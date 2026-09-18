@@ -54,7 +54,7 @@ fn schema() -> SchemaDescriptor {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
+            projection: Box::new([FieldId(0)]).into(),
         }],
     }
 }
@@ -709,12 +709,12 @@ fn closed_roster_coverage_and_capacity_are_judged_once_at_final_state() {
         target.statements = vec![StatementDescriptor::Capacity {
             target: Side {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
                 selection: Box::new([]),
             },
             source: Side {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
                 selection: Box::new([]),
             },
             weight: Weight::Unit,

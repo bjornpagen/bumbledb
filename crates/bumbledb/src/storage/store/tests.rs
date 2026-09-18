@@ -87,7 +87,9 @@ pub(super) fn schema() -> Schema {
         statements: vec![
             bumbledb_theory::schema::StatementDescriptor::Functionality {
                 relation: NOTE,
-                projection: Box::from([bumbledb_theory::schema::FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::from([
+                    bumbledb_theory::schema::FieldId(0),
+                ])),
             },
         ],
     }

@@ -29,7 +29,7 @@ fn schema(n: usize, arity: usize) -> Schema {
         statements: (0..n)
             .map(|r| StatementDescriptor::Functionality {
                 relation: RelationId(u32::try_from(r).expect("small fixture")),
-                projection: Box::from([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
             })
             .collect(),
     }
@@ -291,7 +291,7 @@ fn pointwise_schema() -> Schema {
         ],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(1),
-            projection: Box::new([FieldId(0), FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0), FieldId(1)])),
         }],
     }
     .validate()
@@ -393,7 +393,7 @@ fn eq_pinned_key_fields_count_toward_key_coverage() {
         ],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(1),
-            projection: Box::new([FieldId(0), FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0), FieldId(1)])),
         }],
     }
     .validate()

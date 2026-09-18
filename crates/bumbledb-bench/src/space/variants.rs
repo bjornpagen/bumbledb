@@ -216,7 +216,7 @@ mod home_costs {
             statements: (0..=shape.secondaries)
                 .map(|field| StatementDescriptor::Functionality {
                     relation: RELATION,
-                    projection: Box::from([FieldId(field)]),
+                    projection: bumbledb::schema::Projection::Fields(Box::from([FieldId(field)])),
                 })
                 .collect(),
         }

@@ -74,6 +74,17 @@ struct IndexSpec {
 }
 
 fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
+    assert!(
+        schema
+            .keys()
+            .iter()
+            .all(|key| !matches!(key.form(), bumbledb::schema::KeyForm::EventFull))
+            && schema.relations().iter().all(|relation| relation
+                .fields()
+                .iter()
+                .all(|field| field.value_type != ValueType::Event)),
+        "SQLite schema mapping does not implement Event dependency semantics"
+    );
     let mut plan = Vec::new();
     let statement_count =
         schema.keys().len() + schema.containments().len() + schema.capacities().len();
@@ -118,6 +129,7 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
                     columns: statement
                         .source
                         .projection
+                        .fields()
                         .iter()
                         .flat_map(|field| {
                             field_columns(&rel.fields()[usize::from(field.0)])
@@ -533,53 +545,53 @@ mod tests {
                 // (closed autos now lead the materialized order).
                 StatementDescriptor::Functionality {
                     relation: RelationId(0),
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Functionality {
                     relation: RelationId(1),
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Functionality {
                     relation: RelationId(0),
-                    projection: Box::new([FieldId(1)]),
+                    projection: Box::new([FieldId(1)]).into(),
                 },
                 StatementDescriptor::Containment {
                     source: Side {
                         relation: RelationId(2),
-                        projection: Box::new([FieldId(0)]),
+                        projection: Box::new([FieldId(0)]).into(),
                         selection: Box::new([]),
                     },
                     target: Side {
                         relation: RelationId(0),
-                        projection: Box::new([FieldId(0)]),
+                        projection: Box::new([FieldId(0)]).into(),
                         selection: Box::new([]),
                     },
                 },
                 StatementDescriptor::Containment {
                     source: Side {
                         relation: RelationId(2),
-                        projection: Box::new([FieldId(1)]),
+                        projection: Box::new([FieldId(1)]).into(),
                         selection: Box::new([]),
                     },
                     target: Side {
                         relation: RelationId(1),
-                        projection: Box::new([FieldId(0)]),
+                        projection: Box::new([FieldId(0)]).into(),
                         selection: Box::new([]),
                     },
                 },
                 StatementDescriptor::Functionality {
                     relation: RelationId(2),
-                    projection: Box::new([FieldId(0), FieldId(2)]),
+                    projection: Box::new([FieldId(0), FieldId(2)]).into(),
                 },
                 StatementDescriptor::Containment {
                     source: Side {
                         relation: RelationId(3),
-                        projection: Box::new([FieldId(0)]),
+                        projection: Box::new([FieldId(0)]).into(),
                         selection: Box::new([]),
                     },
                     target: Side {
                         relation: RelationId(4),
-                        projection: Box::new([FieldId(0)]),
+                        projection: Box::new([FieldId(0)]).into(),
                         selection: Box::new([]),
                     },
                 },

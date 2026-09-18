@@ -206,6 +206,7 @@ export type {
 	RelationSpec,
 	RowSpec,
 	SchemaSpec,
+	ProjectionSpec,
 	SideSpec,
 	StatementSpec,
 	ValueSpec,

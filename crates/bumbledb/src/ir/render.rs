@@ -39,8 +39,8 @@ impl ClosedRefs {
                 .relation_checked(target.relation)
                 .is_some_and(|rel| rel.body().closed_rows().is_some());
             if target_closed
-                && target.projection.as_ref() == [FieldId(0)]
-                && let [field] = source.projection.as_ref()
+                && target.projection.fields() == [FieldId(0)]
+                && let [field] = source.projection.fields()
             {
                 map.insert((source.relation, *field), target.relation);
             }

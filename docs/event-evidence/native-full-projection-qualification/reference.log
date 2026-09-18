@@ -1,0 +1,17 @@
+   Compiling bumbledb v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb)
+   Compiling bumbledb-bench v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-bench)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.61s
+     Running unittests src/lib.rs (target/debug/build/bumbledb-bench/6ef6d1b9c31861f7/out/bumbledb_bench-6ef6d1b9c31861f7)
+
+running 8 tests
+test correspondence::tests::owned_catalog_names_every_required_id ... ok
+test correspondence::tests::merge_not_idempotent ... ok
+test correspondence::tests::c_d19_cancel_uses_the_rational_oracle_not_host_add ... ok
+test correspondence::tests::c_d19_mean_once_is_not_rounded_sum_over_count ... ok
+test correspondence::tests::c_g03_add_wins_in_one_changeset ... ok
+test correspondence::tests::c_d04_collision_bytes_exact_rows_are_not_fingerprints ... ok
+test correspondence::tests::c_g03_mutable_support_leaves_untouched_statements ... ok
+test correspondence::tests::c_g03_raw_commute_does_not_commute_admission ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 498 filtered out; finished in 0.00s
+

@@ -169,11 +169,11 @@ fn build_case(
     let target_side = side(TARGET, &projection, arity, selection, false);
     let source_key = StatementDescriptor::Functionality {
         relation: SOURCE,
-        projection: key_order.clone().into_boxed_slice(),
+        projection: bumbledb::schema::Projection::Fields(key_order.clone().into_boxed_slice()),
     };
     let target_key = StatementDescriptor::Functionality {
         relation: TARGET,
-        projection: key_order.into_boxed_slice(),
+        projection: bumbledb::schema::Projection::Fields(key_order.into_boxed_slice()),
     };
     let forward = StatementDescriptor::Containment {
         source: source_side.clone(),

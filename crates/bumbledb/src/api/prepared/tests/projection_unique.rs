@@ -48,7 +48,7 @@ fn instrument_filter_schema() -> SchemaDescriptor {
             .map(
                 |relation| crate::schema::StatementDescriptor::Functionality {
                     relation,
-                    projection: Box::new([FieldId(0)]),
+                    projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
                 },
             )
             .collect(),
@@ -178,7 +178,7 @@ fn uuid_keyed_join_with_negative_guard_preserves_order_across_sink_tiers() {
             .map(
                 |relation| crate::schema::StatementDescriptor::Functionality {
                     relation,
-                    projection: Box::new([FieldId(0)]),
+                    projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
                 },
             )
             .collect(),
@@ -313,7 +313,7 @@ fn keyed_interval_membership_keeps_hashing_for_hidden_points_through_real_normal
         ],
         statements: vec![crate::schema::StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
         }],
     };
     let fix = StoreFix::store("projection-hidden-membership-points", schema);

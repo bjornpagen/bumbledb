@@ -51,12 +51,12 @@ pub(super) fn closed_descriptor() -> SchemaDescriptor {
         statements: vec![bumbledb_theory::schema::StatementDescriptor::Containment {
             source: bumbledb_theory::schema::Side {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(1)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(1)])),
                 selection: Box::new([]),
             },
             target: bumbledb_theory::schema::Side {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
                 selection: Box::new([]),
             },
         }],

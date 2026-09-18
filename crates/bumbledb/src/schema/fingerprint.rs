@@ -72,10 +72,11 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
             StatementView::Key(_, statement) => {
                 out.push(StatementFormTag::Functionality.tag());
                 put_relation_id(out, statement.relation);
-                put_len(out, statement.projection.len());
-                for field in &statement.projection {
-                    put_field_id(out, *field);
-                }
+                put_projection(
+                    out,
+                    &statement.projection,
+                    matches!(statement.form(), super::KeyForm::EventFull),
+                );
             }
             StatementView::Containment(_, statement) => {
                 out.push(StatementFormTag::Containment.tag());
@@ -142,12 +143,26 @@ fn put_field_id(out: &mut Vec<u8>, id: FieldId) {
     out.extend_from_slice(&id.0.to_le_bytes());
 }
 
+/// Existing field-only bytes stay unchanged. 65535 cannot name an admitted
+/// stored field (there are at most 65535 fields, numbered from zero), and is
+/// reserved here solely as the typed full-Event projection opcode.
+fn put_projection(out: &mut Vec<u8>, fields: &[FieldId], full: bool) {
+    put_len(out, fields.len() + usize::from(full));
+    for &field in fields {
+        put_field_id(out, field);
+    }
+    if full {
+        out.extend_from_slice(&u16::MAX.to_le_bytes());
+    }
+}
+
 fn put_side(out: &mut Vec<u8>, schema: &Schema, side: &Side) {
     put_relation_id(out, side.relation);
-    put_len(out, side.projection.len());
-    for field in &side.projection {
-        put_field_id(out, *field);
-    }
+    put_projection(
+        out,
+        side.projection.fields(),
+        side.projection.is_event_full(),
+    );
     put_len(out, side.selection.len());
     for (field, literals) in &side.selection {
         put_field_id(out, *field);

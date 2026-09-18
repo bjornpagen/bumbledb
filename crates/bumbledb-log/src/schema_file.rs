@@ -17,7 +17,7 @@ use std::io;
 use std::path::Path;
 
 use bumbledb::schema::{
-    Bound, FieldDescriptor, FieldId, FixedIntervalElement, IntervalElement, LiteralSet,
+    Bound, FieldDescriptor, FieldId, FixedIntervalElement, IntervalElement, LiteralSet, Projection,
     RelationDescriptor, RelationId, Row, SchemaDescriptor, Side, StatementDescriptor,
     ValidateDescriptor as _, ValueType, Weight,
 };
@@ -289,13 +289,19 @@ fn render_statement(
     Ok(())
 }
 
-fn render_projection(out: &mut String, projection: &[FieldId]) {
+fn render_projection(out: &mut String, projection: &Projection) {
     out.push('[');
-    for (index, field) in projection.iter().enumerate() {
+    for (index, field) in projection.fields().iter().enumerate() {
         if index > 0 {
             out.push(',');
         }
         out.push_str(&field.0.to_string());
+    }
+    if projection.is_event_full() {
+        if !projection.fields().is_empty() {
+            out.push(',');
+        }
+        out.push_str("{\"event\":\"full\"}");
     }
     out.push(']');
 }
@@ -487,12 +493,24 @@ fn parse_statement(json: &Json) -> Result<StatementDescriptor, TheoryFile> {
     Err(TheoryFile::Shape("unknown statement"))
 }
 
-fn parse_projection(json: &Json) -> Result<Box<[FieldId]>, TheoryFile> {
-    json.as_array()
-        .ok_or(TheoryFile::Shape("projection"))?
-        .iter()
-        .map(|field| Ok(FieldId(as_u16(field, "field")?)))
-        .collect()
+fn parse_projection(json: &Json) -> Result<Projection, TheoryFile> {
+    let terms = json.as_array().ok_or(TheoryFile::Shape("projection"))?;
+    let mut fields = Vec::with_capacity(terms.len());
+    for (index, term) in terms.iter().enumerate() {
+        if let Some(marker) = term.as_object() {
+            if index + 1 != terms.len()
+                || marker.len() != 1
+                || marker.get("event").and_then(Json::as_str) != Some("full")
+            {
+                return Err(TheoryFile::Shape(
+                    "projection requires one trailing full Event marker",
+                ));
+            }
+            return Ok(Projection::EventFull(fields.into_boxed_slice()));
+        }
+        fields.push(FieldId(as_u16(term, "field")?));
+    }
+    Ok(fields.into())
 }
 
 fn parse_side(json: &Json) -> Result<Side, TheoryFile> {
@@ -627,6 +645,55 @@ mod tests {
         let schema = parse(raw).expect("note theory");
         assert_eq!(schema.relations.len(), 1);
         assert_eq!(schema.statements.len(), 1);
+    }
+
+    #[test]
+    fn full_projection_markers_roundtrip_and_distinguish_schema_identity() {
+        let raw = r#"{"relations":[{"name":"r","fields":[{"name":"id","type":"u64"}]}],"statements":[{"functionality":{"relation":0,"projection":[0,{"event":"full"}]}}]}"#;
+        let full = parse(raw).unwrap();
+        let rendered = render(&full).unwrap();
+        assert!(rendered.contains(r#""projection":[0,{"event":"full"}]"#));
+        assert_eq!(parse(&rendered).unwrap(), full);
+        // The scalar prefix is the same, but the authored law remains distinct.
+        let mut scalar = full.clone();
+        let bumbledb::schema::StatementDescriptor::Functionality { projection, .. } =
+            &mut scalar.statements[0]
+        else {
+            unreachable!()
+        };
+        *projection = projection.fields().to_vec().into();
+        assert_ne!(schema_id(&full).unwrap(), schema_id(&scalar).unwrap());
+        assert!(matches!(
+            crate::bindings::emit(&full),
+            Err(crate::bindings::BindingError::Unrepresentable { .. })
+        ));
+        // A full-only projection has no physical columns, but logical arity one.
+        let singleton = parse(&raw.replace("[0,{", "[{")).unwrap();
+        assert_eq!(parse(&render(&singleton).unwrap()).unwrap(), singleton);
+        schema_id(&singleton).unwrap();
+    }
+
+    #[test]
+    fn malformed_projection_constants_refuse_instead_of_losing_the_marker() {
+        let prefix =
+            r#"{"relations":[],"statements":[{"functionality":{"relation":0,"projection":"#;
+        for terms in [
+            r#"[{"event":"full"},0]"#,
+            r#"[{"event":"full"},{"event":"full"}]"#,
+            r#"[{"event":"empty"}]"#,
+            r#"[{"event":"full","field":0}]"#,
+            "[{}]",
+            "[true]",
+            r#"["true"]"#,
+        ] {
+            assert!(
+                matches!(
+                    parse(&(format!("{prefix}{terms}") + "}}]}")),
+                    Err(TheoryFile::Shape(_))
+                ),
+                "{terms}"
+            );
+        }
     }
 
     #[test]

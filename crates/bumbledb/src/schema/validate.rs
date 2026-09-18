@@ -9,9 +9,9 @@ use super::{
     AxiomIndex, Bound, CapacityEnforcement, CapacityId, CapacityStatement, ContainmentId,
     ContainmentStatement, DisjointDeterminantProof, EncodableCheck, Enforcement, FactLayout,
     FieldDescriptor, FieldId, KeyForm, KeyId, KeyStatement, LiteralSet, MemberSet, Pairing,
-    Relation, RelationBody, RelationDescriptor, RelationId, Schema, SchemaDescriptor, SealedBound,
-    SealedWeight, Side, StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType,
-    Weight, value_matches,
+    Projection as TypedProjection, Relation, RelationBody, RelationDescriptor, RelationId, Schema,
+    SchemaDescriptor, SealedBound, SealedWeight, Side, StatementDescriptor, StatementId,
+    StatementRef, ValueMismatch, ValueType, Weight, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
@@ -75,7 +75,7 @@ impl ValidateDescriptor for SchemaDescriptor {
                 | StatementDescriptor::Capacity { source, target, .. } => {
                     for side in [source, target] {
                         if matches!(descriptor, StatementDescriptor::Capacity { .. }) {
-                            for &field in &side.projection {
+                            for &field in side.projection.fields() {
                                 check_event(side.relation, field)?;
                             }
                         }
@@ -155,12 +155,13 @@ impl ValidateDescriptor for SchemaDescriptor {
                     keys.push(KeyStatement {
                         id,
                         relation: *relation,
-                        projection: projection.clone(),
+                        projection: projection.fields().into(),
                         form: match evidence {
                             FunctionalityEvidence::Pointwise(disjoint, tail) => {
                                 KeyForm::Pointwise { tail, disjoint }
                             }
                             FunctionalityEvidence::Scalar => KeyForm::Scalar,
+                            FunctionalityEvidence::EventFull => KeyForm::EventFull,
                         },
                     });
                     StatementRef::Key(key_id)
@@ -327,10 +328,10 @@ fn pair_mirrors(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FieldSet(Box<[FieldId]>);
+struct FieldSet(Box<[FieldId]>, bool);
 
 impl FieldSet {
-    fn new(fields: &[FieldId]) -> Result<Self, FieldId> {
+    fn new(fields: &[FieldId], full: bool) -> Result<Self, FieldId> {
         let mut canonical = fields.to_vec();
         canonical.sort_unstable();
         if let Some(duplicate) = canonical
@@ -339,16 +340,16 @@ impl FieldSet {
         {
             return Err(duplicate);
         }
-        Ok(Self(canonical.into_boxed_slice()))
+        Ok(Self(canonical.into_boxed_slice(), full))
     }
 }
 
-struct Projection<'a> {
+struct CheckedProjection<'a> {
     ordered: &'a [FieldId],
     fields: FieldSet,
 }
 
-impl Projection<'_> {
+impl CheckedProjection<'_> {
     fn ordered(&self) -> &[FieldId] {
         self.ordered
     }
@@ -361,6 +362,7 @@ impl Projection<'_> {
 #[derive(Clone, Copy)]
 enum FunctionalityEvidence {
     Scalar,
+    EventFull,
 
     Pointwise(DisjointDeterminantProof, ValueType),
 }
@@ -448,7 +450,7 @@ fn canonical_side(side: &Side) -> Side {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NormalizedSide {
     relation: RelationId,
-    projection: Box<[FieldId]>,
+    projection: TypedProjection,
     selection: Box<[(FieldId, LiteralSet)]>,
 }
 
@@ -472,7 +474,7 @@ impl NormalizedSide {
 enum StatementIdentity {
     Functionality {
         relation: RelationId,
-        projection: Box<[FieldId]>,
+        projection: TypedProjection,
     },
     Containment {
         source: NormalizedSide,
@@ -570,11 +572,12 @@ fn validate_key_region(
 fn validate_functionality(
     id: StatementId,
     relation_id: RelationId,
-    projection: &[FieldId],
+    projection: &TypedProjection,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
 ) -> Result<FunctionalityEvidence, SchemaError> {
     let relation = known_relation(id, relation_id, relations)?;
+    let is_full = projection.is_event_full();
     let projection = validate_projection(id, relation_id, projection, relation)?;
 
     let region = validate_key_region(id, relation_id, &relation.fields, projection.ordered())?;
@@ -587,7 +590,7 @@ fn validate_functionality(
             projection: p,
         } = earlier
             && *r == relation_id
-            && FieldSet::new(p).is_ok_and(|set| &set == this_set)
+            && FieldSet::new(p.fields(), p.is_event_full()).is_ok_and(|set| &set == this_set)
         {
             return Err(StatementErrorKind::DuplicateFunctionality {
                 earlier: statement_id(idx),
@@ -652,6 +655,7 @@ fn validate_functionality(
 
     Ok(match tail {
         Some(tail) => FunctionalityEvidence::Pointwise(DisjointDeterminantProof(()), tail),
+        None if is_full => FunctionalityEvidence::EventFull,
         None => FunctionalityEvidence::Scalar,
     })
 }
@@ -665,6 +669,19 @@ fn validate_containment(
 ) -> Result<Enforcement, SchemaError> {
     let target_projection = validate_side_pair(id, source, target, relations)?;
 
+    if source.projection.is_event_full() || target.projection.is_event_full() {
+        let resolved = resolve_event_target(
+            id,
+            source,
+            target,
+            &target_projection,
+            relations,
+            descriptors,
+        )?;
+        validate_closed_full_containment(id, source, target, relations)?;
+        return Ok(resolved);
+    }
+
     // Interval positions on closed containments: refused v0. A pointwise
 
     let target_fields = &relations[target.relation.0 as usize].fields;
@@ -677,7 +694,7 @@ fn validate_containment(
         RelationBody::Closed { .. }
     );
     if (source_closed || target_closed)
-        && !region_positions(target_fields, &target.projection).is_empty()
+        && !region_positions(target_fields, target.projection.fields()).is_empty()
     {
         return Err(StatementErrorKind::ClosedContainmentInterval {
             relation: if target_closed {
@@ -696,7 +713,7 @@ fn validate_containment(
         &target_projection,
         relations,
         descriptors,
-        relations[source.relation.0 as usize].region_tail(&source.projection),
+        relations[source.relation.0 as usize].region_tail(source.projection.fields()),
     )?;
 
     if let (Enforcement::Closed { members }, Some(rows)) = (
@@ -712,7 +729,7 @@ fn validate_containment(
             if !sealed_satisfies(&phi, layout, &row.fact) {
                 continue;
             }
-            let word = decoded_word(layout, source.projection[0], &row.fact);
+            let word = decoded_word(layout, source.projection.fields()[0], &row.fact);
 
             if !AxiomIndex::try_from(word).is_ok_and(|index| members.contains(index)) {
                 return Err(StatementErrorKind::ClosedStatementRefuted {
@@ -766,16 +783,19 @@ fn validate_capacity(
         return Err(StatementErrorKind::CapacityInvertedWindow { lo, hi }.at(id));
     }
 
+    if source.projection.is_event_full() || target.projection.is_event_full() {
+        return Err(StatementErrorKind::EventFullCapacity.at(id));
+    }
     let target_projection = validate_side_pair(id, source, target, relations)?;
 
     // The v0 interval refusal, narrowed to projections: capacity
 
     let source_fields = &relations[source.relation.0 as usize].fields;
-    let positions = region_positions(source_fields, &source.projection);
+    let positions = region_positions(source_fields, source.projection.fields());
     if let Some(pos) = positions.first() {
         return Err(StatementErrorKind::CapacityIntervalPosition {
             relation: source.relation,
-            field: source.projection[*pos],
+            field: source.projection.fields()[*pos],
         }
         .at(id));
     }
@@ -887,8 +907,9 @@ fn validate_capacity(
                     sealed_satisfies(&phi, source_layout, &child.fact)
                         && source
                             .projection
+                            .fields()
                             .iter()
-                            .zip(target.projection.iter())
+                            .zip(target.projection.fields().iter())
                             .all(|(s, t)| {
                                 field_bytes(source_layout.encoded(&child.fact), usize::from(s.0))
                                     == field_bytes(
@@ -1051,16 +1072,16 @@ fn known_relation(
 fn validate_projection<'p>(
     id: StatementId,
     relation_id: RelationId,
-    projection: &'p [FieldId],
+    projection: &'p TypedProjection,
     relation: &Relation,
-) -> Result<Projection<'p>, SchemaError> {
-    if projection.is_empty() {
+) -> Result<CheckedProjection<'p>, SchemaError> {
+    if projection.arity() == 0 {
         return Err(StatementErrorKind::EmptyProjection {
             relation: relation_id,
         }
         .at(id));
     }
-    for field in projection {
+    for field in projection.fields() {
         if usize::from(field.0) >= relation.fields.len() {
             return Err(StatementErrorKind::UnknownField {
                 relation: relation_id,
@@ -1069,15 +1090,27 @@ fn validate_projection<'p>(
             .at(id));
         }
     }
-    let fields = FieldSet::new(projection).map_err(|field| {
-        StatementErrorKind::DuplicateProjectionField {
-            relation: relation_id,
-            field,
+    if projection.is_event_full() {
+        for &field in projection.fields() {
+            if relation.fields[usize::from(field.0)].value_type.is_region() {
+                return Err(StatementErrorKind::FullProjectionNonScalar {
+                    relation: relation_id,
+                    field,
+                }
+                .at(id));
+            }
         }
-        .at(id)
-    })?;
-    Ok(Projection {
-        ordered: projection,
+    }
+    let fields =
+        FieldSet::new(projection.fields(), projection.is_event_full()).map_err(|field| {
+            StatementErrorKind::DuplicateProjectionField {
+                relation: relation_id,
+                field,
+            }
+            .at(id)
+        })?;
+    Ok(CheckedProjection {
+        ordered: projection.fields(),
         fields,
     })
 }
@@ -1089,32 +1122,31 @@ fn validate_side_pair<'t>(
     source: &Side,
     target: &'t Side,
     relations: &[Relation],
-) -> Result<Projection<'t>, SchemaError> {
+) -> Result<CheckedProjection<'t>, SchemaError> {
     validate_side_shape(id, source, relations)?;
     let target_projection = validate_side_shape(id, target, relations)?;
 
-    if source.projection.len() != target.projection.len() {
+    if source.projection.arity() != target.projection.arity() {
         return Err(StatementErrorKind::ContainmentArityMismatch {
             mismatch: Mismatch {
-                witnessed: source.projection.len(),
-                required: target.projection.len(),
+                witnessed: source.projection.arity(),
+                required: target.projection.arity(),
             },
         }
         .at(id));
     }
 
-    let source_fields = &relations[source.relation.0 as usize].fields;
-    let target_fields = &relations[target.relation.0 as usize].fields;
-    for (position, (s, t)) in source
-        .projection
-        .iter()
-        .zip(target.projection.iter())
-        .enumerate()
-    {
-        if !positional_types_match(
-            &source_fields[usize::from(s.0)].value_type,
-            &target_fields[usize::from(t.0)].value_type,
-        ) {
+    let types = |side: &Side| {
+        let fields = &relations[side.relation.0 as usize].fields;
+        side.projection
+            .fields()
+            .iter()
+            .map(|field| fields[usize::from(field.0)].value_type)
+            .chain(side.projection.is_event_full().then_some(ValueType::Event))
+            .collect::<Vec<_>>()
+    };
+    for (position, (source, target)) in types(source).iter().zip(types(target)).enumerate() {
+        if !positional_types_match(source, &target) {
             return Err(StatementErrorKind::ContainmentTypeMismatch { position }.at(id));
         }
     }
@@ -1129,7 +1161,7 @@ fn validate_side_shape<'s>(
     id: StatementId,
     side: &'s Side,
     relations: &[Relation],
-) -> Result<Projection<'s>, SchemaError> {
+) -> Result<CheckedProjection<'s>, SchemaError> {
     let relation = known_relation(id, side.relation, relations)?;
     let projection = validate_projection(id, side.relation, &side.projection, relation)?;
     for (idx, (field, literals)) in side.selection.iter().enumerate() {
@@ -1180,7 +1212,7 @@ fn validate_side_selection(
 ) -> Result<(), SchemaError> {
     let relation = &relations[side.relation.0 as usize];
     for (field, _) in &side.selection {
-        if side.projection.contains(field) {
+        if side.projection.fields().contains(field) {
             return Err(StatementErrorKind::SelectedFieldProjected {
                 relation: side.relation,
                 field: *field,
@@ -1214,11 +1246,126 @@ fn validate_selection_literal(
     })
 }
 
+/// Event coverage keeps the exact declared target projection, including `true`.
+/// Physical indexes contain only stored fields; their scalar permutations remain
+/// meaningful when one side has a contextual constant and the other an Event field.
+fn resolve_event_target(
+    id: StatementId,
+    source: &Side,
+    target: &Side,
+    target_projection: &CheckedProjection<'_>,
+    relations: &[Relation],
+    descriptors: &[StatementDescriptor],
+) -> Result<Enforcement, SchemaError> {
+    let target_relation = &relations[target.relation.0 as usize];
+    if !target.projection.is_event_full() {
+        validate_key_region(
+            id,
+            target.relation,
+            &target_relation.fields,
+            target.projection.fields(),
+        )?;
+    }
+    let Some((key_idx, key_projection)) =
+        matching_functionality(target.relation, target_projection.fields(), descriptors)
+    else {
+        return Err(missing_target_key(id, target, relations, descriptors, true));
+    };
+    let disjoint = match validate_functionality(
+        statement_id(key_idx),
+        target.relation,
+        key_projection,
+        relations,
+        descriptors,
+    )? {
+        FunctionalityEvidence::EventFull => DisjointDeterminantProof(()),
+        FunctionalityEvidence::Pointwise(disjoint, ValueType::Event) => disjoint,
+        _ => unreachable!("positional Event types and an exact target key"),
+    };
+    let mut physical_source = Vec::new();
+    for key_field in key_projection.fields() {
+        if target_relation.field(*key_field).value_type == ValueType::Event {
+            continue;
+        }
+        let position = target
+            .projection
+            .fields()
+            .iter()
+            .position(|field| field == key_field)
+            .expect("exact target-key field set");
+        physical_source.push(source.projection.fields()[position]);
+    }
+    if !source.projection.is_event_full() {
+        physical_source.push(
+            *source
+                .projection
+                .fields()
+                .last()
+                .expect("Event projection tail"),
+        );
+    }
+    Ok(Enforcement::EventCoverage {
+        target_key: functionality_key_id(descriptors, key_idx),
+        key_projection: physical_source.into_boxed_slice(),
+        disjoint,
+    })
+}
+
+/// Full/full on two closed scalar rosters is a ground law. Reject a refuted
+/// declaration during sealing, just as for ordinary closed containments.
+fn validate_closed_full_containment(
+    id: StatementId,
+    source: &Side,
+    target: &Side,
+    relations: &[Relation],
+) -> Result<(), SchemaError> {
+    let source_relation = &relations[source.relation.0 as usize];
+    let target_relation = &relations[target.relation.0 as usize];
+    let (Some(sources), Some(targets)) = (
+        source_relation.body.closed_rows(),
+        target_relation.body.closed_rows(),
+    ) else {
+        return Ok(());
+    };
+    // Event fields on closed rosters are separately refused. Positional typing
+    // therefore proves that both projections carry a full constant here.
+    let phi = encodable_checks(&source.selection, &source_relation.fields);
+    let psi = encodable_checks(&target.selection, &target_relation.fields);
+    for (index, row) in sources.iter().enumerate() {
+        if !sealed_satisfies(&phi, &source_relation.layout, &row.fact) {
+            continue;
+        }
+        let covered = targets.iter().any(|candidate| {
+            sealed_satisfies(&psi, &target_relation.layout, &candidate.fact)
+                && source
+                    .projection
+                    .fields()
+                    .iter()
+                    .zip(target.projection.fields())
+                    .all(|(s, t)| {
+                        field_bytes(source_relation.layout.encoded(&row.fact), usize::from(s.0))
+                            == field_bytes(
+                                target_relation.layout.encoded(&candidate.fact),
+                                usize::from(t.0),
+                            )
+                    })
+        });
+        if !covered {
+            return Err(StatementErrorKind::ClosedStatementRefuted {
+                relation: source.relation,
+                row: RowIndex(index),
+            }
+            .at(id));
+        }
+    }
+    Ok(())
+}
+
 fn resolve_target_key(
     id: StatementId,
     source: &Side,
     target: &Side,
-    target_projection: &Projection<'_>,
+    target_projection: &CheckedProjection<'_>,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
     source_tail: Option<ValueType>,
@@ -1230,7 +1377,7 @@ fn resolve_target_key(
     // the refused field set, and the rule here is closedness, not key
 
     if let Some(rows) = target_relation.body.closed_rows() {
-        if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
+        if target.projection.fields().len() != 1 || target.projection.fields()[0] != FieldId(0) {
             return Err(StatementErrorKind::ClosedTargetNotHandle {
                 target: target.relation,
                 target_name: target_relation.name.clone(),
@@ -1245,7 +1392,7 @@ fn resolve_target_key(
     }
 
     let target_fields = &target_relation.fields;
-    let positions = region_positions(target_fields, &target.projection);
+    let positions = region_positions(target_fields, target.projection.fields());
 
     if positions.len() > 1 {
         return Err(missing_target_key(id, target, relations, descriptors, true));
@@ -1265,8 +1412,11 @@ fn resolve_target_key(
         ));
     };
 
-    let key_projection_in_order =
-        source_key_projection(&source.projection, target_projection, key_projection);
+    let key_projection_in_order = source_key_projection(
+        source.projection.fields(),
+        target_projection,
+        key_projection.fields(),
+    );
     let target_key = functionality_key_id(descriptors, key_idx);
 
     if interval_position.is_some() {
@@ -1312,13 +1462,13 @@ fn resolve_capacity_target(
     id: StatementId,
     source: &Side,
     target: &Side,
-    target_projection: &Projection<'_>,
+    target_projection: &CheckedProjection<'_>,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
 ) -> Result<CapacityEnforcement, SchemaError> {
     let target_relation = &relations[target.relation.0 as usize];
     if let Some(rows) = target_relation.body.closed_rows() {
-        if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
+        if target.projection.fields().len() != 1 || target.projection.fields()[0] != FieldId(0) {
             return Err(StatementErrorKind::ClosedTargetNotHandle {
                 target: target.relation,
                 target_name: target_relation.name.clone(),
@@ -1346,9 +1496,9 @@ fn resolve_capacity_target(
     Ok(CapacityEnforcement::ScalarProbe {
         target_key: functionality_key_id(descriptors, key_idx),
         key_projection: source_key_projection(
-            &source.projection,
+            source.projection.fields(),
             target_projection,
-            key_projection,
+            key_projection.fields(),
         ),
     })
 }
@@ -1357,7 +1507,7 @@ fn matching_functionality<'a>(
     relation: RelationId,
     want: &FieldSet,
     descriptors: &'a [StatementDescriptor],
-) -> Option<(usize, &'a [FieldId])> {
+) -> Option<(usize, &'a TypedProjection)> {
     descriptors
         .iter()
         .enumerate()
@@ -1365,8 +1515,11 @@ fn matching_functionality<'a>(
             StatementDescriptor::Functionality {
                 relation: r,
                 projection,
-            } if *r == relation && FieldSet::new(projection).is_ok_and(|set| &set == want) => {
-                Some((index, projection.as_ref()))
+            } if *r == relation
+                && FieldSet::new(projection.fields(), projection.is_event_full())
+                    .is_ok_and(|set| &set == want) =>
+            {
+                Some((index, projection))
             }
             StatementDescriptor::Functionality { .. }
             | StatementDescriptor::Containment { .. }
@@ -1376,7 +1529,7 @@ fn matching_functionality<'a>(
 
 fn source_key_projection(
     source_projection: &[FieldId],
-    target_projection: &Projection<'_>,
+    target_projection: &CheckedProjection<'_>,
     key_projection: &[FieldId],
 ) -> Box<[FieldId]> {
     key_projection
@@ -1408,10 +1561,12 @@ fn functionality_key_id(descriptors: &[StatementDescriptor], key_idx: usize) -> 
 
 /// The projection was validated (`validate_projection`) before any rejection
 /// citing it, so the index is total.
-fn projection_field_names(relation: &Relation, projection: &[FieldId]) -> Box<[Box<str>]> {
+fn projection_field_names(relation: &Relation, projection: &TypedProjection) -> Box<[Box<str>]> {
     projection
+        .fields()
         .iter()
         .map(|field| relation.fields[usize::from(field.0)].name.clone())
+        .chain(projection.is_event_full().then(|| "true".into()))
         .collect()
 }
 

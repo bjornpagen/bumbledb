@@ -53,7 +53,7 @@ fn closed_spec_carries_the_handle_newtype_by_construction() {
         statements: vec![StatementSpec::Containment {
             source: SideSpec {
                 relation: "Account".into(),
-                projection: vec!["status".into()],
+                projection: vec!["status".into()].into(),
                 selection: vec![(
                     "status".into(),
                     LiteralSetSpec::One(LiteralSpec::Handle("Frozen".into())),
@@ -61,7 +61,7 @@ fn closed_spec_carries_the_handle_newtype_by_construction() {
             },
             target: SideSpec {
                 relation: "Status".into(),
-                projection: vec!["id".into()],
+                projection: vec!["id".into()].into(),
                 selection: vec![],
             },
             bidirectional: false,
@@ -83,13 +83,13 @@ fn closed_spec_carries_the_handle_newtype_by_construction() {
         panic!("one containment lowered");
     };
     assert_eq!(source.relation, RelationId(1));
-    assert_eq!(&*source.projection, [FieldId(1)]);
+    assert_eq!(source.projection.fields(), [FieldId(1)]);
     assert_eq!(
         &*source.selection,
         [(FieldId(1), LiteralSet::One(Value::U64(1)))]
     );
     assert_eq!(target.relation, RelationId(0));
-    assert_eq!(&*target.projection, [FieldId(0)]);
+    assert_eq!(target.projection.fields(), [FieldId(0)]);
 }
 
 /// The one sealed-slot lookup (finding 126): the synthetic `id` carries
@@ -120,12 +120,12 @@ fn synthetic_id_newtype_rides_the_sealed_slot() {
         statements: vec![StatementSpec::Containment {
             source: SideSpec {
                 relation: "Account".into(),
-                projection: vec!["status".into()],
+                projection: vec!["status".into()].into(),
                 selection: vec![],
             },
             target: SideSpec {
                 relation: "Status".into(),
-                projection: vec!["id".into()],
+                projection: vec!["id".into()].into(),
                 selection: vec![],
             },
             bidirectional: false,
@@ -176,12 +176,12 @@ fn the_issue_list_is_complete_in_one_pass() {
         statements: vec![
             StatementSpec::Fd {
                 relation: "Ghost".into(),
-                projection: vec!["x".into()],
+                projection: vec!["x".into()].into(),
             },
             StatementSpec::Containment {
                 source: SideSpec {
                     relation: "Account".into(),
-                    projection: vec!["status".into()],
+                    projection: vec!["status".into()].into(),
                     selection: vec![(
                         "status".into(),
                         LiteralSetSpec::One(LiteralSpec::Handle("Missing".into())),
@@ -189,7 +189,7 @@ fn the_issue_list_is_complete_in_one_pass() {
                 },
                 target: SideSpec {
                     relation: "Status".into(),
-                    projection: vec!["id".into()],
+                    projection: vec!["id".into()].into(),
                     selection: vec![],
                 },
                 bidirectional: false,
@@ -240,14 +240,14 @@ fn equivalent_capacity_spellings_normalize_and_real_errors_still_refuse() {
         statements: vec![StatementSpec::Capacity {
             target: SideSpec {
                 relation: "Student".into(),
-                projection: vec!["id".into()],
+                projection: vec!["id".into()].into(),
                 selection: vec![],
             },
             weight: WeightSpec::Unit,
             window,
             source: SideSpec {
                 relation: "Attempt".into(),
-                projection: vec!["student".into()],
+                projection: vec!["student".into()].into(),
                 selection: vec![],
             },
         }],
@@ -339,7 +339,7 @@ fn wide_relation_is_a_typed_issue_not_a_panic() {
         }],
         statements: vec![StatementSpec::Fd {
             relation: "Wide".into(),
-            projection: vec![format!("f{}", count - 1).into()],
+            projection: vec![format!("f{}", count - 1).into()].into(),
         }],
     };
     let err = spec.descriptor().expect_err("the cap refuses typed");

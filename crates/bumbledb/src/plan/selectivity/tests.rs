@@ -71,11 +71,11 @@ fn schema() -> Schema {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: POSTING,
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Functionality {
                 relation: ACCOUNT,
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             // Posting.account ⊆ Account.id: the schema bound for the
             // account column's distincts when no image is resident.

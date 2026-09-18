@@ -104,8 +104,32 @@ pub enum ConditionalAbort {
 }
 
 impl NaiveDb {
+    /// Construct the scalar/interval reference database.
+    ///
+    /// # Panics
+    /// Refuses Event fields and contextual full projections: this reference
+    /// has no Event semantics. Event tests use a separate bitset oracle.
     #[must_use]
     pub fn new(schema: &SchemaDescriptor) -> Self {
+        // This independent scalar/interval oracle has no Event denotation.
+        // Refuse at construction instead of silently comparing region values.
+        assert!(
+            schema
+                .relations
+                .iter()
+                .all(|r| r.fields.iter().all(|f| f.value_type != ValueType::Event)),
+            "NaiveDb does not support Event schemas; use the independent Event bitset oracle"
+        );
+        assert!(
+            schema.statements.iter().all(|s| match s {
+                StatementDescriptor::Functionality { projection, .. } =>
+                    !projection.is_event_full(),
+                StatementDescriptor::Containment { source, target }
+                | StatementDescriptor::Capacity { source, target, .. } =>
+                    !source.projection.is_event_full() && !target.projection.is_event_full(),
+            }),
+            "NaiveDb does not support contextual full Event projections"
+        );
         let field_types: Vec<Vec<ValueType>> = schema
             .relations
             .iter()
@@ -217,7 +241,7 @@ impl NaiveDb {
                 continue;
             };
             for fact in &state[relation.0 as usize] {
-                if self.functionality_violated(state, *relation, projection, fact) {
+                if self.functionality_violated(state, *relation, projection.fields(), fact) {
                     found.push(Violation::Functionality {
                         statement: statement_id(sid),
                     });
@@ -440,8 +464,9 @@ impl NaiveDb {
                     satisfies_selection(child, &source.selection)
                         && source
                             .projection
+                            .fields()
                             .iter()
-                            .zip(target.projection.iter())
+                            .zip(target.projection.fields().iter())
                             .all(|(s, t)| child.0[s.0 as usize] == parent.0[t.0 as usize])
                 })
                 .map(|child| child_weight(weight, child))
@@ -458,7 +483,12 @@ impl NaiveDb {
     }
 
     fn determinant_order<'a>(&'a self, target: &'a Side) -> &'a [bumbledb::FieldId] {
-        let wanted: BTreeSet<u16> = target.projection.iter().map(|field| field.0).collect();
+        let wanted: BTreeSet<u16> = target
+            .projection
+            .fields()
+            .iter()
+            .map(|field| field.0)
+            .collect();
         self.statements
             .iter()
             .find_map(|statement| match statement {
@@ -467,18 +497,19 @@ impl NaiveDb {
                     projection,
                 } if *relation == target.relation
                     && projection
+                        .fields()
                         .iter()
                         .map(|field| field.0)
                         .collect::<BTreeSet<u16>>()
                         == wanted =>
                 {
-                    Some(projection.as_ref())
+                    Some(projection.fields())
                 }
                 StatementDescriptor::Functionality { .. }
                 | StatementDescriptor::Containment { .. }
                 | StatementDescriptor::Capacity { .. } => None,
             })
-            .unwrap_or(&target.projection)
+            .unwrap_or(target.projection.fields())
     }
 
     fn encoded_key(
@@ -567,10 +598,12 @@ impl NaiveDb {
     ) -> bool {
         let interval = source
             .projection
+            .fields()
             .iter()
             .position(|field| self.is_interval(source.relation, *field));
         let projected: Vec<&Value> = source
             .projection
+            .fields()
             .iter()
             .map(|field| &fact.0[field.0 as usize])
             .collect();
@@ -579,6 +612,7 @@ impl NaiveDb {
                 satisfies_selection(candidate, &target.selection)
                     && target
                         .projection
+                        .fields()
                         .iter()
                         .zip(&projected)
                         .all(|(field, value)| &candidate.0[field.0 as usize] == *value)
@@ -592,6 +626,7 @@ impl NaiveDb {
                     let scalars_match =
                         target
                             .projection
+                            .fields()
                             .iter()
                             .enumerate()
                             .all(|(position, field)| {
@@ -599,7 +634,9 @@ impl NaiveDb {
                                     || candidate.0[field.0 as usize] == *projected[position]
                             });
                     if scalars_match {
-                        segments.push(endpoints(&candidate.0[target.projection[index].0 as usize]));
+                        segments.push(endpoints(
+                            &candidate.0[target.projection.fields()[index].0 as usize],
+                        ));
                     }
                 }
                 segments.sort_unstable();

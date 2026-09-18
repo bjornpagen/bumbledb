@@ -58,17 +58,17 @@ fn descriptor() -> SchemaDescriptor {
             // the same materialized position.
             StatementDescriptor::Functionality {
                 relation: READING,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Containment {
                 source: Side {
                     relation: READING,
-                    projection: Box::new([FieldId(1)]),
+                    projection: Box::new([FieldId(1)]).into(),
                     selection: Box::new([]),
                 },
                 target: Side {
                     relation: KIND,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                     selection: Box::new([]),
                 },
             },

@@ -108,12 +108,12 @@ fn theory() -> Schema {
         statements: vec![StatementDescriptor::Containment {
             source: Side {
                 relation: RelationId(ITEM),
-                projection: Box::new([FieldId(1)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(1)])),
                 selection: Box::new([]),
             },
             target: Side {
                 relation: RelationId(KIND),
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
                 selection: Box::new([]),
             },
         }],

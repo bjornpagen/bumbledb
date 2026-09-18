@@ -247,7 +247,7 @@ fn register_schema() -> SchemaDescriptor {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
+            projection: Box::new([FieldId(0)]).into(),
         }],
     }
 }
@@ -277,11 +277,11 @@ fn maintenance_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: MAINTENANCE_SOURCE,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Functionality {
                 relation: MAINTENANCE_DERIVED,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Containment {
                 source: side(MAINTENANCE_DERIVED, &[0], &[]),

@@ -74,7 +74,7 @@ pub struct Exceeded<T> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetKeyCandidate {
     pub key: KeyId,
-    pub projection: Box<[FieldId]>,
+    pub projection: crate::schema::Projection,
     pub projection_names: Box<[Box<str>]>,
 }
 
@@ -388,6 +388,12 @@ pub enum StatementErrorKind {
         field: FieldId,
     },
 
+    FullProjectionNonScalar {
+        relation: RelationId,
+        field: FieldId,
+    },
+    EventFullCapacity,
+
     FunctionalityMultipleRegions {
         relation: RelationId,
         field: FieldId,
@@ -428,7 +434,7 @@ pub enum StatementErrorKind {
     NoMatchingTargetKey {
         target: RelationId,
         target_name: Box<str>,
-        projection: Box<[FieldId]>,
+        projection: crate::schema::Projection,
         projection_names: Box<[Box<str>]>,
         available: Box<[TargetKeyCandidate]>,
     },
@@ -436,7 +442,7 @@ pub enum StatementErrorKind {
     NoPointwiseTargetKey {
         target: RelationId,
         target_name: Box<str>,
-        projection: Box<[FieldId]>,
+        projection: crate::schema::Projection,
         projection_names: Box<[Box<str>]>,
         available: Box<[TargetKeyCandidate]>,
     },
@@ -449,7 +455,7 @@ pub enum StatementErrorKind {
     ClosedTargetNotHandle {
         target: RelationId,
         target_name: Box<str>,
-        projection: Box<[FieldId]>,
+        projection: crate::schema::Projection,
         projection_names: Box<[Box<str>]>,
     },
 

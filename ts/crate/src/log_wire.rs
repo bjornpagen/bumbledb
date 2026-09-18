@@ -1735,7 +1735,7 @@ pub enum SubmitOwned {
         /// Present exactly when the receipt is invariant-rejected: the
         /// canonical evidence decoded INSIDE the job (where the schema and
         /// the cancellation context live) into owned public rows.
-        violations: Option<ViolationsOwned>,
+        violations: Option<Box<ViolationsOwned>>,
     },
     NotSubmitted {
         reference: CommandRef,
@@ -2235,7 +2235,7 @@ fn run_history_verb(
                         Ok(violations) => SubmitOwned::Decided {
                             receipt,
                             health: local_health,
-                            violations,
+                            violations: violations.map(Box::new),
                         },
                         Err(fail) => SubmitOwned::Decided {
                             receipt,
@@ -2805,7 +2805,10 @@ pub fn log_history_result(
                     violations,
                 } => {
                     outcome.set("kind", "decided")?;
-                    outcome.set("receipt", receipt_wire(env, &receipt, violations)?)?;
+                    outcome.set(
+                        "receipt",
+                        receipt_wire(env, &receipt, violations.map(|v| *v))?,
+                    )?;
                     outcome.set("localHealth", health_wire(&env, &health)?)?;
                 }
                 SubmitOwned::NotSubmitted { reference, fail } => {

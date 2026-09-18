@@ -269,7 +269,12 @@ fn distinct_of(
     let mut containment_bound: Option<u64> = None;
     for id in descriptor.outgoing() {
         let statement = schema.containment(*id);
-        if statement.source.projection.as_ref() == [field] && statement.source.selection.is_empty()
+        if matches!(
+            statement.enforcement,
+            crate::schema::Enforcement::ScalarProbe { .. }
+                | crate::schema::Enforcement::Closed { .. }
+        ) && statement.source.projection.fields() == [field]
+            && statement.source.selection.is_empty()
         {
             let target_rows = relation_rows_on(source, schema, statement.target.relation)?;
             containment_bound =

@@ -228,7 +228,7 @@ fn output_key_witness() -> crate::plan::fj::ProjectionDistinctWitness {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::from([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
         }],
     }
     .validate()

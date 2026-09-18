@@ -30,7 +30,7 @@ fn keyed_users() -> Schema {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::from([FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::from([FieldId(1)])),
         }],
     }
     .validate()

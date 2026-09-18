@@ -55,7 +55,7 @@ fn two_relation_schema() -> SchemaDescriptor {
         ],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(1),
-            projection: Box::new([FieldId(0)]),
+            projection: Box::new([FieldId(0)]).into(),
         }],
     }
 }

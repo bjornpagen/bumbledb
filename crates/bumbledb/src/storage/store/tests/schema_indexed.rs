@@ -69,15 +69,15 @@ fn keyed_schema() -> Schema {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: USER,
-                projection: Box::from([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
             },
             StatementDescriptor::Functionality {
                 relation: USER,
-                projection: Box::from([FieldId(1)]),
+                projection: crate::schema::Projection::Fields(Box::from([FieldId(1)])),
             },
             StatementDescriptor::Functionality {
                 relation: BOOKING,
-                projection: Box::from([FieldId(0), FieldId(1)]),
+                projection: crate::schema::Projection::Fields(Box::from([FieldId(0), FieldId(1)])),
             },
         ],
     }
@@ -375,7 +375,7 @@ fn nonleading_uuid_fixed_bytes_and_reordered_composite_keys_are_primary_homes() 
             }],
             statements: vec![StatementDescriptor::Functionality {
                 relation: USER,
-                projection: selected.into_boxed_slice(),
+                projection: crate::schema::Projection::Fields(selected.into_boxed_slice()),
             }],
         }
         .validate()

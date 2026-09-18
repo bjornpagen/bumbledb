@@ -53,7 +53,7 @@ fn base_schema() -> SchemaDescriptor {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([bumbledb::FieldId(0)]),
+            projection: Box::new([bumbledb::FieldId(0)]).into(),
         }],
     }
 }

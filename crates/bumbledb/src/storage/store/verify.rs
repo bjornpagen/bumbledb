@@ -910,11 +910,11 @@ mod tests {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: NOTE,
-                    projection: Box::from([FieldId(0)]),
+                    projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
                 },
                 StatementDescriptor::Functionality {
                     relation: NOTE,
-                    projection: Box::from([FieldId(1)]),
+                    projection: crate::schema::Projection::Fields(Box::from([FieldId(1)])),
                 },
             ],
         }

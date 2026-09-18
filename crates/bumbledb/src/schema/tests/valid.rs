@@ -56,7 +56,7 @@ fn statement_ids_are_auto_fds_first_then_declared_order() {
     let mut decl = ledger_slice();
     decl.statements.push(StatementDescriptor::Functionality {
         relation: RelationId(1),
-        projection: Box::new([FieldId(1), FieldId(2)]),
+        projection: crate::schema::Projection::Fields(Box::new([FieldId(1), FieldId(2)])),
     });
     let materialized = decl.materialized_statements();
     assert_eq!(
@@ -64,11 +64,11 @@ fn statement_ids_are_auto_fds_first_then_declared_order() {
         vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Containment {
                 source: side(RelationId(1), &[FieldId(1)]),
@@ -76,7 +76,7 @@ fn statement_ids_are_auto_fds_first_then_declared_order() {
             },
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(1), FieldId(2)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(1), FieldId(2)])),
             },
         ]
     );
@@ -93,7 +93,7 @@ fn statement_ids_are_auto_fds_first_then_declared_order() {
                 },
             ) => {
                 assert_eq!(sealed.relation, *relation);
-                assert_eq!(sealed.projection, *projection);
+                assert_eq!(&*sealed.projection, projection.fields());
             }
             (
                 StatementView::Containment(_, sealed),

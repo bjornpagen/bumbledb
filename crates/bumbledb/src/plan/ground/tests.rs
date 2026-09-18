@@ -21,7 +21,7 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
 fn id_key(relation: u32) -> StatementDescriptor {
     StatementDescriptor::Functionality {
         relation: RelationId(relation),
-        projection: Box::from([FieldId(0)]),
+        projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
     }
 }
 
@@ -184,7 +184,7 @@ fn du_schema() -> Schema {
             id_key(0),
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             containment((0, &[0], &[(1, Value::U64(0))]), (1, &[0], &[])),
             containment((1, &[0], &[]), (0, &[0], &[(1, Value::U64(0))])),
@@ -323,7 +323,7 @@ fn a_partial_key_join_refuses() {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0), FieldId(1)])),
             },
             containment((1, &[0, 1], &[]), (0, &[0, 1], &[])),
         ],
@@ -536,7 +536,7 @@ fn a_missing_source_selection_refuses() {
             id_key(0),
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             containment((0, &[0], &[(1, Value::U64(0))]), (1, &[0], &[])),
         ],
@@ -630,7 +630,7 @@ fn an_interval_typed_pair_refuses() {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0), FieldId(1)])),
             },
             containment((1, &[0, 1], &[]), (0, &[0, 1], &[])),
         ],
@@ -767,7 +767,7 @@ fn distinct_bodies_refuse_subsumption() {
         ],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(1),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
         }],
     }
     .validate()

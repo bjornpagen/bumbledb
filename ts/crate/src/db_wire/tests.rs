@@ -82,7 +82,7 @@ fn schema_diagnostics_name_closed_identity_and_synthetic_key() {
         .statements
         .push(StatementDescriptor::Functionality {
             relation: RelationId(1),
-            projection: Box::new([FieldId(0)]),
+            projection: Box::new([FieldId(0)]).into(),
         });
     let error = descriptor.clone().validate().unwrap_err();
     let RuntimeError::Engine {
@@ -99,12 +99,12 @@ fn schema_diagnostics_name_closed_identity_and_synthetic_key() {
     descriptor.statements[1] = StatementDescriptor::Containment {
         source: Side {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
+            projection: Box::new([FieldId(0)]).into(),
             selection: Box::default(),
         },
         target: Side {
             relation: RelationId(1),
-            projection: Box::new([FieldId(1)]),
+            projection: Box::new([FieldId(1)]).into(),
             selection: Box::default(),
         },
     };

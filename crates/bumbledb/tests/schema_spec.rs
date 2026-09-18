@@ -209,15 +209,15 @@ fn everything_spec() -> SchemaSpec {
         statements: vec![
             StatementSpec::Fd {
                 relation: "SavingsTerms".into(),
-                projection: vec!["account".into()],
+                projection: vec!["account".into()].into(),
             },
             StatementSpec::Fd {
                 relation: "Holder".into(),
-                projection: vec!["id".into()],
+                projection: vec!["id".into()].into(),
             },
             StatementSpec::Fd {
                 relation: "Account".into(),
-                projection: vec!["id".into()],
+                projection: vec!["id".into()].into(),
             },
             StatementSpec::Containment {
                 source: side("Account", &["holder"]),
@@ -471,11 +471,11 @@ fn seam_spec() -> SchemaSpec {
         statements: vec![
             StatementSpec::Fd {
                 relation: "Item".into(),
-                projection: vec!["id".into(), "flag".into()],
+                projection: vec!["id".into(), "flag".into()].into(),
             },
             StatementSpec::Fd {
                 relation: "Item".into(),
-                projection: vec!["id".into()],
+                projection: vec!["id".into()].into(),
             },
             contain(side_valued("Item", &["id"], "flag", Value::Bool(true))),
             contain(side_valued("Item", &["id"], "count", Value::U64(5))),
@@ -664,7 +664,7 @@ fn unresolvable_names_are_enumerated_completely_never_first_only() {
     let mut spec = everything_spec();
     spec.statements.push(StatementSpec::Fd {
         relation: "Nowhere".into(),
-        projection: vec!["id".into()],
+        projection: vec!["id".into()].into(),
     });
     spec.statements.push(StatementSpec::Containment {
         source: side("Account", &["nope"]),

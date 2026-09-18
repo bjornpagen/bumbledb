@@ -29,7 +29,7 @@ fn schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: HOLDER,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Capacity {
                 target: side(HOLDER, &[0], &[]),
@@ -38,7 +38,7 @@ fn schema() -> SchemaDescriptor {
                 hi: Some(bumbledb::schema::Bound::Lit(2)),
                 source: Side {
                     relation: ACCOUNT,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                     selection: Box::new([(FieldId(1), LiteralSet::One(Value::U64(1)))]),
                 },
             },
@@ -79,7 +79,7 @@ fn exact_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: HOLDER,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Capacity {
                 target: side(HOLDER, &[0], &[]),
@@ -88,7 +88,7 @@ fn exact_schema() -> SchemaDescriptor {
                 hi: Some(bumbledb::schema::Bound::Lit(2)),
                 source: Side {
                     relation: ACCOUNT,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                     selection: Box::new([(FieldId(1), LiteralSet::One(Value::U64(1)))]),
                 },
             },
@@ -99,7 +99,7 @@ fn exact_schema() -> SchemaDescriptor {
                 hi: Some(bumbledb::schema::Bound::Lit(0)),
                 source: Side {
                     relation: ACCOUNT,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                     selection: Box::new([(FieldId(1), LiteralSet::One(Value::U64(9)))]),
                 },
             },

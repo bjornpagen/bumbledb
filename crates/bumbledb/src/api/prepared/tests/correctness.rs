@@ -47,13 +47,13 @@ fn fallback_lookup_schema(lookup_type: ValueType, keyed_lookup: bool) -> SchemaD
         ],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
         }],
     };
     if keyed_lookup {
         schema.statements.push(StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(1)])),
         });
     }
     schema
@@ -636,7 +636,7 @@ fn heap_prepared_witnesses_require_the_same_schema_laws() {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
         }],
     };
     let mut unkeyed = keyed.clone();

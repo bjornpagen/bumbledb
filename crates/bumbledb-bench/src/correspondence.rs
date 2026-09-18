@@ -48,7 +48,7 @@ mod tests {
             }],
             statements: vec![StatementDescriptor::Functionality {
                 relation: ITEM,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             }],
         }
         .validate()
@@ -72,11 +72,11 @@ mod tests {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: PARENT,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Functionality {
                     relation: CHILD,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Capacity {
                     target: side(PARENT, &[0], &[]),

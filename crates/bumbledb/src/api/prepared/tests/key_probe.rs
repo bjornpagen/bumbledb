@@ -32,7 +32,7 @@ fn cancelled_text_resolution_is_not_a_membership_or_indexed_key_miss() {
         if indexed {
             schema.statements.push(StatementDescriptor::Functionality {
                 relation: POSTING,
-                projection: Box::new([FieldId(2)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(2)])),
             });
         }
         let fix = StoreFix::store("prepared-scratch-key-refusal", schema);
@@ -317,7 +317,7 @@ fn text_free_probe_uses_shared_execution_without_acquiring_a_resolver() {
         .statements
         .push(StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::from([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
         });
     let store = StoreFix::store("prepared-text-free-probe", descriptor.clone());
     let facts = vec![vec![
@@ -429,7 +429,7 @@ fn booking_descriptor() -> SchemaDescriptor {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0), FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0), FieldId(1)])),
         }],
     }
 }
@@ -654,7 +654,7 @@ fn an_unstored_text_param_on_the_fast_path_is_empty_not_an_error() {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
         }],
     };
     let docs = StoreFix::store("prepared-keyprobe-doc", descriptor);

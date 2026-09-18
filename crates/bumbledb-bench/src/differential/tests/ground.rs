@@ -75,11 +75,11 @@ fn walk_descriptor() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Containment {
                 source: side(RelationId(0), &[1], &[]),
@@ -165,11 +165,11 @@ fn du_descriptor() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Containment {
                 source: side(RelationId(0), &[0], &[(1, Value::U64(0))]),

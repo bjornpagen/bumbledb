@@ -428,9 +428,11 @@ fn containment_into_id(
 ) -> bool {
     schema.containments().iter().any(|statement| {
         OccBind::of_occurrence(occurrence) == OccBind::Edb(statement.source.relation)
-            && statement.source.projection.as_ref() == [field]
+            && !statement.source.projection.is_event_full()
+            && statement.source.projection.fields() == [field]
             && statement.target.relation == closed
-            && statement.target.projection.as_ref() == [FieldId(0)]
+            && !statement.target.projection.is_event_full()
+            && statement.target.projection.fields() == [FieldId(0)]
             && super::encoded_selection(&statement.source).is_some_and(|phi| {
                 phi.iter().all(|(f, value)| {
                     occurrence.filters.iter().any(|filter| {

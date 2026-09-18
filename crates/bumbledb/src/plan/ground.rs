@@ -111,7 +111,13 @@ fn removable(
 }
 
 fn join_covers_full_key(a: &Occurrence, b: &Occurrence, source: &Side, target: &Side) -> bool {
-    let pairs = || source.projection.iter().zip(target.projection.iter());
+    let pairs = || {
+        source
+            .projection
+            .fields()
+            .iter()
+            .zip(target.projection.fields().iter())
+    };
     let every_pair_join_covered = pairs().all(|(x, y)| {
         a.vars
             .iter()
@@ -161,7 +167,7 @@ fn target_otherwise_unused(
     let non_y_fields_unused = b
         .vars
         .iter()
-        .filter(|(field, _)| !target.projection.contains(field))
+        .filter(|(field, _)| !target.projection.fields().contains(field))
         .all(|(_, var)| var_is_dead(normalized, b_idx, *var, output_vars));
     selections_within_psi && source_carries_phi && non_y_fields_unused
 }
@@ -179,8 +185,9 @@ fn variables_join_or_dead(
     b.vars.iter().all(|(field, var)| {
         let joins = source
             .projection
+            .fields()
             .iter()
-            .zip(target.projection.iter())
+            .zip(target.projection.fields().iter())
             .any(|(x, y)| y == field && a.vars.iter().any(|(f, v)| f == x && v == var));
         joins || var_is_dead(normalized, b_idx, *var, output_vars)
     })

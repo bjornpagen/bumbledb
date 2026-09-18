@@ -38,7 +38,7 @@ fn account_schema() -> Schema {
         // The declared id key (the deleted fresh auto-key's position).
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
         }],
     }
     .validate()
@@ -69,7 +69,7 @@ fn booking_schema() -> Schema {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0), FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0), FieldId(1)])),
         }],
     }
     .validate()
@@ -122,7 +122,7 @@ fn shift_schema() -> Schema {
         // there are no implicit keys (the fresh auto-key era is deleted).
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::from([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
         }],
     }
     .validate()
@@ -517,7 +517,7 @@ fn uniqueness_reuses_row_storage_without_interning_rejected_candidates() {
             }],
             statements: vec![StatementDescriptor::Functionality {
                 relation: REL,
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             }],
         }
         .validate()

@@ -1,0 +1,40 @@
+{
+  "scope": "Additional shared descriptor and named-spec regression checks on the same qualified source state",
+  "passed": true,
+  "source_manifest": "check.json",
+  "source_manifest_sha256": "b1518b075ac0e1e4ee41ee8b18c2f00c295ec0a20cf5358cc11039302aeeab46",
+  "checks": [
+    {
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "bumbledb-theory"
+      ],
+      "passed": true,
+      "test_counts": [
+        39,
+        5,
+        3
+      ],
+      "log": "theory.log",
+      "sha256": "82d4359e8d36d7d8566cc1f1c6e1a5a6f7a71cb24cc03c35f29995709ff7dd88"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "bumbledb",
+        "--test",
+        "schema_spec"
+      ],
+      "passed": true,
+      "test_counts": [
+        20
+      ],
+      "log": "spec.log",
+      "sha256": "3dbfcacba5afe085759535c1951c16ba79614b42a589303de71668fa49404e94"
+    }
+  ]
+}

@@ -29,8 +29,8 @@ use bumbledb_theory::Value;
 pub use bumbledb_theory::schema::spec;
 pub use bumbledb_theory::schema::{
     Bound, Extension, FieldDescriptor, FieldId, FixedIntervalElement, IntervalElement, LiteralSet,
-    MAX_EXTENSION_ROWS, RelationDescriptor, RelationId, Row, SchemaDescriptor, SealedField, Side,
-    StatementDescriptor, StatementId, StatementKind, ValueType, Weight,
+    MAX_EXTENSION_ROWS, Projection, RelationDescriptor, RelationId, Row, SchemaDescriptor,
+    SealedField, Side, StatementDescriptor, StatementId, StatementKind, ValueType, Weight,
 };
 
 pub use bumbledb_theory::schema::{ValueMismatch, value_matches};
@@ -221,14 +221,18 @@ impl EncodableCheck {
     }
 }
 
-/// The sealed key form: two behaviors, two arms. There is no fresh-row
-/// arm — the database issues no identity, and every key is an ordinary
-/// declared law over application-supplied values. The disjointness proof
-/// lives on the Pointwise arm that needs it (CONTRACT C9).
+/// The sealed key form preserves whether uniqueness was declared over scalar
+/// fields, a contextual full Event, or a stored region. Every key is an ordinary
+/// declared law over application-supplied values. The disjointness proof lives
+/// on the stored-region arm that needs it (CONTRACT C9).
 #[allow(private_interfaces)]
 #[derive(Debug, Clone)]
 pub enum KeyForm {
     Scalar,
+
+    /// A contextual full Event is inhabited in every admissible context, so
+    /// its pointwise key gives scalar uniqueness over the stored prefix.
+    EventFull,
 
     Pointwise {
         tail: ValueType,
@@ -254,6 +258,8 @@ impl KeyStatement {
 
 impl KeyForm {
     #[must_use]
+    /// Whether uniqueness depends on a stored region. Contextual full has
+    /// scalar uniqueness under the admitted nonempty-world contract.
     pub const fn is_pointwise(&self) -> bool {
         matches!(self, Self::Pointwise { .. })
     }

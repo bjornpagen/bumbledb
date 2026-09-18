@@ -55,7 +55,7 @@ fn fresh_field(name: &str) -> FieldDescriptor {
 fn savings_accounts() -> Side {
     Side {
         relation: RelationId(2),
-        projection: Box::new([FieldId(0)]),
+        projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
         selection: Box::new([(FieldId(2), LiteralSet::One(Value::U64(1)))]),
     }
 }
@@ -63,7 +63,7 @@ fn savings_accounts() -> Side {
 fn savings_terms_side() -> Side {
     Side {
         relation: RelationId(3),
-        projection: Box::new([FieldId(0)]),
+        projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
         selection: Box::new([]),
     }
 }
@@ -118,24 +118,24 @@ fn hand_built() -> bumbledb::schema::Schema {
             StatementDescriptor::Containment {
                 source: Side {
                     relation: RelationId(2),
-                    projection: Box::new([FieldId(1)]),
+                    projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(1)])),
                     selection: Box::new([]),
                 },
                 target: Side {
                     relation: RelationId(1),
-                    projection: Box::new([FieldId(0)]),
+                    projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
                     selection: Box::new([]),
                 },
             },
             StatementDescriptor::Containment {
                 source: Side {
                     relation: RelationId(2),
-                    projection: Box::new([FieldId(2)]),
+                    projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(2)])),
                     selection: Box::new([]),
                 },
                 target: Side {
                     relation: RelationId(0),
-                    projection: Box::new([FieldId(0)]),
+                    projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
                     selection: Box::new([]),
                 },
             },
@@ -149,15 +149,15 @@ fn hand_built() -> bumbledb::schema::Schema {
             },
             StatementDescriptor::Functionality {
                 relation: RelationId(3),
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Functionality {
                 relation: RelationId(2),
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
         ],
     }
@@ -177,7 +177,7 @@ fn statements_land_in_source_order_with_equality_lowered() {
         .map(|id| match schema.statement(StatementId(id)) {
             StatementView::Key(_, statement) => StatementDescriptor::Functionality {
                 relation: statement.relation,
-                projection: statement.projection.clone(),
+                projection: bumbledb::schema::Projection::Fields(statement.projection.clone()),
             },
             StatementView::Containment(_, statement) => StatementDescriptor::Containment {
                 source: statement.source.clone(),
@@ -196,7 +196,7 @@ fn statements_land_in_source_order_with_equality_lowered() {
         descriptors[0],
         StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
+            projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
         }
     );
     assert_eq!(
@@ -204,12 +204,12 @@ fn statements_land_in_source_order_with_equality_lowered() {
         StatementDescriptor::Containment {
             source: Side {
                 relation: RelationId(2),
-                projection: Box::new([FieldId(1)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(1)])),
                 selection: Box::new([]),
             },
             target: Side {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
                 selection: Box::new([]),
             },
         }
@@ -219,12 +219,12 @@ fn statements_land_in_source_order_with_equality_lowered() {
         StatementDescriptor::Containment {
             source: Side {
                 relation: RelationId(2),
-                projection: Box::new([FieldId(2)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(2)])),
                 selection: Box::new([]),
             },
             target: Side {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
                 selection: Box::new([]),
             },
         }
@@ -247,7 +247,7 @@ fn statements_land_in_source_order_with_equality_lowered() {
         descriptors[5],
         StatementDescriptor::Functionality {
             relation: RelationId(3),
-            projection: Box::new([FieldId(0)]),
+            projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
         }
     );
 }
@@ -721,7 +721,7 @@ mod closed_relations {
         let target = &statement.target;
 
         assert_eq!(source.relation, Review::SUBMISSION);
-        assert_eq!(source.projection[..], [Review::SUBMISSION_KIND]);
+        assert_eq!(source.projection.fields()[..], [Review::SUBMISSION_KIND]);
         assert_eq!(
             source.selection[..],
             [(
@@ -731,7 +731,7 @@ mod closed_relations {
         );
 
         assert_eq!(target.relation, Review::KIND);
-        assert_eq!(target.projection[..], [FieldId(0)]);
+        assert_eq!(target.projection.fields()[..], [FieldId(0)]);
         assert_eq!(
             target.selection[..],
             [(
@@ -937,7 +937,7 @@ mod equality_reverse_key {
             panic!("the cited reverse half is a containment");
         };
         assert_eq!(target.relation, Source::RELATION);
-        assert_eq!(&*target.projection, &[FieldId(0)]);
+        assert_eq!(target.projection.fields(), &[FieldId(0)]);
 
         let dir = crate::common::TempDir::new("macro-equality-reverse-key");
         let Err(error) = Db::create(dir.path(), InvalidEquality, crate::common::work()).map(|_| ())
@@ -955,7 +955,7 @@ mod equality_reverse_key {
                     ..
                 },
             }) if target == Source::RELATION
-                && *projection == [FieldId(0)]
+                && projection.fields() == [FieldId(0)]
                 && available.is_empty()
         ));
     }
@@ -1244,7 +1244,7 @@ mod capacity_forms {
                 StatementDescriptor::Capacity {
                     target: bumbledb::schema::Side {
                         relation: Grid::POOL,
-                        projection: Box::new([FieldId(0)]),
+                        projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
                         selection: Box::new([]),
                     },
                     weight: Weight::Field(Grid::DEVICE_WATTS),
@@ -1252,14 +1252,16 @@ mod capacity_forms {
                     hi: Some(Bound::TargetField(Grid::POOL_SUPPLY)),
                     source: bumbledb::schema::Side {
                         relation: Grid::DEVICE,
-                        projection: Box::new([Grid::DEVICE_POOL]),
+                        projection: bumbledb::schema::Projection::Fields(Box::new([
+                            Grid::DEVICE_POOL
+                        ])),
                         selection: Box::new([]),
                     },
                 },
                 StatementDescriptor::Capacity {
                     target: bumbledb::schema::Side {
                         relation: Grid::POOL,
-                        projection: Box::new([FieldId(0)]),
+                        projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
                         selection: Box::new([]),
                     },
                     weight: Weight::DurationOf(Grid::DEVICE_BOOKED),
@@ -1267,14 +1269,16 @@ mod capacity_forms {
                     hi: Some(Bound::Lit(720)),
                     source: bumbledb::schema::Side {
                         relation: Grid::DEVICE,
-                        projection: Box::new([Grid::DEVICE_POOL]),
+                        projection: bumbledb::schema::Projection::Fields(Box::new([
+                            Grid::DEVICE_POOL
+                        ])),
                         selection: Box::new([]),
                     },
                 },
                 StatementDescriptor::Capacity {
                     target: bumbledb::schema::Side {
                         relation: Grid::POOL,
-                        projection: Box::new([FieldId(0)]),
+                        projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
                         selection: Box::new([]),
                     },
                     weight: Weight::Field(Grid::DEVICE_WATTS),
@@ -1282,7 +1286,9 @@ mod capacity_forms {
                     hi: None,
                     source: bumbledb::schema::Side {
                         relation: Grid::DEVICE,
-                        projection: Box::new([Grid::DEVICE_POOL]),
+                        projection: bumbledb::schema::Projection::Fields(Box::new([
+                            Grid::DEVICE_POOL
+                        ])),
                         selection: Box::new([]),
                     },
                 },

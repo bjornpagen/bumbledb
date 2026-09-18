@@ -1,7 +1,7 @@
 import { createRequire } from "node:module"
 import { Result } from "effect"
 import { NativeLoadError, NativeOperationError, NativeReportedError } from "#errors.ts"
-import type { SchemaSpec, ValueSpec, ValueTypeSpec } from "#spec.ts"
+import type { ProjectionSpec, SchemaSpec, ValueSpec, ValueTypeSpec } from "#spec.ts"
 
 /**
  * The opaque managed database capability. The native runtime registry —
@@ -377,7 +377,7 @@ interface ManifestRelation {
 
 interface SealedSide {
 	readonly relation: number
-	readonly projection: readonly number[]
+	readonly projection: ProjectionSpec<number>
 	readonly selection: ReadonlyArray<{ readonly field: number; readonly values: readonly FactValue[] }>
 }
 
@@ -397,7 +397,7 @@ type SealedStatement =
 			readonly id: number
 			readonly kind: "functionality"
 			readonly relation: number
-			readonly projection: readonly number[]
+			readonly projection: ProjectionSpec<number>
 	  }
 	| {
 			readonly id: number

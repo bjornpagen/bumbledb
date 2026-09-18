@@ -49,12 +49,12 @@
 //! enum** (an emission, not a type — the engine's vocabulary is
 use bumbledb_theory::schema::spec::{
     BoundSpec, CapacityWindowSpec, ClosedSpec, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec,
-    RelationSpec, RowSpec, SchemaSpec, SideSpec, SpecIssue, StatementSide, StatementSpec,
-    WeightSpec,
+    ProjectionSpec, RelationSpec, RowSpec, SchemaSpec, SideSpec, SpecIssue, StatementSide,
+    StatementSpec, WeightSpec,
 };
 use bumbledb_theory::schema::{
-    FixedIntervalElement, IntervalElement, LiteralSet, SchemaDescriptor, Side as SideDescriptor,
-    StatementDescriptor, ValueType, Weight,
+    FixedIntervalElement, IntervalElement, LiteralSet, Projection, SchemaDescriptor,
+    Side as SideDescriptor, StatementDescriptor, ValueType, Weight,
 };
 use bumbledb_theory::{F64, Interval, Uuid, Value};
 use proc_macro::{Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
@@ -1068,6 +1068,25 @@ pub fn schema(input: TokenStream) -> TokenStream {
         Ok(schema) => schema,
         Err(error) => return compile_error_tokens(error.span, &error.message),
     };
+    for statement in &schema.statements {
+        let projections = match statement {
+            Statement::Functionality { projection, .. } => vec![projection],
+            Statement::Containment { source, target, .. }
+            | Statement::Capacity { source, target, .. } => {
+                vec![&source.projection, &target.projection]
+            }
+        };
+        for projection in projections {
+            for (index, (name, span)) in projection.iter().enumerate() {
+                if name == "true" && index + 1 != projection.len() {
+                    return compile_error_tokens(
+                        *span,
+                        "the contextual Event `true` must be the final projection position",
+                    );
+                }
+            }
+        }
+    }
     let (spec, spans) = lower_input(&schema);
     let descriptor = match spec.descriptor() {
         Ok(descriptor) => descriptor,
@@ -1450,6 +1469,22 @@ fn lower_relations(schema: &SchemaAst, spans: &mut SpanTable) -> Vec<RelationSpe
     relations
 }
 
+/// Projection constants are typed before name resolution. The AST retains the
+/// spelling and span so a misplaced literal receives a local diagnostic.
+fn lower_projection(spelling: &[(String, Span)]) -> ProjectionSpec {
+    let full = spelling.last().is_some_and(|(name, _)| name == "true");
+    let prefix = &spelling[..spelling.len() - usize::from(full)];
+    let fields = prefix
+        .iter()
+        .map(|(field, _)| field.as_str().into())
+        .collect();
+    if full {
+        ProjectionSpec::EventFull(fields)
+    } else {
+        ProjectionSpec::Fields(fields)
+    }
+}
+
 /// [`lower_input`]'s statement half, over the relations already lowered.
 fn lower_statements(schema: &SchemaAst, spans: &mut SpanTable) -> Vec<StatementSpec> {
     let mut statements = Vec::with_capacity(schema.statements.len());
@@ -1474,10 +1509,7 @@ fn lower_statements(schema: &SchemaAst, spans: &mut SpanTable) -> Vec<StatementS
                 }
                 statements.push(StatementSpec::Fd {
                     relation: relation.as_str().into(),
-                    projection: projection
-                        .iter()
-                        .map(|(field, _)| field.as_str().into())
-                        .collect(),
+                    projection: lower_projection(projection),
                 });
             }
             Statement::Containment {
@@ -1671,10 +1703,9 @@ fn lower_side(
             .or_default()
             .push(span);
     };
-    let mut projection = Vec::with_capacity(side.projection.len());
+    let projection = lower_projection(&side.projection);
     for (field, span) in &side.projection {
         field_span(field, *span);
-        projection.push(field.as_str().into());
     }
     let mut selection = Vec::with_capacity(side.selection.len());
     for (binding_idx, binding) in side.selection.iter().enumerate() {
@@ -2068,13 +2099,23 @@ fn literal_set_tokens(set: &LiteralSet) -> String {
     }
 }
 
-fn side_tokens(side: &SideDescriptor) -> String {
-    let projection = side
-        .projection
+fn projection_tokens(projection: &Projection) -> String {
+    let fields = projection
+        .fields()
         .iter()
         .map(|field| format!("::bumbledb::schema::FieldId({})", field.0))
         .collect::<Vec<_>>()
         .join(", ");
+    let kind = if projection.is_event_full() {
+        "EventFull"
+    } else {
+        "Fields"
+    };
+    format!("::bumbledb::schema::Projection::{kind}(::std::boxed::Box::new([{fields}]))")
+}
+
+fn side_tokens(side: &SideDescriptor) -> String {
+    let projection = projection_tokens(&side.projection);
     let mut selection = String::new();
     for (field, set) in &side.selection {
         let _ = write!(
@@ -2087,7 +2128,7 @@ fn side_tokens(side: &SideDescriptor) -> String {
     format!(
         "::bumbledb::schema::Side {{ \
              relation: ::bumbledb::schema::RelationId({}), \
-             projection: ::std::boxed::Box::new([{projection}]), \
+             projection: {projection}, \
              selection: ::std::boxed::Box::new([{selection}]) }}",
         side.relation.0,
     )
@@ -2099,15 +2140,11 @@ fn statement_tokens(statement: &StatementDescriptor) -> String {
             relation,
             projection,
         } => {
-            let fields = projection
-                .iter()
-                .map(|field| format!("::bumbledb::schema::FieldId({})", field.0))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let fields = projection_tokens(projection);
             format!(
                 "::bumbledb::schema::StatementDescriptor::Functionality {{ \
                      relation: ::bumbledb::schema::RelationId({}), \
-                     projection: ::std::boxed::Box::new([{fields}]) }},",
+                     projection: {fields} }},",
                 relation.0,
             )
         }
@@ -2751,6 +2788,7 @@ fn emit_key_struct(
     let rel_name = &relation.name;
     let fields: Vec<(usize, &Field)> = projection
         .iter()
+        .filter(|(name, _)| name != "true")
         .map(|(name, _)| {
             relation
                 .fields

@@ -42,10 +42,15 @@ impl fmt::Display for LmdbFailure {
 /// invariant).
 fn field_set(
     f: &mut fmt::Formatter<'_>,
-    projection: &[bumbledb_theory::schema::FieldId],
+    projection: &crate::schema::Projection,
     names: &[Box<str>],
 ) -> fmt::Result {
-    let mut fields: Vec<_> = projection.iter().copied().zip(names.iter()).collect();
+    let mut fields: Vec<_> = projection
+        .fields()
+        .iter()
+        .copied()
+        .zip(names.iter())
+        .collect();
     fields.sort_unstable_by_key(|(field, _)| *field);
     write!(f, "{{")?;
     for (index, (field, name)) in fields.iter().enumerate() {
@@ -54,6 +59,12 @@ fn field_set(
         }
         write!(f, "{name} ({})", field.0)?;
     }
+    if projection.is_event_full() {
+        if !fields.is_empty() {
+            write!(f, ", ")?;
+        }
+        write!(f, "true (Event)")?;
+    }
     write!(f, "}}")
 }
 
@@ -61,7 +72,7 @@ fn target_key_rejection(
     f: &mut fmt::Formatter<'_>,
     target: bumbledb_theory::schema::RelationId,
     target_name: &str,
-    projection: &[bumbledb_theory::schema::FieldId],
+    projection: &crate::schema::Projection,
     projection_names: &[Box<str>],
     available: &[TargetKeyCandidate],
     pointwise: bool,
@@ -510,6 +521,13 @@ impl fmt::Display for StatementErrorKind {
             ),
             Self::DuplicateFunctionality { earlier } => {
                 write!(f, "statement {} already keys this field set", earlier.0)
+            }
+            Self::FullProjectionNonScalar { relation, field } => write!(
+                f,
+                "relation {relation:?}: field {field:?} before contextual Event true must be scalar"
+            ),
+            Self::EventFullCapacity => {
+                f.write_str("contextual Event true is not a scalar capacity projection")
             }
             Self::FunctionalityMultipleRegions { relation, field } => write!(
                 f,

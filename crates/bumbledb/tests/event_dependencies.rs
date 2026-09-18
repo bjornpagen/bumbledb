@@ -710,7 +710,10 @@ fn event_keys_keep_exact_target_and_region_shape_requirements() {
     else {
         unreachable!()
     };
-    projection.reverse();
+    let bumbledb::schema::Projection::Fields(fields) = projection else {
+        unreachable!()
+    };
+    fields.reverse();
     assert!(matches!(
         wrong_order.validate(),
         Err(SchemaError::Statement {
@@ -733,7 +736,7 @@ fn event_keys_keep_exact_target_and_region_shape_requirements() {
     else {
         unreachable!()
     };
-    *projection = vec![FieldId(0), FieldId(1), FieldId(2)].into_boxed_slice();
+    *projection = vec![FieldId(0), FieldId(1), FieldId(2)].into();
     assert!(matches!(
         two_regions.validate(),
         Err(SchemaError::Statement {

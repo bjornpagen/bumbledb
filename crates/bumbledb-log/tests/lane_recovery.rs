@@ -61,12 +61,12 @@ fn nonempty_required() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Capacity {
                 target: Side {
                     relation: RelationId(0),
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                     selection: Box::new([]),
                 },
                 weight: Weight::Unit,
@@ -74,7 +74,7 @@ fn nonempty_required() -> SchemaDescriptor {
                 hi: None,
                 source: Side {
                     relation: RelationId(1),
-                    projection: Box::new([FieldId(1)]),
+                    projection: Box::new([FieldId(1)]).into(),
                     selection: Box::new([]),
                 },
             },

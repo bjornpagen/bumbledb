@@ -77,7 +77,7 @@ fn closed_source_schema() -> SchemaDescriptor {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: RelationId(1),
-                    projection: Box::new([FieldId(0)]),
+                    projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
                 },
                 StatementDescriptor::Containment {
                     source: side(RelationId(0), &[0]),
@@ -118,7 +118,7 @@ fn ordinary_source_schema() -> SchemaDescriptor {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: RelationId(0),
-                    projection: Box::new([FieldId(0)]),
+                    projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
                 },
                 StatementDescriptor::Containment {
                     source: side(RelationId(1), &[0]),
@@ -140,7 +140,7 @@ fn ordinary_capacity_schema() -> SchemaDescriptor {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: RelationId(0),
-                    projection: Box::new([FieldId(0)]),
+                    projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
                 },
                 StatementDescriptor::Capacity {
                     target: side(RelationId(0), &[0]),
@@ -161,7 +161,7 @@ fn key_only_schema() -> SchemaDescriptor {
             relations: vec![u64_relation("Holder", &["id", "tag"])],
             statements: vec![StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
             }],
         },
         "key-only",

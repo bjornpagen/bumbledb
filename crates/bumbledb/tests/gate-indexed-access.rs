@@ -391,7 +391,7 @@ mod forced_collisions {
             }],
             statements: vec![StatementDescriptor::Functionality {
                 relation: USER,
-                projection: Box::from([FieldId(1)]),
+                projection: [FieldId(1)].into(),
             }],
         }
         .validate()

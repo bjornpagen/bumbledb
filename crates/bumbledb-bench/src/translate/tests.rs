@@ -856,7 +856,7 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
 
     let functionality = StatementDescriptor::Functionality {
         relation: ids::MANDATE,
-        projection: Box::new([ids::mandate::ACCOUNT, ids::mandate::ACTIVE]),
+        projection: Box::new([ids::mandate::ACCOUNT, ids::mandate::ACTIVE]).into(),
     };
     assert_eq!(
         sqlite_expressible(&LaneCase::Judgment(&functionality)),
@@ -866,12 +866,12 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
     let containment = StatementDescriptor::Containment {
         source: Side {
             relation: ids::MANDATE,
-            projection: Box::new([ids::mandate::ACCOUNT]),
+            projection: Box::new([ids::mandate::ACCOUNT]).into(),
             selection: Box::new([]),
         },
         target: Side {
             relation: ids::ACCOUNT,
-            projection: Box::new([ids::account::ID]),
+            projection: Box::new([ids::account::ID]).into(),
             selection: Box::new([]),
         },
     };
@@ -885,7 +885,7 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
     let capacity = StatementDescriptor::Capacity {
         target: Side {
             relation: ids::POSTING,
-            projection: Box::new([ids::posting::ID]),
+            projection: Box::new([ids::posting::ID]).into(),
             selection: Box::new([]),
         },
         weight: bumbledb::schema::Weight::Field(ids::posting_tag::TAG),
@@ -893,7 +893,7 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
         hi: Some(bumbledb::schema::Bound::Lit(3)),
         source: Side {
             relation: ids::POSTING_TAG,
-            projection: Box::new([ids::posting_tag::POSTING]),
+            projection: Box::new([ids::posting_tag::POSTING]).into(),
             selection: Box::new([]),
         },
     };

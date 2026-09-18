@@ -264,7 +264,7 @@ fn export_uses_the_selected_nonleading_scalar_key_not_canonical_row_order() {
         }],
         statements: vec![crate::schema::StatementDescriptor::Functionality {
             relation: NOTE,
-            projection: Box::from([crate::schema::FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::from([crate::schema::FieldId(1)])),
         }],
     }
     .validate()

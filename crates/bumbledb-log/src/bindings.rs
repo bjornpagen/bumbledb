@@ -92,7 +92,12 @@ fn rosters(schema: &SchemaDescriptor) -> Result<Rosters, BindingError> {
         if let StatementDescriptor::Containment { source, target } = statement
             && source.selection.is_empty()
         {
-            for (a, b) in source.projection.iter().zip(&target.projection) {
+            for (a, b) in source
+                .projection
+                .fields()
+                .iter()
+                .zip(target.projection.fields())
+            {
                 edges
                     .entry((target.relation.0 as usize, usize::from(b.0)))
                     .or_default()
@@ -128,7 +133,12 @@ fn rosters(schema: &SchemaDescriptor) -> Result<Rosters, BindingError> {
         match statement {
             StatementDescriptor::Containment { source, target }
             | StatementDescriptor::Capacity { source, target, .. } => {
-                for (a, b) in source.projection.iter().zip(&target.projection) {
+                for (a, b) in source
+                    .projection
+                    .fields()
+                    .iter()
+                    .zip(target.projection.fields())
+                {
                     let a = (source.relation.0 as usize, usize::from(a.0));
                     let b = (target.relation.0 as usize, usize::from(b.0));
                     if known.get(&a) != known.get(&b) {
@@ -255,8 +265,8 @@ fn face(schema: &SchemaDescriptor, rosters: &Rosters, side: &Side) -> Result<Str
                 let intrinsic = r == roster && f.0 == 0;
                 let direct = schema.statements.iter().any(|statement| matches!(statement,
                     StatementDescriptor::Containment { source, target }
-                        if source.relation == side.relation && source.projection.as_ref() == [*f]
-                            && target.relation.0 as usize == roster && target.projection.as_ref() == [FieldId(0)]
+                        if source.relation == side.relation && source.projection.fields() == [*f]
+                            && target.relation.0 as usize == roster && target.projection.fields() == [FieldId(0)]
                 ));
                 if !intrinsic && !direct {
                     return Err(refuse(
@@ -284,7 +294,7 @@ fn face(schema: &SchemaDescriptor, rosters: &Rosters, side: &Side) -> Result<Str
     }
     Ok(format!(
         "db.on({owner}, {})",
-        projection(schema, side.relation, &side.projection)
+        projection(schema, side.relation, side.projection.fields())
     ))
 }
 
@@ -305,6 +315,21 @@ pub fn emit(schema: &SchemaDescriptor) -> Result<String, BindingError> {
                 ));
             }
             name(&field.name, &format!("{}.{}", relation.name, field.name))?;
+        }
+    }
+    for (index, statement) in schema.statements.iter().enumerate() {
+        let full = match statement {
+            StatementDescriptor::Functionality { projection, .. } => projection.is_event_full(),
+            StatementDescriptor::Containment { source, target }
+            | StatementDescriptor::Capacity { source, target, .. } => {
+                source.projection.is_event_full() || target.projection.is_event_full()
+            }
+        };
+        if full {
+            return Err(refuse(
+                format!("statement {index}"),
+                "contextual full Event SDK authoring is not implemented",
+            ));
         }
     }
     let rosters = rosters(schema)?;
@@ -421,7 +446,7 @@ fn statement(
             format!(
                 "db.key(r{}, {})",
                 relation.0,
-                projection(schema, *relation, fields)
+                projection(schema, *relation, fields.fields())
             )
         }
         StatementDescriptor::Containment { source, target } => format!(

@@ -94,13 +94,16 @@ pub enum LiteralSetSpec {
     Many(Vec<LiteralSpec>),
 }
 
+/// The name-bearing form of a typed dependency projection.
+pub type ProjectionSpec = super::Projection<Box<str>>;
+
 /// One side of a containment or capacity statement:
 /// `R(fields… | field == literal…)`, all names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SideSpec {
     pub relation: Box<str>,
 
-    pub projection: Vec<Box<str>>,
+    pub projection: ProjectionSpec,
 
     pub selection: Vec<(Box<str>, LiteralSetSpec)>,
 }
@@ -162,7 +165,7 @@ pub enum CapacityWindowSpec {
 pub enum StatementSpec {
     Fd {
         relation: Box<str>,
-        projection: Vec<Box<str>>,
+        projection: ProjectionSpec,
     },
 
     Containment {
@@ -542,8 +545,12 @@ impl<'spec> Resolver<'spec> {
         else {
             return;
         };
-        for (position, (source_field, target_field)) in
-            source.projection.iter().zip(&target.projection).enumerate()
+        for (position, (source_field, target_field)) in source
+            .projection
+            .fields()
+            .iter()
+            .zip(target.projection.fields())
+            .enumerate()
         {
             let (Some(source_slot), Some(target_slot)) = (
                 self.slot(source_rel, source_field),
@@ -613,12 +620,12 @@ impl<'spec> Resolver<'spec> {
         let Some(rel_idx) = self.relation(statement, &side.relation) else {
             return Side {
                 relation: RelationId(0),
-                projection: Box::new([]),
+                projection: Box::new([]).into(),
                 selection: Box::new([]),
             };
         };
-        let mut projection = Vec::with_capacity(side.projection.len());
-        for field in &side.projection {
+        let mut projection = Vec::with_capacity(side.projection.fields().len());
+        for field in side.projection.fields() {
             if let Some(slot) = self.field(statement, rel_idx, field) {
                 projection.push(slot.field);
             }
@@ -659,7 +666,11 @@ impl<'spec> Resolver<'spec> {
         }
         Side {
             relation: RelationId(u32::try_from(rel_idx).expect("relation count fits u32")),
-            projection: projection.into_boxed_slice(),
+            projection: if side.projection.is_event_full() {
+                super::Projection::EventFull(projection.into_boxed_slice())
+            } else {
+                projection.into()
+            },
             selection: selection.into_boxed_slice(),
         }
     }
@@ -884,10 +895,10 @@ impl SchemaSpec {
                     relation,
                     projection,
                 } => {
-                    let mut fields = Vec::with_capacity(projection.len());
+                    let mut fields = Vec::with_capacity(projection.fields().len());
                     let relation = match resolver.relation(index, relation) {
                         Some(rel_idx) => {
-                            for field in projection {
+                            for field in projection.fields() {
                                 if let Some(slot) = resolver.field(index, rel_idx, field) {
                                     fields.push(slot.field);
                                 }
@@ -899,7 +910,11 @@ impl SchemaSpec {
                     };
                     statements.push(StatementDescriptor::Functionality {
                         relation,
-                        projection: fields.into_boxed_slice(),
+                        projection: if projection.is_event_full() {
+                            super::Projection::EventFull(fields.into_boxed_slice())
+                        } else {
+                            fields.into()
+                        },
                     });
                 }
                 StatementSpec::Containment {

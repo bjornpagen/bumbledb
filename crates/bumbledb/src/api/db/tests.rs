@@ -67,7 +67,9 @@ impl crate::Theory for Ledger {
             }],
             statements: vec![StatementDescriptor::Functionality {
                 relation: ENTRY,
-                projection: Box::new([bumbledb_theory::schema::FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([
+                    bumbledb_theory::schema::FieldId(0),
+                ])),
             }],
         }
     }

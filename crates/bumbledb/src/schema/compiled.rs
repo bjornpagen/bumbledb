@@ -711,7 +711,7 @@ fn compile_key(
         return Ok(());
     }
     let witness = match statement.form() {
-        KeyForm::Scalar => DistinctnessWitness::ScalarKeyUnique {
+        KeyForm::Scalar | KeyForm::EventFull => DistinctnessWitness::ScalarKeyUnique {
             projection: ProjectionId(0),
         },
         KeyForm::Pointwise {
@@ -760,9 +760,9 @@ fn compile_containment(
                 intern.fields,
                 access,
                 statement.source.relation,
-                &statement.source.projection,
+                statement.source.projection.fields(),
                 statement.target.relation,
-                &statement.target.projection,
+                statement.target.projection.fields(),
             );
             Ok(())
         }
@@ -784,9 +784,9 @@ fn compile_containment(
             intern,
             access,
             statement.source.relation,
-            &statement.source.projection,
+            statement.source.projection.fields(),
             statement.target.relation,
-            &statement.target.projection,
+            statement.target.projection.fields(),
             key_projection,
             *target_key,
             DistinctnessWitness::FullRowEquality,
@@ -824,9 +824,9 @@ fn compile_capacity(
                 intern.fields,
                 access,
                 statement.source.relation,
-                &statement.source.projection,
+                statement.source.projection.fields(),
                 statement.target.relation,
-                &statement.target.projection,
+                statement.target.projection.fields(),
             );
             Ok(())
         }
@@ -838,9 +838,9 @@ fn compile_capacity(
             intern,
             access,
             statement.source.relation,
-            &statement.source.projection,
+            statement.source.projection.fields(),
             statement.target.relation,
-            &statement.target.projection,
+            statement.target.projection.fields(),
             key_projection,
             *target_key,
             DistinctnessWitness::FullRowEquality,

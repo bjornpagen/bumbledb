@@ -158,12 +158,12 @@ fn rejects_a_statement_roster_past_the_u16_id_space() {
     let statement = StatementDescriptor::Containment {
         source: Side {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             selection: Box::new([]),
         },
         target: Side {
             relation: RelationId(1),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             selection: Box::new([]),
         },
     };
@@ -243,13 +243,13 @@ fn equality_rejects_a_singleton_reverse_projection_without_a_left_key() {
         panic!("the cited reverse half is a containment");
     };
     assert_eq!(target.relation, RelationId(0));
-    assert_eq!(&*target.projection, &[FieldId(0)]);
+    assert_eq!(target.projection.fields(), &[FieldId(0)]);
     assert_eq!(
         decl.validate().unwrap_err(),
         StatementErrorKind::NoMatchingTargetKey {
             target: RelationId(0),
             target_name: "S".into(),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             projection_names: names(&["a"]),
             available: Box::new([])
         }
@@ -278,13 +278,13 @@ fn equality_rejects_a_composite_reverse_projection_without_a_left_key() {
         panic!("the cited reverse half is a containment");
     };
     assert_eq!(target.relation, RelationId(0));
-    assert_eq!(&*target.projection, &[FieldId(0), FieldId(1)]);
+    assert_eq!(target.projection.fields(), &[FieldId(0), FieldId(1)]);
     assert_eq!(
         decl.validate().unwrap_err(),
         StatementErrorKind::NoMatchingTargetKey {
             target: RelationId(0),
             target_name: "S".into(),
-            projection: Box::new([FieldId(0), FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0), FieldId(1)])),
             projection_names: names(&["a", "b"]),
             available: Box::new([])
         }
@@ -588,7 +588,7 @@ fn rejects_no_matching_target_key() {
         StatementErrorKind::NoMatchingTargetKey {
             target: RelationId(1),
             target_name: "T".into(),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             projection_names: names(&["x"]),
             available: Box::new([])
         }
@@ -644,7 +644,7 @@ fn rejects_interval_containment_without_pointwise_key() {
         StatementErrorKind::NoPointwiseTargetKey {
             target: RelationId(1),
             target_name: "T".into(),
-            projection: Box::new([FieldId(0), FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0), FieldId(1)])),
             projection_names: names(&["who", "during"]),
             available: Box::new([target_key(0, &[FieldId(0)], &["who"])])
         }
@@ -989,7 +989,7 @@ fn rejects_a_closed_target_projection_that_is_not_the_id() {
         StatementErrorKind::ClosedTargetNotHandle {
             target: RelationId(0),
             target_name: "Currency".into(),
-            projection: Box::new([FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(1)])),
             projection_names: names(&["minor_units"])
         }
         .at(StatementId(1))
@@ -1030,7 +1030,7 @@ fn a_declared_key_on_the_closed_target_does_not_soften_the_handle_rule() {
         StatementErrorKind::ClosedTargetNotHandle {
             target: RelationId(0),
             target_name: "Kind".into(),
-            projection: Box::new([FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(1)])),
             projection_names: names(&["weight"])
         }
         .at(StatementId(2))
@@ -1767,7 +1767,7 @@ fn the_id_width_caps_refuse_typed_rather_than_panicking() {
     let statements = (0..=count)
         .map(|idx| StatementDescriptor::Functionality {
             relation: RelationId(idx),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
         })
         .collect();
     let decl = SchemaDescriptor {

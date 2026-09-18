@@ -7,7 +7,7 @@ use bumbledb::schema::spec::{
     RelationSpec, RowSpec, SideSpec, StatementSpec, WeightSpec,
 };
 use bumbledb::schema::{
-    Bound, FieldDescriptor, IntervalElement, RelationManifest, SealedField, Side,
+    Bound, FieldDescriptor, IntervalElement, Projection, RelationManifest, SealedField, Side,
     StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{
@@ -17,7 +17,7 @@ use bumbledb::{
     ScalarExpr, SchemaDescriptor, SchemaSpec, StatementId, StatementKind, Term, Uuid, Value, VarId,
 };
 use napi::bindgen_prelude::{
-    Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, Utf16String, i64n,
+    Array, BigInt, Either, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, Utf16String, i64n,
 };
 use napi::{Unknown, ValueType as JsType, sys};
 
@@ -460,6 +460,8 @@ pub(crate) fn key_row(
             "bumbledb marshal: statement {key_statement} is not a key of relation `{name}`"
         )));
     }
+    // A full constant is supplied by the declared key, never by a row value.
+    let projection = projection.fields();
     let fields = &roster(rosters, rel)?.fields;
     if values.len() as usize != projection.len() {
         return Err(err(format!(
@@ -656,13 +658,37 @@ fn literal_set_in(obj: &Object) -> napi::Result<LiteralSetSpec> {
     }
 }
 
+/// Projection constants are tagged syntax, not Boolean cells or field names.
+fn projection_in(terms: &Array) -> napi::Result<bumbledb::schema::spec::ProjectionSpec> {
+    let mut fields = Vec::with_capacity(terms.len() as usize);
+    for index in 0..terms.len() {
+        let term: Unknown = req_at(terms, index, "projection")?;
+        match term.get_type()? {
+            JsType::String => fields.push(text_at(terms, index, "projection field")?.into()),
+            JsType::Object => {
+                let marker: Object = req_at(terms, index, "full Event marker")?;
+                exact_fields(&marker, &["event"])?;
+                if index + 1 != terms.len() || req_text(&marker, "event", "projection")? != "full" {
+                    return Err(err(
+                        "bumbledb marshal: projection requires one trailing full Event marker"
+                            .into(),
+                    ));
+                }
+                return Ok(Projection::EventFull(fields.into_boxed_slice()));
+            }
+            _ => return Err(err(
+                "bumbledb marshal: projection expects a field name or trailing full Event marker"
+                    .into(),
+            )),
+        }
+    }
+    Ok(fields.into())
+}
+
 fn side_in(obj: &Object) -> napi::Result<SideSpec> {
     exact_fields(obj, &["relation", "projection", "selection"])?;
     let projection: Array = req(obj, "projection", "side")?;
-    let mut fields = Vec::with_capacity(projection.len() as usize);
-    for index in 0..projection.len() {
-        fields.push(text_at(&projection, index, "side projection")?.into());
-    }
+    let projection = projection_in(&projection)?;
     let selection: Array = req(obj, "selection", "side")?;
     let mut bindings = Vec::with_capacity(selection.len() as usize);
     for index in 0..selection.len() {
@@ -673,7 +699,7 @@ fn side_in(obj: &Object) -> napi::Result<SideSpec> {
     }
     Ok(SideSpec {
         relation: req_text(obj, "relation", "side")?.into(),
-        projection: fields,
+        projection,
         selection: bindings,
     })
 }
@@ -741,13 +767,9 @@ fn statement_in(obj: &Object) -> napi::Result<StatementSpec> {
     match kind.as_str() {
         tags::statement::FD => {
             let projection: Array = req(obj, "projection", "fd statement")?;
-            let mut fields = Vec::with_capacity(projection.len() as usize);
-            for index in 0..projection.len() {
-                fields.push(text_at(&projection, index, "fd projection")?.into());
-            }
             Ok(StatementSpec::Fd {
                 relation: req_text(obj, "relation", "fd statement")?.into(),
-                projection: fields,
+                projection: projection_in(&projection)?,
             })
         }
         tags::statement::CONTAINMENT => Ok(StatementSpec::Containment {
@@ -1676,15 +1698,27 @@ fn relation_objects<'env>(
     Ok(out)
 }
 
+fn projection_out<'env>(
+    env: &'env Env,
+    projection: &Projection,
+) -> napi::Result<Vec<Either<u32, Object<'env>>>> {
+    let mut terms: Vec<_> = projection
+        .fields()
+        .iter()
+        .map(|field| Either::A(u32::from(field.0)))
+        .collect();
+    if projection.is_event_full() {
+        let mut marker = Object::new(env)?;
+        marker.set("event", "full")?;
+        terms.push(Either::B(marker));
+    }
+    Ok(terms)
+}
+
 fn side_object<'env>(env_handle: &'env Env, side: &Side) -> napi::Result<Object<'env>> {
     let mut obj = Object::new(env_handle)?;
     obj.set("relation", side.relation.0)?;
-    let projection: Vec<u32> = side
-        .projection
-        .iter()
-        .map(|field| u32::from(field.0))
-        .collect();
-    obj.set("projection", projection)?;
+    obj.set("projection", projection_out(env_handle, &side.projection)?)?;
     let mut selection = Vec::with_capacity(side.selection.len());
     for (field, set) in &side.selection {
         let mut binding = Object::new(env_handle)?;
@@ -1759,8 +1793,7 @@ fn statement_object(
         } => {
             obj.set("kind", statement_kind_out(StatementKind::Functionality))?;
             obj.set("relation", relation.0)?;
-            let fields: Vec<u32> = projection.iter().map(|field| u32::from(field.0)).collect();
-            obj.set("projection", fields)?;
+            obj.set("projection", projection_out(env_handle, &projection)?)?;
         }
         StatementDescriptor::Containment { source, target } => {
             obj.set("kind", statement_kind_out(StatementKind::Containment))?;

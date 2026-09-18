@@ -199,6 +199,7 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
         StatementView::Key(_, statement) => RenderedStatement::Key {
             relation: statement.relation,
             projection: &statement.projection,
+            full: matches!(statement.form(), super::KeyForm::EventFull),
         },
         StatementView::Containment(_, statement) => RenderedStatement::Containment {
             source: &statement.source,
@@ -267,7 +268,8 @@ pub(super) fn render_materialized(
             projection,
         } => RenderedStatement::Key {
             relation: *relation,
-            projection,
+            projection: projection.fields(),
+            full: projection.is_event_full(),
         },
         StatementDescriptor::Containment { source, target } => RenderedStatement::Containment {
             source,
@@ -317,8 +319,10 @@ fn closed_target_of<'a>(
     }
     statements.into_iter().find_map(|(source, target)| {
         (source.relation == relation
-            && source.projection.as_ref() == [field]
-            && target.projection.as_ref() == [FieldId(0)]
+            && !source.projection.is_event_full()
+            && source.projection.fields() == [field]
+            && !target.projection.is_event_full()
+            && target.projection.fields() == [FieldId(0)]
             && is_closed(target.relation))
         .then_some(target.relation)
     })
@@ -433,6 +437,7 @@ enum RenderedStatement<'a> {
     Key {
         relation: RelationId,
         projection: &'a [FieldId],
+        full: bool,
     },
     Containment {
         source: &'a Side,
@@ -455,8 +460,9 @@ impl<N: Names + ?Sized> fmt::Display for Rendered<'_, N> {
             RenderedStatement::Key {
                 relation,
                 projection,
+                full,
             } => {
-                side_parts(f, self.names, relation, projection, &[])?;
+                side_parts(f, self.names, relation, projection, full, &[])?;
                 write!(f, " -> ")?;
                 relation_name(f, self.names, relation)
             }
@@ -561,7 +567,14 @@ fn field_name<N: Names + ?Sized>(
 }
 
 fn side<N: Names + ?Sized>(f: &mut fmt::Formatter<'_>, names: &N, side: &Side) -> fmt::Result {
-    side_parts(f, names, side.relation, &side.projection, &side.selection)
+    side_parts(
+        f,
+        names,
+        side.relation,
+        side.projection.fields(),
+        side.projection.is_event_full(),
+        &side.selection,
+    )
 }
 
 fn side_parts<N: Names + ?Sized>(
@@ -569,6 +582,7 @@ fn side_parts<N: Names + ?Sized>(
     names: &N,
     relation: RelationId,
     projection: &[FieldId],
+    full: bool,
     selection: &[(FieldId, LiteralSet)],
 ) -> fmt::Result {
     relation_name(f, names, relation)?;
@@ -578,6 +592,12 @@ fn side_parts<N: Names + ?Sized>(
             write!(f, ", ")?;
         }
         field_name(f, names, relation, *field)?;
+    }
+    if full {
+        if !projection.is_empty() {
+            write!(f, ", ")?;
+        }
+        write!(f, "true")?;
     }
     if !selection.is_empty() {
         write!(f, " | ")?;

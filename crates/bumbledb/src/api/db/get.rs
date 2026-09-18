@@ -74,11 +74,13 @@ pub(super) fn check_key_shape(
             && event.is_empty()
             && !rel.keys().iter().any(|&key| {
                 let key = schema.key(key);
-                matches!(key.form(), crate::schema::KeyForm::Scalar)
-                    && key
-                        .projection
-                        .iter()
-                        .all(|field| projection.contains(field))
+                matches!(
+                    key.form(),
+                    crate::schema::KeyForm::Scalar | crate::schema::KeyForm::EventFull
+                ) && key
+                    .projection
+                    .iter()
+                    .all(|field| projection.contains(field))
             })
         {
             return Err(crate::error::FactShapeError::EmptyEventLookup { relation, field }.into());

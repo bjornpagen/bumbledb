@@ -12,7 +12,7 @@ use bumbledb_theory::schema::{RelationDescriptor, Side, StatementDescriptor};
 fn ground_descriptor() -> SchemaDescriptor {
     let key = |relation: u32| StatementDescriptor::Functionality {
         relation: RelationId(relation),
-        projection: Box::new([FieldId(0)]),
+        projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
     };
     SchemaDescriptor {
         relations: vec![
@@ -55,12 +55,12 @@ fn ground_descriptor() -> SchemaDescriptor {
             StatementDescriptor::Containment {
                 source: Side {
                     relation: RelationId(0),
-                    projection: Box::new([FieldId(1)]),
+                    projection: crate::schema::Projection::Fields(Box::new([FieldId(1)])),
                     selection: Box::new([]),
                 },
                 target: Side {
                     relation: RelationId(1),
-                    projection: Box::new([FieldId(0)]),
+                    projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
                     selection: Box::new([]),
                 },
             },
@@ -138,7 +138,7 @@ fn answers(buffer: &Answers) -> Vec<Vec<AnswerValue<'_>>> {
 fn du_descriptor() -> SchemaDescriptor {
     let side = |relation: u32, field: u16, selection: &[(u16, crate::ir::Value)]| Side {
         relation: RelationId(relation),
-        projection: Box::new([FieldId(field)]),
+        projection: crate::schema::Projection::Fields(Box::new([FieldId(field)])),
         selection: selection
             .iter()
             .map(|(f, v)| {
@@ -183,11 +183,11 @@ fn du_descriptor() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Containment {
                 source: side(0, 0, &[(1, Value::U64(0))]),
@@ -310,18 +310,18 @@ fn chain_descriptor() -> SchemaDescriptor {
     let containment = |source: u32, target: u32| StatementDescriptor::Containment {
         source: Side {
             relation: RelationId(source),
-            projection: Box::new([FieldId(1)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(1)])),
             selection: Box::new([]),
         },
         target: Side {
             relation: RelationId(target),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             selection: Box::new([]),
         },
     };
     let key = |relation: u32| StatementDescriptor::Functionality {
         relation: RelationId(relation),
-        projection: Box::new([FieldId(0)]),
+        projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
     };
     let plain = |name: &str| FieldDescriptor {
         name: name.into(),

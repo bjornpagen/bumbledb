@@ -48,11 +48,11 @@ fn ladder_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: ZONE,
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: Box::new([FieldId(0), FieldId(1)]).into(),
             },
             StatementDescriptor::Functionality {
                 relation: SPAN,
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: Box::new([FieldId(0), FieldId(1)]).into(),
             },
         ],
     }
@@ -188,7 +188,7 @@ const SLOT: RelationId = RelationId(1);
 fn playlist_schema() -> SchemaDescriptor {
     let side = |relation: RelationId| Side {
         relation,
-        projection: Box::new([FieldId(0), FieldId(1)]),
+        projection: Box::new([FieldId(0), FieldId(1)]).into(),
         selection: Box::new([]),
     };
     SchemaDescriptor {
@@ -225,11 +225,11 @@ fn playlist_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: PLAYLIST,
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: Box::new([FieldId(0), FieldId(1)]).into(),
             },
             StatementDescriptor::Functionality {
                 relation: SLOT,
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: Box::new([FieldId(0), FieldId(1)]).into(),
             },
             StatementDescriptor::Containment {
                 source: side(SLOT),

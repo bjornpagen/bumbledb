@@ -90,19 +90,19 @@ fn delta_schema() -> Schema {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: USER,
-                projection: Box::from([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
             },
             StatementDescriptor::Functionality {
                 relation: USER,
-                projection: Box::from([FieldId(1)]),
+                projection: crate::schema::Projection::Fields(Box::from([FieldId(1)])),
             },
             StatementDescriptor::Functionality {
                 relation: BOOKING,
-                projection: Box::from([FieldId(0), FieldId(1)]),
+                projection: crate::schema::Projection::Fields(Box::from([FieldId(0), FieldId(1)])),
             },
             StatementDescriptor::Functionality {
                 relation: ROOM,
-                projection: Box::from([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
             },
             StatementDescriptor::Containment {
                 source: side(BOOKING, &[0]),

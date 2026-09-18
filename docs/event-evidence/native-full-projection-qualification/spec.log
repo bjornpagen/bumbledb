@@ -1,0 +1,28 @@
+   Compiling bumbledb v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.61s
+     Running tests/schema_spec.rs (target/debug/build/bumbledb/0844ea8d228e3a50/out/schema_spec-0844ea8d228e3a50)
+
+running 20 tests
+test __bumbledb_weld_kind::host_enum_weld ... ok
+test __bumbledb_weld_status::host_enum_weld ... ok
+test __bumbledb_weld_grade::host_enum_weld ... ok
+test a_psi_selected_target_never_bypasses_the_coherence_check ... ok
+test a_path_weight_is_refused_naming_the_pinned_column_idiom ... ok
+test a_dependent_floor_is_refused_hi_slot_only ... ok
+test a_labeled_face_never_pairs_with_a_bare_one ... ok
+test bare_faces_pair_with_bare_faces ... ok
+test a_path_bound_is_refused_naming_the_pinned_column_idiom ... ok
+test a_row_with_extra_values_is_rejected_not_silently_truncated ... ok
+test a_handle_on_a_non_reference_field_is_typed ... ok
+test an_empty_spec_lowers_and_seals ... ok
+test paired_faces_with_disagreeing_newtypes_are_rejected_typed ... ok
+test degenerate_literal_sets_are_banned_naming_the_bare_spelling ... ok
+test the_weighted_floor_is_legal_where_the_unit_floor_is_banned ... ok
+test unresolvable_names_are_enumerated_completely_never_first_only ... ok
+test inverted_bounds_refuse_and_the_old_ban_table_spellings_lower_canonically ... ok
+test the_seam_roster_spec_and_macro_produce_one_fingerprint ... ok
+test the_spec_and_the_macro_produce_one_fingerprint ... ok
+test the_extension_row_cap_is_the_validators_not_the_lowerings ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -151,12 +151,12 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
         statements: vec![StatementDescriptor::Containment {
             source: Side {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
                 selection: Box::new([]),
             },
             target: Side {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
                 selection: Box::new([]),
             },
         }],
@@ -232,17 +232,17 @@ fn one_byte_compound_determinants() {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: Box::new([FieldId(0), FieldId(1)]).into(),
             },
             StatementDescriptor::Containment {
                 source: Side {
                     relation: RelationId(1),
-                    projection: Box::new([FieldId(0), FieldId(1)]),
+                    projection: Box::new([FieldId(0), FieldId(1)]).into(),
                     selection: Box::new([]),
                 },
                 target: Side {
                     relation: RelationId(0),
-                    projection: Box::new([FieldId(0), FieldId(1)]),
+                    projection: Box::new([FieldId(0), FieldId(1)]).into(),
                     selection: Box::new([]),
                 },
             },

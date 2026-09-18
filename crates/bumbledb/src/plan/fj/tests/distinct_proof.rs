@@ -85,7 +85,7 @@ fn pointwise_schema(element: IntervalElement) -> Schema {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::from([FieldId(0), FieldId(2)]),
+            projection: crate::schema::Projection::Fields(Box::from([FieldId(0), FieldId(2)])),
         }],
     }
     .validate()
@@ -194,7 +194,7 @@ fn a_determined_interval_row_does_not_determine_membership_points() {
         ],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
         }],
     }
     .validate()

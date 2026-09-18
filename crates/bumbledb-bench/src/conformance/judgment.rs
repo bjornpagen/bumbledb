@@ -84,7 +84,7 @@ fn marks_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: HOLDER,
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Capacity {
                 target: side(HOLDER, &[0]),
@@ -137,7 +137,7 @@ fn ledger_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: HOLDER,
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Containment {
                 source: side(ACCOUNT, &[0]),
@@ -164,7 +164,7 @@ fn exact_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: HOLDER,
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Capacity {
                 target: side(HOLDER, &[0]),
@@ -193,7 +193,7 @@ fn weighted_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Capacity {
                 target: side(RelationId(0), &[0]),
@@ -233,7 +233,7 @@ fn dependent_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Capacity {
                 target: side(RelationId(0), &[0]),
@@ -284,7 +284,7 @@ fn calendar_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
             StatementDescriptor::Capacity {
                 target: side(RelationId(0), &[0]),
@@ -333,7 +333,10 @@ fn permuted_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: SLOT,
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([
+                    FieldId(0),
+                    FieldId(1),
+                ])),
             },
             StatementDescriptor::Containment {
                 source: side(CLAIM, &[0, 1]),
@@ -390,11 +393,17 @@ fn playlist_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: PLAYLIST,
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([
+                    FieldId(0),
+                    FieldId(1),
+                ])),
             },
             StatementDescriptor::Functionality {
                 relation: FSLOT,
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([
+                    FieldId(0),
+                    FieldId(1),
+                ])),
             },
             StatementDescriptor::Containment {
                 source: side(FSLOT, &[0, 1]),
@@ -454,11 +463,17 @@ fn lanes_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([
+                    FieldId(0),
+                    FieldId(1),
+                ])),
             },
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: bumbledb::schema::Projection::Fields(Box::new([
+                    FieldId(0),
+                    FieldId(1),
+                ])),
             },
         ],
     }
@@ -972,13 +987,20 @@ fn push_bound(out: &mut String, bound: Bound) {
     }
 }
 
-fn push_field_ids(out: &mut String, fields: &[FieldId]) {
+fn push_field_ids(out: &mut String, projection: &bumbledb::schema::Projection) {
+    let fields = projection.fields();
     out.push('[');
     for (index, field) in fields.iter().enumerate() {
         if index > 0 {
             out.push(',');
         }
         let _ = write!(out, "{}", field.0);
+    }
+    if projection.is_event_full() {
+        if !fields.is_empty() {
+            out.push(',');
+        }
+        out.push_str("{\"event\":\"full\"}");
     }
     out.push(']');
 }
@@ -1413,7 +1435,7 @@ mod tests {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: HANDLER,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Containment {
                     source: side(SEVERITY, &[0]),

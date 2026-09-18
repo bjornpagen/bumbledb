@@ -52,37 +52,37 @@ fn schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: BOOKING,
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: Box::new([FieldId(0), FieldId(1)]).into(),
             },
             StatementDescriptor::Functionality {
                 relation: BOOKING,
-                projection: Box::new([FieldId(2)]),
+                projection: Box::new([FieldId(2)]).into(),
             },
             StatementDescriptor::Functionality {
                 relation: MARKER,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Containment {
                 source: Side {
                     relation: BOOKING,
-                    projection: Box::new([FieldId(2)]),
+                    projection: Box::new([FieldId(2)]).into(),
                     selection: Box::new([]),
                 },
                 target: Side {
                     relation: MARKER,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                     selection: Box::new([]),
                 },
             },
             StatementDescriptor::Containment {
                 source: Side {
                     relation: MARKER,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                     selection: Box::new([]),
                 },
                 target: Side {
                     relation: BOOKING,
-                    projection: Box::new([FieldId(2)]),
+                    projection: Box::new([FieldId(2)]).into(),
                     selection: Box::new([]),
                 },
             },

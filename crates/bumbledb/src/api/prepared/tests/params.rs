@@ -143,7 +143,7 @@ fn uuid_param_fixture() -> (StoreFix, Query, [crate::Uuid; 3]) {
         }],
         statements: vec![crate::schema::StatementDescriptor::Functionality {
             relation,
-            projection: Box::new([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
         }],
     };
     let fix = StoreFix::store("uuid-param-slot-reuse", descriptor);

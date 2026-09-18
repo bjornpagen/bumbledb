@@ -52,7 +52,7 @@ fn the_witness_walks_the_permuted_key_order() {
             StatementDescriptor::Functionality {
                 relation: POOL,
 
-                projection: Box::new([FieldId(1), FieldId(0)]),
+                projection: Box::new([FieldId(1), FieldId(0)]).into(),
             },
             StatementDescriptor::Capacity {
                 target: side(POOL, &[0, 1]),
@@ -115,7 +115,7 @@ fn the_witness_walks_intern_order_not_lexicographic_order() {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: POOL,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Capacity {
                 target: side(POOL, &[0]),

@@ -501,7 +501,7 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
                 projection: bumbledb::FieldId,
                 selection: &[(bumbledb::FieldId, Value)]| Side {
         relation,
-        projection: Box::new([projection]),
+        projection: bumbledb::schema::Projection::Fields(Box::new([projection])),
         selection: selection
             .iter()
             .map(|(f, v)| (*f, bumbledb::schema::LiteralSet::One(v.clone())))
@@ -513,7 +513,7 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
     let id_key = |relation: bumbledb::RelationId, id_field: bumbledb::FieldId| {
         StatementDescriptor::Functionality {
             relation,
-            projection: Box::new([id_field]),
+            projection: bumbledb::schema::Projection::Fields(Box::new([id_field])),
         }
     };
     vec![
@@ -527,7 +527,7 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
         id_key(ids::TRANSFER, ids::transfer::ID),
         StatementDescriptor::Functionality {
             relation: ids::IMPORT_BATCH,
-            projection: Box::new([ids::import_batch::ENTRY]),
+            projection: bumbledb::schema::Projection::Fields(Box::new([ids::import_batch::ENTRY])),
         },
         containment(
             side(ids::ACCOUNT, ids::account::HOLDER, &[]),
@@ -575,7 +575,7 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
         ),
         StatementDescriptor::Functionality {
             relation: ids::TRANSFER,
-            projection: Box::new([ids::transfer::EXTREF]),
+            projection: bumbledb::schema::Projection::Fields(Box::new([ids::transfer::EXTREF])),
         },
         // The vocabulary containments (the enum funeral) — appended
         // after everything else so no earlier statement id shifts.
@@ -596,7 +596,9 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
         // the key the domain quantification probes,
         StatementDescriptor::Functionality {
             relation: ids::CURRENCY_BACKING,
-            projection: Box::new([ids::currency_backing::CURRENCY]),
+            projection: bumbledb::schema::Projection::Fields(Box::new([
+                ids::currency_backing::CURRENCY,
+            ])),
         },
         // backings reference real currencies (a plain closed target),
         containment(

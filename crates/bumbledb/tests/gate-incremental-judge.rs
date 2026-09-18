@@ -91,19 +91,22 @@ fn theory_descriptor() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: USER,
-                projection: Box::from([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::from([FieldId(0)])),
             },
             StatementDescriptor::Functionality {
                 relation: USER,
-                projection: Box::from([FieldId(1)]),
+                projection: bumbledb::schema::Projection::Fields(Box::from([FieldId(1)])),
             },
             StatementDescriptor::Functionality {
                 relation: BOOKING,
-                projection: Box::from([FieldId(0), FieldId(1)]),
+                projection: bumbledb::schema::Projection::Fields(Box::from([
+                    FieldId(0),
+                    FieldId(1),
+                ])),
             },
             StatementDescriptor::Functionality {
                 relation: ROOM,
-                projection: Box::from([FieldId(0)]),
+                projection: bumbledb::schema::Projection::Fields(Box::from([FieldId(0)])),
             },
             StatementDescriptor::Containment {
                 source: side(BOOKING, &[0]),

@@ -1193,6 +1193,22 @@ impl<E> Judge<'_, '_, E> {
                 judge.containment_closed_row(statement, members, row, &mut pending)?;
                 Ok(true)
             })?;
+        } else if matches!(statement.enforcement, Enforcement::EventCoverage { .. }) {
+            let position = if statement.target.projection.is_event_full() {
+                statement.target.projection.arity() - 1
+            } else {
+                let fields = self.schema.relation(statement.target.relation).fields();
+                statement
+                    .target
+                    .projection
+                    .fields()
+                    .iter()
+                    .position(|field| {
+                        fields[usize::from(field.0)].value_type == crate::schema::ValueType::Event
+                    })
+                    .expect("sealed Event coverage has a region position")
+            };
+            self.containment_event(state, statement, position, &mut pending)?;
         } else {
             let target_fields = self.schema.relation(statement.target.relation).fields();
             // At most one trailing region position (validation's rule);
@@ -1200,16 +1216,13 @@ impl<E> Judge<'_, '_, E> {
             let coverage_position = statement
                 .target
                 .projection
+                .fields()
                 .iter()
                 .position(|field| target_fields[usize::from(field.0)].value_type.is_region());
             match coverage_position {
                 None => self.containment_scalar(state, statement, &mut pending)?,
                 Some(position) => {
-                    if matches!(statement.enforcement, Enforcement::EventCoverage { .. }) {
-                        self.containment_event(state, statement, position, &mut pending)?;
-                    } else {
-                        self.containment_pointwise(state, statement, position, &mut pending)?;
-                    }
+                    self.containment_pointwise(state, statement, position, &mut pending)?;
                 }
             }
         }
@@ -1230,7 +1243,7 @@ impl<E> Judge<'_, '_, E> {
         if !satisfies(&statement.source, row) {
             return Ok(());
         }
-        let handle = &row[usize::from(statement.source.projection[0].0)];
+        let handle = &row[usize::from(statement.source.projection.fields()[0].0)];
         let witnessed = matches!(handle, Value::U64(word)
             if AxiomIndex::try_from(*word).is_ok_and(|index| members.contains(index)));
         if !witnessed {
@@ -1332,7 +1345,7 @@ impl<E> Judge<'_, '_, E> {
             prefix.clear();
             encode_projection(&statement.target, row, Some(position), &mut prefix);
             let token = tokens.token_of(&prefix)?;
-            let span_value = &row[usize::from(statement.target.projection[position].0)];
+            let span_value = &row[usize::from(statement.target.projection.fields()[position].0)];
             let (start, end) = interval_order_words(span_value)
                 .expect("positional typing pairs interval positions");
             // Coverage is a set: identical spans collapse.
@@ -1370,7 +1383,7 @@ impl<E> Judge<'_, '_, E> {
             }
             prefix.clear();
             encode_projection(&statement.source, row, Some(position), &mut prefix);
-            let span_value = &row[usize::from(statement.source.projection[position].0)];
+            let span_value = &row[usize::from(statement.source.projection.fields()[position].0)];
             let (span_start, span_end) = interval_order_words(span_value)
                 .expect("positional typing pairs interval positions");
             let witnessed = match tokens.lookup_token(&prefix)? {
@@ -1538,6 +1551,7 @@ impl<E> Judge<'_, '_, E> {
         let coverage_position = statement
             .target
             .projection
+            .fields()
             .iter()
             .position(|field| target_fields[usize::from(field.0)].value_type.is_interval());
         let (Some(source_binding), Some(target_binding)) = (
@@ -1798,7 +1812,7 @@ impl<E> Judge<'_, '_, E> {
                             }
                             if !run_covers(
                                 0,
-                                &row[usize::from(statement.source.projection[position].0)],
+                                &row[usize::from(statement.source.projection.fields()[position].0)],
                                 &mut runs,
                                 &mut found_key,
                                 &mut found_value,
@@ -1822,7 +1836,7 @@ impl<E> Judge<'_, '_, E> {
                         }
                         if !run_covers(
                             0,
-                            &row[usize::from(statement.source.projection[position].0)],
+                            &row[usize::from(statement.source.projection.fields()[position].0)],
                             &mut runs,
                             &mut found_key,
                             &mut found_value,
@@ -1853,7 +1867,7 @@ impl<E> Judge<'_, '_, E> {
         let mut spans = self.grouped();
         let mut add_span = |row: &[Value]| {
             if satisfies(&statement.target, row) {
-                let span = &row[usize::from(statement.target.projection[position].0)];
+                let span = &row[usize::from(statement.target.projection.fields()[position].0)];
                 let (start, end) =
                     interval_order_words(span).expect("positional typing pairs interval positions");
                 spans.put(&span_key(0, start, end, 0), &[])?;
@@ -1946,7 +1960,7 @@ impl<E> Judge<'_, '_, E> {
                 return Ok(true);
             }
             let token = tokens.token_of(&prefix)?;
-            let span_value = &row[usize::from(statement.target.projection[position].0)];
+            let span_value = &row[usize::from(statement.target.projection.fields()[position].0)];
             let (start, end) = interval_order_words(span_value)
                 .expect("positional typing pairs interval positions");
             spans.put(&span_key(token, start, end, 0), &[])?;
@@ -1965,7 +1979,7 @@ impl<E> Judge<'_, '_, E> {
             if !affected.contains(&prefix)? {
                 return Ok(true);
             }
-            let span_value = &row[usize::from(statement.source.projection[position].0)];
+            let span_value = &row[usize::from(statement.source.projection.fields()[position].0)];
             let witnessed = match tokens.lookup_token(&prefix)? {
                 None => false,
                 Some(token) => run_covers(
@@ -2498,7 +2512,7 @@ fn satisfies(side: &Side, row: &[Value]) -> bool {
 /// Append the side's projected values as exact injective bytes, optionally
 /// skipping one projection position (the pointwise interval slot).
 fn encode_projection(side: &Side, row: &[Value], skip: Option<usize>, out: &mut Vec<u8>) {
-    for (index, field) in side.projection.iter().enumerate() {
+    for (index, field) in side.projection.fields().iter().enumerate() {
         if Some(index) == skip {
             continue;
         }

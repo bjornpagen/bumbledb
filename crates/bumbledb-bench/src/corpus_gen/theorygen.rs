@@ -224,7 +224,9 @@ fn random_statement(rng: &mut Rng, relations: &[RelationDescriptor]) -> Statemen
             let relation = random_relation_id(rng, relations.len());
             StatementDescriptor::Functionality {
                 relation,
-                projection: random_projection(rng, relations, relation),
+                projection: bumbledb::schema::Projection::Fields(random_projection(
+                    rng, relations, relation,
+                )),
             }
         }
         2..=4 => StatementDescriptor::Containment {
@@ -300,7 +302,7 @@ fn random_side(rng: &mut Rng, relations: &[RelationDescriptor]) -> Side {
         .collect();
     Side {
         relation,
-        projection,
+        projection: bumbledb::schema::Projection::Fields(projection),
         selection,
     }
 }

@@ -58,7 +58,7 @@ fn schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: HANDLER,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Containment {
                 source: side(ALERT, &[0], &[]),
@@ -68,7 +68,7 @@ fn schema() -> SchemaDescriptor {
                 source: side(ESCALATION, &[0], &[]),
                 target: Side {
                     relation: SEVERITY,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                     selection: Box::new([(
                         FieldId(1),
                         bumbledb::schema::LiteralSet::One(Value::Bool(true)),

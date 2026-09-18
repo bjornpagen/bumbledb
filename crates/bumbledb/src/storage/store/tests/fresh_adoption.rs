@@ -20,7 +20,7 @@ fn keyed_schema() -> Schema {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::from([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
         }],
     }
     .validate()

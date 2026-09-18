@@ -121,15 +121,15 @@ fn matrix_schema() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: TARGET,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Functionality {
                 relation: KEYED,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Functionality {
                 relation: BOOKING,
-                projection: Box::new([FieldId(0), FieldId(1)]),
+                projection: Box::new([FieldId(0), FieldId(1)]).into(),
             },
             StatementDescriptor::Containment {
                 source: side(CLAIM, &[0], &[]),
@@ -379,19 +379,19 @@ mod source_side {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: PARENT,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Functionality {
                     relation: CHILD,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Functionality {
                     relation: ACCOUNT,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Functionality {
                     relation: SHIFT,
-                    projection: Box::new([FieldId(0), FieldId(1)]),
+                    projection: Box::new([FieldId(0), FieldId(1)]).into(),
                 },
                 StatementDescriptor::Containment {
                     source: side(PARENT, &[0], &[]),
@@ -787,19 +787,19 @@ mod target_side {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: TARGET2,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Functionality {
                     relation: SHIFT,
-                    projection: Box::new([FieldId(0), FieldId(1)]),
+                    projection: Box::new([FieldId(0), FieldId(1)]).into(),
                 },
                 StatementDescriptor::Functionality {
                     relation: PARENT,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Functionality {
                     relation: CHILD,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Containment {
                     source: side(CLAIM_A, &[0], &[]),
@@ -823,11 +823,11 @@ mod target_side {
                 },
                 StatementDescriptor::Functionality {
                     relation: ACCOUNT,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Functionality {
                     relation: ROSTER,
-                    projection: Box::new([FieldId(0), FieldId(1)]),
+                    projection: Box::new([FieldId(0), FieldId(1)]).into(),
                 },
                 StatementDescriptor::Containment {
                     source: side(TRANSFER, &[0], &[]),
@@ -1166,7 +1166,7 @@ mod marks {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: HOLDER,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Capacity {
                     target: side(HOLDER, &[0], &[]),
@@ -1175,7 +1175,7 @@ mod marks {
                     hi: Some(bumbledb::schema::Bound::Lit(2)),
                     source: Side {
                         relation: ACCOUNT,
-                        projection: Box::new([FieldId(0)]),
+                        projection: Box::new([FieldId(0)]).into(),
                         selection: Box::new([(
                             FieldId(1),
                             bumbledb::schema::LiteralSet::One(Value::U64(1)),
@@ -1269,7 +1269,7 @@ mod marks {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: HOLDER,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Capacity {
                     target: side(HOLDER, &[0], &[]),
@@ -1278,7 +1278,7 @@ mod marks {
                     hi: Some(bumbledb::schema::Bound::Lit(2)),
                     source: Side {
                         relation: ACCOUNT,
-                        projection: Box::new([FieldId(0)]),
+                        projection: Box::new([FieldId(0)]).into(),
                         selection: Box::new([(
                             FieldId(1),
                             bumbledb::schema::LiteralSet::One(Value::U64(1)),
@@ -1292,7 +1292,7 @@ mod marks {
                     hi: Some(bumbledb::schema::Bound::Lit(0)),
                     source: Side {
                         relation: ACCOUNT,
-                        projection: Box::new([FieldId(0)]),
+                        projection: Box::new([FieldId(0)]).into(),
                         selection: Box::new([(
                             FieldId(1),
                             bumbledb::schema::LiteralSet::One(Value::U64(9)),
@@ -1403,7 +1403,7 @@ mod capacity_measures {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: POOL,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Capacity {
                     target: side(POOL, &[0], &[]),
@@ -1501,7 +1501,7 @@ mod capacity_measures {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: POOL,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 },
                 StatementDescriptor::Capacity {
                     target: side(POOL, &[0], &[]),

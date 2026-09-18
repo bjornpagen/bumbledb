@@ -31,11 +31,11 @@ fn user_schema() -> Schema {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: USER,
-                projection: Box::from([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
             },
             StatementDescriptor::Functionality {
                 relation: USER,
-                projection: Box::from([FieldId(1)]),
+                projection: crate::schema::Projection::Fields(Box::from([FieldId(1)])),
             },
         ],
     }

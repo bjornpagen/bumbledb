@@ -1,0 +1,9 @@
+   Compiling bumbledb-query v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-query)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.03s
+     Running tests/event.rs (target/debug/build/bumbledb-query/4b6b6f7246a15eb6/out/event-4b6b6f7246a15eb6)
+
+running 1 test
+test named_event_arguments_retain_joint_world_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

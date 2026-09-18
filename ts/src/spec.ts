@@ -37,9 +37,12 @@ type LiteralSetSpec =
 	| { readonly kind: "one"; readonly literal: LiteralSpec }
 	| { readonly kind: "many"; readonly literals: readonly LiteralSpec[] }
 
+/** Stored fields, optionally followed by the contextual full Event. */
+type ProjectionSpec<F = string> = readonly F[] | readonly [...F[], { readonly event: "full" }]
+
 interface SideSpec {
 	readonly relation: string
-	readonly projection: readonly string[]
+	readonly projection: ProjectionSpec
 	readonly selection: ReadonlyArray<readonly [string, LiteralSetSpec]>
 }
 
@@ -96,7 +99,7 @@ interface RelationSpec {
 }
 
 type StatementSpec =
-	| { readonly kind: "fd"; readonly relation: string; readonly projection: readonly string[] }
+	| { readonly kind: "fd"; readonly relation: string; readonly projection: ProjectionSpec }
 	| {
 			readonly kind: "containment"
 			readonly source: SideSpec
@@ -274,6 +277,7 @@ export type {
 	RelationSpec,
 	RowSpec,
 	SchemaSpec,
+	ProjectionSpec,
 	SideSpec,
 	StatementSpec,
 	ValueSpec,

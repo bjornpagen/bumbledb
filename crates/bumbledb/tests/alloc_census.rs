@@ -329,19 +329,19 @@ fn schema() -> SchemaDescriptor {
             StatementDescriptor::Containment {
                 source: Side {
                     relation: POSTING,
-                    projection: Box::new([FieldId(1)]),
+                    projection: Box::new([FieldId(1)]).into(),
                     selection: Box::new([]),
                 },
                 target: Side {
                     relation: ACCOUNT,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                     selection: Box::new([]),
                 },
             },
             StatementDescriptor::Capacity {
                 target: Side {
                     relation: ACCOUNT,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                     selection: Box::new([]),
                 },
                 weight: Weight::Unit,
@@ -349,17 +349,17 @@ fn schema() -> SchemaDescriptor {
                 hi: Some(Bound::Lit(4096)),
                 source: Side {
                     relation: ITEM,
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                     selection: Box::new([]),
                 },
             },
             StatementDescriptor::Functionality {
                 relation: PROFILE,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Functionality {
                 relation: ACCOUNT,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
         ],
     }
@@ -377,7 +377,7 @@ fn wide_schema(n: u16) -> SchemaDescriptor {
         statements: (0..n)
             .map(|i| StatementDescriptor::Functionality {
                 relation: RelationId(i.into()),
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             })
             .collect(),
     }

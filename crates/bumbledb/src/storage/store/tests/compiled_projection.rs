@@ -80,7 +80,7 @@ fn u64_key_uses_exact_bounded_routing_bytes() {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::from([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
         }],
     }
     .validate()
@@ -128,7 +128,7 @@ fn text_key_uses_fingerprint_routing() {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::from([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
         }],
     }
     .validate()
@@ -186,7 +186,7 @@ fn compiled_theory_table_matches_chapter_40() {
             }],
             statements: vec![StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::from([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
             }],
         }
         .validate()
@@ -215,7 +215,7 @@ fn store_shares_schema_compiled_theory() {
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
-            projection: Box::from([FieldId(0)]),
+            projection: crate::schema::Projection::Fields(Box::from([FieldId(0)])),
         }],
     }
     .validate()

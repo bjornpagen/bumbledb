@@ -146,7 +146,7 @@ mod tests {
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: A,
-                    projection: Box::new([bumbledb::FieldId(0)]),
+                    projection: Box::new([bumbledb::FieldId(0)]).into(),
                 },
                 StatementDescriptor::Containment {
                     source: side(B, &[0], &[]),

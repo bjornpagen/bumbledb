@@ -40,7 +40,7 @@ fn idiom_schema() -> Schema {
         statements: vec![
             bumbledb_theory::schema::StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
             },
         ],
     }

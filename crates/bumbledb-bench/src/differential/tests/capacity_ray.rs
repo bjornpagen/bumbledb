@@ -51,7 +51,7 @@ fn descriptor() -> SchemaDescriptor {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: POOL,
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             },
             StatementDescriptor::Capacity {
                 target: side(POOL, &[0]),

@@ -82,12 +82,12 @@ fn calendar() -> Schema {
         statements: vec![StatementDescriptor::Containment {
             source: Side {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(2)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(2)])),
                 selection: Box::new([]),
             },
             target: Side {
                 relation: RelationId(2),
-                projection: Box::new([FieldId(0)]),
+                projection: crate::schema::Projection::Fields(Box::new([FieldId(0)])),
                 selection: Box::new([]),
             },
         }],

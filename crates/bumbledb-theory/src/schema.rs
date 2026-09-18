@@ -4,7 +4,9 @@
 //! the `schema!` macro's expansion) constructs, and the pure judgments
 //! over it — [`SchemaDescriptor::materialized_statements`] and
 //! [`value_matches`]. The admission boundary stays engine-side: the only
+mod projection;
 pub mod spec;
+pub use projection::Projection;
 
 use crate::value::Value;
 
@@ -264,7 +266,7 @@ impl From<Value> for LiteralSet {
 pub struct Side {
     pub relation: RelationId,
 
-    pub projection: Box<[FieldId]>,
+    pub projection: Projection,
 
     pub selection: Box<[(FieldId, LiteralSet)]>,
 }
@@ -303,7 +305,7 @@ pub enum Bound {
 pub enum StatementDescriptor {
     Functionality {
         relation: RelationId,
-        projection: Box<[FieldId]>,
+        projection: Projection,
     },
 
     Containment {
@@ -415,7 +417,7 @@ impl SchemaDescriptor {
             if relation.extension.is_some() {
                 statements.push(StatementDescriptor::Functionality {
                     relation: RelationId(u32::try_from(rel_idx).expect("relation count fits u32")),
-                    projection: Box::new([FieldId(0)]),
+                    projection: Box::new([FieldId(0)]).into(),
                 });
             }
         }
@@ -486,7 +488,7 @@ mod tests {
             ],
             statements: vec![StatementDescriptor::Functionality {
                 relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
+                projection: Box::new([FieldId(0)]).into(),
             }],
         };
         let materialized = descriptor.materialized_statements();
@@ -498,7 +500,7 @@ mod tests {
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
                 projection,
-            } if **projection == [FieldId(0)]
+            } if projection.fields() == [FieldId(0)]
         ));
         assert_eq!(materialized[1], descriptor.statements[0]);
     }
