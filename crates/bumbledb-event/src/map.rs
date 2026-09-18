@@ -281,6 +281,21 @@ impl SurjectiveMap {
     pub fn map(&self) -> &CoordinateMap {
         &self.0
     }
+
+    /// Factor a source Event through this readout. The returned target Event
+    /// is unique because the readout is onto. Admission checks the membership
+    /// FD: equal readouts must imply equal Event membership on legal worlds.
+    /// # Errors
+    /// Refuses an Event varying within a readout fibre, incompatible contexts,
+    /// cancellation or exhausted resources.
+    pub fn descend(&self, event: &Event, control: &dyn Control) -> Result<Event> {
+        let original = event.align_to(self.map().source(), control)?;
+        let image = self.map().image(&original, control)?;
+        if self.map().pullback(&image, control)? != original {
+            return Err(Error::RoleMismatch);
+        }
+        Ok(image)
+    }
 }
 
 fn roots(readouts: &[Event]) -> [Ref; MAX_COORDINATES as usize] {

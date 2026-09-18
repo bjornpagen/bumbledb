@@ -33,6 +33,11 @@ pub enum Error {
     MapArity,
     MapOutsideSupport,
     IncompleteImage,
+    RoleMismatch,
+    EnvironmentMismatch,
+    NoFaces,
+    PartialRelation,
+    NonFunctionalRelation,
 }
 
 impl fmt::Display for Error {
@@ -59,6 +64,17 @@ impl fmt::Display for Error {
             }
             Self::IncompleteImage => {
                 f.write_str("event map does not reach every legal target world")
+            }
+            Self::RoleMismatch => f.write_str("event membership depends on an undeclared face"),
+            Self::EnvironmentMismatch => {
+                f.write_str("event relation maps do not preserve one shared environment")
+            }
+            Self::NoFaces => f.write_str("a face product needs at least one endpoint"),
+            Self::PartialRelation => {
+                f.write_str("a function graph needs an output for every input")
+            }
+            Self::NonFunctionalRelation => {
+                f.write_str("relation has multiple outputs for one input")
             }
         }
     }

@@ -8,6 +8,7 @@ impl BoolOp4 {
     pub const DIFFERENCE: Self = Self(4);
     pub const XOR: Self = Self(6);
     pub const AND: Self = Self(8);
+    pub const EQUIVALENCE: Self = Self(9);
     pub const IMPLIES: Self = Self(11);
     pub const OR: Self = Self(14);
     pub const TRUE: Self = Self(15);

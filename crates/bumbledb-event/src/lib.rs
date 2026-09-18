@@ -12,13 +12,17 @@ mod boolean;
 mod codec;
 mod error;
 mod map;
+mod product;
 mod registry;
+mod relation;
 mod space;
 
 pub use boolean::{BoolOp4, Signature};
 pub use error::{Capacity, Control, Error, Limits, Result};
 pub use map::{CoordinateMap, SurjectiveMap};
+pub use product::{CompleteFibreSquare, FaceProduct, FibreProduct};
 pub use registry::Registry;
+pub use relation::{RelationalProduct, WorldRelation};
 pub use space::{Event, EventKey, Space, SpaceId, Statistics};
 
 #[cfg(test)]
@@ -26,3 +30,6 @@ mod tests;
 
 #[cfg(test)]
 mod map_tests;
+
+#[cfg(test)]
+mod relation_tests;
