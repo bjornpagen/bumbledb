@@ -131,6 +131,7 @@ async function main() {
       kind: 'map', op: 'image', descriptor: mapBytes(full, target, fixture, secondCoordinate), expr: a } }));
     assert.equal(moved.length, 2);
     for (const [value] of moved) assert.deepEqual(Buffer.from(value).subarray(8, 40), target.subarray(8, 40));
+    const relationChecks = await require('./event-relation-wire.cjs')({ collect, query, fixture, full, a, number, blob });
     const foreign = Buffer.from(empty); foreign.fill(43, 8, 40);
     await insert([foreign]);
     await assert.rejects(() => collect(pack));
@@ -139,6 +140,7 @@ async function main() {
       malformed_programs_refused: malformed.length,
       event_pack_evaluations: 4,
       event_map_evaluations: 8,
+      ...relationChecks,
       addon_sha256: createHash('sha256').update(fs.readFileSync(binary)).digest('hex') }));
   } finally {
     if (snapshot) await close(native.runtimeSnapshotClose, snapshot);

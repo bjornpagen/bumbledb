@@ -992,6 +992,14 @@ impl EventBudget {
             bytes: 16 * 1024 * 1024,
         }
     }
+
+    fn node(&mut self, depth: usize) -> napi::Result<()> {
+        if depth > 128 || self.nodes == 0 {
+            return Err(err("Event expression exceeds shape budget".into()));
+        }
+        self.nodes -= 1;
+        Ok(())
+    }
 }
 
 fn event_child(
@@ -1010,13 +1018,11 @@ fn event_expr_in(
     remaining: &mut EventBudget,
 ) -> napi::Result<bumbledb::EventExpr> {
     use bumbledb::EventExpr as E;
-    if depth > 128 || remaining.nodes == 0 {
-        return Err(err("Event expression exceeds shape budget".into()));
-    }
-    remaining.nodes -= 1;
+    remaining.node(depth)?;
     let kind = req_text(obj, "kind", "Event expression")?;
     match kind.as_str() {
         "map" => event_map_in(obj, depth, remaining),
+        "relation" | "modal" => event_relation_in(obj, &kind, depth, remaining),
         "var" | "empty" | "full" => {
             exact_fields(obj, &["kind", "var"])?;
             let var = var_in(obj, "var", "Event operand")?;
@@ -1105,22 +1111,153 @@ fn event_map_in(
         "guaranteed" => bumbledb::event::MapOp::Guaranteed,
         _ => return Err(err("unknown Event readout operation".into())),
     };
+    Ok(bumbledb::EventExpr::Map {
+        operation,
+        map: event_import_in(obj, remaining)?,
+        input: Box::new(event_child(obj, "expr", depth, remaining)?),
+    })
+}
+
+fn event_import_in(
+    obj: &Object,
+    remaining: &mut EventBudget,
+) -> napi::Result<bumbledb::EventImport> {
     let bytes = req::<Uint8Array>(obj, "descriptor", "Event BEDC import")?;
     remaining.bytes = remaining
         .bytes
         .checked_sub(bytes.len())
         .ok_or_else(|| err("Event imports exceed 16 MiB per expression/test".into()))?;
-    let map = bumbledb::EventImport::from_bytes(
-        &bytes,
-        bumbledb::event::DescriptorLimits::default(),
-        &(),
-    )
-    .map_err(|error| err(format!("Event import: {error}")))?;
-    Ok(bumbledb::EventExpr::Map {
-        operation,
-        map,
-        input: Box::new(event_child(obj, "expr", depth, remaining)?),
-    })
+    bumbledb::EventImport::from_bytes(&bytes, bumbledb::event::DescriptorLimits::default(), &())
+        .map_err(|error| err(format!("Event import: {error}")))
+}
+
+fn relation_child(
+    obj: &Object,
+    key: &str,
+    depth: usize,
+    remaining: &mut EventBudget,
+) -> napi::Result<Box<bumbledb::RelationExpr>> {
+    let child = req(obj, key, "relation expression")?;
+    Ok(Box::new(relation_expr_in(&child, depth + 1, remaining)?))
+}
+
+fn event_relation_in(
+    obj: &Object,
+    kind: &str,
+    depth: usize,
+    remaining: &mut EventBudget,
+) -> napi::Result<bumbledb::EventExpr> {
+    let name = req_text(obj, "op", "relation operation")?;
+    if kind == "relation" {
+        exact_fields(obj, &["kind", "op", "relation"])?;
+        let operation = match name.as_str() {
+            "region" => bumbledb::RelationViewOp::Region,
+            "domain" => bumbledb::RelationViewOp::Domain,
+            "range" => bumbledb::RelationViewOp::Range,
+            _ => return Err(err("unknown relation view operation".into())),
+        };
+        Ok(bumbledb::EventExpr::Relation {
+            operation,
+            relation: relation_child(obj, "relation", depth, remaining)?,
+        })
+    } else {
+        exact_fields(obj, &["kind", "op", "relation", "expr"])?;
+        let operation = match name.as_str() {
+            "may" => bumbledb::event::ModalOp::May,
+            "all" => bumbledb::event::ModalOp::All,
+            "must" => bumbledb::event::ModalOp::Must,
+            "post" => bumbledb::event::ModalOp::Post,
+            _ => return Err(err("unknown relation modal operation".into())),
+        };
+        Ok(bumbledb::EventExpr::Modal {
+            operation,
+            relation: relation_child(obj, "relation", depth, remaining)?,
+            input: Box::new(event_child(obj, "expr", depth, remaining)?),
+        })
+    }
+}
+
+fn relation_expr_in(
+    obj: &Object,
+    depth: usize,
+    remaining: &mut EventBudget,
+) -> napi::Result<bumbledb::RelationExpr> {
+    use bumbledb::RelationExpr as R;
+    remaining.node(depth)?;
+    let kind = req_text(obj, "kind", "relation expression")?;
+    match kind.as_str() {
+        "bind" | "test" => {
+            exact_fields(obj, &["kind", "descriptor", "expr"])?;
+            let faces = event_import_in(obj, remaining)?;
+            let input = Box::new(event_child(obj, "expr", depth, remaining)?);
+            Ok(if kind == "bind" {
+                R::Bind {
+                    faces,
+                    region: input,
+                }
+            } else {
+                R::Test {
+                    faces,
+                    predicate: input,
+                }
+            })
+        }
+        "identity" => {
+            exact_fields(obj, &["kind", "descriptor"])?;
+            Ok(R::Identity {
+                faces: event_import_in(obj, remaining)?,
+            })
+        }
+        "not" | "converse" => {
+            exact_fields(obj, &["kind", "relation"])?;
+            let child = relation_child(obj, "relation", depth, remaining)?;
+            Ok(if kind == "not" {
+                R::Not(child)
+            } else {
+                R::Converse(child)
+            })
+        }
+        "apply" => {
+            exact_fields(obj, &["kind", "bits", "left", "right"])?;
+            let bits = ordinal(
+                req(obj, "bits", "relation truth table")?,
+                "relation truth table",
+            )?;
+            let op = u8::try_from(bits)
+                .ok()
+                .and_then(bumbledb::event::BoolOp4::new)
+                .ok_or_else(|| err("relation truth function must have four bits".into()))?;
+            Ok(R::Apply {
+                op,
+                left: relation_child(obj, "left", depth, remaining)?,
+                right: relation_child(obj, "right", depth, remaining)?,
+            })
+        }
+        "product" => {
+            exact_fields(obj, &["kind", "op", "descriptor", "left", "right"])?;
+            let name = req_text(obj, "op", "relation product")?;
+            let operation = match name.as_str() {
+                "compose" => bumbledb::RelationProductOp::Compose,
+                "leftResidual" => bumbledb::RelationProductOp::LeftResidual,
+                "rightResidual" => bumbledb::RelationProductOp::RightResidual,
+                _ => return Err(err("unknown relation product operation".into())),
+            };
+            Ok(R::Product {
+                operation,
+                plan: event_import_in(obj, remaining)?,
+                left: relation_child(obj, "left", depth, remaining)?,
+                right: relation_child(obj, "right", depth, remaining)?,
+            })
+        }
+        "star" => {
+            exact_fields(obj, &["kind", "descriptor", "relation"])?;
+            Ok(R::Star {
+                plan: event_import_in(obj, remaining)?,
+                relation: relation_child(obj, "relation", depth, remaining)?,
+            })
+        }
+        _ => Err(err("unknown relation expression kind".into())),
+    }
 }
 
 fn event_test_in(obj: &Object) -> napi::Result<bumbledb::EventTest> {

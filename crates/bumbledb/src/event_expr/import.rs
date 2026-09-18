@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use crate::event::{
-    AdmittedDescriptor, Control, CoordinateMap, Descriptor, DescriptorLimits, MapDescriptor, MapOp,
-    Result, Space,
+    AdmittedDescriptor, Control, CoordinateMap, Descriptor, DescriptorLimits, FibreDescriptor,
+    FibreProduct, MapDescriptor, MapOp, RelationalProduct, Result, Space,
 };
 
 #[derive(Debug)]
@@ -13,6 +13,7 @@ struct Import {
     bytes: Box<[u8]>,
     admitted: AdmittedDescriptor,
     fingerprint: blake3::Hash,
+    product_markers: Vec<Box<[u8]>>,
 }
 
 /// An immutable, checked descriptor retained by query IR. It owns its maps and
@@ -49,11 +50,24 @@ impl EventImport {
         let data = Descriptor::capture(value, limits, control)?;
         let bytes = data.to_bytes(limits, control)?.into_boxed_slice();
         let fingerprint = blake3::hash(&bytes);
+        let mut product_markers = Vec::new();
+        match value {
+            AdmittedDescriptor::Fibre(pair) => {
+                product_markers.push(pair.space().full().to_bytes(control)?.into_boxed_slice());
+            }
+            AdmittedDescriptor::Composition(plan) => {
+                for pair in plan.products() {
+                    product_markers.push(pair.space().full().to_bytes(control)?.into_boxed_slice());
+                }
+            }
+            _ => {}
+        }
         Ok(Self(Arc::new(Import {
             data,
             bytes,
             admitted: value.clone(),
             fingerprint,
+            product_markers,
         })))
     }
 
@@ -91,6 +105,37 @@ impl EventImport {
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.0.bytes
+    }
+
+    pub(crate) fn faces(&self) -> Option<Role<'_>> {
+        match (&self.0.data, &self.0.admitted) {
+            (Descriptor::Fibre(data), AdmittedDescriptor::Fibre(value)) => Some(Role {
+                data,
+                value,
+                marker: &self.0.product_markers[0],
+                swapped: false,
+            }),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn product(&self) -> Option<(&RelationalProduct, [Role<'_>; 3])> {
+        match (&self.0.data, &self.0.admitted) {
+            (Descriptor::Composition { st, tu, su, .. }, AdmittedDescriptor::Composition(plan)) => {
+                let data = [st, tu, su];
+                let values = plan.products();
+                Some((
+                    plan,
+                    std::array::from_fn(|i| Role {
+                        data: data[i],
+                        value: values[i],
+                        marker: &self.0.product_markers[i],
+                        swapped: false,
+                    }),
+                ))
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn map(&self) -> Option<(&MapDescriptor, &CoordinateMap)> {
@@ -140,5 +185,78 @@ impl EventImport {
             MapOp::Possible => map.possible(value, control),
             MapOp::Guaranteed => map.guaranteed(value, control),
         }
+    }
+}
+
+/// Canonical markers determine semantic context; owners supply execution space.
+#[derive(Clone, Copy)]
+pub(crate) struct Context<'a> {
+    pub(crate) marker: &'a [u8],
+    pub(crate) space: &'a Space,
+}
+
+/// A borrowed typed pair view. Converse changes roles, not product coordinates.
+#[derive(Clone, Copy)]
+pub(crate) struct Role<'a> {
+    data: &'a FibreDescriptor,
+    value: &'a FibreProduct,
+    marker: &'a [u8],
+    swapped: bool,
+}
+
+impl<'a> Role<'a> {
+    fn endpoints(self) -> [&'a MapDescriptor; 2] {
+        if self.data.reversed ^ self.swapped {
+            [&self.data.right, &self.data.left]
+        } else {
+            [&self.data.left, &self.data.right]
+        }
+    }
+
+    pub(crate) fn same(self, other: Self) -> bool {
+        self.endpoints() == other.endpoints()
+    }
+
+    pub(crate) fn endorelation(self) -> bool {
+        let [left, right] = self.endpoints();
+        left == right
+    }
+
+    pub(crate) fn converse(self) -> Self {
+        Self {
+            swapped: !self.swapped,
+            ..self
+        }
+    }
+
+    pub(crate) fn product(self) -> FibreProduct {
+        if self.swapped {
+            self.value.converse()
+        } else {
+            self.value.clone()
+        }
+    }
+
+    pub(crate) fn region(self) -> Context<'a> {
+        Context {
+            marker: self.marker,
+            space: self.value.space(),
+        }
+    }
+
+    pub(crate) fn input(self) -> Context<'a> {
+        let base = if self.swapped {
+            self.value.right_environment()
+        } else {
+            self.value.left_environment()
+        };
+        Context {
+            marker: &self.endpoints()[0].source,
+            space: base.map().source(),
+        }
+    }
+
+    pub(crate) fn output(self) -> Context<'a> {
+        self.converse().input()
     }
 }

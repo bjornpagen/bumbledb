@@ -1,11 +1,11 @@
 # Event evidence
 
 The [implementation ledger](../event-implementation.md) records passing feature
-slices and the remaining M0–M8 gates. The current captured-readout checkpoint is
-[native-query-map-qualification](native-query-map-qualification/check.json),
+slices and the remaining M0–M8 gates. The current typed-relation query checkpoint is
+[native-query-relation-qualification](native-query-relation-qualification/check.json),
 with exact source hashes and all fourteen native qualification commands.
-[native-query-map-semantics](native-query-map-semantics/check.json) contains
-255 Lean reports; the proposal adds 246 reports over its separate source suite.
+[native-query-relation-semantics](native-query-relation-semantics/check.json) contains
+266 Lean reports; the proposal adds 246 reports over its separate source suite.
 
 [portable-package-check](portable-package-check/check.json) reruns both Lean suites
 and the readiness audit in a temporary checkout containing only staged Git files.

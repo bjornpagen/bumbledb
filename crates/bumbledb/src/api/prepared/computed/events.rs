@@ -3,10 +3,11 @@
 use std::collections::BTreeMap;
 
 use super::{Bindings, OutputProgram};
-use crate::event::{BoolOp4, Control, Space};
+use crate::event::{BoolOp4, Control, FixedPointLimits, ModalOp, Space, WorldRelation};
 use crate::work::{GenerationHandle, WorkContext};
 use crate::{
-    Error, Event, EventExpr, EventFaultCategory, EventOperandFault, EventTest, FindTerm, VarId,
+    Error, Event, EventExpr, EventFaultCategory, EventOperandFault, EventTest, FindTerm,
+    RelationExpr, RelationProductOp, RelationViewOp, VarId,
 };
 
 #[derive(Default)]
@@ -161,11 +162,52 @@ impl ScopeAdmission<'_> {
                 let (required, _) = map.map_spaces(*operation).expect("validated map import");
                 self.visit(input, required)
             }
+            EventExpr::Relation { relation, .. } => self.relation(relation),
+            EventExpr::Modal {
+                operation,
+                relation,
+                input,
+            } => {
+                self.relation(relation)?;
+                let role = relation.role().expect("validated relation role");
+                let context = if *operation == ModalOp::Post {
+                    role.input()
+                } else {
+                    role.output()
+                };
+                self.visit(input, context.space)
+            }
             _ => {
                 for child in crate::event_expr::children(expr) {
                     self.visit(child, expected)?;
                 }
                 Ok(())
+            }
+        }
+    }
+
+    fn relation(&mut self, expr: &RelationExpr) -> crate::Result<()> {
+        self.work
+            .checkpoint()
+            .map_err(super::super::source::work_error)?;
+        match expr {
+            RelationExpr::Bind { faces, region } => self.visit(
+                region,
+                faces.faces().expect("validated pair").region().space,
+            ),
+            RelationExpr::Identity { .. } => Ok(()),
+            RelationExpr::Test { faces, predicate } => self.visit(
+                predicate,
+                faces.faces().expect("validated pair").input().space,
+            ),
+            RelationExpr::Not(value)
+            | RelationExpr::Converse(value)
+            | RelationExpr::Star {
+                relation: value, ..
+            } => self.relation(value),
+            RelationExpr::Apply { left, right, .. } | RelationExpr::Product { left, right, .. } => {
+                self.relation(left)?;
+                self.relation(right)
             }
         }
     }
@@ -244,6 +286,90 @@ fn region(
             map,
             input,
         } => map.evaluate_map(*operation, &region(input, inputs, control)?, control),
+        EventExpr::Relation {
+            operation,
+            relation: expr,
+        } => {
+            let value = relation(expr, inputs, control)?;
+            match operation {
+                RelationViewOp::Region => Ok(value.region().clone()),
+                RelationViewOp::Domain => value.domain(control),
+                RelationViewOp::Range => value.range(control),
+            }
+        }
+        EventExpr::Modal {
+            operation,
+            relation: expr,
+            input,
+        } => {
+            let value = relation(expr, inputs, control)?;
+            let predicate = region(input, inputs, control)?;
+            match operation {
+                ModalOp::May => value.may(&predicate, control),
+                ModalOp::All => value.all(&predicate, control),
+                ModalOp::Must => value.must(&predicate, control),
+                ModalOp::Post => value.post(&predicate, control),
+            }
+        }
+    }
+}
+
+fn relation(
+    expr: &RelationExpr,
+    inputs: &mut std::slice::Iter<'_, Event>,
+    control: &dyn Control,
+) -> crate::event::Result<WorldRelation> {
+    control.checkpoint()?;
+    match expr {
+        RelationExpr::Bind {
+            faces,
+            region: input,
+        } => WorldRelation::new(
+            &faces.faces().expect("validated pair").product(),
+            &region(input, inputs, control)?,
+            control,
+        ),
+        RelationExpr::Identity { faces } => {
+            WorldRelation::identity(&faces.faces().expect("validated pair").product(), control)
+        }
+        RelationExpr::Test { faces, predicate } => WorldRelation::test(
+            &faces.faces().expect("validated pair").product(),
+            &region(predicate, inputs, control)?,
+            control,
+        ),
+        RelationExpr::Not(value) => Ok(relation(value, inputs, control)?.complement()),
+        RelationExpr::Converse(value) => Ok(relation(value, inputs, control)?.converse()),
+        RelationExpr::Apply { op, left, right } => {
+            let left = relation(left, inputs, control)?;
+            let right = relation(right, inputs, control)?;
+            left.apply(*op, &right, control)
+        }
+        RelationExpr::Product {
+            operation,
+            plan,
+            left,
+            right,
+        } => {
+            let left = relation(left, inputs, control)?;
+            let right = relation(right, inputs, control)?;
+            let (plan, _) = plan.product().expect("validated composition plan");
+            match operation {
+                RelationProductOp::Compose => plan.compose(&left, &right, control),
+                RelationProductOp::LeftResidual => plan.left_residual(&left, &right, control),
+                RelationProductOp::RightResidual => plan.right_residual(&left, &right, control),
+            }
+        }
+        RelationExpr::Star {
+            plan,
+            relation: value,
+        } => {
+            let value = relation(value, inputs, control)?;
+            plan.product().expect("validated closure plan").0.star(
+                &value,
+                FixedPointLimits::default(),
+                control,
+            )
+        }
     }
 }
 

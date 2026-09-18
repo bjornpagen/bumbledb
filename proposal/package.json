@@ -21,8 +21,8 @@
       "sha256": "7c6ce2642ef377c00b86433ca0c3aee26e30d20889be512549a50a9511e3e050"
     },
     "proposal/README.md": {
-      "bytes": 6983,
-      "sha256": "6504d76234d310fac98a3a0a906344b14ed50459abb46113aad1d98ebcda0ed8"
+      "bytes": 7147,
+      "sha256": "955337ce2a4f633ee5136ed83a1b0c25bfb962f4dd1bb92f99f14f8df464a64e"
     },
     "proposal/RESEARCH-HANDOFF.md": {
       "bytes": 7608,
@@ -1233,8 +1233,8 @@
       "sha256": "6a78c2855e8da5af0a3bae97c9705608888936a208e7317b91743c2df60352be"
     },
     "proposal/coup/algebra-queries.rs": {
-      "bytes": 5675,
-      "sha256": "90053b57410e76e6ee15fca853a8be67f6416adf3ce51ea2469a793d1cd0c415"
+      "bytes": 5559,
+      "sha256": "75ef202e09ebcf5c78949e320484d936dd66720b10e236c819c7b459b66f2924"
     },
     "proposal/coup/archive/kernel-surface/README.md": {
       "bytes": 21031,
@@ -35289,8 +35289,8 @@
       "sha256": "10ce0cb12eb4ec2812e5bf5e52a8b971f0291e42db1494233af017332345f96d"
     },
     "proposal/implementation-plan.md": {
-      "bytes": 18448,
-      "sha256": "53feacb8161786eed2c49bc4ff17bddf282c8f4b4482b057a6b09902ca6e6284"
+      "bytes": 18965,
+      "sha256": "8e3d8cd219fb1438284eb2e10364e8012d3edab1d389e674e8f8020ee4771a44"
     },
     "proposal/kernels/arm64-probe.c": {
       "bytes": 2880,
@@ -35357,12 +35357,12 @@
       "sha256": "9872d0dfa8645a82aeb8d8ee4df47b17e7af163d9f9ef17ff2590c6945f7690f"
     },
     "proposal/proposal.md": {
-      "bytes": 15558,
-      "sha256": "4b28ed3d50b8d3ea29c2b8f5061911a2096c5e0e018c0b0689abcd856ed41a60"
+      "bytes": 15647,
+      "sha256": "2491191232616e8e319f15267057c51e0270411405e73fc07ae7fef637b13e9f"
     },
     "proposal/query-algebra.md": {
-      "bytes": 33260,
-      "sha256": "dc09131bad30ec2e29d6914d2ed1cab2a0c890710ef91c84c54be96651ec3996"
+      "bytes": 34148,
+      "sha256": "f8dc6cdcbccfe28c12b213500f35ad7dd093306b92dc5d5522898c3f4914dea9"
     },
     "proposal/question.md": {
       "bytes": 183,
@@ -35685,8 +35685,8 @@
       "sha256": "099edfc4e756d56fd9d75d41d347fb36de2e0871e3f1a1e09229acefcae2b4c9"
     },
     "proposal/semantics/README.md": {
-      "bytes": 17087,
-      "sha256": "038ec88c0318c76c48197c1f1248a36509d26a7f9b52af34b77a63232bdef1a0"
+      "bytes": 17628,
+      "sha256": "753018e67c71f89c0359ac6a9e1d63b1b5e04d1ad8b0218fe14490cb820e3487"
     },
     "proposal/semantics/check.py": {
       "bytes": 4832,
@@ -36641,8 +36641,8 @@
       "sha256": "8e15d6145446ef4ed6f9e8bf42a6237e5911be02f2920cb518d650e745d85614"
     },
     "proposal/world-relations.md": {
-      "bytes": 24078,
-      "sha256": "3c3329fbca3b1c6a785ad0dda09e6f1ce50c99e6ff2d14577c127b9600bbc29e"
+      "bytes": 24530,
+      "sha256": "11678430e97cc9c3e295c2a0343ad8bd75d9d7592b4056bcadb25d158fd65705"
     }
   }
 }

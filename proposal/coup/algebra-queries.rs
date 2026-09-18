@@ -1,6 +1,6 @@
-// Revision 0.5 proposal only. New heads/imports are not parsed by today's macro.
-// Event/Test/Expectation and face-aware relation expressions are specified in
-// ../query-algebra.md. These templates do not call TypeSafe or execute queries.
+// Revision 0.9 worked templates; complete Coup integration remains pending.
+// Event/Test/Pack and face-aware relation heads now parse on the implementation
+// branch. Expectation remains proposed. Nothing here calls TypeSafe.
 
 fn existing_coup_schema_examples() {
     // Keep an Event for impossible holdings, so complement remains composable.
@@ -87,10 +87,10 @@ fn existing_coup_schema_examples() {
 
 // Companion RuleView schema and its constructor obligations are in
 // algebra-applications.md §8. Faces are owned descriptors, not scalar fields
-// or Model<T> parameters. `use faces` is a NEW proposed macro import form.
-fn rule_view_examples(step_faces: &ProposedWorldFaces) {
+// or Model<T> parameters. `step_faces` captures a checked Fibre descriptor.
+fn rule_view_examples(step_faces: &bumbledb::EventImport) {
     let action_preconditions = bumbledb_query::query!(RuleView {
-        use faces step = &step_faces;
+        use faces step = step_faces;
         (scenario, option, starts,
          can: Event(May(Relation(r, step), goal)),
          safe: Event(Must(Relation(r, step), goal))) |
@@ -116,6 +116,3 @@ fn rule_view_examples(step_faces: &ProposedWorldFaces) {
     });
     let _ = permitted;
 }
-
-// Proposed descriptor type, intentionally not a native bumbledb definition.
-struct ProposedWorldFaces;

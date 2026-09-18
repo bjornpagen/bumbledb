@@ -127,6 +127,8 @@ type EventExprIr =
 	| { readonly kind: "not"; readonly expr: EventExprIr }
 	| { readonly kind: "apply"; readonly bits: number; readonly left: EventExprIr; readonly right: EventExprIr }
 	| { readonly kind: "ite"; readonly condition: EventExprIr; readonly high: EventExprIr; readonly low: EventExprIr }
+	| { readonly kind: "relation"; readonly op: "region" | "domain" | "range"; readonly relation: RelationExprIr }
+	| { readonly kind: "modal"; readonly op: "may" | "all" | "must" | "post"; readonly relation: RelationExprIr; readonly expr: EventExprIr }
 	| {
 			readonly kind: "map"
 			readonly op: "pullback" | "image" | "universalImage" | "nonvacuousImage" | "possible" | "guaranteed"
@@ -139,6 +141,14 @@ type EventExprIr =
 			readonly maximum: bigint
 			readonly events: readonly EventExprIr[]
 	  }
+
+type RelationExprIr =
+	| { readonly kind: "bind" | "test"; readonly descriptor: Uint8Array; readonly expr: EventExprIr }
+	| { readonly kind: "identity"; readonly descriptor: Uint8Array }
+	| { readonly kind: "not" | "converse"; readonly relation: RelationExprIr }
+	| { readonly kind: "apply"; readonly bits: number; readonly left: RelationExprIr; readonly right: RelationExprIr }
+	| { readonly kind: "product"; readonly op: "compose" | "leftResidual" | "rightResidual"; readonly descriptor: Uint8Array; readonly left: RelationExprIr; readonly right: RelationExprIr }
+	| { readonly kind: "star"; readonly descriptor: Uint8Array; readonly relation: RelationExprIr }
 
 type EventTestIr =
 	| { readonly kind: "isEmpty" | "isFull"; readonly expr: EventExprIr }
@@ -707,6 +717,7 @@ export type {
 	FindTermIr,
 	EventExprIr,
 	EventTestIr,
+	RelationExprIr,
 	HeadOpIr,
 	HeadTermIr,
 	InteriorIr,

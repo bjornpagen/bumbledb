@@ -1,5 +1,6 @@
 import { AuthoringError } from "#errors.ts"
 import type {
+	RelationExprIr,
 	AtomIr,
 	CmpOpIr,
 	ConditionTreeIr,
@@ -119,19 +120,70 @@ function eventCount(context: string, input: unknown): bigint {
 	return input
 }
 
+type EventBudget = { remaining: number; bytes: number }
+
+function eventImport(context: string, input: unknown, budget: EventBudget): Uint8Array {
+	const bytes = bytesValue(context, input, budget.bytes)
+	budget.bytes -= bytes.byteLength
+	return bytes
+}
+
+function relationExpr(context: string, input: unknown, depth: number, budget: EventBudget): RelationExprIr {
+	if (depth > 128 || budget.remaining-- <= 0) return fail(context, "Event expression exceeds shape budget")
+	const raw = tagged(context, input)
+	const child = (key: string) => relationExpr(`${context}.${key}`, raw[key], depth + 1, budget)
+	const descriptor = () => eventImport(`${context}.descriptor`, raw.descriptor, budget)
+	switch (raw.kind) {
+		case "bind":
+		case "test":
+			recordValue(context, raw, ["kind", "descriptor", "expr"])
+			return Object.freeze({ kind: raw.kind, descriptor: descriptor(), expr: eventExpr(`${context}.expr`, raw.expr, depth + 1, budget) })
+		case "identity":
+			recordValue(context, raw, ["kind", "descriptor"])
+			return Object.freeze({ kind: raw.kind, descriptor: descriptor() })
+		case "not":
+		case "converse":
+			recordValue(context, raw, ["kind", "relation"])
+			return Object.freeze({ kind: raw.kind, relation: child("relation") })
+		case "apply":
+			recordValue(context, raw, ["kind", "bits", "left", "right"])
+			return Object.freeze({ kind: raw.kind, bits: ordinal(context, raw.bits, 15), left: child("left"), right: child("right") })
+		case "product": {
+			recordValue(context, raw, ["kind", "op", "descriptor", "left", "right"])
+			const op = raw.op
+			if (op !== "compose" && op !== "leftResidual" && op !== "rightResidual") return fail(context, "unknown relation product operation")
+			return Object.freeze({ kind: raw.kind, op, descriptor: descriptor(), left: child("left"), right: child("right") })
+		}
+		case "star":
+			recordValue(context, raw, ["kind", "descriptor", "relation"])
+			return Object.freeze({ kind: raw.kind, descriptor: descriptor(), relation: child("relation") })
+		default: return fail(context, "unknown relation expression kind")
+	}
+}
+
 function eventExpr(context: string, input: unknown, depth = 1, budget = { remaining: 4096, bytes: 16 * 1024 * 1024 }): EventExprIr {
 	if (depth > 128 || budget.remaining-- <= 0) return fail(context, "Event expression exceeds shape budget")
 	const raw = tagged(context, input)
 	const child = (key: string) => eventExpr(`${context}.${key}`, raw[key], depth + 1, budget)
 	switch (raw.kind) {
+		case "relation": {
+			recordValue(context, raw, ["kind", "op", "relation"])
+			const op = raw.op
+			if (op !== "region" && op !== "domain" && op !== "range") return fail(context, "unknown relation view operation")
+			return Object.freeze({ kind: raw.kind, op, relation: relationExpr(`${context}.relation`, raw.relation, depth + 1, budget) })
+		}
+		case "modal": {
+			recordValue(context, raw, ["kind", "op", "relation", "expr"])
+			const op = raw.op
+			if (op !== "may" && op !== "all" && op !== "must" && op !== "post") return fail(context, "unknown modal operation")
+			return Object.freeze({ kind: raw.kind, op, relation: relationExpr(`${context}.relation`, raw.relation, depth + 1, budget), expr: child("expr") })
+		}
 		case "map": {
 			recordValue(context, raw, ["kind", "op", "descriptor", "expr"])
 			const op = raw.op
 			if (op !== "pullback" && op !== "image" && op !== "universalImage" && op !== "nonvacuousImage" && op !== "possible" && op !== "guaranteed")
 				return fail(context, "unknown Event readout operation")
-			const descriptor = bytesValue(`${context}.descriptor`, raw.descriptor, budget.bytes)
-			budget.bytes -= descriptor.byteLength
-			if (budget.bytes < 0) return fail(context, "Event imports exceed 16 MiB per expression/test")
+			const descriptor = eventImport(`${context}.descriptor`, raw.descriptor, budget)
 			return Object.freeze({ kind: raw.kind, op, descriptor, expr: child("expr") })
 		}
 		case "var":

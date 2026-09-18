@@ -69,6 +69,7 @@ pub(crate) mod plan;
 pub mod scalar;
 pub use event_expr::{
     EventExpr, EventExprError, EventFaultCategory, EventImport, EventOperandFault, EventTest,
+    RelationExpr, RelationProductOp, RelationViewOp,
 };
 pub mod schema;
 pub(crate) mod storage;

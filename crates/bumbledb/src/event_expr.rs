@@ -3,11 +3,14 @@
 //! every algebraic shortcut, including constant truth functions and ITE.
 use crate::{
     VarId,
-    event::{BoolOp4, MapOp, Space},
+    event::{BoolOp4, MapOp, ModalOp, Space},
 };
 
 mod import;
+use import::Context;
 pub use import::EventImport;
+mod relations;
+pub use relations::{RelationExpr, RelationProductOp, RelationViewOp};
 
 /// Stable logical identity of one participating context refusal. Canonical
 /// bytes contain source/support/value identity, never resident arena keys.
@@ -59,6 +62,15 @@ pub enum EventExpr {
         map: EventImport,
         input: Box<Self>,
     },
+    Relation {
+        operation: RelationViewOp,
+        relation: Box<RelationExpr>,
+    },
+    Modal {
+        operation: ModalOp,
+        relation: Box<RelationExpr>,
+        input: Box<Self>,
+    },
 }
 
 /// A Boolean statement about whole regions, suitable for a later-stage filter.
@@ -82,6 +94,7 @@ pub enum EventExprError {
     ImportKind,
     ImportBudget,
     IncompatibleContexts,
+    IncompatibleRoles,
 }
 
 impl std::fmt::Display for EventExprError {
@@ -94,7 +107,7 @@ impl EventExpr {
     /// Syntactic leaf occurrences, in written order, including anchors and
     /// repeated variables. This is also the diagnostic operand numbering.
     pub fn variables(&self) -> impl Iterator<Item = VarId> + '_ {
-        variables(vec![self])
+        variables(vec![Node::Event(self)])
     }
 
     /// Bound recursion and roster extent before normalization clones the IR.
@@ -106,17 +119,45 @@ impl EventExpr {
     }
 
     pub(crate) fn output_space(&self) -> Option<&Space> {
+        self.output_context().map(|context| context.space)
+    }
+
+    fn output_context(&self) -> Option<Context<'_>> {
         match self {
-            Self::Map { operation, map, .. } => map.map_spaces(*operation).map(|(_, out)| out),
-            _ => children(self).into_iter().find_map(Self::output_space),
+            Self::Map { operation, map, .. } => {
+                let (_, space) = map.map_spaces(*operation)?;
+                let (_, marker) = map.map_markers(*operation)?;
+                Some(Context { marker, space })
+            }
+            Self::Relation {
+                operation,
+                relation,
+            } => {
+                let role = relation.role()?;
+                Some(match operation {
+                    RelationViewOp::Region => role.region(),
+                    RelationViewOp::Domain => role.input(),
+                    RelationViewOp::Range => role.output(),
+                })
+            }
+            Self::Modal {
+                operation,
+                relation,
+                ..
+            } => {
+                let role = relation.role()?;
+                Some(if *operation == ModalOp::Post {
+                    role.output()
+                } else {
+                    role.input()
+                })
+            }
+            _ => children(self).into_iter().find_map(Self::output_context),
         }
     }
 
     fn output_marker(&self) -> Option<&[u8]> {
-        match self {
-            Self::Map { operation, map, .. } => map.map_markers(*operation).map(|(_, out)| out),
-            _ => children(self).into_iter().find_map(Self::output_marker),
-        }
+        self.output_context().map(|context| context.marker)
     }
 }
 
@@ -133,7 +174,7 @@ impl EventTest {
     pub fn variables(&self) -> impl Iterator<Item = VarId> + '_ {
         let mut roots = self.roots();
         roots.reverse();
-        variables(roots)
+        variables(roots.into_iter().map(Node::Event).collect())
     }
 
     /// # Errors
@@ -151,7 +192,10 @@ impl EventTest {
 
 pub(crate) fn children(expr: &EventExpr) -> Vec<&EventExpr> {
     match expr {
-        EventExpr::Var(_) | EventExpr::Empty(_) | EventExpr::Full(_) => vec![],
+        EventExpr::Var(_)
+        | EventExpr::Empty(_)
+        | EventExpr::Full(_)
+        | EventExpr::Relation { .. } => vec![],
         EventExpr::Not(value) => vec![value],
         EventExpr::Apply { left, right, .. } => vec![left, right],
         EventExpr::Ite {
@@ -160,18 +204,71 @@ pub(crate) fn children(expr: &EventExpr) -> Vec<&EventExpr> {
             low,
         } => vec![condition, high, low],
         EventExpr::Cardinality { events, .. } => events.iter().collect(),
-        EventExpr::Map { input, .. } => vec![input],
+        EventExpr::Map { input, .. } | EventExpr::Modal { input, .. } => vec![input],
     }
 }
 
-fn variables(mut pending: Vec<&EventExpr>) -> impl Iterator<Item = VarId> {
+enum Node<'a> {
+    Event(&'a EventExpr),
+    Relation(&'a RelationExpr),
+}
+
+impl<'a> Node<'a> {
+    fn children(&self) -> Vec<Node<'a>> {
+        match self {
+            Self::Event(EventExpr::Relation { relation, .. }) => vec![Self::Relation(relation)],
+            Self::Event(EventExpr::Modal {
+                relation, input, ..
+            }) => {
+                vec![Self::Relation(relation), Self::Event(input)]
+            }
+            Self::Event(value) => children(value).into_iter().map(Self::Event).collect(),
+            Self::Relation(value) => match value {
+                RelationExpr::Bind { region, .. } => vec![Self::Event(region)],
+                RelationExpr::Identity { .. } => vec![],
+                RelationExpr::Test { predicate, .. } => vec![Self::Event(predicate)],
+                RelationExpr::Not(value)
+                | RelationExpr::Converse(value)
+                | RelationExpr::Star {
+                    relation: value, ..
+                } => vec![Self::Relation(value)],
+                RelationExpr::Apply { left, right, .. }
+                | RelationExpr::Product { left, right, .. } => {
+                    vec![Self::Relation(left), Self::Relation(right)]
+                }
+            },
+        }
+    }
+
+    fn import(&self) -> Result<Option<&EventImport>, EventExprError> {
+        let (data, valid) = match self {
+            Self::Event(EventExpr::Map { map, .. }) => (map, map.map().is_some()),
+            Self::Relation(
+                RelationExpr::Bind { faces, .. }
+                | RelationExpr::Identity { faces }
+                | RelationExpr::Test { faces, .. },
+            ) => (faces, faces.faces().is_some()),
+            Self::Relation(
+                RelationExpr::Product { plan, .. } | RelationExpr::Star { plan, .. },
+            ) => (plan, plan.product().is_some()),
+            _ => return Ok(None),
+        };
+        if valid {
+            Ok(Some(data))
+        } else {
+            Err(EventExprError::ImportKind)
+        }
+    }
+}
+
+fn variables(mut pending: Vec<Node<'_>>) -> impl Iterator<Item = VarId> {
     std::iter::from_fn(move || {
         while let Some(expr) = pending.pop() {
             match expr {
-                EventExpr::Var(var) | EventExpr::Empty(var) | EventExpr::Full(var) => {
+                Node::Event(EventExpr::Var(var) | EventExpr::Empty(var) | EventExpr::Full(var)) => {
                     return Some(*var);
                 }
-                _ => pending.extend(children(expr).into_iter().rev()),
+                _ => pending.extend(expr.children().into_iter().rev()),
             }
         }
         None
@@ -179,7 +276,10 @@ fn variables(mut pending: Vec<&EventExpr>) -> impl Iterator<Item = VarId> {
 }
 
 fn validate_shape(roots: Vec<&EventExpr>) -> Result<(), EventExprError> {
-    let mut pending: Vec<_> = roots.into_iter().map(|root| (root, 1)).collect();
+    let mut pending: Vec<_> = roots
+        .into_iter()
+        .map(|root| (Node::Event(root), 1))
+        .collect();
     let mut nodes = 0;
     let mut import_bytes = 0usize;
     while let Some((expr, depth)) = pending.pop() {
@@ -190,7 +290,7 @@ fn validate_shape(roots: Vec<&EventExpr>) -> Result<(), EventExprError> {
         if nodes + pending.len() > 4096 {
             return Err(EventExprError::TooLarge);
         }
-        if let EventExpr::Cardinality { events, .. } = expr {
+        if let Node::Event(EventExpr::Cardinality { events, .. }) = expr {
             if events.is_empty() {
                 return Err(EventExprError::EmptyRoster);
             }
@@ -198,16 +298,13 @@ fn validate_shape(roots: Vec<&EventExpr>) -> Result<(), EventExprError> {
                 return Err(EventExprError::TooLarge);
             }
         }
-        if let EventExpr::Map { map, .. } = expr {
-            if map.map().is_none() {
-                return Err(EventExprError::ImportKind);
-            }
-            import_bytes = import_bytes.saturating_add(map.bytes().len());
+        if let Some(import) = expr.import()? {
+            import_bytes = import_bytes.saturating_add(import.bytes().len());
             if import_bytes > 16 * 1024 * 1024 {
                 return Err(EventExprError::ImportBudget);
             }
         }
-        pending.extend(children(expr).into_iter().map(|child| (child, depth + 1)));
+        pending.extend(expr.children().into_iter().map(|child| (child, depth + 1)));
     }
     Ok(())
 }
@@ -215,6 +312,26 @@ fn validate_shape(roots: Vec<&EventExpr>) -> Result<(), EventExprError> {
 // All ordinary Boolean nodes preserve one context. A readout supplies a typed
 // boundary; its input constraints cannot leak into its output component.
 fn validate_contexts(expr: &EventExpr, expected: Option<&[u8]>) -> Result<(), EventExprError> {
+    if let EventExpr::Relation { relation, .. } | EventExpr::Modal { relation, .. } = expr {
+        let output = expr.output_marker().ok_or(EventExprError::ImportKind)?;
+        if expected.is_some_and(|expected| expected != output) {
+            return Err(EventExprError::IncompatibleContexts);
+        }
+        relation.validate_contexts()?;
+        if let EventExpr::Modal {
+            operation, input, ..
+        } = expr
+        {
+            let role = relation.role().ok_or(EventExprError::ImportKind)?;
+            let needed = if *operation == ModalOp::Post {
+                role.input()
+            } else {
+                role.output()
+            };
+            validate_contexts(input, Some(needed.marker))?;
+        }
+        return Ok(());
+    }
     if let EventExpr::Map {
         operation,
         map,

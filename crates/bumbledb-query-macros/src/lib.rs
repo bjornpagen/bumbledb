@@ -7,6 +7,8 @@
 //! query     := import* (cq | reach)
 //! import    := 'use' 'map' name '=' expr ';' // retained checked EventImport;
 //!                                            // map heads own its BEDC descriptor
+//! import    := 'use' ('faces' | 'product') name '=' expr ';'
+//!                                            // retained pair or shared-workspace plan
 //! import    := 'use' derived '=' expr ';'    // nonrecursive composition (ch. 34):
 //!                                            //   binds an existing schema-bound
 //!                                            //   `&Query` template into the lexical
@@ -2341,10 +2343,12 @@ struct Import {
     kind: ImportKind,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ImportKind {
     Template,
     Map,
+    Faces,
+    Product,
 }
 
 /// Parses the leading `use <name> = <expr>;` clauses — nonrecursive
@@ -2356,10 +2360,16 @@ fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
     while peek_ident_text(tokens).as_deref() == Some("use") {
         let keyword = expect_ident(tokens, "`use`")?;
         let first = expect_ident(tokens, "the imported template's local name or `map`")?;
-        let (kind, name) = if first.text == "map" && !peek_punct(tokens, '=') {
+        let (kind, name) = if matches!(first.text.as_str(), "map" | "faces" | "product")
+            && !peek_punct(tokens, '=')
+        {
             (
-                ImportKind::Map,
-                expect_ident(tokens, "the imported map's local name")?,
+                match first.text.as_str() {
+                    "map" => ImportKind::Map,
+                    "faces" => ImportKind::Faces,
+                    _ => ImportKind::Product,
+                },
+                expect_ident(tokens, "the imported Event descriptor's local name")?,
             )
         } else {
             (ImportKind::Template, first)
@@ -2574,7 +2584,7 @@ fn emit_import_prelude(imports: &[Import]) -> String {
     for (index, import) in imports.iter().enumerate() {
         let name = &import.name.text;
         let expr = &import.expr;
-        if import.kind == ImportKind::Map {
+        if import.kind != ImportKind::Template {
             let _ = write!(
                 out,
                 "let __event_import{index}: ::bumbledb::EventImport = {{ let value: &::bumbledb::EventImport = {expr}; value.clone() }}; "

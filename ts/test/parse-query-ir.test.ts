@@ -369,5 +369,26 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 				kind: "equal", left: make(large), right: make(large)
 			} })), /at most/)
 		})
+
+		test("parses owned relation programs under the shared Event tree budget", () => {
+			const descriptor = new Uint8Array([66, 69, 68, 67, 1, 3])
+			const bind = { kind: "bind", descriptor, expr: { kind: "var", var: 0 } }
+			const product = { kind: "product", op: "compose", descriptor, left: bind, right: bind }
+			const parsed = parseQueryIr(output({ kind: "event", expr: { kind: "relation", op: "region", relation: product } }))
+			const find = parsed.rules[0]?.finds[0]
+			if (find?.kind !== "event" || find.expr.kind !== "relation" || find.expr.relation.kind !== "product") throw new Error("relation product")
+			descriptor.fill(0)
+			assert.deepEqual(find.expr.relation.descriptor, new Uint8Array([66, 69, 68, 67, 1, 3]))
+			for (const relation of [
+				{ ...product, op: "unknown" }, { ...bind, ignored: true },
+				{ kind: "star", relation: bind }, { kind: "apply", bits: 16, left: bind, right: bind }
+			]) assert.throws(() => parseQueryIr(output({ kind: "event", expr: { kind: "relation", op: "region", relation } })))
+			const cycle: { kind: string; relation?: unknown } = { kind: "converse" }; cycle.relation = cycle
+			assert.throws(() => parseQueryIr(output({ kind: "event", expr: { kind: "relation", op: "region", relation: cycle } })))
+			const huge = { ...bind, descriptor: new Uint8Array(8 * 1024 * 1024 + 1) }
+			assert.throws(() => parseQueryIr(output({ kind: "event", expr: {
+				kind: "relation", op: "region", relation: { kind: "apply", bits: 8, left: huge, right: huge }
+			} })), /at most/)
+		})
 	})
 })

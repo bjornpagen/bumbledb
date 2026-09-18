@@ -4,6 +4,7 @@ use super::{
     peek_punct, peek_span, take_paren_group,
 };
 use proc_macro::{Delimiter, TokenTree};
+mod relations;
 
 pub(super) enum Region {
     Leaf {
@@ -26,6 +27,15 @@ pub(super) enum Region {
         operation: String,
         input: Box<Self>,
         name: Name,
+    },
+    View {
+        operation: String,
+        relation: Box<relations::Relation>,
+    },
+    Modal {
+        operation: String,
+        relation: Box<relations::Relation>,
+        input: Box<Self>,
     },
 }
 
@@ -118,6 +128,9 @@ fn unary(tokens: &mut Tokens, depth: usize) -> Parse<Region> {
     let op = match name.text.as_str() {
         "Empty" => "Empty",
         "Full" => "Full",
+        "Region" | "Domain" | "Range" | "May" | "All" | "Must" | "Post" => {
+            return relations::event(name, tokens, depth);
+        }
         "Pullback" | "Image" | "UniversalImage" | "NonvacuousImage" | "Possible" | "Guaranteed" => {
             let (mut args, _) = take_paren_group(tokens, "Event readout arguments")?;
             let input = expression(&mut args, 0, depth + 1)?;
@@ -244,21 +257,51 @@ impl Region {
                 input,
                 name,
             } => {
-                let Some((index, _)) = imports.iter().enumerate().find(|(_, import)| {
-                    import.kind == ImportKind::Map && import.name.text == name.text
-                }) else {
-                    return fail(
-                        name.span,
-                        "query!: readout requires a declared `use map` import",
-                    );
-                };
+                let captured = imported(name, imports, ImportKind::Map)?;
                 format!(
-                    "{prefix}::Map {{ operation: ::bumbledb::event::MapOp::{operation}, map: __event_import{index}.clone(), input: {} }}",
+                    "{prefix}::Map {{ operation: ::bumbledb::event::MapOp::{operation}, map: {captured}, input: {} }}",
                     child(input)?
                 )
             }
+            Self::View {
+                operation,
+                relation,
+            } => format!(
+                "{prefix}::Relation {{ operation: ::bumbledb::RelationViewOp::{operation}, relation: ::std::boxed::Box::new({}) }}",
+                relation.emit(scope, imports, depth + 1)?
+            ),
+            Self::Modal {
+                operation,
+                relation,
+                input,
+            } => format!(
+                "{prefix}::Modal {{ operation: ::bumbledb::event::ModalOp::{operation}, relation: ::std::boxed::Box::new({}), input: {} }}",
+                relation.emit(scope, imports, depth + 1)?,
+                child(input)?
+            ),
         })
     }
+}
+
+fn imported(name: &Name, imports: &[Import], kind: ImportKind) -> Parse<String> {
+    let Some((index, _)) = imports
+        .iter()
+        .enumerate()
+        .find(|(_, import)| import.kind == kind && import.name.text == name.text)
+    else {
+        return fail(
+            name.span,
+            match kind {
+                ImportKind::Map => "query!: readout requires a declared `use map` import",
+                ImportKind::Faces => "query!: relation requires a declared `use faces` import",
+                ImportKind::Product => {
+                    "query!: composition/residual/closure requires a declared `use product` import"
+                }
+                ImportKind::Template => unreachable!("Event imports"),
+            },
+        );
+    };
+    Ok(format!("__event_import{index}.clone()"))
 }
 
 impl Test {
