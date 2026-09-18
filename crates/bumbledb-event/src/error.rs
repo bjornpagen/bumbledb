@@ -20,6 +20,9 @@ pub enum Capacity {
     Diagnostics,
     DescriptorBytes,
     DescriptorItems,
+    ArithmeticBits,
+    ArithmeticSteps,
+    LawCells,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +57,12 @@ pub enum Error {
     PartitionIndex,
     UnsafePolicy,
     IncompletePolicy,
+    InvalidRational,
+    DivisionByZero,
+    NegativeMass,
+    LawOverlap,
+    LawNotNormalized,
+    MissingLaw,
 }
 
 impl fmt::Display for Error {
@@ -103,6 +112,12 @@ impl fmt::Display for Error {
             Self::PartitionIndex => f.write_str("Event partition index is outside the roster"),
             Self::UnsafePolicy => f.write_str("strategy policy includes an unpermitted action"),
             Self::IncompletePolicy => f.write_str("strategy policy omits a required state"),
+            Self::InvalidRational => f.write_str("invalid exact rational"),
+            Self::DivisionByZero => f.write_str("exact arithmetic division by zero"),
+            Self::NegativeMass => f.write_str("a probability law cannot have negative mass"),
+            Self::LawOverlap => f.write_str("probability density pieces overlap"),
+            Self::LawNotNormalized => f.write_str("the joint probability law does not sum to one"),
+            Self::MissingLaw => f.write_str("the Event space has no designated probability law"),
         }
     }
 }

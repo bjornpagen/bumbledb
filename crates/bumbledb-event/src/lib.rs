@@ -14,9 +14,11 @@ mod codec;
 mod descriptor;
 mod diagram;
 mod error;
+mod exact;
 mod fixed_point;
 mod information;
 mod map;
+mod measure;
 mod partition;
 mod product;
 mod program;
@@ -31,11 +33,13 @@ pub use descriptor::{
 };
 pub use diagram::{Diagram, DiagramNode, DiagramView};
 pub use error::{Capacity, Control, Error, Limits, Result};
+pub use exact::{ArithmeticLimits, ExactArithmetic, ExactRational};
 pub use fixed_point::{
     FiniteCarrier, FixedPointLimits, FixedPointProgram, FixedPointResult, LayeredFixedPointResult,
 };
 pub use information::InformationCases;
 pub use map::{CoordinateMap, SurjectiveMap};
+pub use measure::{DensityPiece, LawLimits, ProbabilityObservation};
 pub use partition::{EventPartition, PartitionLimits};
 pub use product::{CompleteFibreSquare, FaceProduct, FibreProduct};
 pub use program::{
@@ -72,3 +76,9 @@ mod action_tests;
 
 #[cfg(test)]
 mod descriptor_tests;
+
+#[cfg(test)]
+mod exact_tests;
+
+#[cfg(test)]
+mod measure_tests;

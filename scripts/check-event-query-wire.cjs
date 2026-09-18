@@ -132,6 +132,21 @@ async function main() {
     assert.equal(moved.length, 2);
     for (const [value] of moved) assert.deepEqual(Buffer.from(value).subarray(8, 40), target.subarray(8, 40));
     const relationChecks = await require('./event-relation-wire.cjs')({ collect, query, fixture, full, a, number, blob });
+    const measured = Buffer.from(fs.readFileSync(path.join(__dirname, '../crates/bumbledb/tests/fixtures/event-v2-source.hex'), 'utf8').trim(), 'hex');
+    const measuredComplement = Buffer.from(measured);
+    measuredComplement.writeUInt32LE(measured.readUInt32LE(13 + 48) ^ 1, 13 + 48);
+    await insert([measured, measured]);
+    const echo = query({ kind: 'var', var: 0 }); echo.head = [{ kind: 'var' }];
+    const measuredRows = await collect(echo);
+    assert.equal(measuredRows.length, 3);
+    assert.equal(measuredRows.filter(([value]) => Buffer.from(value).equals(measured)).length, 1);
+    const complementRows = await collect(query({ kind: 'event', expr: { kind: 'not', expr: a } }));
+    assert.equal(complementRows.filter(([value]) => Buffer.from(value).equals(measuredComplement)).length, 1);
+    const badLaw = Buffer.from(measured);
+    const rational = badLaw.indexOf(Buffer.from('BERA'));
+    badLaw[rational + 23] = 3;
+    await assert.rejects(() => insert([badLaw]));
+    assert.equal((await collect(echo)).length, 3);
     const foreign = Buffer.from(empty); foreign.fill(43, 8, 40);
     await insert([foreign]);
     await assert.rejects(() => collect(pack));
@@ -140,6 +155,7 @@ async function main() {
       malformed_programs_refused: malformed.length,
       event_pack_evaluations: 4,
       event_map_evaluations: 8,
+      measured_wire_evaluations: 4, malformed_laws_refused: 1,
       ...relationChecks,
       addon_sha256: createHash('sha256').update(fs.readFileSync(binary)).digest('hex') }));
   } finally {

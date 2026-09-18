@@ -21,8 +21,8 @@
       "sha256": "7c6ce2642ef377c00b86433ca0c3aee26e30d20889be512549a50a9511e3e050"
     },
     "proposal/README.md": {
-      "bytes": 7147,
-      "sha256": "955337ce2a4f633ee5136ed83a1b0c25bfb962f4dd1bb92f99f14f8df464a64e"
+      "bytes": 7428,
+      "sha256": "f6308049934a4b08c1bce519638e3c00500d9d802c6bc67f540fc841fb77020e"
     },
     "proposal/RESEARCH-HANDOFF.md": {
       "bytes": 7608,
@@ -1301,12 +1301,12 @@
       "sha256": "aea69b7ba588b1e1694278c66a4210dd263fc3b2e4c8b669169fe11de0ee5d56"
     },
     "proposal/event-storage.md": {
-      "bytes": 6604,
-      "sha256": "3a0ba2d251aa0c6d719d42053d5bc735d7256af2f0be02ec4a70cd8940241666"
+      "bytes": 6618,
+      "sha256": "f6cd164e691c1737f430b05ef340033d22cab9a96f85aa08a6d30291123f508a"
     },
     "proposal/event-surface.md": {
-      "bytes": 7470,
-      "sha256": "724951e261d30faa14aca1fe1847105181a9849b375db1b8ba00869e3146ac58"
+      "bytes": 7731,
+      "sha256": "d33f83d3cbf4ce034a1f7b65a3aac6fc3c7af8ebe06bf9da0afcc9c8a8201066"
     },
     "proposal/examples/operations-schema.ts": {
       "bytes": 3779,
@@ -35289,8 +35289,8 @@
       "sha256": "10ce0cb12eb4ec2812e5bf5e52a8b971f0291e42db1494233af017332345f96d"
     },
     "proposal/implementation-plan.md": {
-      "bytes": 18965,
-      "sha256": "8e3d8cd219fb1438284eb2e10364e8012d3edab1d389e674e8f8020ee4771a44"
+      "bytes": 19650,
+      "sha256": "f5e37b7d3ae79530ed9ddb3c40e100d63c8296673450dceec079b8d594c644e0"
     },
     "proposal/kernels/arm64-probe.c": {
       "bytes": 2880,
@@ -35357,8 +35357,8 @@
       "sha256": "9872d0dfa8645a82aeb8d8ee4df47b17e7af163d9f9ef17ff2590c6945f7690f"
     },
     "proposal/proposal.md": {
-      "bytes": 15647,
-      "sha256": "2491191232616e8e319f15267057c51e0270411405e73fc07ae7fef637b13e9f"
+      "bytes": 15996,
+      "sha256": "4a2ba2530629cc8418721d5fd88ecaced53ef1dbc4a2fdbeed471a08e54808f8"
     },
     "proposal/query-algebra.md": {
       "bytes": 34148,
@@ -35377,8 +35377,8 @@
       "sha256": "5d64d689ba50ea3565f9a13f977c41c19b31ae8247e4448b9303cc08ae360986"
     },
     "proposal/representation.md": {
-      "bytes": 9883,
-      "sha256": "7a7d323dde446c8c3b3c8c9dfe4265729cc574fec2028b0670777e96d0d5a98b"
+      "bytes": 11245,
+      "sha256": "cfb94aa00d14177c04d878d24ad382ec04a71bf11cd70e0eda218bd29d31dcfd"
     },
     "proposal/research/README.md": {
       "bytes": 4411,
@@ -35685,8 +35685,8 @@
       "sha256": "099edfc4e756d56fd9d75d41d347fb36de2e0871e3f1a1e09229acefcae2b4c9"
     },
     "proposal/semantics/README.md": {
-      "bytes": 17628,
-      "sha256": "753018e67c71f89c0359ac6a9e1d63b1b5e04d1ad8b0218fe14490cb820e3487"
+      "bytes": 18160,
+      "sha256": "de81f5384e17dc263f39b1dd0b3029af3983498ef7e7d61a0963bd41ce6e96de"
     },
     "proposal/semantics/check.py": {
       "bytes": 4832,
@@ -36617,8 +36617,8 @@
       "sha256": "d1020bfa7943432784d43604f416892b489191b5c5c0f3dcdb68607caf3c3abe"
     },
     "proposal/source-law.md": {
-      "bytes": 11800,
-      "sha256": "abb31ca558587593394a393b2f4da0877a0c7aa84a4dd9a1f165abae000249c8"
+      "bytes": 12776,
+      "sha256": "c727516368370f62c92d8e835f0ac180c4babb0d64caea5d56d0323acb2affa5"
     },
     "proposal/sources.md": {
       "bytes": 25408,

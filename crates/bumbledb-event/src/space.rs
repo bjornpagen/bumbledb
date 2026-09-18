@@ -35,6 +35,7 @@ pub(crate) struct Owner {
     identity: SpaceId,
     dimensions: u8,
     pub(crate) support: Ref,
+    pub(crate) law: Option<Arc<crate::measure::FiniteLaw>>,
     anchor: u64,
     arena: Arc<Mutex<Arena>>,
 }
@@ -117,6 +118,7 @@ impl Space {
             identity,
             dimensions,
             support: 1,
+            law: None,
             anchor: 0,
             arena: Arc::new(Mutex::new(arena)),
         })))
@@ -241,7 +243,8 @@ impl Space {
     }
 
     /// Capture a nonempty restriction as a new context. Existing Events remain
-    /// immutable; use `Event::in_space` to transfer them explicitly.
+    /// immutable; use `Event::in_space` to transfer them explicitly. The new
+    /// context is unmeasured; structural restriction is not conditioning.
     /// # Errors
     /// Refuses mismatched owners, empty support or unavailable resources.
     pub fn restrict(&self, legal: &Event, control: &dyn Control) -> Result<Self> {
@@ -259,8 +262,30 @@ impl Space {
             identity: self.identity(),
             dimensions: self.dimensions(),
             support,
+            law: None,
             anchor,
             arena: self.0.arena.clone(),
+        })))
+    }
+
+    pub(crate) fn measurement_bytes(&self) -> Option<&[u8]> {
+        self.0.law.as_ref().map(|law| law.canonical.as_ref())
+    }
+
+    pub(crate) fn with_measurement(
+        &self,
+        law: Option<Arc<crate::measure::FiniteLaw>>,
+        control: &dyn Control,
+    ) -> Result<Self> {
+        control.checkpoint()?;
+        Ok(Self(Arc::new(Owner {
+            token: token()?,
+            identity: self.identity(),
+            dimensions: self.dimensions(),
+            support: self.0.support,
+            anchor: self.0.anchor,
+            arena: self.0.arena.clone(),
+            law,
         })))
     }
 
@@ -290,17 +315,27 @@ impl Event {
             self.owner.identity,
             self.owner.support,
             self.root,
+            self.owner.law.as_ref().map(|law| law.canonical.clone()),
             &mut arena,
             control,
         )
     }
 
-    /// Canonical versioned bytes of this unmeasured space and region. Allocation,
+    /// Canonical versioned bytes of this space, designated law and region. Allocation,
     /// decoder aliases, working order and local-table cutoff do not determine
     /// these bytes. Conversion can exceed an explicit resource limit.
     /// # Errors
     /// Refuses cancellation, allocation or conversion-capacity exhaustion.
     pub fn to_bytes(&self, control: &dyn Control) -> Result<Vec<u8>> {
+        let structural = self.structural_bytes(control)?;
+        if let Some(law) = &self.owner.law {
+            crate::measure::wire::encode(&structural, &law.canonical, control)
+        } else {
+            Ok(structural)
+        }
+    }
+
+    pub(crate) fn structural_bytes(&self, control: &dyn Control) -> Result<Vec<u8>> {
         control.checkpoint()?;
         let mut arena = self.owner.lock()?;
         crate::codec::encode(
@@ -331,6 +366,32 @@ impl Event {
         limits: Limits,
         control: &dyn Control,
     ) -> Result<Self> {
+        Self::from_bytes_with_source_limits(
+            bytes,
+            order,
+            limits,
+            crate::LawLimits::default(),
+            crate::ArithmeticLimits::default(),
+            control,
+        )
+    }
+
+    /// Reconstruct with explicit finite-law payload and arithmetic budgets as
+    /// well as graph limits. Unmeasured BEVT v1 retains its original contract.
+    /// # Errors
+    /// Malformed or noncanonical sources, unsupported versions, contexts,
+    /// normalization, cancellation or exhausted resource limits.
+    pub fn from_bytes_with_source_limits(
+        bytes: &[u8],
+        order: Option<&[u8]>,
+        limits: Limits,
+        law: crate::LawLimits,
+        arithmetic: crate::ArithmeticLimits,
+        control: &dyn Control,
+    ) -> Result<Self> {
+        if bytes.get(..5) == Some(b"BEVT\x02") {
+            return crate::measure::wire::decode(bytes, order, limits, law, arithmetic, control);
+        }
         let decoded = crate::codec::decode(bytes, order, limits, control)?;
         let anchor = decoded
             .arena
@@ -341,6 +402,7 @@ impl Event {
             identity: decoded.identity,
             dimensions: decoded.dimensions,
             support: decoded.support,
+            law: None,
             anchor,
             arena: Arc::new(Mutex::new(decoded.arena)),
         });
@@ -377,7 +439,7 @@ impl Event {
         }
     }
 
-    fn aligned(&self, other: &Self) -> Result<()> {
+    pub(crate) fn aligned(&self, other: &Self) -> Result<()> {
         if Arc::ptr_eq(&self.owner, &other.owner) {
             Ok(())
         } else {
@@ -427,7 +489,8 @@ impl Event {
     }
 
     /// Transfer to an explicitly restricted context sharing these coordinates.
-    /// This is a support map, not a probability conditioning operation.
+    /// This explicitly transfers structure across restrictions or designated
+    /// law revisions; it does not assert preservation of probability.
     /// # Errors
     /// Refuses unrelated coordinate owners or a target extending source support.
     pub fn in_space(&self, target: &Space, control: &dyn Control) -> Result<Self> {
@@ -446,12 +509,14 @@ impl Event {
     }
 
     /// Align independently owned presentations of the same named space.
-    /// Checks equal source identity, coordinates and admissible support before
+    /// Checks equal source identity, designated law, coordinates and support before
     /// completing the translated region with the target's decoder.
     /// # Errors
     /// Refuses unequal contexts, cancellation and exhausted resources.
     pub fn align_to(&self, target: &Space, control: &dyn Control) -> Result<Self> {
-        if self.owner.identity != target.0.identity || self.owner.dimensions != target.0.dimensions
+        if self.owner.identity != target.0.identity
+            || self.owner.dimensions != target.0.dimensions
+            || self.space().measurement_bytes() != target.measurement_bytes()
         {
             return Err(Error::SpaceMismatch);
         }

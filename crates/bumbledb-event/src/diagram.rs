@@ -23,6 +23,7 @@ struct Record {
 #[derive(Debug)]
 struct Graph {
     identity: SpaceId,
+    measurement: Option<Arc<[u8]>>,
     dimensions: u8,
     order: Vec<u8>,
     support: Ref,
@@ -144,7 +145,10 @@ impl Diagram {
     /// # Errors
     /// Refuses unequal identities, dimensions or support, cancellation or capacity.
     pub fn rebuild(&self, target: &Space, control: &dyn Control) -> Result<Event> {
-        if self.identity() != target.identity() || self.dimensions() != target.dimensions() {
+        if self.identity() != target.identity()
+            || self.dimensions() != target.dimensions()
+            || self.0.measurement.as_deref() != target.measurement_bytes()
+        {
             return Err(Error::SpaceMismatch);
         }
         control.checkpoint()?;
@@ -380,6 +384,7 @@ pub(crate) fn capture(
     identity: SpaceId,
     support: Ref,
     root: Ref,
+    measurement: Option<Arc<[u8]>>,
     arena: &mut Arena,
     control: &dyn Control,
 ) -> Result<Diagram> {
@@ -392,6 +397,7 @@ pub(crate) fn capture(
         op: Operation::new(arena, control)?,
         graph: Graph {
             identity,
+            measurement,
             dimensions,
             order,
             support: 0,
