@@ -85,6 +85,8 @@ pub use api::prepared::{
     Answer, AnswerValue, Answers, BindArgs, BindValue, CompleteResult, DeliveryTicket, ParamArg,
     PreparedQuery, ResultCursor, ResultIdentity, ResultPage, ResultRow,
 };
+pub use bumbledb_theory::event;
+pub use bumbledb_theory::event::Event;
 pub use bumbledb_theory::interval::SegmentOp;
 pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Uuid};
 pub use changes::{ChangeError, ChangeSet, ChangeSetBuilder};

@@ -14,6 +14,7 @@ pub mod schema;
 pub mod value;
 
 pub use allen::{AllenMask, Basic};
+pub use bumbledb_event as event;
 pub use float::{F64, F64CastError, F64ParseError};
 pub use interval::{Discrete, Element, FloatMeasureError, Interval};
 pub use schema::ValueType;

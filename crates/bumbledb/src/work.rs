@@ -57,6 +57,15 @@ impl WorkContext {
     }
 }
 
+impl bumbledb_theory::event::Control for WorkContext {
+    fn checkpoint(&self) -> bumbledb_theory::event::Result<()> {
+        Self::checkpoint(self).map_err(|error| match error {
+            WorkError::Cancelled => bumbledb_theory::event::Error::Cancelled,
+            WorkError::Allocation => bumbledb_theory::event::Error::Allocation,
+        })
+    }
+}
+
 pub mod cache;
 
 pub use crate::exec::scratch::{

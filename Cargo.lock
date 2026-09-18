@@ -144,6 +144,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bumbledb-event"
+version = "1.3.1"
+
+[[package]]
 name = "bumbledb-log"
 version = "1.3.1"
 dependencies = [
@@ -182,6 +186,7 @@ dependencies = [
 name = "bumbledb-theory"
 version = "1.3.1"
 dependencies = [
+ "bumbledb-event",
  "uuid",
 ]
 

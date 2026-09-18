@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/bumbledb",
+    "crates/bumbledb-event",
     "crates/bumbledb-bench",
     "crates/bumbledb-log",
     "crates/bumbledb-macros",
