@@ -1,7 +1,7 @@
 //! Constructive Event heads; this grammar binds only existing body variables.
 use super::{
-    Name, Parse, Scope, Tokens, expect_ident, expect_punct, fail, parse_int, peek_punct, peek_span,
-    take_paren_group,
+    Import, ImportKind, Name, Parse, Scope, Tokens, expect_ident, expect_punct, fail, parse_int,
+    peek_punct, peek_span, take_paren_group,
 };
 use proc_macro::{Delimiter, TokenTree};
 
@@ -21,6 +21,11 @@ pub(super) enum Region {
         minimum: usize,
         maximum: usize,
         values: Vec<Self>,
+    },
+    Map {
+        operation: String,
+        input: Box<Self>,
+        name: Name,
     },
 }
 
@@ -113,6 +118,18 @@ fn unary(tokens: &mut Tokens, depth: usize) -> Parse<Region> {
     let op = match name.text.as_str() {
         "Empty" => "Empty",
         "Full" => "Full",
+        "Pullback" | "Image" | "UniversalImage" | "NonvacuousImage" | "Possible" | "Guaranteed" => {
+            let (mut args, _) = take_paren_group(tokens, "Event readout arguments")?;
+            let input = expression(&mut args, 0, depth + 1)?;
+            expect_punct(&mut args, ',', "`,` before the imported map")?;
+            let map = expect_ident(&mut args, "a `use map` import")?;
+            end(&mut args)?;
+            return Ok(Region::Map {
+                operation: name.text,
+                input: Box::new(input),
+                name: map,
+            });
+        }
         "Ite" | "AtLeast" | "AtMost" | "Exactly" => {
             let (mut args, _) = take_paren_group(tokens, "Event constructor arguments")?;
             if name.text == "Ite" {
@@ -178,7 +195,7 @@ fn unary(tokens: &mut Tokens, depth: usize) -> Parse<Region> {
 }
 
 impl Region {
-    pub(super) fn emit(&self, scope: &Scope, depth: usize) -> Parse<String> {
+    pub(super) fn emit(&self, scope: &Scope, imports: &[Import], depth: usize) -> Parse<String> {
         if depth > 128 {
             return fail(
                 proc_macro::Span::call_site(),
@@ -187,7 +204,7 @@ impl Region {
         }
         let child = |value: &Self| {
             value
-                .emit(scope, depth + 1)
+                .emit(scope, imports, depth + 1)
                 .map(|s| format!("::std::boxed::Box::new({s})"))
         };
         let prefix = "::bumbledb::EventExpr";
@@ -215,11 +232,29 @@ impl Region {
             } => {
                 let values = values
                     .iter()
-                    .map(|v| v.emit(scope, depth + 1))
+                    .map(|v| v.emit(scope, imports, depth + 1))
                     .collect::<Parse<Vec<_>>>()?
                     .join(",");
                 format!(
                     "{prefix}::Cardinality {{ minimum: {minimum}, maximum: {maximum}, events: ::std::vec![{values}] }}"
+                )
+            }
+            Self::Map {
+                operation,
+                input,
+                name,
+            } => {
+                let Some((index, _)) = imports.iter().enumerate().find(|(_, import)| {
+                    import.kind == ImportKind::Map && import.name.text == name.text
+                }) else {
+                    return fail(
+                        name.span,
+                        "query!: readout requires a declared `use map` import",
+                    );
+                };
+                format!(
+                    "{prefix}::Map {{ operation: ::bumbledb::event::MapOp::{operation}, map: __event_import{index}.clone(), input: {} }}",
+                    child(input)?
                 )
             }
         })
@@ -227,11 +262,11 @@ impl Region {
 }
 
 impl Test {
-    pub(super) fn emit(&self, scope: &Scope) -> Parse<String> {
+    pub(super) fn emit(&self, scope: &Scope, imports: &[Import]) -> Parse<String> {
         let values = self
             .values
             .iter()
-            .map(|value| value.emit(scope, 0))
+            .map(|value| value.emit(scope, imports, 0))
             .collect::<Parse<Vec<_>>>()?
             .join(",");
         Ok(format!("::bumbledb::EventTest::{}({values})", self.op))

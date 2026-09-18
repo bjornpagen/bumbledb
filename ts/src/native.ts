@@ -128,6 +128,12 @@ type EventExprIr =
 	| { readonly kind: "apply"; readonly bits: number; readonly left: EventExprIr; readonly right: EventExprIr }
 	| { readonly kind: "ite"; readonly condition: EventExprIr; readonly high: EventExprIr; readonly low: EventExprIr }
 	| {
+			readonly kind: "map"
+			readonly op: "pullback" | "image" | "universalImage" | "nonvacuousImage" | "possible" | "guaranteed"
+			readonly descriptor: Uint8Array
+			readonly expr: EventExprIr
+	  }
+	| {
 			readonly kind: "cardinality"
 			readonly minimum: bigint
 			readonly maximum: bigint

@@ -72,7 +72,7 @@ function floatValue(context: string, input: unknown): number {
 
 /** Read typed-array internal slots through the intrinsic getters, never a
  * caller's shadowed buffer/length properties or custom iterator. */
-function bytesValue(context: string, input: unknown): Uint8Array {
+function bytesValue(context: string, input: unknown, maximum?: number): Uint8Array {
 	if (!(input instanceof Uint8Array)) return invalid(context, "Uint8Array")
 	const prototype = Object.getPrototypeOf(Uint8Array.prototype)
 	const buffer = Reflect.get(prototype, "buffer", input)
@@ -83,6 +83,7 @@ function bytesValue(context: string, input: unknown): Uint8Array {
 		})
 	const offset = Reflect.get(prototype, "byteOffset", input)
 	const length = Reflect.get(prototype, "byteLength", input)
+	if (maximum !== undefined && length > maximum) return invalid(context, `at most ${maximum} bytes`)
 	try {
 		return new Uint8Array(new Uint8Array(buffer, offset, length))
 	} catch {

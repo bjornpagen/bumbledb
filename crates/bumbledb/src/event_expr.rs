@@ -1,7 +1,13 @@
 //! Pure-data Event outputs. Variables name body bindings, never head aliases.
 //! Shape admission precedes cloning/lowering; runtime scope admission precedes
 //! every algebraic shortcut, including constant truth functions and ITE.
-use crate::{VarId, event::BoolOp4};
+use crate::{
+    VarId,
+    event::{BoolOp4, MapOp, Space},
+};
+
+mod import;
+pub use import::EventImport;
 
 /// Stable logical identity of one participating context refusal. Canonical
 /// bytes contain source/support/value identity, never resident arena keys.
@@ -47,6 +53,12 @@ pub enum EventExpr {
         maximum: usize,
         events: Vec<Self>,
     },
+    /// A captured total readout determines both input and output contexts.
+    Map {
+        operation: MapOp,
+        map: EventImport,
+        input: Box<Self>,
+    },
 }
 
 /// A Boolean statement about whole regions, suitable for a later-stage filter.
@@ -67,6 +79,9 @@ pub enum EventExprError {
     TooLarge,
     EmptyRoster,
     NotEvent(VarId),
+    ImportKind,
+    ImportBudget,
+    IncompatibleContexts,
 }
 
 impl std::fmt::Display for EventExprError {
@@ -86,7 +101,22 @@ impl EventExpr {
     /// # Errors
     /// Excessive nesting/nodes or a roster without a scope anchor.
     pub fn validate_shape(&self) -> Result<(), EventExprError> {
-        validate_shape(vec![self])
+        validate_shape(vec![self])?;
+        validate_contexts(self, self.output_marker())
+    }
+
+    pub(crate) fn output_space(&self) -> Option<&Space> {
+        match self {
+            Self::Map { operation, map, .. } => map.map_spaces(*operation).map(|(_, out)| out),
+            _ => children(self).into_iter().find_map(Self::output_space),
+        }
+    }
+
+    fn output_marker(&self) -> Option<&[u8]> {
+        match self {
+            Self::Map { operation, map, .. } => map.map_markers(*operation).map(|(_, out)| out),
+            _ => children(self).into_iter().find_map(Self::output_marker),
+        }
     }
 }
 
@@ -109,11 +139,17 @@ impl EventTest {
     /// # Errors
     /// As [`EventExpr::validate_shape`], bounding the whole test.
     pub fn validate_shape(&self) -> Result<(), EventExprError> {
-        validate_shape(self.roots())
+        let roots = self.roots();
+        validate_shape(roots.clone())?;
+        let expected = roots.iter().find_map(|expr| expr.output_marker());
+        for root in roots {
+            validate_contexts(root, expected)?;
+        }
+        Ok(())
     }
 }
 
-fn children(expr: &EventExpr) -> Vec<&EventExpr> {
+pub(crate) fn children(expr: &EventExpr) -> Vec<&EventExpr> {
     match expr {
         EventExpr::Var(_) | EventExpr::Empty(_) | EventExpr::Full(_) => vec![],
         EventExpr::Not(value) => vec![value],
@@ -124,6 +160,7 @@ fn children(expr: &EventExpr) -> Vec<&EventExpr> {
             low,
         } => vec![condition, high, low],
         EventExpr::Cardinality { events, .. } => events.iter().collect(),
+        EventExpr::Map { input, .. } => vec![input],
     }
 }
 
@@ -144,6 +181,7 @@ fn variables(mut pending: Vec<&EventExpr>) -> impl Iterator<Item = VarId> {
 fn validate_shape(roots: Vec<&EventExpr>) -> Result<(), EventExprError> {
     let mut pending: Vec<_> = roots.into_iter().map(|root| (root, 1)).collect();
     let mut nodes = 0;
+    let mut import_bytes = 0usize;
     while let Some((expr, depth)) = pending.pop() {
         nodes += 1;
         if depth > 128 {
@@ -160,7 +198,39 @@ fn validate_shape(roots: Vec<&EventExpr>) -> Result<(), EventExprError> {
                 return Err(EventExprError::TooLarge);
             }
         }
+        if let EventExpr::Map { map, .. } = expr {
+            if map.map().is_none() {
+                return Err(EventExprError::ImportKind);
+            }
+            import_bytes = import_bytes.saturating_add(map.bytes().len());
+            if import_bytes > 16 * 1024 * 1024 {
+                return Err(EventExprError::ImportBudget);
+            }
+        }
         pending.extend(children(expr).into_iter().map(|child| (child, depth + 1)));
+    }
+    Ok(())
+}
+
+// All ordinary Boolean nodes preserve one context. A readout supplies a typed
+// boundary; its input constraints cannot leak into its output component.
+fn validate_contexts(expr: &EventExpr, expected: Option<&[u8]>) -> Result<(), EventExprError> {
+    if let EventExpr::Map {
+        operation,
+        map,
+        input,
+    } = expr
+    {
+        let (source, target) = map
+            .map_markers(*operation)
+            .ok_or(EventExprError::ImportKind)?;
+        if expected.is_some_and(|expected| expected != target) {
+            return Err(EventExprError::IncompatibleContexts);
+        }
+        return validate_contexts(input, Some(source));
+    }
+    for child in children(expr) {
+        validate_contexts(child, expected)?;
     }
     Ok(())
 }

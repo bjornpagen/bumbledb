@@ -351,5 +351,23 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 			])
 				assert.throws(() => parseQueryIr(output({ kind: "event", expr })), { name: "AuthoringError" })
 		})
+		test("owns bounded BEDC payloads while native import remains the semantic gate", () => {
+			const descriptor = new Uint8Array([66, 69, 68, 67, 1, 0])
+			const make = (bytes: Uint8Array, op = "image") => ({
+				kind: "map", op, descriptor: bytes, expr: { kind: "var", var: 0 }
+			})
+			const parsed = parseQueryIr(output({ kind: "event", expr: make(descriptor) }))
+			const find = parsed.rules[0]?.finds[0]
+			assert.equal(find?.kind, "event")
+			if (find?.kind !== "event" || find.expr.kind !== "map") throw new Error("map")
+			descriptor.fill(0)
+			assert.deepEqual(find.expr.descriptor, new Uint8Array([66, 69, 68, 67, 1, 0]))
+			assert.throws(() => parseQueryIr(output({ kind: "event", expr: make(descriptor, "unknown") })))
+			assert.throws(() => parseQueryIr(output({ kind: "event", expr: make(new Uint8Array(new SharedArrayBuffer(6))) })))
+			const large = new Uint8Array(8 * 1024 * 1024 + 1)
+			assert.throws(() => parseQueryIr(output({ kind: "test", expr: {
+				kind: "equal", left: make(large), right: make(large)
+			} })), /at most/)
+		})
 	})
 })

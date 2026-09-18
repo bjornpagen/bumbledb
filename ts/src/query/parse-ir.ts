@@ -14,7 +14,7 @@ import type {
 	TermIr
 } from "#native.ts"
 import { roundingMode } from "#scalar.ts"
-import { arrayValue as array, recordValue, valueDescriptor } from "#values.ts"
+import { arrayValue as array, bytesValue, recordValue, valueDescriptor } from "#values.ts"
 
 function fail(context: string, expected: string): never {
 	throw new AuthoringError({
@@ -119,11 +119,21 @@ function eventCount(context: string, input: unknown): bigint {
 	return input
 }
 
-function eventExpr(context: string, input: unknown, depth = 1, budget = { remaining: 4096 }): EventExprIr {
+function eventExpr(context: string, input: unknown, depth = 1, budget = { remaining: 4096, bytes: 16 * 1024 * 1024 }): EventExprIr {
 	if (depth > 128 || budget.remaining-- <= 0) return fail(context, "Event expression exceeds shape budget")
 	const raw = tagged(context, input)
 	const child = (key: string) => eventExpr(`${context}.${key}`, raw[key], depth + 1, budget)
 	switch (raw.kind) {
+		case "map": {
+			recordValue(context, raw, ["kind", "op", "descriptor", "expr"])
+			const op = raw.op
+			if (op !== "pullback" && op !== "image" && op !== "universalImage" && op !== "nonvacuousImage" && op !== "possible" && op !== "guaranteed")
+				return fail(context, "unknown Event readout operation")
+			const descriptor = bytesValue(`${context}.descriptor`, raw.descriptor, budget.bytes)
+			budget.bytes -= descriptor.byteLength
+			if (budget.bytes < 0) return fail(context, "Event imports exceed 16 MiB per expression/test")
+			return Object.freeze({ kind: raw.kind, op, descriptor, expr: child("expr") })
+		}
 		case "var":
 		case "empty":
 		case "full":
@@ -161,7 +171,7 @@ function eventExpr(context: string, input: unknown, depth = 1, budget = { remain
 
 function eventTest(context: string, input: unknown): EventTestIr {
 	const raw = tagged(context, input)
-	const budget = { remaining: 4096 }
+	const budget = { remaining: 4096, bytes: 16 * 1024 * 1024 }
 	const child = (key: string) => eventExpr(`${context}.${key}`, raw[key], 1, budget)
 	switch (raw.kind) {
 		case "isEmpty":

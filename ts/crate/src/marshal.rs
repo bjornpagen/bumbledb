@@ -980,11 +980,25 @@ fn scalar_child(obj: &Object, key: &str, depth: usize) -> napi::Result<ScalarExp
     scalar_expr_in(&child, depth + 1)
 }
 
+struct EventBudget {
+    nodes: usize,
+    bytes: usize,
+}
+
+impl EventBudget {
+    fn new() -> Self {
+        Self {
+            nodes: 4096,
+            bytes: 16 * 1024 * 1024,
+        }
+    }
+}
+
 fn event_child(
     obj: &Object,
     key: &str,
     depth: usize,
-    remaining: &mut usize,
+    remaining: &mut EventBudget,
 ) -> napi::Result<bumbledb::EventExpr> {
     let child: Object = req(obj, key, "Event expression")?;
     event_expr_in(&child, depth + 1, remaining)
@@ -993,15 +1007,16 @@ fn event_child(
 fn event_expr_in(
     obj: &Object,
     depth: usize,
-    remaining: &mut usize,
+    remaining: &mut EventBudget,
 ) -> napi::Result<bumbledb::EventExpr> {
     use bumbledb::EventExpr as E;
-    if depth > 128 || *remaining == 0 {
+    if depth > 128 || remaining.nodes == 0 {
         return Err(err("Event expression exceeds shape budget".into()));
     }
-    *remaining -= 1;
+    remaining.nodes -= 1;
     let kind = req_text(obj, "kind", "Event expression")?;
     match kind.as_str() {
+        "map" => event_map_in(obj, depth, remaining),
         "var" | "empty" | "full" => {
             exact_fields(obj, &["kind", "var"])?;
             let var = var_in(obj, "var", "Event operand")?;
@@ -1050,7 +1065,7 @@ fn event_expr_in(
             )?;
             let events: Array = req(obj, "events", "Event cardinality")?;
             let len = events.len() as usize;
-            if len == 0 || len > *remaining {
+            if len == 0 || len > remaining.nodes {
                 return Err(err(
                     "Event roster needs 1..4096 scope-bearing positions".into()
                 ));
@@ -1074,10 +1089,44 @@ fn event_expr_in(
     }
 }
 
+fn event_map_in(
+    obj: &Object,
+    depth: usize,
+    remaining: &mut EventBudget,
+) -> napi::Result<bumbledb::EventExpr> {
+    exact_fields(obj, &["kind", "op", "descriptor", "expr"])?;
+    let name = req_text(obj, "op", "Event readout")?;
+    let operation = match name.as_str() {
+        "pullback" => bumbledb::event::MapOp::Pullback,
+        "image" => bumbledb::event::MapOp::Image,
+        "universalImage" => bumbledb::event::MapOp::UniversalImage,
+        "nonvacuousImage" => bumbledb::event::MapOp::NonvacuousImage,
+        "possible" => bumbledb::event::MapOp::Possible,
+        "guaranteed" => bumbledb::event::MapOp::Guaranteed,
+        _ => return Err(err("unknown Event readout operation".into())),
+    };
+    let bytes = req::<Uint8Array>(obj, "descriptor", "Event BEDC import")?;
+    remaining.bytes = remaining
+        .bytes
+        .checked_sub(bytes.len())
+        .ok_or_else(|| err("Event imports exceed 16 MiB per expression/test".into()))?;
+    let map = bumbledb::EventImport::from_bytes(
+        &bytes,
+        bumbledb::event::DescriptorLimits::default(),
+        &(),
+    )
+    .map_err(|error| err(format!("Event import: {error}")))?;
+    Ok(bumbledb::EventExpr::Map {
+        operation,
+        map,
+        input: Box::new(event_child(obj, "expr", depth, remaining)?),
+    })
+}
+
 fn event_test_in(obj: &Object) -> napi::Result<bumbledb::EventTest> {
     use bumbledb::EventTest as T;
     let kind = req_text(obj, "kind", "Event test")?;
-    let mut remaining = 4096;
+    let mut remaining = EventBudget::new();
     match kind.as_str() {
         "isEmpty" | "isFull" => {
             exact_fields(obj, &["kind", "expr"])?;
@@ -1163,7 +1212,11 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
         tags::find_term::EVENT => {
             exact_fields(obj, &["kind", "expr"])?;
             let expr: Object = req(obj, "expr", "Event find")?;
-            Ok(FindTerm::Event(event_expr_in(&expr, 1, &mut 4096)?))
+            Ok(FindTerm::Event(event_expr_in(
+                &expr,
+                1,
+                &mut EventBudget::new(),
+            )?))
         }
         tags::find_term::TEST => {
             exact_fields(obj, &["kind", "expr"])?;

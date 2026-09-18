@@ -1,16 +1,16 @@
 # Event evidence
 
 The [implementation ledger](../event-implementation.md) records passing feature
-slices and the remaining M0–M8 gates. The current finite descriptor checkpoint is
-[native-descriptor-qualification](native-descriptor-qualification/check.json),
+slices and the remaining M0–M8 gates. The current captured-readout checkpoint is
+[native-query-map-qualification](native-query-map-qualification/check.json),
 with exact source hashes and all fourteen native qualification commands.
-[native-descriptor-semantics](native-descriptor-semantics/check.json) contains
-237 Lean reports; the proposal adds 246 reports over its separate source suite.
+[native-query-map-semantics](native-query-map-semantics/check.json) contains
+255 Lean reports; the proposal adds 246 reports over its separate source suite.
 
 [portable-package-check](portable-package-check/check.json) reruns both Lean suites
 and the readiness audit in a temporary checkout containing only staged Git files.
 Its input tree, package hash, exact commands, manifests and logs are retained.
-This rules out a dependency on untracked research sources for those checks; it
+At its recorded input tree this rules out a dependency on untracked research sources for those checks; it
 does not qualify Rust, solver behavior or native performance.
 
 Earlier passing directories remain immutable evidence for their named source

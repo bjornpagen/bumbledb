@@ -31,11 +31,30 @@ async function main() {
     assert.equal(opened.tag, 'accepted');
     db = opened.db;
     snapshot = (await operation(cb => native.runtimeDbSnapshot(db, cb), native.runtimeSnapshotTake)).snapshot;
+    // The pinned canonical row fixture contains one coordinate predicate.
+    // Complement toggles its root; terminal full/empty need no graph nodes.
+    const fixture = Buffer.from(fs.readFileSync(path.join(__dirname, '../crates/bumbledb/tests/fixtures/event-v1-row.hex'), 'utf8').trim(), 'hex').subarray(11);
+    assert.equal(fixture.subarray(0, 4).toString(), 'BEVT');
+    const complement = Buffer.from(fixture);
+    complement.writeUInt32LE(fixture.readUInt32LE(48) ^ 1, 48);
+    assert.equal(fixture[5], 2);
+    const secondCoordinate = Buffer.from(fixture); secondCoordinate[52] = 1;
+    const full = Buffer.alloc(52); fixture.copy(full, 0, 0, 40);
+    full.writeUInt32LE(1, 44); full.writeUInt32LE(1, 48);
+    const empty = Buffer.from(full); empty.writeUInt32LE(0, 48);
     const a = { kind: 'var', var: 0 };
     const expressions = [a, { kind: 'empty', var: 0 }, { kind: 'full', var: 0 },
       { kind: 'not', expr: a }, { kind: 'ite', condition: a, high: a, low: a },
       { kind: 'cardinality', minimum: 2n, maximum: 2n, events: [a, a] },
       ...Array.from({ length: 16 }, (_, bits) => ({ kind: 'apply', bits, left: a, right: a }))];
+    const number = value => { const bytes = Buffer.alloc(8); bytes.writeBigUInt64LE(BigInt(value)); return bytes; };
+    const blob = bytes => Buffer.concat([number(bytes.length), bytes]);
+    const mapBytes = (source, target, ...readouts) => Buffer.concat([
+      Buffer.from('BEDC'), Buffer.from([1, 0]), blob(source), blob(target),
+      number(readouts.length), ...readouts.map(blob)]);
+    const inverse = mapBytes(full, full, complement, secondCoordinate);
+    const mapOps = ['pullback', 'image', 'universalImage', 'nonvacuousImage', 'possible', 'guaranteed'];
+    expressions.push(...mapOps.map(op => ({ kind: 'map', op, descriptor: inverse, expr: a })));
     const valid = expressions.map(expr => ({ kind: 'event', expr }));
     valid.push(...['isEmpty', 'isFull'].map(kind => ({ kind: 'test', expr: { kind, expr: a } })),
       ...['subset', 'equal', 'disjoint', 'covers'].map(kind => ({ kind: 'test', expr: { kind, left: a, right: a } })));
@@ -48,6 +67,11 @@ async function main() {
     }
     const malformed = [
       { kind: 'full', var: 0, ignored: true }, { kind: 'var', var: -1 },
+      { kind: 'map', op: 'image', descriptor: new Uint8Array(), expr: a },
+      { kind: 'map', op: 'unknown', descriptor: inverse, expr: a },
+      { kind: 'map', op: 'image', descriptor: inverse, expr: a, ignored: true },
+      { kind: 'map', op: 'image', descriptor: mapBytes(fixture, full, fixture, secondCoordinate), expr: a },
+      { kind: 'map', op: 'image', descriptor: mapBytes(full, full, fixture), expr: a },
       { kind: 'apply', bits: 16, left: a, right: a }, { kind: 'not' },
       { kind: 'ite', condition: a, high: a },
       { kind: 'cardinality', minimum: 0n, maximum: 0n, events: [] },
@@ -65,15 +89,6 @@ async function main() {
     };
     const pack = query({ kind: 'pack', over: 0 });
     assert.deepEqual(await collect(pack), []);
-    // The pinned canonical row fixture contains one coordinate predicate.
-    // Complement toggles its root; terminal full/empty need no graph nodes.
-    const fixture = Buffer.from(fs.readFileSync(path.join(__dirname, '../crates/bumbledb/tests/fixtures/event-v1-row.hex'), 'utf8').trim(), 'hex').subarray(11);
-    assert.equal(fixture.subarray(0, 4).toString(), 'BEVT');
-    const complement = Buffer.from(fixture);
-    complement.writeUInt32LE(fixture.readUInt32LE(48) ^ 1, 48);
-    const full = Buffer.alloc(52); fixture.copy(full, 0, 0, 40);
-    full.writeUInt32LE(1, 44); full.writeUInt32LE(1, 48);
-    const empty = Buffer.from(full); empty.writeUInt32LE(0, 48);
     const insert = async values => {
       const draft = await operation(cb => native.runtimeDraftOpen(runtime, spec, cb), native.runtimeDraftTake);
       let changes;
@@ -99,12 +114,31 @@ async function main() {
     const missing = await collect(staged);
     assert.equal(missing.length, 1);
     assert.deepEqual(Buffer.from(missing[0][0]), empty);
+    for (const op of mapOps) {
+      const ir = query({ kind: 'event', expr: { kind: 'map', op, descriptor: inverse, expr: a } });
+      ir.head.unshift({ kind: 'var' });
+      ir.rules[0].finds.unshift({ kind: 'var', var: 0 });
+      const rows = await collect(ir);
+      assert.equal(rows.length, 2);
+      for (const [before, after] of rows) {
+        const unchanged = ['possible', 'guaranteed'].includes(op);
+        const expected = unchanged ? before : (Buffer.from(before).equals(fixture) ? complement : fixture);
+        assert.deepEqual(Buffer.from(after), Buffer.from(expected));
+      }
+    }
+    const target = Buffer.from(full); target.fill(44, 8, 40);
+    const moved = await collect(query({ kind: 'event', expr: {
+      kind: 'map', op: 'image', descriptor: mapBytes(full, target, fixture, secondCoordinate), expr: a } }));
+    assert.equal(moved.length, 2);
+    for (const [value] of moved) assert.deepEqual(Buffer.from(value).subarray(8, 40), target.subarray(8, 40));
     const foreign = Buffer.from(empty); foreign.fill(43, 8, 40);
     await insert([foreign]);
     await assert.rejects(() => collect(pack));
+    await assert.rejects(() => collect(query({ kind: 'event', expr: { kind: 'map', op: 'image', descriptor: inverse, expr: a } })));
     console.log(JSON.stringify({ passed: true, constructors_admitted: valid.length,
       malformed_programs_refused: malformed.length,
       event_pack_evaluations: 4,
+      event_map_evaluations: 8,
       addon_sha256: createHash('sha256').update(fs.readFileSync(binary)).digest('hex') }));
   } finally {
     if (snapshot) await close(native.runtimeSnapshotClose, snapshot);

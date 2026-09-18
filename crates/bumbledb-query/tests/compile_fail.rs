@@ -369,5 +369,5 @@ fn compile_fail_fixtures() {
     // walls: an unknown `params!` name, a missing param
     // (typestate), a doubled `params!` name, a scalar-and-set mixed param,
     // and a keyword param name.
-    assert_eq!(seen, 40, "the compile-fail roster has forty fixtures");
+    assert_eq!(seen, 41, "the compile-fail roster has forty-one fixtures");
 }

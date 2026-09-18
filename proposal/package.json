@@ -13,16 +13,16 @@
   ],
   "files": {
     "proposal/.gitignore": {
-      "bytes": 420,
-      "sha256": "b81190190ddf026091daa3b7663a0f31c68cfac28e72f7fddcd7af7800c42f80"
+      "bytes": 443,
+      "sha256": "a21d8ac8ad3b64b88c2a356450baa4e646fea9318a8d25722b0ab147fc146374"
     },
     "proposal/PACKAGE.md": {
       "bytes": 3845,
       "sha256": "7c6ce2642ef377c00b86433ca0c3aee26e30d20889be512549a50a9511e3e050"
     },
     "proposal/README.md": {
-      "bytes": 6844,
-      "sha256": "f38c439c11dc11feda40d910992157aef689d5c091b967a338092521d57d64cc"
+      "bytes": 6983,
+      "sha256": "6504d76234d310fac98a3a0a906344b14ed50459abb46113aad1d98ebcda0ed8"
     },
     "proposal/RESEARCH-HANDOFF.md": {
       "bytes": 7608,
@@ -35289,8 +35289,8 @@
       "sha256": "10ce0cb12eb4ec2812e5bf5e52a8b971f0291e42db1494233af017332345f96d"
     },
     "proposal/implementation-plan.md": {
-      "bytes": 17782,
-      "sha256": "7b3b534a6bc33f72677bbd903112f276328ebe5f399193fe21bfe56f517c25e2"
+      "bytes": 18448,
+      "sha256": "53feacb8161786eed2c49bc4ff17bddf282c8f4b4482b057a6b09902ca6e6284"
     },
     "proposal/kernels/arm64-probe.c": {
       "bytes": 2880,
@@ -35361,8 +35361,8 @@
       "sha256": "4b28ed3d50b8d3ea29c2b8f5061911a2096c5e0e018c0b0689abcd856ed41a60"
     },
     "proposal/query-algebra.md": {
-      "bytes": 31622,
-      "sha256": "044e19cc5b67604133fd95cd16673ad8f8590557c6391e51e78dcea2fc8ce711"
+      "bytes": 33260,
+      "sha256": "dc09131bad30ec2e29d6914d2ed1cab2a0c890710ef91c84c54be96651ec3996"
     },
     "proposal/question.md": {
       "bytes": 183,
@@ -35685,8 +35685,8 @@
       "sha256": "099edfc4e756d56fd9d75d41d347fb36de2e0871e3f1a1e09229acefcae2b4c9"
     },
     "proposal/semantics/README.md": {
-      "bytes": 16567,
-      "sha256": "d0a6f8872f61557d380cb57826eeff8c87f7fdc1a5247e36cd8afe5e142808e8"
+      "bytes": 17087,
+      "sha256": "038ec88c0318c76c48197c1f1248a36509d26a7f9b52af34b77a63232bdef1a0"
     },
     "proposal/semantics/check.py": {
       "bytes": 4832,

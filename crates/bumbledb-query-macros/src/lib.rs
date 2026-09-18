@@ -5,6 +5,8 @@
 //! promoted:
 //! ```text
 //! query     := import* (cq | reach)
+//! import    := 'use' 'map' name '=' expr ';' // retained checked EventImport;
+//!                                            // map heads own its BEDC descriptor
 //! import    := 'use' derived '=' expr ';'    // nonrecursive composition (ch. 34):
 //!                                            //   binds an existing schema-bound
 //!                                            //   `&Query` template into the lexical
@@ -1592,6 +1594,7 @@ struct Derived {
 
 struct Emitter<'a> {
     theory: &'a str,
+    imports: &'a [Import],
     params: Params,
 
     derived: Vec<Derived>,
@@ -1888,14 +1891,17 @@ impl Emitter<'_> {
         })
     }
 
-    fn find(scope: &Scope, term: &HeadTerm) -> Parse<String> {
+    fn find(&self, scope: &Scope, term: &HeadTerm) -> Parse<String> {
         Ok(match term {
             HeadTerm::Event { expression, .. } => format!(
                 "::bumbledb::FindTerm::Event({})",
-                expression.emit(scope, 0)?
+                expression.emit(scope, self.imports, 0)?
             ),
             HeadTerm::Test { expression, .. } => {
-                format!("::bumbledb::FindTerm::Test({})", expression.emit(scope)?)
+                format!(
+                    "::bumbledb::FindTerm::Test({})",
+                    expression.emit(scope, self.imports)?
+                )
             }
             HeadTerm::Var(name) => format!(
                 "::bumbledb::FindTerm::Var(::bumbledb::VarId({}))",
@@ -1976,7 +1982,7 @@ impl Emitter<'_> {
         let (scope, atoms, negated, conditions) = self.body_parts(rule)?;
         let mut finds = String::new();
         for term in rule.head() {
-            let _ = write!(finds, "{},", Self::find(&scope, term)?);
+            let _ = write!(finds, "{},", self.find(&scope, term)?);
         }
         Ok(format!(
             "::bumbledb::Rule {{ \
@@ -2332,6 +2338,13 @@ fn emit_rules(emitter: &mut Emitter<'_>, rules: &[ParsedRule]) -> Parse<String> 
 struct Import {
     name: Name,
     expr: String,
+    kind: ImportKind,
+}
+
+#[derive(PartialEq, Eq)]
+enum ImportKind {
+    Template,
+    Map,
 }
 
 /// Parses the leading `use <name> = <expr>;` clauses — nonrecursive
@@ -2342,7 +2355,15 @@ fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
     let mut imports: Vec<Import> = Vec::new();
     while peek_ident_text(tokens).as_deref() == Some("use") {
         let keyword = expect_ident(tokens, "`use`")?;
-        let name = expect_ident(tokens, "the imported template's local name")?;
+        let first = expect_ident(tokens, "the imported template's local name or `map`")?;
+        let (kind, name) = if first.text == "map" && !peek_punct(tokens, '=') {
+            (
+                ImportKind::Map,
+                expect_ident(tokens, "the imported map's local name")?,
+            )
+        } else {
+            (ImportKind::Template, first)
+        };
         validate_derived_name(&name)?;
         if imports.iter().any(|import| import.name.text == name.text) {
             return fail(
@@ -2381,6 +2402,7 @@ fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
         imports.push(Import {
             name,
             expr: expr.to_string(),
+            kind,
         });
     }
     Ok(imports)
@@ -2466,6 +2488,7 @@ fn derived_roster(
     let mut derived: Vec<Derived> = imports
         .iter()
         .enumerate()
+        .filter(|(_, import)| import.kind == ImportKind::Template)
         .map(|(index, import)| Derived {
             name: import.name.text.clone(),
             id_expr: format!("__use{index}"),
@@ -2539,13 +2562,25 @@ const IMPORT_HELPERS: &str = "\
 /// one `__useK` head-stage id per import, and the declared-interior base.
 fn emit_import_prelude(imports: &[Import]) -> String {
     let mut out = String::new();
-    out.push_str(IMPORT_HELPERS);
+    if imports
+        .iter()
+        .any(|import| import.kind == ImportKind::Template)
+    {
+        out.push_str(IMPORT_HELPERS);
+    }
     out.push_str(
-        "let mut __interiors: ::std::vec::Vec<::bumbledb::Interior> = ::std::vec::Vec::new(); ",
+        "#[allow(unused_mut)] let mut __interiors: ::std::vec::Vec<::bumbledb::Interior> = ::std::vec::Vec::new(); ",
     );
     for (index, import) in imports.iter().enumerate() {
         let name = &import.name.text;
         let expr = &import.expr;
+        if import.kind == ImportKind::Map {
+            let _ = write!(
+                out,
+                "let __event_import{index}: ::bumbledb::EventImport = {{ let value: &::bumbledb::EventImport = {expr}; value.clone() }}; "
+            );
+            continue;
+        }
         let _ = write!(
             out,
             "let __use{index}: u32 = {{ \
@@ -2935,6 +2970,7 @@ fn emit_cq(
 ) -> Parse<String> {
     let mut emitter = Emitter {
         theory,
+        imports,
         params: Params::default(),
         derived: derived_roster(imports, interiors, None),
     };
@@ -2971,6 +3007,7 @@ fn emit_reach(
     let rec_name = rec_derived_name(rec, interiors.len());
     let mut emitter = Emitter {
         theory,
+        imports,
         params: Params::default(),
         derived: derived_roster(imports, interiors, Some(rec_name.clone())),
     };
