@@ -10,6 +10,7 @@ compile_error!("bumbledb-event currently requires a 64-bit target");
 mod action;
 mod algebraic;
 mod arena;
+mod belief;
 mod boolean;
 mod codec;
 mod descriptor;
@@ -35,6 +36,9 @@ mod space;
 
 pub use action::{ActionArena, ReachStrategy, SafetyStrategy};
 pub use algebraic::{AlgebraicLimits, AlgebraicRoot, RootLimits};
+pub use belief::{
+    BeliefArena, BeliefLimits, BeliefMemory, BeliefSpaceIds, BeliefState, BeliefTransition,
+};
 pub use boolean::{BoolOp4, Signature};
 pub use descriptor::{
     AdmittedDescriptor, AdmittedFamilyDescriptor, AdmittedSourceDescriptor, Descriptor,
@@ -101,6 +105,9 @@ mod partition_tests;
 
 #[cfg(test)]
 mod action_tests;
+
+#[cfg(test)]
+mod belief_tests;
 
 #[cfg(test)]
 mod descriptor_tests;

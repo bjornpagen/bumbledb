@@ -21,8 +21,8 @@
       "sha256": "7c6ce2642ef377c00b86433ca0c3aee26e30d20889be512549a50a9511e3e050"
     },
     "proposal/README.md": {
-      "bytes": 8496,
-      "sha256": "dc128b1444c8553f532eb391216f94ebcab322898e03bab1f029bc07effb3f90"
+      "bytes": 8717,
+      "sha256": "e7b7a27590eb1e34c4f2d61bfb4dd84b24307a273d395fdcfc578ea9e79bf0c0"
     },
     "proposal/RESEARCH-HANDOFF.md": {
       "bytes": 7608,
@@ -35289,8 +35289,8 @@
       "sha256": "10ce0cb12eb4ec2812e5bf5e52a8b971f0291e42db1494233af017332345f96d"
     },
     "proposal/implementation-plan.md": {
-      "bytes": 34625,
-      "sha256": "b91f83510d8bff7f967c6501160bc56aa5bd3cc2d58f5ee2ba5a48e9a62a871e"
+      "bytes": 36103,
+      "sha256": "6298106154e0d5d63ebe130e53daa994b3538373219f1cc18e08bb1804f6f13f"
     },
     "proposal/kernels/arm64-probe.c": {
       "bytes": 2880,
@@ -35361,8 +35361,8 @@
       "sha256": "42dc08a8f43b5c365ae791ebb6a1b2d7c910e36c9ee1749d14a76e71e473f82e"
     },
     "proposal/query-algebra.md": {
-      "bytes": 35174,
-      "sha256": "f3d4fb95c8af5da7a238ceeefbefe5e83a509e9d307739b1e8031bf7ff0d3a2d"
+      "bytes": 35518,
+      "sha256": "aafe7000e2ac02fbd43657b056abdc089cd3e6b13e3ed43c6bbd80bbc60c147a"
     },
     "proposal/question.md": {
       "bytes": 183,
@@ -36641,8 +36641,8 @@
       "sha256": "8e15d6145446ef4ed6f9e8bf42a6237e5911be02f2920cb518d650e745d85614"
     },
     "proposal/world-relations.md": {
-      "bytes": 24530,
-      "sha256": "11678430e97cc9c3e295c2a0343ad8bd75d9d7592b4056bcadb25d158fd65705"
+      "bytes": 24922,
+      "sha256": "024989dbd33dc8a870cab5ecf5be637dbd4a47873d1a96bd2ddb19bdaad7c73a"
     }
   }
 }

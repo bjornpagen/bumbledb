@@ -40,6 +40,9 @@ pub enum Capacity {
     ParameterSourceCells,
     ParameterSourceSteps,
     WorldCount,
+    BeliefStates,
+    BeliefTransitions,
+    BeliefSteps,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +77,7 @@ pub enum Error {
     PartitionIndex,
     UnsafePolicy,
     IncompletePolicy,
+    BeliefIndex,
     InvalidRational,
     DivisionByZero,
     NegativeMass,
@@ -158,6 +162,9 @@ impl fmt::Display for Error {
             Self::PartitionIndex => f.write_str("Event partition index is outside the roster"),
             Self::UnsafePolicy => f.write_str("strategy policy includes an unpermitted action"),
             Self::IncompletePolicy => f.write_str("strategy policy omits a required state"),
+            Self::BeliefIndex => {
+                f.write_str("belief state, action or observation index is outside its roster")
+            }
             Self::InvalidRational => f.write_str("invalid exact rational"),
             Self::DivisionByZero => f.write_str("exact arithmetic division by zero"),
             Self::NegativeMass => f.write_str("a probability law cannot have negative mass"),
