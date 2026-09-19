@@ -20,6 +20,7 @@ bumbledb::schema! {
     relation Decision { game: u64 }
     relation Presentation { game: u64, source: event, identity: bytes<32> }
     relation WrongPresentation { source: event, short: bytes<31>, long: bytes<33> }
+    relation SourceRoster { game: u64, source: event, peer: event, other: event, identity: bytes<32> }
     Presentation(game) -> Presentation;
     relation Truth { game: u64, case: u64, when: event }
     relation Claim { game: u64, when: event }
@@ -1131,5 +1132,246 @@ fn bound_guard_sources_refuse_partial_markers_and_keep_transport_faults() {
         } else {
             faults = Some(found);
         }
+    }
+}
+
+fn peer_source(identity: u8, cut: i64) -> Space {
+    let limits = ParameterSourceLimits::default();
+    let original = named_source(SpaceId([identity; 32]), cut == 1);
+    let parameter = original.parameter_domain().unwrap().parameter();
+    let difference = Poly::parameter(parameter)
+        .sub(
+            &Poly::constant(q(cut, 4)),
+            limits.parameters.region.polynomial,
+            &mut work(),
+        )
+        .unwrap();
+    let guard = ParameterRegion::from_polynomial(
+        parameter,
+        &difference,
+        Signs::POSITIVE,
+        limits.parameters.region,
+        &mut work(),
+    )
+    .unwrap();
+    bumbledb::event::ParameterRefinement::new(
+        SpaceId([identity + 2; 32]),
+        &original,
+        &[guard],
+        limits,
+        &mut work(),
+    )
+    .unwrap()
+    .refined()
+    .clone()
+}
+
+#[test]
+fn common_source_queries_resolve_partitions_without_combining_outcomes_or_laws() {
+    use bumbledb::event::ParameterRefinement;
+    let limits = ParameterSourceLimits::default();
+    let source = source();
+    let claim = source.coordinate(0, &()).unwrap();
+    let peers = [peer_source(240, 1), peer_source(241, 3)];
+    let identity = SpaceId([244; 32]);
+    // The independent host constructor already specifies source-roster semantics.
+    let expected = ParameterRefinement::common(
+        &[
+            (identity, source.clone()),
+            (SpaceId([245; 32]), peers[0].clone()),
+            (SpaceId([246; 32]), peers[1].clone()),
+        ],
+        Limits::default(),
+        limits,
+        &mut work(),
+    )
+    .unwrap()
+    .remove(0);
+    let path = common::TempDir::new("common-source-query-guards");
+    let db = Db::create(path.path(), PredicateGuards, common::work())
+        .unwrap()
+        .unwrap();
+    db.write(common::work(), |tx| {
+        tx.insert([&SourceRoster {
+            game: 1,
+            source: source.full(),
+            peer: peers[0].full(),
+            other: peers[1].full(),
+            identity: identity.0,
+        }])?;
+        tx.insert([&Trial {
+            game: 1,
+            claim: claim.clone(),
+            given: source.full(),
+        }])
+    })
+    .unwrap()
+    .unwrap();
+    let plan = bumbledb::PredicateGuardPlan::capture(
+        &source,
+        Some(identity),
+        ObservationNumberCodecLimits::default(),
+        &mut work(),
+    )
+    .unwrap();
+    let query = query!(PredicateGuards {
+        use guard captured = &plan;
+        interior lifted(id,source,peer,other,identity,
+            held:Guard(Lift(Sign(0,4),CommonSources(Refine(source,identity),peer,other),claim)),
+            full:Guard(Holds(Sign(1,4),CommonSources(Refine(source,identity),other,peer,peer))),
+            copy:Guard(Holds(Sign(1,4),CommonSources(captured,peer,other))))
+            | Trial(game: id,claim,given), SourceRoster(game: id,source,peer,other,identity);
+        (game,held,full,copy,old:Guard(Descend(Sign(1,4),CommonSources(Refine(source,identity),other,peer),held)))
+            | lifted(game,source,peer,other,identity,held,full,copy);
+    });
+    let mixed = query!(PredicateGuards {
+        interior observed(game,p:Probability(claim,given)) | Trial(game,claim,given);
+        interior truth(game,p:Predicate(Value(p)<1/2),hole:Predicate(Value(p)/Value(p)>0)) | observed(game,p);
+        (yes:Guard(Holds(p,Common(CommonSources(Refine(source,identity),peer,other),hole))),
+            unknown:Guard(Undefined(hole,Common(CommonSources(Refine(source,identity),other,peer),p))))
+            | truth(game,p,hole),SourceRoster(game,source,peer,other,identity);
+    });
+    let mut retained = Vec::new();
+    for fallback in [false, true] {
+        let mut prepared = db.prepare(&query, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        let rows = db
+            .read(common::work(), |tx| {
+                tx.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        for column in 1..5 {
+            let AnswerValue::Event(value) = rows.get(0, column) else {
+                panic!("event")
+            };
+            let expected = match column {
+                1 => expected.lift(&claim, &()).unwrap(),
+                2 | 3 => expected.refined().full(),
+                4 => claim.clone(),
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                value.to_bytes(&()).unwrap(),
+                expected.to_bytes(&()).unwrap()
+            );
+        }
+        let mut prepared = db.prepare(&mixed, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        retained.push(
+            db.read(common::work(), |tx| {
+                tx.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((db, query, mixed, source, peers));
+    for rows in retained {
+        assert_eq!(rows.len(), 1);
+        for column in 0..2 {
+            let AnswerValue::Event(value) = rows.get(0, column) else {
+                panic!("event")
+            };
+            for n in 0..=8 {
+                for outcomes in 0..2 {
+                    let world = ParameterWorld {
+                        parameter: RealWitness::Rational(q(n, 8)),
+                        outcomes,
+                    };
+                    assert_eq!(
+                        value
+                            .contains_parameter(&world, limits, &mut work())
+                            .unwrap(),
+                        if column == 0 { n < 4 } else { n == 0 }
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn common_source_queries_reject_each_bad_peer_even_behind_constant_truth_and_filtering() {
+    let limits = ParameterSourceLimits::default();
+    let source = source();
+    let valid = peer_source(240, 1);
+    let changed_domain = Space::new(SpaceId([247; 32]), 1, &())
+        .unwrap()
+        .with_parameters(
+            ParameterDomain::new(ParameterRegion::full(ParameterId([210; 32]))).unwrap(),
+            &[],
+            limits,
+            &mut work(),
+        )
+        .unwrap();
+    let foreign_domain = Space::new(SpaceId([248; 32]), 1, &())
+        .unwrap()
+        .with_parameters(
+            ParameterDomain::new(ParameterRegion::full(ParameterId([249; 32]))).unwrap(),
+            &[],
+            limits,
+            &mut work(),
+        )
+        .unwrap();
+    let path = common::TempDir::new("bad-common-source-query-guards");
+    let db = Db::create(path.path(), PredicateGuards, common::work())
+        .unwrap()
+        .unwrap();
+    let peers = [
+        valid.coordinate(0, &()).unwrap(),
+        valid.empty(),
+        changed_domain.full(),
+        foreign_domain.full(),
+        Space::new(SpaceId([250; 32]), 1, &()).unwrap().full(),
+    ];
+    for (i, peer) in peers.iter().enumerate() {
+        db.write(common::work(), |tx| {
+            tx.insert([&SourceRoster {
+                game: u64::try_from(i).unwrap(),
+                source: source.full(),
+                peer: peer.clone(),
+                other: valid.full(),
+                identity: [251; 32],
+            }])
+        })
+        .unwrap()
+        .unwrap();
+    }
+    let invalid = query!(PredicateGuards {
+        interior bad(game,e:Guard(Holds(Sign(0,4),CommonSources(Refine(source,identity),other,peer))))
+            | SourceRoster(game,source,peer,other,identity),game==?game;
+        (e) | bad(game,e),game==999;
+    });
+    let unresolved = query!(PredicateGuards {
+        interior bad(game,e:Guard(Holds(Sign(0,4),CommonSources(Existing(source),other))))
+            | SourceRoster(game,source,peer,other,identity),game==0;
+        (e) | bad(game,e),game==999;
+    });
+    let wrong_type = query!(PredicateGuards {(e:Guard(Holds(Sign(1,4),CommonSources(Existing(source),game))))
+        | SourceRoster(game,source,peer,other,identity);});
+    assert!(db.prepare(&wrong_type, common::work()).is_err());
+    for fallback in [false, true] {
+        let mut prepared = db.prepare(&invalid, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        for game in 0..5 {
+            let out = db.read(common::work(), |tx| {
+                tx.execute_collect(&mut prepared, &[BindValue::U64(game)])
+            });
+            let expected = match game {
+                0 | 1 => bumbledb::event::Error::InvalidEncoding,
+                2 | 3 => bumbledb::event::Error::ParameterDomainMismatch,
+                _ => bumbledb::event::Error::MissingParameter,
+            };
+            assert!(matches!(out,Err(bumbledb::Error::Event(error)) if error==expected));
+        }
+        let mut prepared = db.prepare(&unresolved, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        assert!(matches!(
+            db.read(common::work(), |tx| tx
+                .execute_collect(&mut prepared, &[] as &[BindValue])),
+            Err(bumbledb::Error::Event(
+                bumbledb::event::Error::ParameterRefinementRequired
+            ))
+        ));
     }
 }

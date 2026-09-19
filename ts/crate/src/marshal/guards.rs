@@ -1,7 +1,7 @@
 //! Copy bounded captured source plans and combined guard/predicate programs.
 use super::{
-    Array, EventBudget, Object, err, exact_fields, numbers, predicates, req, req_at, req_text,
-    var_in,
+    Array, EventBudget, Object, err, exact_fields, numbers, ordinal, predicates, req, req_at,
+    req_text, u16_id, var_in,
 };
 use crate::ingress::query::{GuardExpr, GuardPlan};
 use bumbledb::{GuardOp, event::SpaceId};
@@ -22,12 +22,16 @@ pub(super) fn parse(obj: &Object, budget: &mut EventBudget<'_, '_>) -> napi::Res
         _ => return Err(err("unknown guard operation".into())),
     };
     let common = Object::keys(obj)?.iter().any(|key| key == "resolve");
+    let peers = Object::keys(obj)?.iter().any(|key| key == "sources");
     let mut fields = vec!["kind", "predicate", "plan"];
     if matches!(operation, GuardOp::Lift(_) | GuardOp::Descend(_)) {
         fields.push("input");
     }
     if common {
         fields.push("resolve");
+    }
+    if peers {
+        fields.push("sources");
     }
     exact_fields(obj, &fields)?;
     let plan = req::<Object>(obj, "plan", "guard plan")?;
@@ -87,10 +91,40 @@ pub(super) fn parse(obj: &Object, budget: &mut EventBudget<'_, '_>) -> napi::Res
             )?);
         }
     }
+    let sources = if peers {
+        source_roster(obj, budget)?
+    } else {
+        Vec::new()
+    };
     Ok(GuardExpr {
         plan,
         predicate,
         companions,
+        sources,
         operation,
     })
+}
+
+fn source_roster(
+    obj: &Object,
+    budget: &mut EventBudget<'_, '_>,
+) -> napi::Result<Vec<bumbledb::VarId>> {
+    let mut sources = Vec::new();
+    let roster: Array = req(obj, "sources", "common source roster")?;
+    let len = roster.len() as usize;
+    if len == 0 || len > budget.nodes {
+        return Err(err("invalid common source roster or shape budget".into()));
+    }
+    budget.nodes -= len;
+    sources
+        .try_reserve_exact(len)
+        .map_err(|_| err("source roster allocation failed".into()))?;
+    for i in 0..roster.len() {
+        let value = ordinal(
+            req_at::<f64>(&roster, i, "common source variable")?,
+            "common source variable",
+        )?;
+        sources.push(bumbledb::VarId(u16_id(value, "common source variable")?));
+    }
+    Ok(sources)
 }

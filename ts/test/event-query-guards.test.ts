@@ -17,6 +17,7 @@ import {
 	NumberExpr as N,
 	NativeRuntime,
 	ExactPolynomial as P,
+	ParameterRefinement,
 	probability,
 	ExactRational as Q,
 	type QueryRow,
@@ -48,6 +49,8 @@ function types(plan: GuardPlan) {
 		GuardPlan.bound(c.id)
 		// @ts-expect-error Bound identity must be a bytes<32> variable.
 		GuardPlan.boundRefine(c.id, c.claim)
+		// @ts-expect-error Common source peers must be Event variables.
+		Guard.commonSources(plan, [c.id])
 		// @ts-expect-error Guard interpretation requires a predicate.
 		Guard.holds(c.p, plan)
 		// @ts-expect-error Guard transport requires an Event column.
@@ -81,6 +84,18 @@ test("guard plans and expression shape are pure, owned and strict", () => {
 	assert.throws(() => Guard.common(plan, []), /nonempty/)
 	assert.throws(() => Guard.common(plan, new Array(1)), /present element/)
 	assert.throws(() => Guard.common(plan, [v(Trial).id as never]))
+	assert.throws(() => Guard.commonSources(plan, []), /nonempty/)
+	assert.throws(() => Guard.commonSources(plan, new Array(1)), /present element/)
+	assert.throws(() => Guard.commonSources(plan, [v(Trial).id as never]), /Event variable/)
+	assert.throws(
+		() =>
+			query(Theory).rule((r) =>
+				r.match(Trial, trial).find({
+					when: Guard.holds(value, Guard.commonSources(plan, [v(Trial).given]))
+				})
+			),
+		/not bound/
+	)
 	const unbound = Guard.common(plan, [T.sign(N.integer(v(Trial).id), 4)])
 	assert.throws(
 		() => query(Theory).rule((r) => r.match(Trial, trial).find({ when: Guard.holds(value, unbound) })),
@@ -110,6 +125,17 @@ test("guard plans and expression shape are pure, owned and strict", () => {
 	const predicate = { kind: "sign", number: { kind: "integer", var: 0 }, signs: 4 }
 	const source = Event.toBytes(envelope)
 	for (const expr of [
+		...[
+			[0.5],
+			[-1],
+			[65536],
+			[Number.NaN],
+			[Number.POSITIVE_INFINITY],
+			[true],
+			new Array(1),
+			[],
+			Array(4096).fill(0)
+		].map((sources) => ({ kind: "holds", predicate, plan: { kind: "boundExisting", source: 0 }, sources })),
 		{ kind: "holds", predicate, plan: { kind: "existing", source, identity: new Uint8Array(32) } },
 		{ kind: "holds", predicate, plan: { kind: "refine", source, identity: new Uint8Array(31) } },
 		{ kind: "holds", predicate, plan: { kind: "existing", source }, ignored: true },
@@ -120,6 +146,132 @@ test("guard plans and expression shape are pure, owned and strict", () => {
 	])
 		assert.throws(() => parseGuardIr("test", expr))
 	assert.equal(nativeBindingIsLoaded(), false)
+})
+
+test("common source guards preserve source laws and compose with predicate rosters", async () => {
+	const retained = await run(
+		Effect.scoped(
+			Effect.gen(function* () {
+				const name = new Uint8Array(32).fill(220)
+				const domain = yield* D.new(yield* R.full(name))
+				const x = yield* P.parameter(name)
+				const positive = yield* R.whereSign(name, x, S.positive)
+				const negative = yield* R.whereSign(name, x, S.negative)
+				const one = yield* Q.fraction(1n)
+				const half = yield* Q.fraction(1n, 2n)
+				const raw = yield* Event.withParameters(yield* Event.space(new Uint8Array(32).fill(221), 1n), domain, [])
+				const full = yield* R.full(name)
+				const source = yield* FamilyFunction.designate(
+					yield* FamilyFunction.new(raw, [
+						{
+							region: raw,
+							value: {
+								numerator: yield* P.constant(half),
+								denominator: yield* P.constant(one),
+								defined: full
+							}
+						}
+					])
+				)
+				const peerRefinement = yield* ParameterRefinement.new(new Uint8Array(32).fill(222), source, [positive])
+				const peer = (yield* ParameterRefinement.describe(peerRefinement)).refined
+				const identity = new Uint8Array(32).fill(223)
+				const common = yield* ParameterRefinement.common([
+					{ identity, source },
+					{ identity: new Uint8Array(32).fill(224), source: peer }
+				])
+				const expectedRefinement = common[0]
+				assert.ok(expectedRefinement)
+				const expected = (yield* ParameterRefinement.describe(expectedRefinement)).refined
+				const truth = T.equal(N.literal(one), N.literal(one))
+				const lower = T.region(domain, negative)
+				const db = yield* Db.create(storeDir("sdk-common-sources"), Theory)
+				const changes = yield* ChangeSet.builder(Theory)
+				yield* changes.insert(Presentation, [{ id: 1n, source, identity }])
+				yield* changes.insert(Trial, [{ id: 1n, claim: yield* Event.coordinate(source, 0n), given: peer }])
+				assert.equal((yield* db.apply(yield* changes.finish(), { expected: { kind: "any" } })).kind, "accepted")
+				const snapshot = yield* db.snapshot()
+				const program = query(Theory).rule((r) => {
+					const s = v(Presentation)
+					const t = v(Trial)
+					const peers = [t.given]
+					const plan = Guard.commonSources(GuardPlan.boundRefine(s.identity, s.source), peers)
+					peers.length = 0
+					return r
+						.match(Presentation, s)
+						.match(Trial, t)
+						.where(r.eq(s.id, t.id))
+						.find({
+							source: s.source,
+							identity: s.identity,
+							peer: t.given,
+							full: Guard.holds(truth, plan),
+							held: Guard.lift(truth, plan, t.claim),
+							copy: Guard.holds(truth, Guard.commonSources(GuardPlan.refine(identity, source), [t.given, t.given])),
+							negative: Guard.holds(lower, Guard.common(plan, [truth])),
+							negativeCopy: Guard.holds(
+								lower,
+								Guard.commonSources(Guard.common(GuardPlan.boundRefine(s.identity, s.source), [truth]), [
+									t.given,
+									t.given
+								])
+							)
+						})
+				})
+				const output = query(Theory).rule((r) => {
+					const c = v(program)
+					return r.match(program, c).find({
+						full: c.full,
+						copy: c.copy,
+						negative: c.negative,
+						negativeCopy: c.negativeCopy,
+						original: Guard.descend(
+							truth,
+							Guard.commonSources(GuardPlan.boundRefine(c.identity, c.source), [c.peer]),
+							c.held
+						)
+					})
+				})
+				const description = describeQuery(output)
+				const replay = queryFromDescription(Theory, description, {
+					full: event,
+					copy: event,
+					negative: event,
+					negativeCopy: event,
+					original: event
+				})
+				assert.deepEqual(describeQuery(replay), description)
+				const rows = yield* (yield* snapshot.execute(replay, {})).collect()
+				assert.equal(rows.length, 1)
+				const row = rows[0]
+				assert.ok(row)
+				assert.deepEqual(Event.toBytes(row.full), Event.toBytes(expected))
+				assert.deepEqual(Event.toBytes(row.copy), Event.toBytes(expected))
+				assert.deepEqual(Event.toBytes(row.original), Event.toBytes(yield* Event.coordinate(source, 0n)))
+				assert.deepEqual(Event.toBytes(row.negative), Event.toBytes(row.negativeCopy))
+				const unresolved = query(Theory).rule((r) => {
+					const t = v(Trial)
+					return r
+						.match(Trial, t)
+						.find({ value: Guard.holds(truth, Guard.commonSources(GuardPlan.existing(source), [t.given])) })
+				})
+				const hidden = query(Theory).rule((r) => {
+					const c = v(unresolved)
+					const s = v(Presentation)
+					return r.match(unresolved, c).match(Presentation, s).where(r.eq(s.id, 999n)).find(c)
+				})
+				assert.ok(Result.isFailure(yield* Effect.result(snapshot.execute(hidden, {}))))
+				return row.negative
+			})
+		)
+	)
+	for (const n of [-1n, 0n, 1n]) {
+		const point = await run(Q.fraction(n))
+		assert.equal(
+			await run(Event.containsParameter(retained, { parameter: { kind: "rational", value: point }, outcomes: 1n })),
+			n < 0n
+		)
+	}
 })
 
 test("query guard refinements preserve all truth cases, law, transport and owner closure", async () => {

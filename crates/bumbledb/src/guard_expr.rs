@@ -94,11 +94,12 @@ impl PredicateGuardPlan {
         &self,
         predicate: &ObservationPredicate,
         companions: &[ObservationPredicate],
+        sources: &[Space],
         limits: &ObservationNumberCodecLimits,
         work: &mut ExactArithmetic<'_>,
     ) -> Result<Interpretation> {
         let (cases, refinement) = if let Some(identity) = self.0.refinement {
-            let value = if companions.is_empty() {
+            let value = if companions.is_empty() && sources.is_empty() {
                 predicate.refine(
                     identity,
                     &self.0.source,
@@ -113,9 +114,10 @@ impl PredicateGuardPlan {
                     .map_err(Error::from)?;
                 roster.push(predicate.clone());
                 roster.extend_from_slice(companions);
-                crate::PredicateRefinement::common(
+                crate::PredicateRefinement::common_sources(
                     identity,
                     &self.0.source,
+                    sources,
                     &roster,
                     limits.sources.descriptors.events,
                     limits.sources.parameters,
@@ -127,6 +129,12 @@ impl PredicateGuardPlan {
             };
             (value.events().clone(), Some(value.refinement().clone()))
         } else {
+            crate::PredicateRefinement::check_sources(
+                &self.0.source,
+                sources,
+                limits.sources.parameters,
+                work,
+            )?;
             for companion in companions {
                 companion.events(&self.0.source, limits.sources.parameters, work)?;
             }
@@ -154,6 +162,31 @@ impl From<PredicateGuardPlan> for GuardPlanExpr {
     }
 }
 impl GuardPlanExpr {
+    pub(crate) fn resolve(
+        &self,
+        event: impl Fn(VarId) -> Result<Event>,
+        identity: impl Fn(VarId) -> SpaceId,
+        limits: &ObservationNumberCodecLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<PredicateGuardPlan> {
+        let (source, name) = match self {
+            Self::Captured(plan) => return Ok(plan.clone()),
+            Self::Existing(source) => (*source, None),
+            Self::Refine {
+                source,
+                identity: name,
+            } => (*source, Some(identity(*name))),
+        };
+        // A proper Event never silently becomes a source. Admission includes
+        // the complete law and shares the caller's exact arithmetic counter.
+        PredicateGuardPlan::from_parts(
+            &event(source)?.to_bytes(work.control())?,
+            name,
+            *limits,
+            work,
+        )
+    }
+
     pub(crate) fn inputs(&self) -> impl Iterator<Item = (VarId, ObservationInputKind)> {
         let (source, identity) = match self {
             Self::Captured(_) => (None, None),
@@ -192,6 +225,9 @@ pub struct GuardExpr {
     /// Additional predicates resolved in the same named presentation. A
     /// nonempty roster requests canonical common refinement, even if repeated.
     pub companions: Vec<PredicateExpr>,
+    /// Full peer sources whose parameter distinctions must also be resolved.
+    /// They contribute neither outcomes nor a joint probability law.
+    pub sources: Vec<VarId>,
     pub operation: GuardOp,
 }
 impl GuardExpr {
@@ -200,18 +236,29 @@ impl GuardExpr {
             .variables()
             .chain(self.companions.iter().flat_map(PredicateExpr::variables))
             .chain(self.plan.inputs().map(|(var, _)| var))
+            .chain(self.sources.iter().copied())
             .chain(self.operation.input())
     }
     pub(crate) fn inputs(
         &self,
     ) -> std::result::Result<Vec<(VarId, ObservationInputKind)>, NumberExprError> {
         let mut inputs = Vec::new();
-        let mut nodes = 1;
+        let mut nodes = self
+            .sources
+            .len()
+            .checked_add(1)
+            .filter(|&n| n <= 65_536)
+            .ok_or(NumberExprError::TooLarge)?;
         self.predicate.collect_inputs(2, &mut nodes, &mut inputs)?;
         for companion in &self.companions {
             companion.collect_inputs(2, &mut nodes, &mut inputs)?;
         }
         inputs.extend(self.plan.inputs());
+        inputs.extend(
+            self.sources
+                .iter()
+                .map(|&v| (v, ObservationInputKind::Event)),
+        );
         if let Some(var) = self.operation.input() {
             inputs.push((var, ObservationInputKind::Event));
         }
@@ -304,11 +351,18 @@ mod tests {
         )
         .unwrap();
         let guard = |predicate| GuardExpr {
+            sources: Vec::new(),
             plan: plan.clone().into(),
             predicate,
             companions: Vec::new(),
             operation: GuardOp::Holds,
         };
+        let mut wide = guard(PredicateExpr::Sign {
+            number: crate::NumberExpr::Integer(VarId(0)),
+            signs: PolynomialSigns::POSITIVE,
+        });
+        wide.sources = vec![VarId(1); 65_534];
+        assert_eq!(wide.inputs().unwrap_err(), NumberExprError::TooLarge);
         let mut number = crate::NumberExpr::Integer(VarId(0));
         for _ in 1..255 {
             number = crate::NumberExpr::Negate(Box::new(number));

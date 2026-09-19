@@ -20,12 +20,14 @@ export function parseGuardIr(context: string, input: unknown): GuardExprIr {
 		return fail(context)
 	const transport = raw.kind === "lift" || raw.kind === "descend"
 	const common = Object.hasOwn(raw, "resolve")
+	const peers = Object.hasOwn(raw, "sources")
 	recordValue(context, raw, [
 		"kind",
 		"predicate",
 		"plan",
 		...(transport ? ["input"] : []),
-		...(common ? ["resolve"] : [])
+		...(common ? ["resolve"] : []),
+		...(peers ? ["sources"] : [])
 	])
 	if (typeof raw.plan !== "object" || raw.plan === null || !("kind" in raw.plan)) return fail(context)
 	const p = recordValue(context, raw.plan, [
@@ -63,10 +65,14 @@ export function parseGuardIr(context: string, input: unknown): GuardExprIr {
 	const resolve = common
 		? { resolve: arrayValue(`${context}.resolve`, raw.resolve, (label, p) => parsePredicateIr(label, p, 2, budget)) }
 		: {}
+	if (peers && (!Array.isArray(raw.sources) || raw.sources.length === 0 || raw.sources.length > budget.nodes))
+		return fail(`${context}: invalid common source roster or shape budget`)
+	const sources = peers ? { sources: arrayValue(`${context}.sources`, raw.sources, (_, v) => variable(v)) } : {}
+	budget.nodes -= sources.sources?.length ?? 0
 	if (raw.kind === "lift" || raw.kind === "descend") {
 		if (typeof raw.input !== "number" || !Number.isInteger(raw.input) || raw.input < 0 || raw.input > 0xffff)
 			return fail(context)
-		return Object.freeze({ kind: raw.kind, predicate, plan, ...resolve, input: raw.input })
+		return Object.freeze({ kind: raw.kind, predicate, plan, ...resolve, ...sources, input: raw.input })
 	}
-	return Object.freeze({ kind: raw.kind, predicate, plan, ...resolve })
+	return Object.freeze({ kind: raw.kind, predicate, plan, ...resolve, ...sources })
 }

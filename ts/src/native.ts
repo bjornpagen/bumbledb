@@ -233,6 +233,7 @@ type GuardExprIr<V = number, P = PredicateExprIr, G = GuardPlanIr> = {
 	readonly predicate: P
 	readonly plan: G
 	readonly resolve?: readonly P[]
+	readonly sources?: readonly V[]
 } & ({ readonly kind: "holds" | "fails" | "undefined" } | { readonly kind: "lift" | "descend"; readonly input: V })
 type FindTermIr =
 	| { readonly kind: "guard"; readonly expr: GuardExprIr }

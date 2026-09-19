@@ -261,6 +261,75 @@ fn common_predicate_refinement_preserves_roster_origins_and_one_joint_presentati
         .is_err()
     );
 }
+#[test]
+fn common_source_rosters_share_bytes_before_deduplication_and_exact_work() {
+    let source = source();
+    let source_limits = ParameterSourceLimits::default();
+    let predicate = measured(&source)
+        .where_sign(PolynomialSigns::POSITIVE, limits(), &mut work())
+        .unwrap();
+    let peer = predicate
+        .refine(
+            SpaceId([233; 32]),
+            &source,
+            Limits::default(),
+            source_limits,
+            &mut work(),
+        )
+        .unwrap();
+    let peers = vec![peer.events().source().clone(); 100];
+    let roster = [truth(Some(true))];
+    let run = |peers: &[Space], limits, work: &mut ExactArithmetic<'_>| {
+        PredicateRefinement::common_sources(
+            SpaceId([234; 32]),
+            &source,
+            peers,
+            &roster,
+            Limits::default(),
+            limits,
+            work,
+        )
+    };
+    let once = run(&peers[..1], source_limits, &mut work()).unwrap();
+    let repeated = run(&peers, source_limits, &mut work()).unwrap();
+    assert_eq!(
+        once[0].events().holds().to_bytes(&()).unwrap(),
+        repeated[0].events().holds().to_bytes(&()).unwrap()
+    );
+    let mut small = source_limits;
+    small.parameters.bytes = 1024;
+    assert!(matches!(
+        run(&peers, small, &mut work()),
+        Err(crate::Error::Event(Error::Capacity(
+            Capacity::DescriptorBytes
+        )))
+    ));
+    assert!(
+        run(
+            &peers[..1],
+            source_limits,
+            &mut ExactArithmetic::new(
+                ArithmeticLimits {
+                    operations: 0,
+                    ..ArithmeticLimits::default()
+                },
+                &()
+            )
+        )
+        .is_err()
+    );
+    let control = crate::WorkContext::new();
+    control.cancel();
+    assert!(
+        run(
+            &peers[..1],
+            source_limits,
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &control)
+        )
+        .is_err()
+    );
+}
+
 fn value_at(value: &P, point: &Rat) -> Option<bool> {
     let NumberPredicateView::Parameter {
         holds,

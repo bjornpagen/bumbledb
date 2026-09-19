@@ -20,6 +20,7 @@ pub(crate) struct GuardExpr {
     pub(crate) plan: GuardPlan,
     pub(crate) predicate: PredicateExpr,
     pub(crate) companions: Vec<PredicateExpr>,
+    pub(crate) sources: Vec<VarId>,
     pub(crate) operation: GuardOp,
 }
 impl PayoffAdmission<'_> {
@@ -58,6 +59,7 @@ impl PayoffAdmission<'_> {
             plan,
             predicate,
             companions,
+            sources: value.sources,
             operation: value.operation,
         })
     }
@@ -84,6 +86,7 @@ mod tests {
             ))
             .unwrap();
         let input = |source| GuardExpr {
+            sources: Vec::new(),
             plan: GuardPlan::Captured {
                 source,
                 refinement: None,

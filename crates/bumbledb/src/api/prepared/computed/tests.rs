@@ -470,20 +470,53 @@ fn predicate_sink_canonicalizes_before_spilled_projection_and_shares_contraction
     }
 }
 
-fn guard_fixture(bound: bool) -> (ComputedSink, crate::work::GenerationHandle) {
+fn guard_fixture(bound: bool, peers: bool) -> (ComputedSink, crate::work::GenerationHandle) {
     use crate::event::{ArithmeticLimits, ExactArithmetic, PolynomialSigns};
     let (mut sink, source, generation) = event_fixture(crate::EventExpr::Full(VarId(0)));
     let mut admission = ExactArithmetic::new(ArithmeticLimits::default(), &());
-    let source = source
-        .with_density(
-            &[crate::event::DensityPiece {
-                region: source.full(),
-                density: crate::event::ExactRational::fraction("1", "4", &mut admission).unwrap(),
-            }],
-            crate::event::LawLimits::default(),
+    let source = if peers {
+        use crate::event::{
+            ExactPolynomial, GuardedRationalFunction, ParameterDensityPiece, ParameterDomain,
+            ParameterId, ParameterRegion, ParameterSourceLimits,
+        };
+        let limits = ParameterSourceLimits::default();
+        let domain = ParameterDomain::new(ParameterRegion::full(ParameterId([28; 32]))).unwrap();
+        let source = source
+            .with_parameters(domain.clone(), &[], limits, &mut admission)
+            .unwrap();
+        let density = GuardedRationalFunction::new(
+            domain,
+            ExactPolynomial::constant(
+                crate::event::ExactRational::fraction("1", "4", &mut admission).unwrap(),
+            ),
+            ExactPolynomial::one(),
+            limits.parameters.region,
             &mut admission,
         )
         .unwrap();
+        source
+            .with_parameter_density(
+                &[ParameterDensityPiece {
+                    region: source.full(),
+                    density,
+                }],
+                limits,
+                &mut admission,
+            )
+            .unwrap()
+    } else {
+        source
+            .with_density(
+                &[crate::event::DensityPiece {
+                    region: source.full(),
+                    density: crate::event::ExactRational::fraction("1", "4", &mut admission)
+                        .unwrap(),
+                }],
+                crate::event::LawLimits::default(),
+                &mut admission,
+            )
+            .unwrap()
+    };
     set_event(&mut sink, &generation, 2, &source.full());
     let limits = crate::ObservationNumberCodecLimits::default();
     let plan = crate::PredicateGuardPlan::capture(
@@ -501,6 +534,11 @@ fn guard_fixture(bound: bool) -> (ComputedSink, crate::work::GenerationHandle) {
             (VarId(1), 2, ValueType::Event.into()),
         ],
         expression: FindTerm::Guard(crate::GuardExpr {
+            sources: if peers {
+                vec![VarId(1), VarId(1)]
+            } else {
+                Vec::new()
+            },
             plan: if bound {
                 crate::GuardPlanExpr::Existing(VarId(1))
             } else {
@@ -523,8 +561,8 @@ fn guard_fixture(bound: bool) -> (ComputedSink, crate::work::GenerationHandle) {
 #[test]
 fn guard_sink_retains_empty_events_through_spill_and_shares_execution_work() {
     use crate::event::{ArithmeticBudget, ArithmeticLimits};
-    for bound in [false, true] {
-        let (mut sink, generation) = guard_fixture(bound);
+    for (bound, peers) in [(false, false), (true, false), (false, true), (true, true)] {
+        let (mut sink, generation) = guard_fixture(bound, peers);
         let mut steps = 0;
         for spill in [false, true] {
             sink.reset();

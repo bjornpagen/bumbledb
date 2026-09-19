@@ -142,35 +142,35 @@ impl ComputedSink {
             let slot = input_slot(var);
             interner.resolve_event([self.bindings.get(slot), self.bindings.get(slot + 1)])
         };
-        let bound_plan;
-        let plan = match &expression.plan {
-            crate::GuardPlanExpr::Captured(plan) => plan,
-            crate::GuardPlanExpr::Existing(source)
-            | crate::GuardPlanExpr::Refine { source, .. } => {
-                let source = event_input(*source)?;
-                let identity =
-                    if let crate::GuardPlanExpr::Refine { identity, .. } = &expression.plan {
-                        let slot = input_slot(*identity);
-                        let mut bytes = [0u8; 32];
-                        for (i, chunk) in bytes.as_chunks_mut::<8>().0.iter_mut().enumerate() {
-                            *chunk = self.bindings.get(slot + i).to_be_bytes();
-                        }
-                        Some(crate::event::SpaceId(bytes))
-                    } else {
-                        None
-                    };
-                // A proper Event does not silently become a full source marker.
-                // Replay the same complete source admission as captured plans.
-                bound_plan = crate::PredicateGuardPlan::from_parts(
-                    &source.to_bytes(control)?,
-                    identity,
-                    limits,
-                    &mut arithmetic,
-                )?;
-                &bound_plan
-            }
-        };
-        let interpretation = plan.interpret(&predicate, &companions, &limits, &mut arithmetic)?;
+        let plan = expression.plan.resolve(
+            event_input,
+            |var| {
+                let slot = input_slot(var);
+                let mut bytes = [0u8; 32];
+                for (i, chunk) in bytes.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+                    *chunk = self.bindings.get(slot + i).to_be_bytes();
+                }
+                crate::event::SpaceId(bytes)
+            },
+            &limits,
+            &mut arithmetic,
+        )?;
+        let mut sources = Vec::new();
+        sources
+            .try_reserve_exact(expression.sources.len())
+            .map_err(crate::event::Error::from)?;
+        for &var in &expression.sources {
+            let marker = event_input(var)?;
+            let peer = crate::PredicateGuardPlan::from_parts(
+                &marker.to_bytes(control)?,
+                None,
+                limits,
+                &mut arithmetic,
+            )?;
+            sources.push(peer.source().clone());
+        }
+        let interpretation =
+            plan.interpret(&predicate, &companions, &sources, &limits, &mut arithmetic)?;
         let input = expression.operation.input().map(event_input).transpose()?;
         if let (Some(input), Some(expected)) =
             (&input, interpretation.expected_input(expression.operation))

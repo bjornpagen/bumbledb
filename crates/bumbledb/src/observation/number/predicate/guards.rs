@@ -72,6 +72,23 @@ impl PredicateRefinement {
         limits: ParameterSourceLimits,
         work: &mut ExactArithmetic<'_>,
     ) -> Result<Vec<Self>> {
+        Self::common_sources(identity, source, &[], predicates, events, limits, work)
+    }
+
+    /// Resolve the predicate roster and every peer source's parameter guards
+    /// in one presentation of `source`. Peers supply distinctions, not outcomes
+    /// or probability mass. Every peer must have the same named exact domain.
+    /// # Errors
+    /// Empty predicate roster, invalid domains, source/byte/work bounds or cancellation.
+    pub fn common_sources(
+        identity: SpaceId,
+        source: &Space,
+        sources: &[Space],
+        predicates: &[ObservationPredicate],
+        events: Limits,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Vec<Self>> {
         work.control().checkpoint()?;
         if predicates.is_empty() {
             return Err(Error::NoParameterSources.into());
@@ -80,8 +97,7 @@ impl PredicateRefinement {
             return Err(Error::Capacity(crate::event::Capacity::ParameterSourceSteps).into());
         }
         source.parameter_domain().ok_or(Error::MissingParameter)?;
-        let mut guards = Vec::new();
-        let mut bytes_left = limits.parameters.bytes;
+        let mut guards = CommonGuards::from_sources(source, sources, limits, work)?;
         for predicate in predicates {
             predicate.check_source(source, limits, work)?;
             if let NumberPredicateView::Parameter { holds, fails, .. } =
@@ -94,19 +110,12 @@ impl PredicateRefinement {
                     2
                 };
                 for region in &regions[..count] {
-                    let bytes = region.to_bytes(limits.parameters, work)?;
-                    bytes_left = bytes_left
-                        .checked_sub(bytes.len())
-                        .ok_or(Error::Capacity(crate::event::Capacity::DescriptorBytes))?;
-                    guards.try_reserve(1).map_err(Error::from)?;
-                    guards.push((bytes, (*region).clone()));
+                    guards.push((*region).clone(), limits, work)?;
                 }
             }
         }
-        guards.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        guards.dedup_by(|a, b| a.0 == b.0);
         let mut additional = Vec::new();
-        for (_, region) in guards {
+        for region in guards.canonical() {
             match source.parameter_event(&region, limits, work) {
                 Ok(_) => {}
                 Err(Error::ParameterRefinementRequired) => {
@@ -129,6 +138,89 @@ impl PredicateRefinement {
             });
         }
         Ok(result)
+    }
+
+    pub(crate) fn check_sources(
+        source: &Space,
+        sources: &[Space],
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<()> {
+        for region in CommonGuards::from_sources(source, sources, limits, work)?.canonical() {
+            source.parameter_event(&region, limits, work)?;
+        }
+        Ok(())
+    }
+}
+
+struct CommonGuards {
+    regions: Vec<(Vec<u8>, ParameterRegion)>,
+    bytes_left: usize,
+}
+impl CommonGuards {
+    fn push(
+        &mut self,
+        region: ParameterRegion,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<()> {
+        if self.regions.len() >= limits.steps / 3 {
+            return Err(Error::Capacity(crate::event::Capacity::ParameterSourceSteps).into());
+        }
+        let bytes = region.to_bytes(limits.parameters, work)?;
+        self.bytes_left = self
+            .bytes_left
+            .checked_sub(bytes.len())
+            .ok_or(Error::Capacity(crate::event::Capacity::DescriptorBytes))?;
+        self.regions.try_reserve(1).map_err(Error::from)?;
+        self.regions.push((bytes, region));
+        Ok(())
+    }
+
+    fn from_sources(
+        source: &Space,
+        sources: &[Space],
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let mut result = Self {
+            regions: Vec::new(),
+            bytes_left: limits.parameters.bytes,
+        };
+        if sources.is_empty() {
+            return Ok(result);
+        }
+        if sources.len() > limits.steps / 3 {
+            return Err(Error::Capacity(crate::event::Capacity::ParameterSourceSteps).into());
+        }
+        let domain = source.parameter_domain().ok_or(Error::MissingParameter)?;
+        let domain_bytes = domain.to_bytes(limits.parameters, work)?;
+        for peer in sources {
+            work.control().checkpoint()?;
+            let other = peer.parameter_domain().ok_or(Error::MissingParameter)?;
+            if other.to_bytes(limits.parameters, work)? != domain_bytes {
+                return Err(Error::ParameterDomainMismatch.into());
+            }
+            for guard in peer.parameter_guards().ok_or(Error::MissingParameter)? {
+                result.push(
+                    guard.region.apply(
+                        crate::event::BoolOp4::AND,
+                        domain.region(),
+                        limits.parameters.region,
+                        work,
+                    )?,
+                    limits,
+                    work,
+                )?;
+            }
+        }
+        Ok(result)
+    }
+
+    fn canonical(mut self) -> impl Iterator<Item = ParameterRegion> {
+        self.regions.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        self.regions.dedup_by(|a, b| a.0 == b.0);
+        self.regions.into_iter().map(|(_, region)| region)
     }
 }
 

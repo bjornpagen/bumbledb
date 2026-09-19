@@ -7,6 +7,7 @@ use super::{
 pub(super) struct Expression {
     predicate: predicates::Expression,
     companions: Vec<predicates::Expression>,
+    sources: Vec<Name>,
     plan: Plan,
     operation: Name,
     input: Option<Name>,
@@ -41,6 +42,38 @@ fn plan(tokens: &mut Tokens) -> Parse<Plan> {
         Ok(Plan::Captured(name))
     }
 }
+fn source_plan(tokens: &mut Tokens) -> Parse<(Plan, Vec<Name>)> {
+    let mut trial = tokens.clone();
+    let name = expect_ident(&mut trial, "a guard plan or CommonSources")?;
+    if name.text != "CommonSources"
+        || !matches!(trial.peek(), Some(proc_macro::TokenTree::Group(_)))
+    {
+        return Ok((plan(tokens)?, Vec::new()));
+    }
+    *tokens = trial;
+    let (mut args, span) = take_paren_group(tokens, "CommonSources' plan and sources")?;
+    let base = plan(&mut args)?;
+    let mut sources = Vec::new();
+    expect_punct(
+        &mut args,
+        ',',
+        "a comma before CommonSources' nonempty source roster",
+    )?;
+    loop {
+        sources.push(expect_ident(&mut args, "a full Event source variable")?);
+        if sources.len() > 4094 {
+            return fail(span, "query!: common source roster exceeds shape budget");
+        }
+        if args.peek().is_none() {
+            break;
+        }
+        expect_punct(&mut args, ',', "a comma between source variables")?;
+        if args.peek().is_none() {
+            break;
+        }
+    }
+    Ok((base, sources))
+}
 fn end(tokens: &mut Tokens) -> Parse<()> {
     if let Some(extra) = tokens.next() {
         fail(extra.span(), "query!: unexpected token in guard expression")
@@ -66,11 +99,11 @@ pub(super) fn parse(tokens: &mut Tokens) -> Parse<Expression> {
     let mut companions = Vec::new();
     let mut trial = args.clone();
     let name = expect_ident(&mut trial, "a guard plan or Common")?;
-    let plan =
+    let (plan, sources) =
         if name.text == "Common" && matches!(trial.peek(), Some(proc_macro::TokenTree::Group(_))) {
             args = trial;
             let (mut roster, _) = take_paren_group(&mut args, "Common's plan and predicates")?;
-            let source = plan(&mut roster)?;
+            let source = source_plan(&mut roster)?;
             expect_punct(
                 &mut roster,
                 ',',
@@ -90,8 +123,14 @@ pub(super) fn parse(tokens: &mut Tokens) -> Parse<Expression> {
             }
             source
         } else {
-            plan(&mut args)?
+            source_plan(&mut args)?
         };
+    if nodes + sources.len() > 4096 {
+        return fail(
+            operation.span,
+            "query!: guard expression exceeds shape budget",
+        );
+    }
     let input = if matches!(operation.text.as_str(), "Lift" | "Descend") {
         expect_punct(&mut args, ',', "a comma before the Event input")?;
         Some(expect_ident(&mut args, "an Event variable")?)
@@ -103,6 +142,7 @@ pub(super) fn parse(tokens: &mut Tokens) -> Parse<Expression> {
     Ok(Expression {
         predicate,
         companions,
+        sources,
         plan,
         operation,
         input,
@@ -134,6 +174,16 @@ impl Expression {
             .map(|p| p.emit(scope, imports, 1))
             .collect::<Parse<Vec<_>>>()?
             .join(",");
+        let sources = self
+            .sources
+            .iter()
+            .map(|name| {
+                scope
+                    .head_var(name)
+                    .map(|v| format!("::bumbledb::VarId({v})"))
+            })
+            .collect::<Parse<Vec<_>>>()?
+            .join(",");
         let input = self.input.as_ref().map(|v| scope.head_var(v)).transpose()?;
         let operation = if let Some(v) = input {
             format!("{}(::bumbledb::VarId({v}))", self.operation.text)
@@ -141,7 +191,7 @@ impl Expression {
             self.operation.text.clone()
         };
         Ok(format!(
-            "::bumbledb::GuardExpr {{ plan: {plan}, predicate: {predicate}, companions: ::std::vec![{companions}], operation: ::bumbledb::GuardOp::{operation} }}"
+            "::bumbledb::GuardExpr {{ plan: {plan}, predicate: {predicate}, companions: ::std::vec![{companions}], sources: ::std::vec![{sources}], operation: ::bumbledb::GuardOp::{operation} }}"
         ))
     }
 }

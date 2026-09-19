@@ -371,5 +371,5 @@ fn compile_fail_fixtures() {
     // and a keyword param name.
     // Numerical imports, domains, operators and natural powers have dedicated diagnostics.
     // Guard operation/import/transport refusals remain source diagnostics.
-    assert_eq!(seen, 65, "the compile-fail roster has sixty-five fixtures");
+    assert_eq!(seen, 67, "the compile-fail roster has sixty-seven fixtures");
 }

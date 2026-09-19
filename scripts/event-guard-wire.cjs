@@ -38,8 +38,12 @@ module.exports = async ({ native, runtime, snapshot, operation, close, collect, 
   dynamic.rules[0].atoms[0].source={kind:'interior',interior:0};
   const dynamicRows=await collect(dynamic);
   assert.deepEqual(Buffer.from(dynamicRows[0][0]),full);evaluations++;
+  const finitePeer=structuredClone(dynamic);
+  finitePeer.rules[0].finds[0].expr.sources=[0];
+  await assert.rejects(()=>collect(finitePeer)); // Shared guards require parameter sources.
   await assert.rejects(()=>collect(query({kind:'guard',expr:{kind:'holds',predicate:truth,plan:{kind:'boundExisting',source:0}}})));
   const malformed = [
+    ...[[],new Array(1),[-1],[0.5],[NaN],[Infinity],[65536],[true],[1],Array(4096).fill(0)].map(sources=>({...base,sources})),
     {...base,plan:{kind:'boundExisting',source:-1}},
     {...base,plan:{kind:'boundExisting',source:0,identity:1}},
     {...base,plan:{kind:'boundRefine',source:0,identity:0}},

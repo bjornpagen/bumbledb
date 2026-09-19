@@ -34,25 +34,40 @@ export interface GuardContext {
 interface Context {
 	readonly plan: GuardPlan
 	readonly predicates: readonly PredicateExpr[]
+	readonly sources: readonly EventVar[]
 }
 const contexts = new WeakMap<GuardContext, Context>()
-function common(plan: GuardPlan, predicates: readonly PredicateOperand[]): GuardContext {
-	planData(plan)
-	if (!Array.isArray(predicates) || predicates.length === 0 || predicates.length > 4094)
-		return fail("Common guards require a nonempty bounded predicate roster")
-	const owned = arrayValue("Common guards", predicates, (_context, p) => asPredicateExpr(p as PredicateOperand))
-	let nodes = 1
-	let bytes = planBytes(planData(plan))
-	for (const predicate of owned) {
+function contextData(value: GuardPlan | GuardContext): Context {
+	return contexts.get(value as GuardContext) ?? { plan: value as GuardPlan, predicates: [], sources: [] }
+}
+function context(data: Context): GuardContext {
+	let nodes = 1 + data.sources.length
+	let bytes = planBytes(planData(data.plan))
+	for (const predicate of data.predicates) {
 		const shape = predicateShape(predicate)
 		nodes += shape.nodes
 		bytes += shape.bytes
-		if (nodes > 4095 || shape.depth + 1 > 128 || bytes > 16 * 1024 * 1024)
-			return fail("Common guards exceed combined shape or imported byte budget")
+		if (shape.depth + 1 > 128) return fail("Common guards exceed combined shape budget")
 	}
+	if (nodes > 4095 || bytes > 16 * 1024 * 1024)
+		return fail("Common guards exceed combined shape or imported byte budget")
 	const value: GuardContext = Object.freeze({ [contextTag]: true as const })
-	contexts.set(value, { plan, predicates: owned })
+	contexts.set(value, data)
 	return value
+}
+function common(plan: GuardPlan | GuardContext, predicates: readonly PredicateOperand[]): GuardContext {
+	if (!Array.isArray(predicates) || predicates.length === 0 || predicates.length > 4094)
+		return fail("Common guards require a nonempty bounded predicate roster")
+	const owned = arrayValue("Common guards", predicates, (_context, p) => asPredicateExpr(p as PredicateOperand))
+	const data = contextData(plan)
+	return context({ ...data, predicates: Object.freeze([...data.predicates, ...owned]) })
+}
+function commonSources(plan: GuardPlan | GuardContext, sources: readonly EventVar[]): GuardContext {
+	if (!Array.isArray(sources) || sources.length === 0 || sources.length > 4094)
+		return fail("Common sources require a nonempty bounded source roster")
+	const owned = arrayValue("Common sources", sources, (_, value) => sourceVariable(value as EventVar))
+	const data = contextData(plan)
+	return context({ ...data, sources: Object.freeze([...data.sources, ...owned]) })
 }
 export interface GuardExpr {
 	readonly kind: "guard"
@@ -74,8 +89,7 @@ function plan(source: Event, identity: Uint8Array | null): GuardPlan {
 	return value
 }
 function bound(source: EventVar, identity: IdentityVar | null): GuardPlan {
-	if (!isTerm(source) || source[term] !== "var" || source.field.kind !== "event")
-		return fail("Bound guard source requires an Event variable")
+	sourceVariable(source)
 	if (
 		identity !== null &&
 		(!isTerm(identity) || identity[term] !== "var" || identity.field.kind !== "bytes" || identity.field.width !== 32)
@@ -83,6 +97,11 @@ function bound(source: EventVar, identity: IdentityVar | null): GuardPlan {
 		return fail("Bound guard identity requires a bytes<32> variable")
 	const value: GuardPlan = Object.freeze({ [planTag]: true as const })
 	plans.set(value, { kind: "bound", source, identity })
+	return value
+}
+function sourceVariable(value: EventVar): EventVar {
+	if (!isTerm(value) || value[term] !== "var" || value.field.kind !== "event")
+		return fail("Guard source requires an Event variable")
 	return value
 }
 export const GuardPlan = Object.freeze({
@@ -105,7 +124,8 @@ function own(
 	const sourcePlan = context?.plan ?? (captured as GuardPlan)
 	const p = planData(sourcePlan)
 	const resolve = context?.predicates ?? []
-	let nodes = shape.nodes + 1
+	const sources = context?.sources ?? []
+	let nodes = shape.nodes + 1 + sources.length
 	let depth = shape.depth + 1
 	let bytes = shape.bytes + planBytes(p)
 	for (const companion of resolve) {
@@ -124,13 +144,20 @@ function own(
 	const expr: GuardExpr = Object.freeze({
 		kind: "guard",
 		[exprTag]: true as const,
-		node: Object.freeze({ ...operation, predicate: value, plan: sourcePlan, ...(resolve.length ? { resolve } : {}) })
+		node: Object.freeze({
+			...operation,
+			predicate: value,
+			plan: sourcePlan,
+			...(resolve.length ? { resolve } : {}),
+			...(sources.length ? { sources } : {})
+		})
 	})
 	expressions.add(expr)
 	return expr
 }
 export const Guard = Object.freeze({
 	common,
+	commonSources,
 	holds: (p: PredicateOperand, g: GuardPlan | GuardContext) => own(p, g, { kind: "holds" }),
 	fails: (p: PredicateOperand, g: GuardPlan | GuardContext) => own(p, g, { kind: "fails" }),
 	undefined: (p: PredicateOperand, g: GuardPlan | GuardContext) => own(p, g, { kind: "undefined" }),
@@ -149,6 +176,7 @@ export function guardVars(value: GuardExpr): readonly AnyVar[] {
 		...(plan.kind === "bound" ? [plan.source, ...(plan.identity === null ? [] : [plan.identity])] : []),
 		...predicateVars(value.node.predicate),
 		...(value.node.resolve ?? []).flatMap(predicateVars),
+		...(value.node.sources ?? []),
 		...("input" in value.node ? [value.node.input] : [])
 	]
 }
@@ -169,9 +197,10 @@ export function guardIr(value: GuardExpr, variable: (v: AnyVar) => number): Guar
 	}
 	const predicate = predicateIr(node.predicate, variable)
 	const resolve = node.resolve === undefined ? {} : { resolve: node.resolve.map((p) => predicateIr(p, variable)) }
+	const sources = node.sources === undefined ? {} : { sources: node.sources.map(variable) }
 	return "input" in node
-		? { kind: node.kind, predicate, plan, ...resolve, input: variable(node.input) }
-		: { kind: node.kind, predicate, plan, ...resolve }
+		? { kind: node.kind, predicate, plan, ...resolve, ...sources, input: variable(node.input) }
+		: { kind: node.kind, predicate, plan, ...resolve, ...sources }
 }
 export function guardFromIr(node: GuardExprIr, variableAt: (v: number) => AnyVar): GuardExpr {
 	const sourcePlan = node.plan
@@ -183,13 +212,18 @@ export function guardFromIr(node: GuardExprIr, variableAt: (v: number) => AnyVar
 				)
 			: plan(encodedEvent(sourcePlan.source), sourcePlan.kind === "refine" ? sourcePlan.identity : null)
 	const predicate = predicateFromIr(node.predicate, variableAt)
-	const context =
+	let context: GuardPlan | GuardContext =
 		node.resolve === undefined
 			? g
 			: common(
 					g,
 					node.resolve.map((p) => predicateFromIr(p, variableAt))
 				)
+	if (node.sources !== undefined)
+		context = commonSources(
+			context,
+			node.sources.map((v) => variableAt(v) as EventVar)
+		)
 	return "input" in node
 		? own(predicate, context, { kind: node.kind, input: variableAt(node.input) as EventVar })
 		: own(predicate, context, { kind: node.kind })
