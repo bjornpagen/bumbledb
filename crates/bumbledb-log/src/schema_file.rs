@@ -663,14 +663,20 @@ mod tests {
         };
         *projection = projection.fields().to_vec().into();
         assert_ne!(schema_id(&full).unwrap(), schema_id(&scalar).unwrap());
-        assert!(matches!(
-            crate::bindings::emit(&full),
-            Err(crate::bindings::BindingError::Unrepresentable { .. })
-        ));
+        assert!(
+            crate::bindings::emit(&full)
+                .unwrap()
+                .contains(r#"db.key(r0, ["id", true])"#)
+        );
         // A full-only projection has no physical columns, but logical arity one.
         let singleton = parse(&raw.replace("[0,{", "[{")).unwrap();
         assert_eq!(parse(&render(&singleton).unwrap()).unwrap(), singleton);
         schema_id(&singleton).unwrap();
+        assert!(
+            crate::bindings::emit(&singleton)
+                .unwrap()
+                .contains("db.key(r0, [true])")
+        );
     }
 
     #[test]

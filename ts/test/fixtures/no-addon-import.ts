@@ -9,6 +9,7 @@ import { closed, closedId } from "#closed.ts"
 import { Event } from "#event.ts"
 import { EventDescriptor } from "#event-descriptor.ts"
 import { ExactRational } from "#exact.ts"
+import { on } from "#face.ts"
 import { bool, event, i64, interval, str, u64, uuid } from "#fields.ts"
 import { FiniteFunction } from "#finite-function.ts"
 import { FiniteKernel } from "#finite-kernel.ts"
@@ -19,7 +20,7 @@ import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { SourceRevision } from "#source-revision.ts"
-import { key } from "#statements.ts"
+import { key, mirrors } from "#statements.ts"
 
 assert.equal(nativeBindingIsLoaded(), false, "package import must not load the addon")
 
@@ -39,6 +40,8 @@ const value = Result.getOrThrow(Event.fromBytes(envelope))
 envelope.fill(0)
 assert.deepEqual(Event.toBytes(value), Uint8Array.from([66, 69, 86, 84, 1]))
 const Region = relation("Region", { value: event })
+const All = relation("All", { id: u64 })
+schema("Full", { All, Region }, [key(All, [true]), key(Region, ["value"]), mirrors(on(All, true), on(Region, "value"))])
 const Regions = schema("Regions", { Region }, [])
 assert.equal(
 	v(

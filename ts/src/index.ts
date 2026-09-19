@@ -140,6 +140,7 @@ export type {
 	Violation,
 	ViolationFact
 } from "#native.ts"
+export type { NonemptyProjection, ProjectionTerm } from "#projection.ts"
 export type { FindColumn } from "#query/atom.ts"
 export { ALLEN } from "#query/atom.ts"
 export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode } from "#query/compute.ts"

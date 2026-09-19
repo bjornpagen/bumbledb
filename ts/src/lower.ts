@@ -18,6 +18,7 @@ import { isClosedMember } from "#closed.ts"
 import type { AnyFace } from "#face.ts"
 import { type AnyField, literalOf } from "#fields.ts"
 import type { RelationClasses } from "#law.ts"
+import { lowerProjection } from "#projection.ts"
 import { type AnyRelation, relationFields } from "#relation.ts"
 import type { AnySchema } from "#schema.ts"
 import type {
@@ -65,7 +66,7 @@ function lowerField(name: string, field: AnyField, newtype: string | undefined):
 function lowerFace(face: AnyFace): SideSpec {
 	return {
 		relation: face.owner.name,
-		projection: [...face.projection],
+		projection: lowerProjection(face.projection),
 		selection: face.selection.map(function lowerBinding(binding): readonly [string, LiteralSetSpec] {
 			return [binding.field, binding.set]
 		})
@@ -76,7 +77,7 @@ function lowerStatement(statement: Statement): StatementSpec {
 	const data = statement
 	switch (data.kind) {
 		case "key":
-			return { kind: "fd", relation: data.owner.name, projection: [...data.projection] }
+			return { kind: "fd", relation: data.owner.name, projection: lowerProjection(data.projection) }
 		case "containment":
 			return {
 				kind: "containment",

@@ -1,3 +1,4 @@
+import type { ProjectionTerm } from "#projection.ts"
 import type { Query } from "#query/lower.ts"
 import type { inferred, ParamsRecord } from "#query/scope.ts"
 /**
@@ -19,10 +20,11 @@ type Rel<S extends AnySchema> = Extract<S["relations"][keyof S["relations"]], An
  * The structural value of one declared key, derived from its owner's
  * fields and its exact projection. Every selected field is required.
  */
-type Key<K extends KeyStatement<AnyRelation, readonly string[]>> = Pick<
-	Fact<K["owner"]>,
+type Key<K extends KeyStatement<AnyRelation, readonly ProjectionTerm[]>> = [
 	Extract<K["projection"][number], keyof Fact<K["owner"]>>
->
+] extends [never]
+	? Readonly<Record<string, never>>
+	: Pick<Fact<K["owner"]>, Extract<K["projection"][number], keyof Fact<K["owner"]>>>
 
 /** The immutable executable view of a query. Readers consume its schema/data
  * and inferred result/parameters, not the author's rule-building methods.

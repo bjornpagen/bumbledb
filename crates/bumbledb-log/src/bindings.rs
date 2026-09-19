@@ -8,7 +8,8 @@ use std::fmt::{self, Write as _};
 
 use bumbledb::Value;
 use bumbledb::schema::{
-    Bound, FieldId, RelationId, SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
+    Bound, FieldId, Projection, RelationId, SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    Weight,
 };
 
 use crate::json::push_string;
@@ -244,12 +245,14 @@ fn value(
     })
 }
 
-fn projection(schema: &SchemaDescriptor, r: RelationId, fields: &[FieldId]) -> String {
+fn projection(schema: &SchemaDescriptor, r: RelationId, fields: &Projection<FieldId>) -> String {
     format!(
         "[{}]",
         fields
+            .fields()
             .iter()
             .map(|f| quote(field_name(schema, r.0 as usize, usize::from(f.0))))
+            .chain(fields.is_event_full().then(|| "true".into()))
             .collect::<Vec<_>>()
             .join(", ")
     )
@@ -294,7 +297,7 @@ fn face(schema: &SchemaDescriptor, rosters: &Rosters, side: &Side) -> Result<Str
     }
     Ok(format!(
         "db.on({owner}, {})",
-        projection(schema, side.relation, side.projection.fields())
+        projection(schema, side.relation, &side.projection)
     ))
 }
 
@@ -309,21 +312,6 @@ pub fn emit(schema: &SchemaDescriptor) -> Result<String, BindingError> {
         name(&relation.name, &relation.name)?;
         for field in &relation.fields {
             name(&field.name, &format!("{}.{}", relation.name, field.name))?;
-        }
-    }
-    for (index, statement) in schema.statements.iter().enumerate() {
-        let full = match statement {
-            StatementDescriptor::Functionality { projection, .. } => projection.is_event_full(),
-            StatementDescriptor::Containment { source, target }
-            | StatementDescriptor::Capacity { source, target, .. } => {
-                source.projection.is_event_full() || target.projection.is_event_full()
-            }
-        };
-        if full {
-            return Err(refuse(
-                format!("statement {index}"),
-                "contextual full Event SDK authoring is not implemented",
-            ));
         }
     }
     let rosters = rosters(schema)?;
@@ -431,7 +419,8 @@ fn statement(
             relation,
             projection: fields,
         } => {
-            if schema.relations[relation.0 as usize].extension.is_some() {
+            if schema.relations[relation.0 as usize].extension.is_some() && !fields.is_event_full()
+            {
                 return Err(refuse(
                     format!("relation {}", relation.0),
                     "explicit keys on closed relations cannot be represented by the SDK",
@@ -440,7 +429,7 @@ fn statement(
             format!(
                 "db.key(r{}, {})",
                 relation.0,
-                projection(schema, *relation, fields.fields())
+                projection(schema, *relation, fields)
             )
         }
         StatementDescriptor::Containment { source, target } => format!(

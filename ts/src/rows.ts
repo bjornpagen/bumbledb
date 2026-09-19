@@ -19,6 +19,7 @@ import { encodedEvent, eventByteLength, eventBytes, eventValue, isEvent } from "
  */
 import type { AnyClosedRoster, AnyField } from "#fields.ts"
 import { literalShapeError, rosterOf } from "#fields.ts"
+import { type ProjectionTerm, storedProjection } from "#projection.ts"
 import { type AnyRelation, type Fact, relationFields } from "#relation.ts"
 import { fieldValue, recordValue } from "#values.ts"
 
@@ -125,11 +126,12 @@ function flatRowsOf(data: AnyRelation, facts: Iterable<object>): FlatRows {
 
 function keyCellsOf(
 	data: AnyRelation,
-	projection: readonly string[],
+	projection: readonly ProjectionTerm[],
 	input: Readonly<Record<string, unknown>>
 ): CellValue[] {
-	const key = recordValue(`relation ${data.name} key`, input, projection)
-	return projection.map(function marshalKeyCell(fieldName) {
+	const fields = storedProjection(projection)
+	const key = recordValue(`relation ${data.name} key`, input, fields)
+	return fields.map(function marshalKeyCell(fieldName) {
 		const declared = relationFields(data).find((candidate) => candidate.name === fieldName)
 		if (declared === undefined) {
 			throw new AuthoringError({ message: `relation ${data.name}: key projection cites unknown field ${fieldName}` })

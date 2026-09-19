@@ -8,16 +8,35 @@ import {
 	unitWeight,
 	type WeightOnSource
 } from "#capacity.ts"
+import type { AnyClosed } from "#closed.ts"
 import { isClosedMember, memberDescriptor, sealedFieldOf } from "#closed.ts"
 import { AuthoringError } from "#errors.ts"
-import { type AnyFace, faceDescriptor, renderFace, type SameArity, type SameShapes } from "#face.ts"
+import {
+	type AnyFace,
+	type FaceFields,
+	type FaceOwner,
+	faceDescriptor,
+	renderFace,
+	type SameArity,
+	type SameShapes
+} from "#face.ts"
 import { type AnyClosedRoster, assertDeclarationRecord, rosterOf, rostersAgree, signaturesAgree } from "#fields.ts"
 import { descriptorCache } from "#immutable.ts"
+import {
+	type NonemptyProjection,
+	type ProjectionTerm,
+	projectedField,
+	projectionDescriptor,
+	renderProjection
+} from "#projection.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import { type CapacityWindowSpec, renderCapacityWindow, renderWeight, type WeightSpec } from "#spec.ts"
-import { arrayValue, recordValue } from "#values.ts"
+import { recordValue } from "#values.ts"
 
-interface KeyStatement<R extends AnyRelation = AnyRelation, Projection extends readonly string[] = readonly string[]> {
+interface KeyStatement<
+	R extends FaceOwner = FaceOwner,
+	Projection extends readonly ProjectionTerm[] = readonly ProjectionTerm[]
+> {
 	readonly kind: "key"
 	readonly owner: R
 	readonly projection: Projection
@@ -68,8 +87,8 @@ function assertRosterAgreement(source: AnyFace, target: AnyFace, statement: Stat
 		if (targetField === undefined) {
 			return
 		}
-		const sourceRoster = rosterOf(sealedFieldOf(source.owner, fieldName))
-		const targetRoster = rosterOf(sealedFieldOf(target.owner, targetField))
+		const sourceRoster = rosterOf(projectedField(source.owner, fieldName))
+		const targetRoster = rosterOf(projectedField(target.owner, targetField))
 		if (!rostersAgree(sourceRoster, targetRoster)) {
 			throw new AuthoringError({
 				message: `${source.owner.name}.${fieldName} is ${renderRosterSide(sourceRoster)} but ${target.owner.name}.${targetField} is ${renderRosterSide(targetRoster)} — closedness rides the descriptor: a closed reference is spelled with the vocabulary's own id descriptor (one meaning, one spelling), so faces pair closed-with-closed through one roster or bare-with-bare, never across — ${renderStatement(statement)}`
@@ -127,8 +146,8 @@ function assertBoundsOnTarget(window: CapacityWindowSpec, target: AnyFace, state
 
 function assertShapes(source: AnyFace, target: AnyFace): void {
 	for (let i = 0; i < source.projection.length; i++) {
-		const a = sealedFieldOf(source.owner, source.projection[i] ?? "")
-		const b = sealedFieldOf(target.owner, target.projection[i] ?? "")
+		const a = projectedField(source.owner, source.projection[i] ?? "")
+		const b = projectedField(target.owner, target.projection[i] ?? "")
 		if (a === undefined || b === undefined) throw new AuthoringError({ message: "statement: unknown projected field" })
 		const left = a.kind === "interval" ? { ...a, width: undefined } : a
 		const right = b.kind === "interval" ? { ...b, width: undefined } : b
@@ -150,23 +169,11 @@ const checkedStatement = descriptorCache((raw): Statement => {
 	if (input?.kind === "key") {
 		recordValue("key", input, ["kind", "owner", "projection"])
 		const owner = memberDescriptor(input.owner as unknown)
-		if (isClosedMember(owner))
+		const projection = projectionDescriptor(owner, input.projection, "key")
+		if (isClosedMember(owner) && projection.at(-1) !== true)
 			throw new AuthoringError({
-				message: `key(${owner.name}, ...): closedness already materializes its key; explicit keys on closed relations are duplicates`
+				message: `key(${owner.name}, ...): closedness already materializes its id key; additional SDK keys on closed relations require trailing true`
 			})
-		const projection = arrayValue("key projection", input.projection, (_, value) => {
-			if (typeof value !== "string") throw new AuthoringError({ message: "key: expected a field name" })
-			return value
-		})
-		if (projection.length === 0) throw new AuthoringError({ message: "key: expected a nonempty field projection" })
-		const seen = new Set<string>()
-		for (const field of projection) {
-			if (typeof field !== "string" || sealedFieldOf(owner, field) === undefined)
-				throw new AuthoringError({ message: `key(${owner.name}, ...): unknown field ${String(field)}` })
-			if (seen.has(field))
-				throw new AuthoringError({ message: `key(${owner.name}, ...): the projection spells ${field} twice` })
-			seen.add(field)
-		}
 		return Object.freeze({ kind: "key", owner, projection })
 	}
 	if (input?.kind !== "containment" && input?.kind !== "mirrors" && input?.kind !== "capacity") {
@@ -203,10 +210,15 @@ const checkedStatement = descriptorCache((raw): Statement => {
 	return statement
 })
 
-function key<
-	R extends AnyRelation,
-	const Projection extends readonly [keyof RelationFields<R> & string, ...(keyof RelationFields<R> & string)[]]
->(relation: R, fields: Projection): KeyStatement<R, Projection> {
+function key<R extends AnyRelation, const Projection extends NonemptyProjection<keyof RelationFields<R> & string>>(
+	relation: R,
+	fields: Projection
+): KeyStatement<R, Projection>
+function key<R extends AnyClosed, const Projection extends readonly [...FaceFields<R>[], true]>(
+	relation: R,
+	fields: Projection
+): KeyStatement<R, Projection>
+function key(relation: FaceOwner, fields: readonly ProjectionTerm[]): KeyStatement {
 	return statementDescriptor({ kind: "key", owner: relation, projection: fields })
 }
 
@@ -260,7 +272,7 @@ function capacity(
 function renderStatement(statement: Statement): string {
 	switch (statement.kind) {
 		case "key":
-			return `${statement.owner.name}(${statement.projection.join(", ")}) -> ${statement.owner.name}`
+			return `${statement.owner.name}(${renderProjection(statement.projection)}) -> ${statement.owner.name}`
 		case "containment":
 			return `${renderFace(statement.source)} <= ${renderFace(statement.target)}`
 		case "mirrors":

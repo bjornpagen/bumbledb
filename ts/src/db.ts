@@ -18,6 +18,7 @@ import type {
 import { dbNative } from "#db-native.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle, Violation } from "#native.ts"
+import type { ProjectionTerm } from "#projection.ts"
 import type { AnyQuery } from "#query/lower.ts"
 import { lowerQuery } from "#query/lower.ts"
 import { wireParams } from "#query/run.ts"
@@ -114,7 +115,7 @@ interface DbInspection {
  * no writable authority — never a `Db`, an `apply`, or a raw transaction.
  */
 interface QueryReader<S extends AnySchema> {
-	get<K extends KeyStatement<Rel<S>, readonly string[]>>(
+	get<K extends KeyStatement<Rel<S>, readonly ProjectionTerm[]>>(
 		key: K,
 		value: NoInfer<Key<K>>
 	): Effect.Effect<Option.Option<Fact<K["owner"]>>, DbError>
@@ -294,7 +295,7 @@ function internalResultHandle(result: object) {
 	return internalResult(result)?.handle
 }
 
-function getOn<S extends AnySchema, K extends KeyStatement<Rel<S>, readonly string[]>>(
+function getOn<S extends AnySchema, K extends KeyStatement<Rel<S>, readonly ProjectionTerm[]>>(
 	state: SnapshotState<S>,
 	key: K,
 	value: Key<K>
@@ -625,7 +626,7 @@ function internalPublishedReader<S extends AnySchema>(
 } {
 	const state: SnapshotState<S> = { theory: schemaDescriptor(theory), handle: core as SnapshotHandle }
 	return Object.freeze({
-		get<K extends KeyStatement<Rel<S>, readonly string[]>>(key: K, value: NoInfer<Key<K>>) {
+		get<K extends KeyStatement<Rel<S>, readonly ProjectionTerm[]>>(key: K, value: NoInfer<Key<K>>) {
 			return getOn(state, key, value)
 		},
 		execute<P extends ParamsRecord, A>(queryValue: QueryTemplate<S, P, A>, params: P) {

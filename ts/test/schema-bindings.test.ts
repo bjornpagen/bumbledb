@@ -90,6 +90,28 @@ void [value, invalid]
 	)
 })
 
+test("snapshot bindings preserve contextual full projections and explicit closed full keys", async () => {
+	const Roster = db.relation("Roster", { group: db.u64 })
+	const Branch = db.relation("Branch", { group: db.u64, when: db.event })
+	const Config = db.relation("Config", { true: db.bool, value: db.u64 })
+	const Codes = db.closed("Codes", ["One"], { code: db.u64 }, { One: { code: 1n } })
+	const source = await roundtrip(
+		db.schema("Full", { Roster, Branch, Config, Codes }, [
+			db.key(Roster, ["group", true]),
+			db.key(Branch, ["group", "when"]),
+			db.key(Config, [true]),
+			db.key(Config, ["true"]),
+			db.key(Codes, ["code", true]),
+			db.mirrors(db.on(Roster, ["group", true]), db.on(Branch, ["group", "when"])),
+			db.contained(db.on(Roster, ["group", true]), db.on(Codes, ["code", true]))
+		])
+	)
+	assert.match(source, /db\.key\(r0, \["group", true\]\)/)
+	assert.match(source, /db\.key\(r2, \[true\]\)/)
+	assert.match(source, /db\.key\(r2, \["true"\]\)/)
+	assert.match(source, /db\.key\(r3, \["code", true\]\)/)
+})
+
 test("snapshot bindings preserve every field kind, exact payload values, names and field order", async () => {
 	const columns = {
 		unsigned: db.u64,

@@ -1,12 +1,12 @@
 import type { AnyClosed } from "#closed.ts"
-import { memberDescriptor, sealedFieldOf } from "#closed.ts"
-import { AuthoringError } from "#errors.ts"
-import { type AnyField, assertDeclarationRecord, type SignatureOf } from "#fields.ts"
+import { memberDescriptor } from "#closed.ts"
+import { type AnyField, assertDeclarationRecord, type EventField, type SignatureOf } from "#fields.ts"
 import type { Same } from "#judgment.ts"
+import { type NonemptyProjection, type ProjectionTerm, projectionDescriptor, renderProjection } from "#projection.ts"
 import type { AnyRelation, FieldsShape } from "#relation.ts"
 import { type AnySelected, type FieldsOf, type SelectionBinding, selectionBindings } from "#selection.ts"
 import { renderLiteralSet } from "#spec.ts"
-import { arrayValue, recordValue } from "#values.ts"
+import { recordValue } from "#values.ts"
 
 const emptySelection: readonly SelectionBinding[] = Object.freeze([])
 
@@ -26,13 +26,13 @@ function faceParts(source: FaceSource): {
 
 type FaceOwner = AnyRelation | AnyClosed
 
-interface Face<O extends FaceOwner = FaceOwner, P extends readonly string[] = readonly string[]> {
+interface Face<O extends FaceOwner = FaceOwner, P extends readonly ProjectionTerm[] = readonly ProjectionTerm[]> {
 	readonly owner: O
 	readonly projection: P
 	readonly selection: readonly SelectionBinding[]
 }
 
-type AnyFace = Face<FaceOwner, readonly string[]>
+type AnyFace = Face<FaceOwner, readonly ProjectionTerm[]>
 
 type FaceSource = AnyRelation | AnyClosed | AnySelected
 
@@ -52,10 +52,12 @@ type ShapeIn<Fields extends FieldsShape, K extends string> = K extends keyof Fie
 	? ProjectedSignature<Fields[K]>
 	: undefined
 
-type ProjectedShape<S extends FaceSource, K extends string> = ShapeIn<FieldsOf<OwnerOf<S>>, K>
+type ProjectedShape<S extends FaceSource, K extends ProjectionTerm> = K extends true
+	? ProjectedSignature<EventField>
+	: ShapeIn<FieldsOf<OwnerOf<S>>, K & string>
 
-type ShapesOf<S extends FaceSource, P extends readonly string[]> = {
-	readonly [I in keyof P]: ProjectedShape<S, P[I] & string>
+type ShapesOf<S extends FaceSource, P extends readonly ProjectionTerm[]> = {
+	readonly [I in keyof P]: ProjectedShape<S, P[I]>
 }
 
 type FaceShapes<F extends AnyFace> = ShapesOf<F["owner"], F["projection"]>
@@ -82,16 +84,19 @@ interface FaceShapeMismatch<Left, Right> {
 type SameShapes<A extends AnyFace, B extends AnyFace> =
 	Same<FaceShapes<A>, FaceShapes<B>> extends true ? unknown : FaceShapeMismatch<FaceShapes<A>, FaceShapes<B>>
 
-function on<S extends FaceSource, const F extends FaceFields<S>>(source: S, field: F): Face<OwnerOf<S>, readonly [F]>
-function on<S extends FaceSource, const P extends readonly [FaceFields<S>, ...FaceFields<S>[]]>(
+function on<S extends FaceSource, const F extends FaceFields<S> | true>(
+	source: S,
+	field: F
+): Face<OwnerOf<S>, readonly [F]>
+function on<S extends FaceSource, const P extends NonemptyProjection<FaceFields<S>>>(
 	source: S,
 	fields: P
 ): Face<OwnerOf<S>, P>
-function on(source: FaceSource, fields: string | readonly string[]): AnyFace {
+function on(source: FaceSource, fields: ProjectionTerm | readonly ProjectionTerm[]): AnyFace {
 	const parts = faceParts(source)
 	return faceDescriptor({
 		owner: parts.owner,
-		projection: typeof fields === "string" ? [fields] : fields,
+		projection: typeof fields === "string" || fields === true ? [fields] : fields,
 		selection: parts.selection
 	})
 }
@@ -102,26 +107,13 @@ function faceDescriptor(input: unknown): AnyFace
 function faceDescriptor(raw: unknown): AnyFace {
 	const input = recordValue("face", raw, ["owner", "projection", "selection"])
 	const owner = memberDescriptor(input.owner)
-	const projection = arrayValue("face projection", input.projection, (_, value) => {
-		if (typeof value !== "string") throw new AuthoringError({ message: "face: expected a field name" })
-		return value
-	})
-	if (projection.length === 0) {
-		throw new AuthoringError({ message: "face: expected a nonempty projection" })
-	}
-	const projected = new Set<string>()
-	for (const field of projection) {
-		if (typeof field !== "string" || sealedFieldOf(owner, field) === undefined)
-			throw new AuthoringError({ message: `face ${owner.name}: unknown field ${String(field)}` })
-		if (projected.has(field)) throw new AuthoringError({ message: `face ${owner.name}: duplicate field ${field}` })
-		projected.add(field)
-	}
+	const projection = projectionDescriptor(owner, input.projection)
 	const selection = selectionBindings(owner, input.selection)
 	return Object.freeze({ owner, projection, selection })
 }
 
 function renderFace(face: AnyFace): string {
-	const projection = face.projection.join(", ")
+	const projection = renderProjection(face.projection)
 	if (face.selection.length === 0) {
 		return `${face.owner.name}(${projection})`
 	}

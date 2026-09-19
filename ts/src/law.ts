@@ -58,8 +58,9 @@ import { AuthoringError } from "#errors.ts"
 
 import type { AnyClosed } from "#closed.ts"
 import { isClosedMember, sealedFieldsOf } from "#closed.ts"
-import type { AnyFace } from "#face.ts"
+import type { AnyFace, FaceOwner } from "#face.ts"
 import type { Same } from "#judgment.ts"
+import type { ProjectionTerm } from "#projection.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import type { SchemaRelation, SchemaRelations } from "#schema.ts"
 import { renderStatement, type Statement } from "#statements.ts"
@@ -94,13 +95,17 @@ type PairList = readonly Pair[]
 
 type ZipCoords<
 	SN extends string,
-	SP extends readonly string[],
+	SP extends readonly ProjectionTerm[],
 	TN extends string,
-	TP extends readonly string[],
+	TP extends readonly ProjectionTerm[],
 	Acc extends PairList = []
-> = SP extends readonly [infer SH extends string, ...infer ST extends readonly string[]]
-	? TP extends readonly [infer TH extends string, ...infer TT extends readonly string[]]
-		? ZipCoords<SN, ST, TN, TT, readonly [...Acc, readonly [`${SN}.${SH}`, `${TN}.${TH}`]]>
+> = SP extends readonly [infer SH extends ProjectionTerm, ...infer ST extends readonly ProjectionTerm[]]
+	? TP extends readonly [infer TH extends ProjectionTerm, ...infer TT extends readonly ProjectionTerm[]]
+		? SH extends string
+			? TH extends string
+				? ZipCoords<SN, ST, TN, TT, readonly [...Acc, readonly [`${SN}.${SH}`, `${TN}.${TH}`]]>
+				: ZipCoords<SN, ST, TN, TT, Acc>
+			: ZipCoords<SN, ST, TN, TT, Acc>
 		: Acc
 	: Acc
 
@@ -190,9 +195,9 @@ type WallScan<Comps extends readonly string[], Gens extends string, Pairs extend
 		: WallScan<T, Gens, Pairs>
 	: unknown
 
-type SetEq<A extends string, B extends string> = Same<A, B>
+type SetEq<A extends ProjectionTerm, B extends ProjectionTerm> = Same<A, B>
 
-type KeyEntry = readonly [string, string]
+type KeyEntry = readonly [string, ProjectionTerm]
 
 /**
  * Every declared `key` of a statements tuple as {@link KeyEntry} rows —
@@ -210,8 +215,8 @@ type DeclaredKeysOf<Stmts extends readonly Statement[], Acc extends readonly Key
 ]
 	? H extends {
 			readonly kind: "key"
-			readonly owner: infer O extends AnyRelation
-			readonly projection: infer P extends readonly string[]
+			readonly owner: infer O extends FaceOwner
+			readonly projection: infer P extends readonly ProjectionTerm[]
 		}
 		? string extends O["name"]
 			? DeclaredKeysOf<T, Acc>
@@ -219,11 +224,11 @@ type DeclaredKeysOf<Stmts extends readonly Statement[], Acc extends readonly Key
 		: DeclaredKeysOf<T, Acc>
 	: Acc
 
-type LiteralProjection<P extends readonly string[]> = [true] extends [IsMulti<P>]
+type LiteralProjection<P extends readonly ProjectionTerm[]> = [true] extends [IsMulti<P>]
 	? false
 	: [number] extends [P["length"]]
 		? false
-		: [P] extends [readonly [infer H extends string, ...infer T extends readonly string[]]]
+		: [P] extends [readonly [infer H extends ProjectionTerm, ...infer T extends readonly ProjectionTerm[]]]
 			? [string] extends [H]
 				? false
 				: [true] extends [IsMulti<H>]
@@ -234,8 +239,8 @@ type LiteralProjection<P extends readonly string[]> = [true] extends [IsMulti<P>
 type DecidableKeyData<D> = [D] extends [
 	{
 		readonly kind: "key"
-		readonly owner: infer O extends AnyRelation
-		readonly projection: infer P extends readonly string[]
+		readonly owner: infer O extends FaceOwner
+		readonly projection: infer P extends readonly ProjectionTerm[]
 	}
 ]
 	? [true] extends [IsMulti<D>]
@@ -302,17 +307,18 @@ type DecidableRoster<Stmts extends readonly Statement[]> = [true] extends [IsMul
 					: DecidableRoster<T>
 			: true
 
-interface TargetKeyWall<Target extends string, Projection extends string> {
+interface TargetKeyWall<Target extends string, Projection extends ProjectionTerm> {
 	readonly "schema target-key wall — a containment/mirrors/capacity target projection matches no key of the target relation (declare the key() it resolves, or project an existing one)": {
 		readonly target: Target
 		readonly projection: Projection
 	}
 }
 
-type DeclaredKeyMatch<N extends string, PU extends string, Keys extends readonly KeyEntry[]> = Keys extends readonly [
-	infer H extends KeyEntry,
-	...infer T extends readonly KeyEntry[]
-]
+type DeclaredKeyMatch<
+	N extends string,
+	PU extends ProjectionTerm,
+	Keys extends readonly KeyEntry[]
+> = Keys extends readonly [infer H extends KeyEntry, ...infer T extends readonly KeyEntry[]]
 	? SetEq<H[0], N> extends true
 		? string extends H[1]
 			? true
@@ -327,9 +333,11 @@ type JudgeTargetFace<F extends AnyFace, Keys extends readonly KeyEntry[]> = stri
 	: string extends F["projection"][number]
 		? true
 		: F["owner"] extends AnyClosed
-			? SetEq<F["projection"][number], "id"> extends true
-				? true
-				: TargetKeyWall<F["owner"]["name"], F["projection"][number]>
+			? true extends F["projection"][number]
+				? DeclaredKeyMatch<F["owner"]["name"], F["projection"][number], Keys>
+				: SetEq<F["projection"][number], "id"> extends true
+					? true
+					: TargetKeyWall<F["owner"]["name"], F["projection"][number]>
 			: F["owner"] extends AnyRelation
 				? DeclaredKeyMatch<F["owner"]["name"], F["projection"][number], Keys>
 				: true
@@ -498,7 +506,7 @@ function computeClasses(name: string, relations: SchemaRelations, statements: re
 		const [source, target] = faces
 		source.projection.forEach(function unionSlot(fieldName, position) {
 			const targetField = target.projection[position]
-			if (targetField === undefined) {
+			if (typeof fieldName !== "string" || typeof targetField !== "string") {
 				return
 			}
 			const coordA = `${source.owner.name}.${fieldName}`

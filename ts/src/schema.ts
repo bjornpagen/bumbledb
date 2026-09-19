@@ -23,6 +23,7 @@ import type { AnyFace } from "#face.ts"
 import { assertDeclarationOrderKey, assertDeclarationRecord, rosterOf } from "#fields.ts"
 import { descriptorCache, isImmutable } from "#immutable.ts"
 import { type ClassesOf, classesComplete, computeClasses, type LawfulStatements, type SchemaClasses } from "#law.ts"
+import { type ProjectionTerm, projectedField } from "#projection.ts"
 import type { AnyRelation } from "#relation.ts"
 import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
 import { renderStatement, type Statement, statementDescriptor } from "#statements.ts"
@@ -214,7 +215,7 @@ function verifyTargetKeys(
 	statements: readonly Statement[],
 	implied: ReadonlyMap<string, ReadonlyArray<readonly string[]>>
 ): void {
-	const declared = new Map<string, Array<readonly string[]>>()
+	const declared = new Map<string, Array<readonly ProjectionTerm[]>>()
 	for (const statement of statements) {
 		const data = statement
 		if (data.kind !== "key") {
@@ -256,10 +257,10 @@ function verifyTargetKeyFace(
 	name: string,
 	face: AnyFace,
 	implied: ReadonlyMap<string, ReadonlyArray<readonly string[]>>,
-	declared: ReadonlyMap<string, ReadonlyArray<readonly string[]>>,
+	declared: ReadonlyMap<string, ReadonlyArray<readonly ProjectionTerm[]>>,
 	rendered: string
 ): void {
-	if (isClosedMember(face.owner)) {
+	if (isClosedMember(face.owner) && face.projection.at(-1) !== true) {
 		if (face.projection.length === 1 && face.projection[0] === "id") {
 			return
 		}
@@ -291,7 +292,7 @@ function verifyTargetKeyFace(
 	}
 	const available = roster.length === 0 ? "none" : roster.map((key) => `(${key.join(", ")})`).join("; ")
 	const pointwise = face.projection.some(function carriesInterval(fieldName) {
-		const descriptor = sealedFieldOf(face.owner, fieldName)
+		const descriptor = projectedField(face.owner, fieldName)
 		return descriptor !== undefined && descriptor.kind === "interval"
 	})
 	const hint = pointwise ? "; hint: declare the exact pointwise key `R(prefix…, interval) -> R`" : ""
