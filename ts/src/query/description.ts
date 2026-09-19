@@ -7,6 +7,7 @@ import type { SchemaClasses } from "#law.ts"
 import type { AtomIr, ConditionTreeIr, QueryIr, RuleIr, ScalarExprIr, TaggedValue, TermIr } from "#native.ts"
 import type { AnyTreeChild, DerivedTable, FindColumn, InteriorData, RecData, RuleData } from "#query/atom.ts"
 import type { QueryNode } from "#query/compute.ts"
+import { eventFindFromIr } from "#query/event.ts"
 import type { AnyQuery, ChainContext, Query } from "#query/lower.ts"
 import { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, taggedCmpLiteral } from "#query/lower.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
@@ -308,8 +309,7 @@ function replayRule(
 			let value: unknown
 			if (find.kind === "var") value = variableAt(find.var)
 			else if (find.kind === "compute") value = scalar(find.expr)
-			else if (find.kind === "event" || find.kind === "test")
-				return refused("query find", "Event heads currently require the raw QueryIr boundary")
+			else if (find.kind === "event" || find.kind === "test") value = eventFindFromIr(find, variableAt)
 			else if (find.kind === "segments")
 				value = (find.op === "intersection" ? intersection : difference)(
 					variableAt(find.left) as IntervalVar,

@@ -4,6 +4,8 @@ import { eventValue } from "#event-value.ts"
 import type { AnyClosedRoster, AnyField, IntervalField } from "#fields.ts"
 import {
 	assertDeclarationOrderKey,
+	bool as boolField,
+	event as eventField,
 	f64 as f64Field,
 	i64 as i64Field,
 	isFloatIntervalValue,
@@ -60,6 +62,7 @@ import type {
 import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
 import type { QueryNode } from "#query/compute.ts"
 import { computeFieldOf, computeVarsOf, isComputeExpr, MAX_COMPUTE_DEPTH } from "#query/compute.ts"
+import { eventFindIr, eventFindVars, isEventFind, snapshotEventExpression } from "#query/event.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
 import { count, max, mean, min, pack, sum } from "#query/find.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
@@ -878,6 +881,7 @@ function aggDataOf(name: string, entry: { readonly agg: string; readonly over?: 
 }
 
 function findColumnOf(name: string, entry: unknown): FindColumn {
+	if (isEventFind(entry)) return Object.freeze({ name, entry, closed: undefined, slot: undefined })
 	if (isTerm(entry)) {
 		if (entry[term] === "var") {
 			return Object.freeze({
@@ -968,6 +972,8 @@ function assertNumeric(where: string, position: string, ref: AnyVar): void {
  */
 function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedField | undefined {
 	const entry = column.entry
+	if (entry.kind === "event") return { field: eventField, class: undefined }
+	if (entry.kind === "test") return { field: boolField, class: undefined }
 	if (entry.kind === "segments") return { field: segmentField(entry), class: undefined }
 	if (entry.kind === "var") {
 		return mintSlotOf(context, entry.over)
@@ -999,6 +1005,10 @@ function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedFie
 function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, column: FindColumn): void {
 	const where = `${contextLabel(context)} find ${column.name}`
 	const entry = column.entry
+	if (entry.kind === "event" || entry.kind === "test") {
+		for (const ref of eventFindVars(entry)) assertBound(where, bound, ref)
+		return
+	}
 	if (entry.kind === "segments") {
 		assertBound(where, bound, entry.left)
 		assertBound(where, bound, entry.right)
@@ -1269,6 +1279,7 @@ const importOrigins = new WeakMap<InteriorData, InteriorData>()
 
 function snapshotQueryData<A>(input: A): A {
 	return snapshotData(input, (source, snapshot) => {
+		snapshotEventExpression(source, snapshot)
 		// Detached imports retain their authoring identity for deduplication.
 		if (importTables.has(source as InteriorData)) {
 			const table = snapshot as InteriorData
@@ -2258,6 +2269,7 @@ function lowerComputeGrammar(node: QueryNode, ids: VarIds): ScalarExprIr {
 }
 
 function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
+	if (entry.kind === "event" || entry.kind === "test") return eventFindIr(entry, (ref) => ids.of(ref))
 	if (entry.kind === "segments")
 		return { kind: entry.kind, op: entry.op, left: ids.of(entry.left), right: ids.of(entry.right) }
 	if (entry.kind === "var") {
@@ -2290,6 +2302,7 @@ function headOpOf(agg: AggData): HeadOpIr {
 
 function headTermOf(column: FindColumn): HeadTermIr {
 	const entry = column.entry
+	if (entry.kind === "event" || entry.kind === "test") return { kind: "compute" }
 	if (entry.kind === "segments") return { kind: "compute" }
 	if (entry.kind === "var") {
 		return { kind: "var" }

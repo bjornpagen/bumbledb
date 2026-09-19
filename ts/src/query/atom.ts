@@ -3,6 +3,7 @@ import type { Event } from "#event-value.ts"
 import type { AnyClosedRoster, AnyField, FloatIntervalValue, Infer, IntervalValue } from "#fields.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type { QueryNode } from "#query/compute.ts"
+import type { EventFind } from "#query/event.ts"
 import type {
 	AntiJoinOk,
 	AnyVar,
@@ -78,6 +79,7 @@ type AggData =
 /** Compute `expr` is the shared `#scalar.ts` query-var node (one grammar). */
 type FindEntryData =
 	| Segments
+	| EventFind
 	| { readonly kind: "var"; readonly over: AnyVar }
 	| { readonly kind: "aggregate"; readonly agg: AggData }
 	| { readonly kind: "compute"; readonly expr: QueryNode; readonly result: ScalarKind }

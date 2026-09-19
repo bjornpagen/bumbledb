@@ -122,40 +122,66 @@ type FoldOpIr =
 	| { readonly kind: "max" }
 
 /** Raw structural Event IR; all operands are body-bound Event columns. */
-type EventExprIr =
-	| { readonly kind: "var" | "empty" | "full"; readonly var: number }
-	| { readonly kind: "not"; readonly expr: EventExprIr }
-	| { readonly kind: "apply"; readonly bits: number; readonly left: EventExprIr; readonly right: EventExprIr }
-	| { readonly kind: "ite"; readonly condition: EventExprIr; readonly high: EventExprIr; readonly low: EventExprIr }
-	| { readonly kind: "relation"; readonly op: "region" | "domain" | "range"; readonly relation: RelationExprIr }
-	| { readonly kind: "modal"; readonly op: "may" | "all" | "must" | "post"; readonly relation: RelationExprIr; readonly expr: EventExprIr }
+type EventExprIr<V = number, D = Uint8Array> =
+	| { readonly kind: "var" | "empty" | "full"; readonly var: V }
+	| { readonly kind: "not"; readonly expr: EventExprIr<V, D> }
+	| {
+			readonly kind: "apply"
+			readonly bits: number
+			readonly left: EventExprIr<V, D>
+			readonly right: EventExprIr<V, D>
+	  }
+	| {
+			readonly kind: "ite"
+			readonly condition: EventExprIr<V, D>
+			readonly high: EventExprIr<V, D>
+			readonly low: EventExprIr<V, D>
+	  }
+	| { readonly kind: "relation"; readonly op: "region" | "domain" | "range"; readonly relation: RelationExprIr<V, D> }
+	| {
+			readonly kind: "modal"
+			readonly op: "may" | "all" | "must" | "post"
+			readonly relation: RelationExprIr<V, D>
+			readonly expr: EventExprIr<V, D>
+	  }
 	| {
 			readonly kind: "map"
 			readonly op: "pullback" | "image" | "universalImage" | "nonvacuousImage" | "possible" | "guaranteed"
-			readonly descriptor: Uint8Array
-			readonly expr: EventExprIr
+			readonly descriptor: D
+			readonly expr: EventExprIr<V, D>
 	  }
 	| {
 			readonly kind: "cardinality"
 			readonly minimum: bigint
 			readonly maximum: bigint
-			readonly events: readonly EventExprIr[]
+			readonly events: readonly EventExprIr<V, D>[]
 	  }
 
-type RelationExprIr =
-	| { readonly kind: "bind" | "test"; readonly descriptor: Uint8Array; readonly expr: EventExprIr }
-	| { readonly kind: "identity"; readonly descriptor: Uint8Array }
-	| { readonly kind: "not" | "converse"; readonly relation: RelationExprIr }
-	| { readonly kind: "apply"; readonly bits: number; readonly left: RelationExprIr; readonly right: RelationExprIr }
-	| { readonly kind: "product"; readonly op: "compose" | "leftResidual" | "rightResidual"; readonly descriptor: Uint8Array; readonly left: RelationExprIr; readonly right: RelationExprIr }
-	| { readonly kind: "star"; readonly descriptor: Uint8Array; readonly relation: RelationExprIr }
+type RelationExprIr<V = number, D = Uint8Array> =
+	| { readonly kind: "bind" | "test"; readonly descriptor: D; readonly expr: EventExprIr<V, D> }
+	| { readonly kind: "identity"; readonly descriptor: D }
+	| { readonly kind: "not" | "converse"; readonly relation: RelationExprIr<V, D> }
+	| {
+			readonly kind: "apply"
+			readonly bits: number
+			readonly left: RelationExprIr<V, D>
+			readonly right: RelationExprIr<V, D>
+	  }
+	| {
+			readonly kind: "product"
+			readonly op: "compose" | "leftResidual" | "rightResidual"
+			readonly descriptor: D
+			readonly left: RelationExprIr<V, D>
+			readonly right: RelationExprIr<V, D>
+	  }
+	| { readonly kind: "star"; readonly descriptor: D; readonly relation: RelationExprIr<V, D> }
 
-type EventTestIr =
-	| { readonly kind: "isEmpty" | "isFull"; readonly expr: EventExprIr }
+type EventTestIr<V = number, D = Uint8Array> =
+	| { readonly kind: "isEmpty" | "isFull"; readonly expr: EventExprIr<V, D> }
 	| {
 			readonly kind: "subset" | "equal" | "disjoint" | "covers"
-			readonly left: EventExprIr
-			readonly right: EventExprIr
+			readonly left: EventExprIr<V, D>
+			readonly right: EventExprIr<V, D>
 	  }
 
 type FindTermIr =
@@ -712,12 +738,11 @@ export type {
 	ConditionTreeIr,
 	DbHandle,
 	ErrorFamilyKind,
+	EventExprIr,
+	EventTestIr,
 	F64IntervalValue,
 	FactValue,
 	FindTermIr,
-	EventExprIr,
-	EventTestIr,
-	RelationExprIr,
 	HeadOpIr,
 	HeadTermIr,
 	InteriorIr,
@@ -751,6 +776,7 @@ export type {
 	QueryIr,
 	QueryParam,
 	RecIr,
+	RelationExprIr,
 	RuleIr,
 	ScalarExprIr,
 	SealedDescriptor,

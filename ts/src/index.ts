@@ -63,6 +63,7 @@ export {
 	NativeReportedError,
 	SdkInvariantError
 } from "#errors.ts"
+export { EventDescriptor } from "#event-descriptor.ts"
 export type {
 	AnyFace,
 	Arity,
@@ -117,6 +118,7 @@ export type {
 	InteriorIr,
 	QueryIr,
 	RecIr,
+	RelationExprIr,
 	RuleIr,
 	ScalarExprIr,
 	TermIr,
@@ -135,6 +137,8 @@ export type {
 	QueryDescription
 } from "#query/description.ts"
 export { describeQuery, queryFromDescription } from "#query/description.ts"
+export type { EventFind, EventOperand, EventVar } from "#query/event.ts"
+export { EventExpr, EventTest, RelationExpr } from "#query/event.ts"
 export type { Agg, HeadRecordOf, RowOfFind } from "#query/find.ts"
 export type {
 	AnyQuery,
