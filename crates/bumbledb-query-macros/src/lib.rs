@@ -301,6 +301,12 @@ impl AggOp {
 mod events;
 
 enum HeadTerm {
+    Expectation {
+        label: Name,
+        value: Name,
+        when: Name,
+        given: Name,
+    },
     Probability {
         label: Name,
         event: events::Region,
@@ -749,6 +755,27 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
     if peek_punct(tokens, ':') {
         expect_colon(tokens, "the head column's `:`")?;
         let agg_name = expect_ident(tokens, "an aggregate")?;
+        if agg_name.text == "Expectation" {
+            let (mut args, _) =
+                take_paren_group(tokens, "Expectation's value, region, and evidence")?;
+            let value = expect_ident(&mut args, "a payoff variable")?;
+            expect_punct(&mut args, ',', "a comma")?;
+            let when = expect_ident(&mut args, "an Event variable")?;
+            expect_punct(&mut args, ',', "a comma")?;
+            let given = expect_ident(&mut args, "an evidence variable")?;
+            if let Some(extra) = args.next() {
+                return fail(
+                    extra.span(),
+                    "query!: Expectation takes three body-bound variables",
+                );
+            }
+            return Ok(HeadTerm::Expectation {
+                label: name,
+                value,
+                when,
+                given,
+            });
+        }
         if agg_name.text == "Probability" {
             let (event, given) = events::probability(tokens)?;
             return Ok(HeadTerm::Probability {
@@ -774,7 +801,7 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
                 agg_name.span,
                 format!(
                     "query!: `{}` is not an aggregate — a named head position \
-                     takes Sum/Min/Max/Count/Pack/Event/Test/Probability",
+                     takes Sum/Min/Max/Count/Pack/Event/Test/Probability/Expectation",
                     agg_name.text
                 ),
             );
@@ -1908,6 +1935,14 @@ impl Emitter<'_> {
 
     fn find(&self, scope: &Scope, term: &HeadTerm) -> Parse<String> {
         Ok(match term {
+            HeadTerm::Expectation {
+                value, when, given, ..
+            } => format!(
+                "::bumbledb::FindTerm::Expectation {{ value: ::bumbledb::VarId({}), when: ::bumbledb::VarId({}), given: ::bumbledb::VarId({}) }}",
+                scope.head_var(value)?,
+                scope.head_var(when)?,
+                scope.head_var(given)?
+            ),
             HeadTerm::Probability { event, given, .. } => format!(
                 "::bumbledb::FindTerm::Probability {{ event: {}, given: {} }}",
                 event.emit(scope, self.imports, 0)?,
@@ -1964,6 +1999,7 @@ impl Emitter<'_> {
                 HeadTerm::Agg { over, .. }
                 | HeadTerm::Event { label: over, .. }
                 | HeadTerm::Test { label: over, .. }
+                | HeadTerm::Expectation { label: over, .. }
                 | HeadTerm::Probability { label: over, .. } => {
                     return fail(
                         over.span,
@@ -2694,6 +2730,7 @@ fn column_name(term: &HeadTerm) -> String {
     match term {
         HeadTerm::Event { label, .. }
         | HeadTerm::Test { label, .. }
+        | HeadTerm::Expectation { label, .. }
         | HeadTerm::Probability { label, .. } => label.text.clone(),
         HeadTerm::Var(name) => name.text.clone(),
         HeadTerm::Count { label } => label

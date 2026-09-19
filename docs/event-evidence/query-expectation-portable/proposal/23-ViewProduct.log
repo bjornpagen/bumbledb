@@ -1,0 +1,8 @@
+'ViewProduct.output_bijection' does not depend on any axioms
+'ViewProduct.joint_reindex_with_section' does not depend on any axioms
+'ViewProduct.shannon_merge' depends on axioms: [propext]
+'ViewProduct.contraction_through_image' does not depend on any axioms
+'ViewProduct.contraction_exact_iff_image' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ViewProduct.product_is_composition' does not depend on any axioms
+'ViewProduct.separate_surjectivity_is_insufficient' depends on axioms: [propext]
+'ViewProduct.same_roots_different_maps' depends on axioms: [propext]

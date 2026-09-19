@@ -166,7 +166,8 @@ impl FoldOp {
 pub use bumbledb_theory::interval::SegmentOp;
 
 /// One find term: a projection, scalar expression, interval producer, count,
-/// fold, or pack. Count carries no variable; folds and pack require one.
+/// fold, pack, or payoff expectation. Count carries no variable; scalar folds
+/// and pack require one, while expectation reads value, region and evidence.
 /// Interval measurement is a scalar expression, while constructive interval
 /// operations produce zero to two answer rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +184,13 @@ pub enum FindTerm {
     Probability {
         event: crate::EventExpr,
         given: crate::EventExpr,
+    },
+
+    /// Complete evidence-relative payoff roster, grouped by nonaggregate heads.
+    Expectation {
+        value: VarId,
+        when: VarId,
+        given: VarId,
     },
 
     /// Fully bound binary interval constructor. Independent outputs combine
@@ -226,6 +234,7 @@ impl FindTerm {
             | Self::Test(_)
             | Self::Probability { .. }
             | Self::Segments { .. } => HeadTerm::Compute,
+            Self::Expectation { .. } => HeadTerm::Aggregate(HeadOp::Expectation),
             Self::Count => HeadTerm::Aggregate(HeadOp::Count),
             Self::Aggregate { op, .. } => HeadTerm::Aggregate(op.head_op()),
             Self::Pack { .. } => HeadTerm::Aggregate(HeadOp::Pack),
@@ -238,6 +247,7 @@ impl FindTerm {
 /// rule's find term against the head's op kind position by position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadOp {
+    Expectation,
     Sum,
     Mean,
     Min,

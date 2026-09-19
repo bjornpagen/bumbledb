@@ -1976,3 +1976,112 @@ fn probability_groups_by_source_pairs_before_counting_bindings() {
         assert_eq!(counts, [1, 2]);
     }
 }
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one owned-family lifecycle and exact-value oracle"
+)]
+fn expectation_query_retains_shared_parameter_and_excluded_zero_after_owner_release() {
+    use bumbledb::{ExpectationValue, query};
+    let dir = common::TempDir::new("expectation-family-query");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let source = parameterized_draws();
+    let first = source.coordinate(0, &()).unwrap();
+    let second = source.coordinate(1, &()).unwrap();
+    db.write(common::work(), |tx| {
+        tx.insert([
+            &Region {
+                id: 8,
+                condition: second.clone(),
+            },
+            &Region {
+                id: 2,
+                condition: second.complement(),
+            },
+        ])?;
+        tx.insert([&Observation {
+            id: 1,
+            condition: first.clone(),
+        }])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    drop((db, source));
+    let db = Db::open(dir.path(), SourceSchema, common::work()).unwrap();
+    let template = query!(SourceSchema {
+        (expected: Expectation(value, region, evidence)) |
+            Region(id: value, condition: region), Observation(id == 1, condition: evidence);
+    });
+    let mut retained = Vec::new();
+    for fallback in [false, true] {
+        let mut prepared = db.prepare(&template, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        retained.push(
+            db.read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((db, template));
+    for answers in retained {
+        assert_eq!(answers.len(), 1);
+        let AnswerValue::Expectation(answer) = answers.get(0, 0) else {
+            panic!("expectation")
+        };
+        let ExpectationValue::Parameter(observation) = answer.value() else {
+            panic!("family")
+        };
+        let limits = bumbledb::event::ParameterSourceLimits::default();
+        assert_eq!(
+            observation
+                .value_at(&ratio(0, 1), limits, &mut arithmetic())
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            observation
+                .value_at(&ratio(1, 3), limits, &mut arithmetic())
+                .unwrap(),
+            Some(ratio(4, 1))
+        );
+        assert_eq!(
+            observation
+                .value_at(&ratio(1, 1), limits, &mut arithmetic())
+                .unwrap(),
+            Some(ratio(8, 1))
+        );
+        assert_eq!(
+            observation
+                .numerator()
+                .value_at(
+                    &ratio(1, 3),
+                    limits.parameters.region,
+                    limits.functions,
+                    &mut arithmetic()
+                )
+                .unwrap(),
+            Some(ratio(4, 3))
+        );
+        assert_eq!(
+            observation
+                .evidence_mass()
+                .value_at(
+                    &ratio(1, 3),
+                    limits.parameters.region,
+                    limits.functions,
+                    &mut arithmetic()
+                )
+                .unwrap(),
+            Some(ratio(1, 3))
+        );
+        assert_eq!(
+            answer.given().to_bytes(&()).unwrap(),
+            first.to_bytes(&()).unwrap()
+        );
+    }
+}

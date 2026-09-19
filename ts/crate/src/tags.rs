@@ -214,6 +214,7 @@ wire_tags! {
         MAX: HeadOp::Max => "max",
         COUNT: HeadOp::Count => "count",
         PACK: HeadOp::Pack => "pack",
+        EXPECTATION: HeadOp::Expectation => "expectation",
     }
 }
 
@@ -237,6 +238,7 @@ wire_tags! {
         EVENT: FindTerm::Event(_) => "event",
         TEST: FindTerm::Test(_) => "test",
         PROBABILITY: FindTerm::Probability { .. } => "probability",
+        EXPECTATION: FindTerm::Expectation { .. } => "expectation",
         COUNT: FindTerm::Count => "count",
         AGGREGATE: FindTerm::Aggregate { .. } => "aggregate",
         PACK: FindTerm::Pack { .. } => "pack",

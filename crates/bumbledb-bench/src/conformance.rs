@@ -448,7 +448,8 @@ fn push_find(out: &mut String, find: &FindTerm) -> Result<(), Exclusion> {
         | FindTerm::Segments { .. }
         | FindTerm::Event(_)
         | FindTerm::Test(_)
-        | FindTerm::Probability { .. } => return Err(Exclusion::ComputedHead),
+        | FindTerm::Probability { .. }
+        | FindTerm::Expectation { .. } => return Err(Exclusion::ComputedHead),
         FindTerm::Count => out.push_str("{\"agg\":{\"op\":\"count\"}}"),
         FindTerm::Pack { over } => {
             let _ = write!(out, "{{\"agg\":{{\"op\":\"pack\",\"over\":{}}}}}", over.0);
@@ -524,6 +525,11 @@ fn count_vars(rule: &Rule) -> u16 {
             FindTerm::Event(expr) => {
                 for var in expr.variables() {
                     see(&mut count, var);
+                }
+            }
+            FindTerm::Expectation { value, when, given } => {
+                for var in [value, when, given] {
+                    see(&mut count, *var);
                 }
             }
             FindTerm::Probability { event, given } => {
@@ -960,6 +966,7 @@ fn push_head(out: &mut String, head: &[HeadTerm]) -> Result<(), Exclusion> {
                     HeadOp::Max => "max",
                     HeadOp::Count => "count",
                     HeadOp::Pack => "pack",
+                    HeadOp::Expectation => "expectation",
                 };
                 let _ = write!(out, "{{\"kind\":\"aggregate\",\"op\":\"{name}\"}}");
             }

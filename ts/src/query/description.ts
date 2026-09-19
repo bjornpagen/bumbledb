@@ -8,6 +8,7 @@ import type { AtomIr, ConditionTreeIr, QueryIr, RuleIr, ScalarExprIr, TaggedValu
 import type { AnyTreeChild, DerivedTable, FindColumn, InteriorData, RecData, RuleData } from "#query/atom.ts"
 import type { QueryNode } from "#query/compute.ts"
 import { eventFindFromIr } from "#query/event.ts"
+import { type ExpectationAnswer, type ExpectationResult, expectationResult } from "#query/expectation.ts"
 import type { AnyQuery, ChainContext, Query } from "#query/lower.ts"
 import { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, taggedCmpLiteral } from "#query/lower.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
@@ -49,13 +50,15 @@ interface DescriptionParameter {
 	readonly members: readonly TaggedValue[] | undefined
 }
 
-type ResultShape = Readonly<Record<string, AnyField | ProbabilityResult>>
+type ResultShape = Readonly<Record<string, AnyField | ProbabilityResult | ExpectationResult>>
 type DescriptionRow<F extends ResultShape> = {
-	readonly [K in keyof F]: F[K] extends ProbabilityResult
-		? ProbabilityAnswer
-		: F[K] extends AnyField
-			? Infer<F[K]>
-			: never
+	readonly [K in keyof F]: F[K] extends ExpectationResult
+		? ExpectationAnswer
+		: F[K] extends ProbabilityResult
+			? ProbabilityAnswer
+			: F[K] extends AnyField
+				? Infer<F[K]>
+				: never
 }
 
 /** Checked result fields remain exact through v(imported), just as at runtime.
@@ -316,7 +319,12 @@ function replayRule(
 			let value: unknown
 			if (find.kind === "var") value = variableAt(find.var)
 			else if (find.kind === "compute") value = scalar(find.expr)
-			else if (find.kind === "event" || find.kind === "test" || find.kind === "probability")
+			else if (
+				find.kind === "event" ||
+				find.kind === "test" ||
+				find.kind === "probability" ||
+				find.kind === "expectation"
+			)
 				value = eventFindFromIr(find, variableAt)
 			else if (find.kind === "segments")
 				value = (find.op === "intersection" ? intersection : difference)(
@@ -344,10 +352,11 @@ function queryFromDescription<Rels extends SchemaRelations, Classes extends Sche
 		typeof result === "object" && result !== null ? Object.keys(result) : []
 	)
 	const fields = Object.fromEntries(
-		Object.entries(resultRecord).map(([name, field]) => [
-			name,
-			field === probabilityResult ? probabilityResult : fieldDescriptor(`query result.${name}`, field)
-		])
+		Object.entries(resultRecord).map(([name, field]): [string, AnyField | ExpectationResult | ProbabilityResult] => {
+			if (field === expectationResult) return [name, expectationResult]
+			if (field === probabilityResult) return [name, probabilityResult]
+			return [name, fieldDescriptor(`query result.${name}`, field)]
+		})
 	)
 	const interiors: InteriorData[] = []
 	const usedParameters = new Set<number>()
@@ -426,7 +435,7 @@ function queryFromDescription<Rels extends SchemaRelations, Classes extends Sche
 		expected.some(([name, field], ordinal) => {
 			const column = value.data.finds[ordinal]
 			if (column?.name !== name) return true
-			if (field.kind === "probability") return column.entry.kind !== "probability"
+			if (field.kind === "probability" || field.kind === "expectation") return column.entry.kind !== field.kind
 			return column.slot === undefined || !signaturesAgree(column.slot.field, field)
 		})
 	)

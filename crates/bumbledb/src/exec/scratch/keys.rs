@@ -25,7 +25,8 @@ pub enum ScratchMapId {
     /// Exact token → text bytes for nonresident reverse lookup. Same env
     /// as [`Self::TextForward`]; not a second `ScratchRelation`.
     TextReverse = 5,
-    /// Event Pack: group token → canonical context and a retained anchor key.
+    /// Event folds: group token → canonical context and a retained anchor key.
+    /// Pack and Expectation each own their scratch relation.
     EventPackContext = 6,
 }
 

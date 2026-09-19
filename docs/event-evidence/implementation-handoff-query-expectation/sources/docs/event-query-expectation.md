@@ -1,0 +1,120 @@
+# Exact expectation query heads
+
+Final `Expectation(value, when, given)` heads aggregate ordinary integer columns
+and Event columns into a checked payoff on the evidence. Rust macros, native IR,
+Free Join, Node and the TypeScript SDK share this contract. This implements one
+M5/M6 integration boundary; the full M0–M8 proposal remains the target.
+
+```rust
+let query = bumbledb::query!(Game {
+    (action, utility: Expectation(value, when, given), witnesses: Count) |
+        Payoff(action, value, when), Evidence(action, given);
+});
+```
+
+The names stand for application relations and columns. All three arguments are
+body-bound variables. `value` initially accepts exact `i64`/`u64`; `when` and
+`given` are Events. Event-producing interiors can construct their regions before
+this final aggregate. Binary64 is refused rather than silently treated as exact.
+Closed vocabulary/reference codes are refused as payoffs: join an explicit
+ordinary numeric value mapping first. Rational and functional payoff query slots
+remain required follow-on work.
+
+## Admission comes before measurement
+
+The remaining nonaggregate head outputs identify each group. Every expectation
+head collects its own roster within that group. Repeated rows with the same
+numerical value contribute the union of their regions; they do not multiply
+utility or probability. Equal positive signed and unsigned integers agree even
+when different rule arms supply them.
+
+All participating `when` and `given` operands must align to one source context.
+Empty regions, supplied zeros and later rows after saturation still participate.
+One aligned, equal evidence Event is required throughout the group. After
+equal-value union, clip the regions to evidence and prove that distinct values
+are disjoint and cover it completely. Overlap outside evidence is harmless.
+Missing coverage is an error even on zero-mass worlds. Missing values never
+default to zero. An empty input has no group.
+
+A structurally valid payoff on zero-mass evidence produces an impossible
+observation, not a missing row. A missing law is an error, including for zero
+payoffs or empty evidence. For parameter families, the conditional result keeps
+its exact positive-evidence domain; no prior or independence is inferred.
+
+For two draws sharing bias `p`, utilities 2 and 8 according to the second draw,
+conditioned on the first draw, produce numerator `2p + 6p²`, evidence mass `p`
+and conditional function `2 + 6p` on `p > 0`. The endpoint hole survives.
+
+## Representation and Free Join
+
+The complete-binding computed sink gathers inline scratch claims carrying a
+logical group token, signed-magnitude integer, both Event keys and written
+operand provenance. The exact group key includes the head ordinal, so several
+expectations can share one collector without mixing their rosters. Wide group
+keys use the existing exact scratch maps; claims spill at 4,096 entries or about
+4 MiB of retained collector data. These are collector thresholds, not a complete
+retained-memory policy for the execution registry or output.
+
+The first finish pass aligns all contexts against the canonical minimum source
+descriptor of each group. Only after this complete pass can evidence or
+partition errors terminate admission. Operational refusals never claim a
+complete fault set. The second pass unions values and admits `EventPartition`s.
+
+A stable token occupies one output binding word. It is constant for all rows of
+the logical group, allowing the existing scalar aggregate sink to count/sum the
+original bindings alongside several expectations. It also composes with the
+existing single Pack head. Existing restrictions on mixing Pack with scalar
+folds remain unchanged. Suffix skipping and fused leaf scans stay forbidden:
+one witness does not establish payoff coverage or complete operand validation.
+
+After every partition succeeds, one arithmetic budget covers all probability
+and expectation contractions. Publication is atomic. Failed internal appends
+preserve the initialized answer prefix and discard only the failed append.
+
+## Owned results and SDK
+
+`AnswerValue::Expectation(&ExpectationAnswer)` exposes `given()`, `partition()`,
+`values()`, `function()` and `value()`. The retained partition preserves supplied
+zero values and empty buckets. The canonical finite function extends by zero
+outside evidence for arithmetic; this extension is never a claim that those
+worlds had supplied payoffs. Equality retains source, evidence and payoff
+identity; two different payoffs with the same mean are not equal observations.
+
+`ExpectationValue::Fixed` retains the original signed observation, numerator,
+evidence mass and optional exact rational. `ExpectationValue::Parameter` retains
+the corresponding functions, partial conditional result and exact defined
+domain. Owners survive database/snapshot/query release and result paging.
+
+```typescript
+const observed = query(Game).rule((r) => {
+  const p = v(Payoff)
+  return r.match(Payoff, p).find({
+    action: p.action,
+    utility: expectation(p.value, p.when, p.given),
+    witnesses: r.count()
+  })
+})
+```
+
+SDK answers discriminate `law: "fixed" | "parameter"` and retain the admitted
+`payoffs`, source function, evidence, numerator/mass and result/domain. Native
+delivery shares arithmetic and a cumulative 16 MiB observation payload budget
+with probability outputs per collection or page. `expectationResult` describes
+an imported query output; it is not a stored schema field. Authoring stays pure.
+
+Observation interiors and arithmetic over their query results still refuse
+explicitly. This boundary must expand; it does not narrow the proposal.
+
+## Evidence and limits
+
+Tests exercise all 256 pairs of four-world payoff/evidence regions on resident
+and fallback joins against an independent weighted-world oracle, duplicates,
+multiple heads with scalar folds, signed/unsigned union arms with Pack, zero-mass
+gaps, overlap, changing evidence, absent groups, missing laws, extreme integers,
+wide group keys, forced spill, reaim, cancellation, owned family endpoint holes
+and append rollback. SDK checks cover descriptions, ownership, pages and both laws.
+
+`QueryExpectation.lean` supplies twenty reference reports for witness unions,
+unique coverage, clipping, grouping, missing values and partial conditioning.
+They do not prove Rust refinement, the scratch collector or transport. No
+performance qualification or scalar-SQL observation oracle is claimed.

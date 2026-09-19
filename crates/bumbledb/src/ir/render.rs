@@ -199,6 +199,10 @@ fn find_term(out: &mut String, term: &FindTerm) {
         FindTerm::Test(test) => {
             write!(out, "Test({test:?})").expect("writing to String");
         }
+        FindTerm::Expectation { value, when, given } => {
+            write!(out, "Expectation(v{}, v{}, v{})", value.0, when.0, given.0)
+                .expect("writing to String");
+        }
         FindTerm::Probability { event, given } => {
             write!(out, "Probability({event:?}, {given:?})").expect("writing to String");
         }

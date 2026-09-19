@@ -150,7 +150,8 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
             | FindTerm::Segments { .. }
             | FindTerm::Event(_)
             | FindTerm::Test(_)
-            | FindTerm::Probability { .. } => {
+            | FindTerm::Probability { .. }
+            | FindTerm::Expectation { .. } => {
                 return Err("computed heads are not translated to SQL".into());
             }
             FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {
@@ -184,7 +185,8 @@ fn head_projection_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
             | FindTerm::Segments { .. }
             | FindTerm::Event(_)
             | FindTerm::Test(_)
-            | FindTerm::Probability { .. } => {
+            | FindTerm::Probability { .. }
+            | FindTerm::Expectation { .. } => {
                 return Err("computed heads are not translated to SQL".into());
             }
         }
@@ -221,7 +223,8 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
             | FindTerm::Segments { .. }
             | FindTerm::Event(_)
             | FindTerm::Test(_)
-            | FindTerm::Probability { .. } => {
+            | FindTerm::Probability { .. }
+            | FindTerm::Expectation { .. } => {
                 return Err("computed heads are not translated to SQL".into());
             }
             FindTerm::Pack { .. } => {
@@ -309,7 +312,8 @@ fn fold_sql(
             | FindTerm::Segments { .. }
             | FindTerm::Event(_)
             | FindTerm::Test(_)
-            | FindTerm::Probability { .. } => {
+            | FindTerm::Probability { .. }
+            | FindTerm::Expectation { .. } => {
                 return Err("computed heads are not translated to SQL".into());
             }
             FindTerm::Pack { .. } => {

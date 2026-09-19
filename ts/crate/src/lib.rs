@@ -33,6 +33,7 @@ pub mod log_wire;
 mod marshal;
 pub mod parameter_wire;
 pub mod polynomial_wire;
+mod query_expectation;
 mod query_probability;
 mod runtime;
 pub mod runtime_wire;

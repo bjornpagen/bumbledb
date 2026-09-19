@@ -62,7 +62,7 @@ pub(crate) mod encoding;
 pub mod error;
 mod event_expr;
 mod observation;
-pub use observation::{ProbabilityAnswer, ProbabilityValue};
+pub use observation::{ExpectationAnswer, ExpectationValue, ProbabilityAnswer, ProbabilityValue};
 pub(crate) mod exec;
 pub(crate) mod image;
 mod interval;

@@ -504,7 +504,10 @@ fn prepare_reach(
 
 fn has_event_diagnostics(rule: crate::ir::validate::RuleWitness<'_>) -> bool {
     rule.rule().finds.iter().any(|term| match term {
-        FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => true,
+        FindTerm::Event(_)
+        | FindTerm::Test(_)
+        | FindTerm::Probability { .. }
+        | FindTerm::Expectation { .. } => true,
         FindTerm::Pack { over } => *rule.var_type(*over) == ValueType::Event,
         _ => false,
     })
@@ -741,7 +744,10 @@ fn prepare_rule(
     if rule.rule().finds.iter().any(|term| {
         matches!(
             term,
-            FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. }
+            FindTerm::Count
+                | FindTerm::Aggregate { .. }
+                | FindTerm::Pack { .. }
+                | FindTerm::Expectation { .. }
         )
     }) {
         let group_key: std::collections::BTreeSet<crate::ir::VarId> = rule
@@ -759,6 +765,7 @@ fn prepare_rule(
                 | FindTerm::Event(_)
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
+                | FindTerm::Expectation { .. }
                 | FindTerm::Count
                 | FindTerm::Aggregate { .. }
                 | FindTerm::Pack { .. } => None,
@@ -962,6 +969,17 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                         .collect(),
                 }))
             }
+            FindTerm::Expectation { value, when, given } => {
+                FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
+                    find: find_idx,
+                    rules: rule.minted().to_vec(),
+                    expression: term.clone(),
+                    inputs: [*value, *when, *given]
+                        .into_iter()
+                        .map(|var| (var, layout.slot_of(var), *rule.var_type(var)))
+                        .collect(),
+                }))
+            }
             FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
                 let inputs = term
                     .event_variables()
@@ -1073,7 +1091,8 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
             | FindTerm::Compute(_)
             | FindTerm::Event(_)
             | FindTerm::Test(_)
-            | FindTerm::Probability { .. } => return Vec::new(),
+            | FindTerm::Probability { .. }
+            | FindTerm::Expectation { .. } => return Vec::new(),
             FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {}
         }
     }

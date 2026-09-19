@@ -392,7 +392,10 @@ impl NaiveDb {
             .any(|f| {
                 matches!(
                     f,
-                    FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. }
+                    FindTerm::Event(_)
+                        | FindTerm::Test(_)
+                        | FindTerm::Probability { .. }
+                        | FindTerm::Expectation { .. }
                 )
             })
         {
@@ -506,7 +509,8 @@ impl NaiveDb {
                 | FindTerm::Aggregate { .. }
                 | FindTerm::Event(_)
                 | FindTerm::Test(_)
-                | FindTerm::Probability { .. } => false,
+                | FindTerm::Probability { .. }
+                | FindTerm::Expectation { .. } => false,
             })
             .collect()
     }
@@ -603,9 +607,10 @@ impl NaiveDb {
 
                         FindTerm::Segments { .. } => unreachable!("segments do not mix with folds"),
                         FindTerm::Compute(expr) => eval_scalar(expr, binding, index),
-                        FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
-                            Err(QueryError::UnsupportedEvent)
-                        }
+                        FindTerm::Event(_)
+                        | FindTerm::Test(_)
+                        | FindTerm::Probability { .. }
+                        | FindTerm::Expectation { .. } => Err(QueryError::UnsupportedEvent),
 
                         FindTerm::Count => Ok(Value::Bool(false)),
                     })
@@ -640,7 +645,8 @@ impl NaiveDb {
                             | FindTerm::Segments { .. }
                             | FindTerm::Event(_)
                             | FindTerm::Test(_)
-                            | FindTerm::Probability { .. } => Ok(group[0].0[index].clone()),
+                            | FindTerm::Probability { .. }
+                            | FindTerm::Expectation { .. } => Ok(group[0].0[index].clone()),
                             FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
                             FindTerm::Count
                             | FindTerm::Aggregate { .. }
@@ -662,7 +668,8 @@ impl NaiveDb {
                     | FindTerm::Segments { .. }
                     | FindTerm::Event(_)
                     | FindTerm::Test(_)
-                    | FindTerm::Probability { .. } => Ok(group[0].0[index].clone()),
+                    | FindTerm::Probability { .. }
+                    | FindTerm::Expectation { .. } => Ok(group[0].0[index].clone()),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
                     )),
@@ -771,6 +778,11 @@ fn count_vars(rule: &Rule) -> usize {
             FindTerm::Event(expr) => {
                 for var in expr.variables() {
                     see(&mut count, var);
+                }
+            }
+            FindTerm::Expectation { value, when, given } => {
+                for var in [value, when, given] {
+                    see(&mut count, *var);
                 }
             }
             FindTerm::Probability { event, given } => {
@@ -1111,9 +1123,10 @@ fn pack_group_rows(
                 FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
                 FindTerm::Segments { .. } => unreachable!("segments projected before folds"),
                 FindTerm::Compute(expr) => eval_scalar(expr, group[0], index),
-                FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
-                    Err(QueryError::UnsupportedEvent)
-                }
+                FindTerm::Event(_)
+                | FindTerm::Test(_)
+                | FindTerm::Probability { .. }
+                | FindTerm::Expectation { .. } => Err(QueryError::UnsupportedEvent),
                 FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {
                     unreachable!("validated: Pack mixes with no other aggregate")
@@ -1139,7 +1152,10 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 // value distinguishes rows, so it joins the group key.
                 FindTerm::Segments { .. } => unreachable!("segments projected before folds"),
                 FindTerm::Compute(expr) => key.push(eval_scalar(expr, binding, index)?),
-                FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
+                FindTerm::Event(_)
+                | FindTerm::Test(_)
+                | FindTerm::Probability { .. }
+                | FindTerm::Expectation { .. } => {
                     return Err(QueryError::UnsupportedEvent);
                 }
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {}
@@ -1160,9 +1176,10 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                     FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
                     FindTerm::Segments { .. } => unreachable!("segments projected before folds"),
                     FindTerm::Compute(expr) => eval_scalar(expr, group[0], index),
-                    FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
-                        Err(QueryError::UnsupportedEvent)
-                    }
+                    FindTerm::Event(_)
+                    | FindTerm::Test(_)
+                    | FindTerm::Probability { .. }
+                    | FindTerm::Expectation { .. } => Err(QueryError::UnsupportedEvent),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
                     )),

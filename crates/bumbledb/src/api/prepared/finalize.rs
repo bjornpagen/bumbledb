@@ -20,8 +20,9 @@ pub(super) fn finalize(
 ) -> Result<()> {
     let base = out.cells.len();
     let probabilities = out.probabilities.len();
+    let expectations = out.expectations.len();
     let result = finalize_rows(sink, answer_scratch, memo, interner, columns, out, work)
-        .and_then(|()| out.finish_probabilities(work));
+        .and_then(|()| out.finish_observations(work));
     if result.is_err() {
         if base == 0 {
             out.clear();
@@ -30,6 +31,8 @@ pub(super) fn finalize(
             // Public execution starts empty; neither path exposes this append.
             out.cells.truncate(base);
             out.probabilities.truncate(probabilities);
+            out.expectations.truncate(expectations);
+            out.expectation_inputs.clear();
             out.probability_pairs.clear();
             out.probability_indices
                 .retain(|_, index| *index < probabilities);
@@ -55,6 +58,7 @@ fn finalize_rows(
     match sink {
         EitherSink::Computed(sink) => {
             sink.finish_events()?;
+            out.expectation_inputs = std::mem::take(&mut sink.expectation_inputs);
             finalize_rows(
                 &mut sink.inner,
                 answer_scratch,
@@ -156,6 +160,17 @@ fn fill_resident_rows<'a>(
     let mut offset = 0;
     for (col, column) in columns.iter().enumerate() {
         work.checkpoint().map_err(work_error)?;
+        if matches!(column, SignatureColumn::Expectation) {
+            let mut answers = answers.clone();
+            for row in 0..rows {
+                work.checkpoint().map_err(work_error)?;
+                let answer = answers.next().expect("resident sink length");
+                let cell = out.expectation_cell(answer[offset])?;
+                out.cells.spare_capacity_mut()[row * arity + col].write(cell);
+            }
+            offset += 1;
+            continue;
+        }
         let Some(ty) = column.ty() else {
             let mut answers = answers.clone();
             for row in 0..rows {
@@ -330,6 +345,11 @@ fn push_resolved_answer(
 ) -> Result<()> {
     let mut word = 0;
     for column in columns {
+        if matches!(column, SignatureColumn::Expectation) {
+            out.cells.push(out.expectation_cell(answer[word])?);
+            word += 1;
+            continue;
+        }
         let Some(ty) = column.ty() else {
             let cell = out.probability_cell(&answer[word..word + 4], interner)?;
             out.cells.push(cell);

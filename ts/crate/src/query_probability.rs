@@ -16,7 +16,7 @@ pub struct ProbabilityOutput {
     value: Option<Vec<u8>>,
     defined: Option<Vec<u8>>,
 }
-fn function(
+pub(crate) fn function(
     value: &ParameterFunction,
     control: &dyn Control,
     work: &mut ExactArithmetic<'_>,
@@ -33,8 +33,8 @@ fn function(
 }
 /// One cooperative arithmetic and byte budget for an entire delivery batch.
 pub(crate) struct ObservationOutputWork<'a> {
-    arithmetic: ExactArithmetic<'a>,
-    remaining: usize,
+    pub(crate) arithmetic: ExactArithmetic<'a>,
+    pub(crate) remaining: usize,
 }
 impl<'a> ObservationOutputWork<'a> {
     pub(crate) fn new(control: &'a dyn Control) -> Self {

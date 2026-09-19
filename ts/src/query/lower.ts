@@ -972,7 +972,7 @@ function assertNumeric(where: string, position: string, ref: AnyVar): void {
  */
 function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedField | undefined {
 	const entry = column.entry
-	if (entry.kind === "probability") return undefined
+	if (entry.kind === "probability" || entry.kind === "expectation") return undefined
 	if (entry.kind === "event") return { field: eventField, class: undefined }
 	if (entry.kind === "test") return { field: boolField, class: undefined }
 	if (entry.kind === "segments") return { field: segmentField(entry), class: undefined }
@@ -1006,10 +1006,11 @@ function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedFie
 function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, column: FindColumn): void {
 	const where = `${contextLabel(context)} find ${column.name}`
 	const entry = column.entry
-	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability") {
-		if (entry.kind === "probability" && context.kind !== "query")
-			throw new AuthoringError({ message: `${where}: probability observations currently require a final query head` })
+	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability" || entry.kind === "expectation") {
+		if ((entry.kind === "probability" || entry.kind === "expectation") && context.kind !== "query")
+			throw new AuthoringError({ message: `${where}: observations currently require a final query head` })
 		for (const ref of eventFindVars(entry)) assertBound(where, bound, ref)
+		if (entry.kind === "expectation") assertNotClosed(where, "the payoff", entry.node.value)
 		return
 	}
 	if (entry.kind === "segments") {
@@ -1148,7 +1149,10 @@ function completeRule(context: ChainContext, state: RuleBuildState, rawColumns: 
 	if (packs > 1) throw new AuthoringError({ message: "a query stage can pack one interval or Event column" })
 	if (packs !== 0 && aggregates.length !== packs)
 		throw new AuthoringError({ message: "pack regions and compute numeric aggregates in separate query stages" })
-	if (rawColumns.some((c) => c.entry.kind === "segments") && aggregates.length !== 0)
+	if (
+		rawColumns.some((c) => c.entry.kind === "segments") &&
+		(aggregates.length !== 0 || rawColumns.some((c) => c.entry.kind === "expectation"))
+	)
 		throw new AuthoringError({ message: "aggregate generated segments in a following query stage" })
 	const columns = rawColumns.map(function enrichColumn(column): FindColumn {
 		assertDeclarationOrderKey(`${label} find column`, column.name)
@@ -1586,6 +1590,7 @@ function renderClosedSlice(closed: AnyClosedRoster | undefined): string {
 }
 
 function headOperation(column: FindColumn): HeadOpIr | undefined {
+	if (column.entry.kind === "expectation") return "expectation"
 	return column.entry.kind === "aggregate" ? headOpOf(column.entry.agg) : undefined
 }
 
@@ -2277,7 +2282,7 @@ function lowerComputeGrammar(node: QueryNode, ids: VarIds): ScalarExprIr {
 }
 
 function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
-	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability")
+	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability" || entry.kind === "expectation")
 		return eventFindIr(entry, (ref) => ids.of(ref))
 	if (entry.kind === "segments")
 		return { kind: entry.kind, op: entry.op, left: ids.of(entry.left), right: ids.of(entry.right) }
@@ -2311,6 +2316,7 @@ function headOpOf(agg: AggData): HeadOpIr {
 
 function headTermOf(column: FindColumn): HeadTermIr {
 	const entry = column.entry
+	if (entry.kind === "expectation") return { kind: "aggregate", op: "expectation" }
 	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability") return { kind: "compute" }
 	if (entry.kind === "segments") return { kind: "compute" }
 	if (entry.kind === "var") {

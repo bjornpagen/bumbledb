@@ -1,0 +1,16 @@
+'SourceTransport.sum_congr' depends on axioms: [propext, Classical.choice, Quot.sound]
+'SourceTransport.scalar_reconstruction' depends on axioms: [propext, Classical.choice, Quot.sound]
+'SourceTransport.zero_default_reconstructed' depends on axioms: [propext, Classical.choice, Quot.sound]
+'SourceTransport.fibre_reconstruction' depends on axioms: [propext, Classical.choice, Quot.sound]
+'SourceTransport.kernel_normalization_reconstructed' depends on axioms: [propext, Classical.choice, Quot.sound]
+'SourceTransport.likelihood_reconstruction' depends on axioms: [propext, Classical.choice, Quot.sound]
+'SourceTransport.unsupported_cons_retains_position' depends on axioms: [propext, Quot.sound]
+'SourceTransport.admission_exact' depends on axioms: [propext]
+'SourceTransport.replay_failure_preserved' depends on axioms: [propext]
+'SourceTransport.forged_claim_rejected' depends on axioms: [propext]
+'SourceTransport.zero_mass_channel_rows_cannot_be_skipped' depends on axioms: [propext, Classical.choice, Quot.sound]
+'SourceTransport.same_posterior_does_not_validate_a_scaled_receipt' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+'SourceTransport.omitted_empty_target_changes_receipt' depends on axioms: [propext, Classical.choice, Quot.sound]
+'SourceTransport.replay_error_is_not_mathematical_impossibility' does not depend on any axioms

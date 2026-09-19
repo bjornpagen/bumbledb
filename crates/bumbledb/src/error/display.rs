@@ -1083,6 +1083,10 @@ impl fmt::Display for Error {
                 write!(f, "aggregate binding cardinality exceeds u64::MAX")
             }
             Self::Scalar { find, source } => write!(f, "find {find}: {source}"),
+            Self::ExpectationEvidenceMismatch { find } => write!(
+                f,
+                "find {find}: Expectation requires equal evidence throughout each group"
+            ),
             Self::Event(source) => write!(f, "event: {source}"),
             Self::EventFaults(faults) => {
                 write!(f, "{} participating Event operand fault(s)", faults.len())?;

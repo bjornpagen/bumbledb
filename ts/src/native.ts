@@ -78,7 +78,7 @@ type HeadTermIr =
 	| { readonly kind: "compute" }
 	| { readonly kind: "aggregate"; readonly op: HeadOpIr }
 
-type HeadOpIr = "sum" | "mean" | "min" | "max" | "count" | "pack"
+type HeadOpIr = "sum" | "mean" | "min" | "max" | "count" | "pack" | "expectation"
 
 /**
  * The computed-find scalar expression (C05 `FindTerm::Compute(ScalarExpr)`):
@@ -196,6 +196,7 @@ type FindTermIr =
 	| { readonly kind: "event"; readonly expr: EventExprIr }
 	| { readonly kind: "test"; readonly expr: EventTestIr }
 	| { readonly kind: "probability"; readonly event: EventExprIr; readonly given: EventExprIr }
+	| { readonly kind: "expectation"; readonly value: number; readonly when: number; readonly given: number }
 	| { readonly kind: "count" }
 	| { readonly kind: "aggregate"; readonly op: FoldOpIr; readonly over: number }
 	| { readonly kind: "pack"; readonly over: number }
@@ -211,6 +212,7 @@ type AggOpIr =
 	| { readonly kind: "max" }
 	| { readonly kind: "count" }
 	| { readonly kind: "pack" }
+	| { readonly kind: "expectation" }
 
 type AtomSourceIr =
 	| { readonly kind: "edb"; readonly relation: number }

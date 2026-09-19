@@ -1342,6 +1342,7 @@ fn fold_op_in(obj: &Object) -> napi::Result<FoldOp> {
         HeadOp::Mean => Ok(FoldOp::Mean),
         HeadOp::Min => Ok(FoldOp::Min),
         HeadOp::Max => Ok(FoldOp::Max),
+        HeadOp::Expectation => Err(err("Expectation is a three-variable find".into())),
         HeadOp::Count => Err(err(
             "bumbledb marshal: Count is find kind `count`, not a fold".to_string(),
         )),
@@ -1381,6 +1382,14 @@ fn find_term_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<FindTerm> 
                 1,
                 &mut EventBudget::new(copy),
             )?))
+        }
+        tags::find_term::EXPECTATION => {
+            exact_fields(obj, &["kind", "value", "when", "given"])?;
+            Ok(FindTerm::Expectation {
+                value: var_in(obj, "value", "payoff")?,
+                when: var_in(obj, "when", "payoff region")?,
+                given: var_in(obj, "given", "payoff evidence")?,
+            })
         }
         tags::find_term::PROBABILITY => {
             exact_fields(obj, &["kind", "event", "given"])?;
@@ -1714,6 +1723,7 @@ pub(crate) fn query_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<Que
 #[derive(Debug)]
 pub enum ValueOut {
     Probability(Box<crate::query_probability::ProbabilityOutput>),
+    Expectation(Box<crate::query_expectation::ExpectationOutput>),
     Bool(bool),
     U64(u64),
     I64(i64),
@@ -1787,6 +1797,11 @@ impl ToNapiValue for ValueOut {
     // against it lines above.
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
         match val {
+            Self::Expectation(v) => {
+                let handle = Env::from_raw(env);
+                let object = v.object(&handle)?;
+                unsafe { Object::to_napi_value(env, object) }
+            }
             Self::Probability(v) => {
                 let handle = Env::from_raw(env);
                 let object = v.object(&handle)?;
@@ -1845,6 +1860,9 @@ fn value_out_from_answer(
     budget: &mut crate::query_probability::ObservationOutputWork<'_>,
 ) -> Result<ValueOut, bumbledb::event::Error> {
     Ok(match value {
+        AnswerValue::Expectation(v) => ValueOut::Expectation(Box::new(
+            crate::query_expectation::ExpectationOutput::new(v, control, budget)?,
+        )),
         AnswerValue::Probability(v) => ValueOut::Probability(Box::new(
             crate::query_probability::ProbabilityOutput::new(v, control, budget)?,
         )),

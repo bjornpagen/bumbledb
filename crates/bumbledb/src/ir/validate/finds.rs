@@ -19,6 +19,7 @@ impl Signature {
             if matches!(
                 (&*left, right),
                 (SignatureColumn::Probability, SignatureColumn::Probability)
+                    | (SignatureColumn::Expectation, SignatureColumn::Expectation)
             ) {
                 continue;
             }
@@ -38,7 +39,9 @@ impl Signature {
             match left {
                 SignatureColumn::Project { ty: current }
                 | SignatureColumn::Fold { ty: current, .. } => *current = ty,
-                SignatureColumn::Probability => unreachable!("matched above"),
+                SignatureColumn::Probability | SignatureColumn::Expectation => {
+                    unreachable!("matched above")
+                }
             }
         }
         Ok(())
@@ -67,6 +70,7 @@ impl Signature {
                     ty: ValueType::Event,
                 },
                 FindTerm::Probability { .. } => SignatureColumn::Probability,
+                FindTerm::Expectation { .. } => SignatureColumn::Expectation,
                 FindTerm::Test(_) => SignatureColumn::Project {
                     ty: ValueType::Bool,
                 },
@@ -129,6 +133,30 @@ impl Context {
                         }
                     }
                 }
+                FindTerm::Expectation { value, when, given } => {
+                    if self.closed_vars.contains_key(value) {
+                        return Err(ValidationError::AggregateOverClosedReference { find });
+                    }
+                    for var in [value, when, given] {
+                        if !self.atom_vars.contains(var) {
+                            return Err(ValidationError::UnboundFindVariable { var: *var });
+                        }
+                    }
+                    if !matches!(
+                        self.resolved_var_type(*value),
+                        ValueType::I64 | ValueType::U64
+                    ) {
+                        return Err(ValidationError::AggregateInputType { find });
+                    }
+                    for var in [when, given] {
+                        if *self.resolved_var_type(*var) != ValueType::Event {
+                            return Err(ValidationError::EventExpression {
+                                find,
+                                source: crate::EventExprError::NotEvent(*var),
+                            });
+                        }
+                    }
+                }
                 FindTerm::Segments { left, right, .. } => {
                     for var in [left, right] {
                         if !self.atom_vars.contains(var) {
@@ -146,7 +174,10 @@ impl Context {
                     if rule.finds.iter().any(|f| {
                         matches!(
                             f,
-                            FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. }
+                            FindTerm::Count
+                                | FindTerm::Aggregate { .. }
+                                | FindTerm::Pack { .. }
+                                | FindTerm::Expectation { .. }
                         )
                     }) {
                         return Err(ValidationError::ScalarExpression {

@@ -2,7 +2,7 @@
  * lower to native Event programs; they perform no Event mathematics in JS. */
 import { AuthoringError } from "#errors.ts"
 import { descriptorLength, EventDescriptor, encodedDescriptor } from "#event-descriptor.ts"
-import type { EventField } from "#fields.ts"
+import type { EventField, I64Field, U64Field } from "#fields.ts"
 import type { EventExprIr, EventTestIr, FindTermIr, RelationExprIr } from "#native.ts"
 import { eventTree, testTree } from "#query/event-tree.ts"
 import { type AnyVar, isTerm, term } from "#query/scope.ts"
@@ -19,6 +19,12 @@ interface EventTest {
 	readonly [expressionTag]: "test"
 	readonly node: TestNode
 }
+type IntegerVar = AnyVar & { readonly field: I64Field | U64Field }
+interface ExpectationExpr {
+	readonly kind: "expectation"
+	readonly [expressionTag]: "expectation"
+	readonly node: { readonly value: IntegerVar; readonly when: EventVar; readonly given: EventVar }
+}
 interface ProbabilityExpr {
 	readonly kind: "probability"
 	readonly [expressionTag]: "probability"
@@ -30,7 +36,7 @@ interface RelationExpr {
 	readonly node: RelationNode
 }
 type EventOperand = EventVar | EventExpr
-type EventFind = EventExpr | EventTest | ProbabilityExpr
+type EventFind = EventExpr | EventTest | ProbabilityExpr | ExpectationExpr
 type EventNode = EventExprIr<EventVar, EventDescriptor>
 type TestNode = EventTestIr<EventVar, EventDescriptor>
 type RelationNode = RelationExprIr<EventVar, EventDescriptor>
@@ -45,6 +51,7 @@ interface Owned<N> {
 }
 const events = new WeakMap<EventExpr, Owned<EventNode>>()
 const tests = new WeakMap<EventTest, Owned<TestNode>>()
+const expectations = new WeakSet<ExpectationExpr>()
 const probabilities = new WeakMap<ProbabilityExpr, Owned<ProbabilityExpr["node"]>>()
 const relations = new WeakMap<RelationExpr, Owned<RelationNode>>()
 
@@ -93,7 +100,10 @@ function isEventFind(input: unknown): input is EventFind {
 	return (
 		typeof input === "object" &&
 		input !== null &&
-		(events.has(input as EventExpr) || tests.has(input as EventTest) || probabilities.has(input as ProbabilityExpr))
+		(expectations.has(input as ExpectationExpr) ||
+			events.has(input as EventExpr) ||
+			tests.has(input as EventTest) ||
+			probabilities.has(input as ProbabilityExpr))
 	)
 }
 function ownProbability(node: ProbabilityExpr["node"], size: Extent): ProbabilityExpr {
@@ -105,6 +115,18 @@ function ownProbability(node: ProbabilityExpr["node"], size: Extent): Probabilit
 	probabilities.set(value, { node: value.node, extent: size })
 	return value
 }
+/** Admit a complete evidence-relative payoff roster before exact contraction. */
+function expectation(value: IntegerVar, when: EventVar, given: EventVar): ExpectationExpr {
+	if (!isTerm(value) || value[term] !== "var" || (value.field.kind !== "i64" && value.field.kind !== "u64"))
+		return refused("Expectation requires an exact integer variable")
+	const result: ExpectationExpr = Object.freeze({
+		kind: "expectation",
+		[expressionTag]: "expectation" as const,
+		node: Object.freeze({ value, when: eventVar(when), given: eventVar(given) })
+	})
+	expectations.add(result)
+	return result
+}
 /** Observe two Event programs on the same source, retaining the exact law and evidence. */
 function probability(event: EventOperand, given: EventOperand): ProbabilityExpr {
 	const a = eventData(event)
@@ -114,6 +136,7 @@ function probability(event: EventOperand, given: EventOperand): ProbabilityExpr 
 /** The query snapshot copies variable references and their uses in one graph.
  * Re-enroll only copies made from a checked expression, retaining its extent. */
 function snapshotEventExpression(source: object, snapshot: object): void {
+	if (expectations.has(source as ExpectationExpr)) expectations.add(snapshot as ExpectationExpr)
 	const probability = probabilities.get(source as ProbabilityExpr)
 	if (probability !== undefined) {
 		const value = snapshot as ProbabilityExpr
@@ -319,7 +342,16 @@ const RelationExpr = Object.freeze({
 function eventFindIr(
 	input: EventFind,
 	variable: (ref: AnyVar) => number
-): Extract<FindTermIr, { kind: "event" | "test" | "probability" }> {
+): Extract<FindTermIr, { kind: "event" | "test" | "probability" | "expectation" }> {
+	if (input.kind === "expectation") {
+		if (!expectations.has(input)) return refused("Expected an owned expectation expression")
+		return {
+			kind: "expectation",
+			value: variable(input.node.value),
+			when: variable(input.node.when),
+			given: variable(input.node.given)
+		}
+	}
 	const map = { variable, descriptor: EventDescriptor.toBytes }
 	if (input.kind === "probability") {
 		const data = probabilities.get(input) ?? refused("Expected an owned probability expression")
@@ -332,7 +364,11 @@ function eventFindIr(
 	const data = tests.get(input) ?? refused("Expected an owned Event test")
 	return { kind: "test", expr: testTree(data.node, map) }
 }
-function eventFindVars(input: EventFind): readonly EventVar[] {
+function eventFindVars(input: EventFind): readonly AnyVar[] {
+	if (input.kind === "expectation") {
+		if (!expectations.has(input)) return refused("Expected an owned expectation expression")
+		return [input.node.value, input.node.when, input.node.given]
+	}
 	const variables = new Set<EventVar>()
 	const map = {
 		variable: (value: EventVar) => {
@@ -353,9 +389,15 @@ function eventFindVars(input: EventFind): readonly EventVar[] {
 /** Called only after the shared wire parser has admitted shape. Mathematical
  * descriptor admission remains on the worker when this query is prepared. */
 function eventFindFromIr(
-	input: Extract<FindTermIr, { kind: "event" | "test" | "probability" }>,
+	input: Extract<FindTermIr, { kind: "event" | "test" | "probability" | "expectation" }>,
 	variable: (ordinal: number) => AnyVar
 ): EventFind {
+	if (input.kind === "expectation")
+		return expectation(
+			variable(input.value) as IntegerVar,
+			eventVar(variable(input.when)),
+			eventVar(variable(input.given))
+		)
 	let nodes = 0
 	let depth = 0
 	let bytes = 0
@@ -383,13 +425,14 @@ function eventFindFromIr(
 	return ownTest(node, extent([{ nodes, depth, bytes }], [], true))
 }
 
-export type { EventFind, EventOperand, EventVar, ProbabilityExpr }
+export type { EventFind, EventOperand, EventVar, ExpectationExpr, ProbabilityExpr }
 export {
 	EventExpr,
 	EventTest,
 	eventFindFromIr,
 	eventFindIr,
 	eventFindVars,
+	expectation,
 	isEventFind,
 	probability,
 	RelationExpr,

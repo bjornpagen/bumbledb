@@ -44,13 +44,17 @@ impl std::fmt::Display for Signature {
             if index > 0 {
                 f.write_str(", ")?;
             }
+            let Some(ty) = column.ty() else {
+                f.write_str(if matches!(column, SignatureColumn::Expectation) {
+                    "expectation"
+                } else {
+                    "probability"
+                })?;
+                continue;
+            };
             if let Some(op) = column.op() {
                 write!(f, "{op} ")?;
             }
-            let Some(ty) = column.ty() else {
-                f.write_str("probability")?;
-                continue;
-            };
             match ty {
                 ValueType::Event => f.write_str("event")?,
                 ValueType::Bool => f.write_str("bool")?,
@@ -91,6 +95,7 @@ pub enum SignatureColumn {
     },
     /// Query-only owned observation; it is not a stored schema field.
     Probability,
+    Expectation,
 
     Fold {
         op: AggKind,
@@ -103,7 +108,7 @@ impl SignatureColumn {
     pub fn ty(&self) -> Option<&ValueType> {
         match self {
             Self::Project { ty } | Self::Fold { ty, .. } => Some(ty),
-            Self::Probability => None,
+            Self::Probability | Self::Expectation => None,
         }
     }
 
@@ -112,6 +117,7 @@ impl SignatureColumn {
         match self {
             Self::Project { .. } | Self::Probability => None,
             Self::Fold { op, .. } => Some(*op),
+            Self::Expectation => Some(AggKind::Expectation),
         }
     }
 }
@@ -122,6 +128,7 @@ impl SignatureColumn {
 /// `None` — while a folded measure carries its fold's kind).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggKind {
+    Expectation,
     Sum,
     Mean,
 
@@ -137,6 +144,7 @@ pub enum AggKind {
 impl std::fmt::Display for AggKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            Self::Expectation => "Expectation",
             Self::Sum => "Sum",
             Self::Mean => "Mean",
             Self::Min => "Min",
@@ -667,6 +675,7 @@ impl<'a> RuleWitness<'a> {
                     | FindTerm::Event(_)
                     | FindTerm::Test(_)
                     | FindTerm::Probability { .. }
+                    | FindTerm::Expectation { .. }
                     | FindTerm::Segments { .. }
                     | FindTerm::Count
                     | FindTerm::Aggregate { .. }

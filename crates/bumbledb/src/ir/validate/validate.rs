@@ -504,6 +504,7 @@ fn validate_rule(
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }
+            | FindTerm::Expectation { .. }
             | FindTerm::Count
             | FindTerm::Aggregate { .. }
             | FindTerm::Pack { .. } => None,

@@ -169,6 +169,7 @@ impl<'a> BindArgs<'a> for &'a Vec<ParamArg<'a>> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnswerValue<'a> {
     Probability(&'a crate::ProbabilityAnswer),
+    Expectation(&'a crate::ExpectationAnswer),
     Event(&'a crate::Event),
     Bool(bool),
     U64(u64),
@@ -196,6 +197,7 @@ pub enum AnswerValue<'a> {
 #[derive(Debug, Clone, Copy)]
 enum Cell {
     Probability(usize),
+    Expectation(usize),
     Event(usize),
     Bool(bool),
     U64(u64),
@@ -226,6 +228,8 @@ pub struct Answers {
     blob: Vec<u8>,
     events: Vec<crate::Event>,
     probabilities: Vec<crate::ProbabilityAnswer>,
+    expectations: Vec<crate::ExpectationAnswer>,
+    expectation_inputs: Vec<crate::observation::ExpectationInput>,
     probability_pairs: Vec<(crate::Event, crate::Event)>,
     probability_indices: std::collections::HashMap<[u64; 4], usize>,
     event_indices: std::collections::HashMap<[u64; 2], usize>,

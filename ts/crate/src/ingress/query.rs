@@ -90,6 +90,11 @@ pub(crate) struct Query {
 
 #[derive(Debug)]
 pub(crate) enum FindTerm {
+    Expectation {
+        value: VarId,
+        when: VarId,
+        given: VarId,
+    },
     Probability {
         event: EventExpr,
         given: EventExpr,
@@ -354,6 +359,7 @@ impl Admit for FindTerm {
             Self::Compute(v) => O::Compute(v.admit(work)?),
             Self::Event(v) => O::Event(v.admit(work)?),
             Self::Test(v) => O::Test(v.admit(work)?),
+            Self::Expectation { value, when, given } => O::Expectation { value, when, given },
             Self::Probability { event, given } => O::Probability {
                 event: event.admit(work)?,
                 given: given.admit(work)?,

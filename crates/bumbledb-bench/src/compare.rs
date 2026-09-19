@@ -16,6 +16,7 @@ pub enum Owned {
     Bytes(Vec<u8>),
     Event(Vec<u8>),
     Probability(Vec<u8>, Vec<u8>),
+    Expectation(Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>),
     IntervalU64(u64, u64),
     IntervalI64(i64, i64),
     /// Canonical binary64 endpoint payloads — bit-exact, like [`Owned::F64`].
@@ -47,6 +48,8 @@ pub(crate) fn event_bytes(value: &bumbledb::Event) -> Vec<u8> {
         .expect("benchmark Event fits the explicit codec limits")
 }
 
+/// # Panics
+/// If a retained exact payoff exceeds the explicit benchmark codec budget.
 #[must_use]
 pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
     answers
@@ -54,6 +57,24 @@ pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
         .map(|answer| {
             (0..types.len())
                 .map(|column| match answer.get(column) {
+                    AnswerValue::Expectation(v) => {
+                        let mut work = bumbledb::event::ExactArithmetic::new(
+                            bumbledb::event::ArithmeticLimits::default(),
+                            &(),
+                        );
+                        Owned::Expectation(
+                            event_bytes(v.given()),
+                            v.function()
+                                .pieces()
+                                .map(|(region, value)| {
+                                    (
+                                        event_bytes(&region),
+                                        value.to_bytes(&mut work).expect("bounded oracle payoff"),
+                                    )
+                                })
+                                .collect(),
+                        )
+                    }
                     AnswerValue::Probability(v) => {
                         Owned::Probability(event_bytes(v.event()), event_bytes(v.given()))
                     }

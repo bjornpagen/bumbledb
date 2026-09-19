@@ -17,6 +17,8 @@ impl Answers {
         self.blob.clear();
         self.events.clear();
         self.probabilities.clear();
+        self.expectations.clear();
+        self.expectation_inputs.clear();
         self.probability_pairs.clear();
         self.probability_indices.clear();
         self.event_indices.clear();
@@ -52,6 +54,7 @@ impl Answers {
     pub fn get(&self, answer: usize, column: usize) -> AnswerValue<'_> {
         assert!(column < self.arity && answer < self.len());
         match self.cells[answer * self.arity + column] {
+            Cell::Expectation(index) => AnswerValue::Expectation(&self.expectations[index]),
             Cell::Probability(index) => AnswerValue::Probability(&self.probabilities[index]),
             Cell::Event(index) => AnswerValue::Event(&self.events[index]),
             Cell::Bool(v) => AnswerValue::Bool(v),
@@ -82,6 +85,11 @@ impl Answers {
     pub(crate) fn push_value(&mut self, value: &AnswerValue<'_>) {
         let cell = match value {
             AnswerValue::Event(value) => self.event_cell(value),
+            AnswerValue::Expectation(value) => {
+                let index = self.expectations.len();
+                self.expectations.push((*value).clone());
+                Cell::Expectation(index)
+            }
             AnswerValue::Probability(value) => {
                 let index = self.probabilities.len();
                 self.probabilities.push((*value).clone());
@@ -176,7 +184,7 @@ impl Answers {
 
     /// Complete all exact observations before publishing any row. One budget
     /// spans the full result; pair identity allows repeated outputs to share work.
-    pub(super) fn finish_probabilities(&mut self, control: &crate::WorkContext) -> Result<()> {
+    pub(super) fn finish_observations(&mut self, control: &crate::WorkContext) -> Result<()> {
         let mut work =
             crate::event::ExactArithmetic::new(crate::event::ArithmeticLimits::default(), control);
         self.probabilities
@@ -190,7 +198,23 @@ impl Answers {
             )?);
         }
         self.probability_pairs.clear();
+        self.expectations
+            .try_reserve_exact(self.expectation_inputs.len())
+            .map_err(crate::event::Error::from)?;
+        for input in &self.expectation_inputs {
+            self.expectations
+                .push(crate::ExpectationAnswer::new(input.clone(), &mut work)?);
+        }
+        self.expectation_inputs.clear();
         Ok(())
+    }
+
+    pub(super) fn expectation_cell(&self, token: u64) -> Result<Cell> {
+        let token = usize::try_from(token).map_err(|_| crate::Error::ResultBytesOverflow)?;
+        if token >= self.expectation_inputs.len() {
+            return Err(crate::event::Error::UnknownKey.into());
+        }
+        Ok(Cell::Expectation(self.expectations.len() + token))
     }
 
     pub(super) fn uuid_cell(hi: u64, lo: u64) -> Cell {

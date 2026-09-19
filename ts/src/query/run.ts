@@ -1,6 +1,7 @@
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
 import type { QueryParam, TaggedValue } from "#native.ts"
 import type { FindColumn } from "#query/atom.ts"
+import { decodeExpectation } from "#query/expectation.ts"
 import { taggedCmpLiteral } from "#query/lower.ts"
 import { type AnswerCell, decodeProbability } from "#query/probability.ts"
 import type { ParamEntry } from "#query/scope.ts"
@@ -72,6 +73,10 @@ function decodeAnswers<Row>(finds: readonly FindColumn[], rows: readonly (readon
 			const cell = row[ordinal]
 			if (cell === undefined) {
 				throw new SdkInvariantError({ message: `query answer cell ${ordinal} (${column.name}) is absent` })
+			}
+			if (column.entry.kind === "expectation") {
+				setOwnField(decoded, column.name, decodeExpectation(cell))
+				return
 			}
 			if (column.entry.kind === "probability") {
 				setOwnField(decoded, column.name, decodeProbability(cell))

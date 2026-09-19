@@ -1370,6 +1370,9 @@ pub enum Error {
     /// Complete, sorted, duplicate-free faults of the first failing Event
     /// stage. Operational refusal instead returns its own error directly.
     EventFaults(Box<[crate::EventOperandFault]>),
+    ExpectationEvidenceMismatch {
+        find: FindIndex,
+    },
     Scalar {
         find: FindIndex,
         source: crate::ScalarError,
@@ -1489,7 +1492,9 @@ impl Error {
             Self::CapacityRayMeasure { .. } => family_only(ErrorFamily::CapacityRayMeasure),
             Self::Overflow(_) => family_only(ErrorFamily::Overflow),
             Self::Event(source) => family_source(ErrorFamily::Event, source),
-            Self::EventFaults(_) => family_only(ErrorFamily::Event),
+            Self::EventFaults(_) | Self::ExpectationEvidenceMismatch { .. } => {
+                family_only(ErrorFamily::Event)
+            }
             Self::Scalar { .. } => family_only(ErrorFamily::Scalar),
             Self::ResultBytesOverflow => family_only(ErrorFamily::ResultBytesOverflow),
             Self::Corruption(_) => family_only(ErrorFamily::Corruption),

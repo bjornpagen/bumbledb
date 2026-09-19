@@ -109,7 +109,15 @@ function headTerm(context: string, input: unknown): HeadTermIr {
 	recordValue(context, raw, ["kind", "op"])
 	if (raw.kind !== "aggregate") return fail(context, "unknown head kind")
 	const op = raw.op
-	if (op !== "sum" && op !== "mean" && op !== "min" && op !== "max" && op !== "count" && op !== "pack")
+	if (
+		op !== "sum" &&
+		op !== "mean" &&
+		op !== "min" &&
+		op !== "max" &&
+		op !== "count" &&
+		op !== "pack" &&
+		op !== "expectation"
+	)
 		return fail(context, "unknown head aggregate")
 	return Object.freeze({ kind: raw.kind, op })
 }
@@ -297,6 +305,14 @@ function find(context: string, input: unknown): FindTermIr {
 		case "event":
 			recordValue(context, raw, ["kind", "expr"])
 			return Object.freeze({ kind: raw.kind, expr: eventExpr(`${context}.expr`, raw.expr) })
+		case "expectation":
+			recordValue(context, raw, ["kind", "value", "when", "given"])
+			return Object.freeze({
+				kind: raw.kind,
+				value: ordinal(context, raw.value),
+				when: ordinal(context, raw.when),
+				given: ordinal(context, raw.given)
+			})
 		case "probability": {
 			recordValue(context, raw, ["kind", "event", "given"])
 			const budget = { remaining: 4096, bytes: 16 * 1024 * 1024 }

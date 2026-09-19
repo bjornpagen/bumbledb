@@ -37,9 +37,20 @@
 		"isFinite"
 	],
 	"numericCast": ["toF64", "toF64Exact", "toI64Exact", "toU64Exact"],
-	"aggregateOp": ["sum", "mean", "min", "max", "count", "pack"],
+	"aggregateOp": ["sum", "mean", "min", "max", "count", "pack", "expectation"],
 	"headTerm": ["var", "compute", "aggregate"],
-	"findTerm": ["var", "segments", "compute", "event", "test", "probability", "count", "aggregate", "pack"],
+	"findTerm": [
+		"var",
+		"segments",
+		"compute",
+		"event",
+		"test",
+		"probability",
+		"expectation",
+		"count",
+		"aggregate",
+		"pack"
+	],
 	"atomSource": ["edb", "interior"],
 	"cmpOp": ["eq", "ne", "lt", "le", "gt", "ge", "allen", "pointIn"],
 	"condition": ["leaf", "and", "or"],

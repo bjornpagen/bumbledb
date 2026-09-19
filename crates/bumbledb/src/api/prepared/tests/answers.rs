@@ -3,6 +3,86 @@ use crate::error::FindIndex;
 use crate::ir::FoldOp;
 
 #[test]
+fn expectation_finalization_preserves_the_initialized_prefix_on_failed_append() {
+    use crate::event::{
+        ArithmeticLimits, DensityPiece, EventPartition, ExactArithmetic, ExactRational, LawLimits,
+        PartitionLimits, Space, SpaceId,
+    };
+    use crate::exec::run::{Bindings, Sink};
+    use crate::ir::validate::SignatureColumn;
+    use crate::observation::ExpectationInput;
+    let work = crate::WorkContext::new();
+    let generation = crate::image::test_generation();
+    let interner = crate::image::intern::InternerHandle::new(&generation, &work);
+    let raw = Space::new(SpaceId([207; 32]), 0, &work).unwrap();
+    let source = raw
+        .with_density(
+            &[DensityPiece {
+                region: raw.full(),
+                density: ExactRational::one(),
+            }],
+            LawLimits::default(),
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &work),
+        )
+        .unwrap();
+    let input = |source: &Space, value: i64| ExpectationInput {
+        partition: EventPartition::on(
+            &source.full(),
+            &[source.full()],
+            PartitionLimits::default(),
+            &work,
+        )
+        .unwrap(),
+        values: vec![ExactRational::from(value)],
+    };
+    for spill in [false, true] {
+        let append = |inputs: Vec<ExpectationInput>, out: &mut Answers| {
+            let mut sink = ProjectionSink::new(vec![0]);
+            let mut row = Bindings::new(1);
+            for n in 0..inputs.len() {
+                row.set(0, n as u64);
+                assert!(!sink.emit(&row).is_terminal());
+            }
+            if spill {
+                sink.force_spill().unwrap();
+            }
+            out.expectation_inputs = inputs;
+            super::super::finalize::finalize(
+                &mut EitherSink::Projection(sink),
+                &mut Vec::new(),
+                &mut ResolveMemo::new(),
+                &interner,
+                &[SignatureColumn::Expectation],
+                out,
+                &work,
+            )
+        };
+        let mut out = Answers::new();
+        out.begin(1);
+        append(vec![input(&source, 7)], &mut out).unwrap();
+        let AnswerValue::Expectation(prior) = out.get(0, 0) else {
+            panic!("expectation");
+        };
+        let prior = prior.clone();
+        assert!(matches!(
+            append(vec![input(&source, 9), input(&raw, 0)], &mut out),
+            Err(Error::Event(crate::event::Error::MissingLaw))
+        ));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(0, 0), AnswerValue::Expectation(&prior));
+        assert!(out.expectation_inputs.is_empty());
+        append(vec![input(&source, -3)], &mut out).unwrap();
+        let AnswerValue::Expectation(next) = out.get(1, 0) else {
+            panic!("expectation");
+        };
+        let crate::ExpectationValue::Fixed { value, .. } = next.value() else {
+            panic!("fixed");
+        };
+        assert_eq!(value, &Some(ExactRational::from(-3i64)));
+    }
+}
+
+#[test]
 fn probability_finalization_rolls_back_only_failed_appends_in_ram_and_spill() {
     use crate::event::{
         ArithmeticLimits, DensityPiece, ExactArithmetic, ExactRational, LawLimits, Space, SpaceId,

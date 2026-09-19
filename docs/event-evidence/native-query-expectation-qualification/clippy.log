@@ -1,0 +1,20 @@
+    Checking bumbledb v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb)
+error: this function has too many lines (101/100)
+   --> crates/bumbledb/src/api/prepared/computed/expectation.rs:174:5
+    |
+174 | /     pub(super) fn finish(
+175 | |         &mut self,
+176 | |         generation: &GenerationHandle,
+177 | |         work: &WorkContext,
+178 | |         stage: Option<usize>,
+179 | |         faults: &mut Faults,
+180 | |     ) -> Result<Vec<ExpectationInput>> {
+    | |______________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#too_many_lines
+    = note: `-D clippy::too-many-lines` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::too_many_lines)]`
+
+error: could not compile `bumbledb` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `bumbledb` (lib test) due to 1 previous error

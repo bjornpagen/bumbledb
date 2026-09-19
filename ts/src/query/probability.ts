@@ -4,6 +4,7 @@ import { encodedEvent } from "#event-value.ts"
 import { encodedRational } from "#exact-value.ts"
 import type { ParameterProbabilityObservation } from "#parameter-source.ts"
 import { encodedParameter } from "#parameter-value.ts"
+import type { ExpectationWire } from "#query/expectation.ts"
 import type { CellValue } from "#rows.ts"
 import type { ProbabilityObservation } from "#source-operation.ts"
 import { encodedSource } from "#source-value.ts"
@@ -31,7 +32,7 @@ export interface ProbabilityWire {
 	readonly value: Uint8Array | null
 	readonly defined: Uint8Array | null
 }
-export type AnswerCell = CellValue | ProbabilityWire
+export type AnswerCell = CellValue | ProbabilityWire | ExpectationWire
 
 export function decodeProbability(input: unknown): ProbabilityAnswer {
 	const data = recordValue("Query probability", input, [
