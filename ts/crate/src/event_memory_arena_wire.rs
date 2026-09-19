@@ -21,7 +21,7 @@ pub enum ArenaOutput {
         memory: Vec<u8>,
         identities: BeliefSpaceIds,
     },
-    Inspection(inspection::Inspection),
+    Inspection(crate::event_inspection::Inspection),
 }
 #[derive(Clone, Copy)]
 enum Op {

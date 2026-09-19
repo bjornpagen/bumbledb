@@ -8,6 +8,7 @@
  */
 
 import type { ChangeCounts } from "#changes.ts"
+import type { EventActionWire } from "#event-action-data.ts"
 import type { EventDescriptorInspectionWire, EventDescriptorWire } from "#event-descriptor-data.ts"
 import type { EventMemoryInspectionWire, EventMemoryWire } from "#event-memory-data.ts"
 import type { DbHandle, ParsedQuery, QueryParam, SealedDescriptor, Violation } from "#native.ts"
@@ -134,6 +135,24 @@ interface DbBridge {
 		callback: () => void
 	): OperationHandle
 	runtimeEventDescriptorTake(operation: OperationHandle): EventDescriptorWire | EventDescriptorInspectionWire
+	runtimeEventAction(
+		runtime: RuntimeHandle,
+		operation:
+			| "admit"
+			| "describe"
+			| "inspect"
+			| "fromMemory"
+			| "reach"
+			| "safe"
+			| "restrict"
+			| "enabled"
+			| "good"
+			| "predecessor",
+		input: EventActionWire | Uint8Array,
+		operands: readonly Uint8Array[],
+		callback: () => void
+	): OperationHandle
+	runtimeEventActionTake(operation: OperationHandle): unknown
 	runtimeEventMemory(
 		runtime: RuntimeHandle,
 		operation: "admit" | "describe" | "inspect",

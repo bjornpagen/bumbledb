@@ -21,7 +21,9 @@ use napi::bindgen_prelude::{Buffer, Env, Object};
 use napi_derive::napi;
 
 pub mod db_wire;
+pub mod event_action_wire;
 pub mod event_descriptor_wire;
+mod event_inspection;
 pub mod event_memory_arena_wire;
 pub mod event_memory_wire;
 pub mod event_source_wire;

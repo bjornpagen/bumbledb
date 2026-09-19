@@ -1,0 +1,20 @@
+'PredicateQueries.strict_defined_iff' depends on axioms: [propext, Quot.sound]
+'PredicateQueries.strict_left_hole' does not depend on any axioms
+'PredicateQueries.strict_right_hole' does not depend on any axioms
+'PredicateQueries.constant_true_preserves_holes' does not depend on any axioms
+'PredicateQueries.negate_twice' does not depend on any axioms
+'PredicateQueries.negation_preserves_totality' depends on axioms: [propext]
+'PredicateQueries.always_is_total' does not depend on any axioms
+'PredicateQueries.always_is_possible_on_inhabited_domain' does not depend on any axioms
+'PredicateQueries.no_false_plus_total_is_always' depends on axioms: [propext]
+'PredicateQueries.a_hole_is_neither_true_nor_false' depends on axioms: [propext, Quot.sound]
+'PredicateQueries.conjunction_needs_one_shared_witness' depends on axioms: [propext, Quot.sound]
+'PredicateQueries.separately_possible_does_not_mean_jointly_possible' depends on axioms: [propext, Quot.sound]
+'PredicateQueries.strict_or_does_not_erase_an_undefined_operand' depends on axioms: [propext, Quot.sound]
+'PredicateQueries.always_conjunction' depends on axioms: [propext, Quot.sound]
+'PredicateQueries.region_is_total' does not depend on any axioms
+'PredicateQueries.region_possible_iff_intersection' depends on axioms: [propext]
+'PredicateQueries.region_always_iff_inclusion' depends on axioms: [propext]
+'PredicateQueries.region_complement' does not depend on any axioms
+'PredicateQueries.region_boolean_homomorphism' does not depend on any axioms
+'PredicateQueries.same_truth_on_domain_does_not_identify_region_origin' depends on axioms: [propext]

@@ -6,6 +6,7 @@ import {
 	ChangeSet,
 	Db,
 	Event,
+	EventAction,
 	EventDescriptor,
 	type EventFibreDescription,
 	EventMemory,
@@ -390,6 +391,12 @@ test("compiled memory survives replay with exact codes, knowledge, ranks and pro
 			assert.equal(yield* Event.subset(inspection.initial, yield* EventMemoryArena.possible(arena, uncertain)), true)
 			const goal = yield* EventMemoryArena.known(arena, yield* region(data.source, 3, [6]))
 			const reach = yield* EventMemoryArena.reach(arena, goal)
+			const action = yield* EventAction.fromMemory(arena)
+			const strategy = yield* EventAction.reach(action, goal)
+			const checked = yield* EventAction.inspect(strategy)
+			assert.ok(checked.kind === "reach")
+			assert.deepEqual(evbytes(checked.winning), evbytes(reach.winning))
+			assert.deepEqual(checked.ranks.map(evbytes), reach.ranks.map(evbytes))
 			assert.equal(yield* Event.subset(inspection.initial, reach.winning), true)
 			assert.equal(yield* Event.subset(inspection.initial, at(reach.ranks, 3)), true)
 			const policy = yield* EventDescriptor.inspect(reach.policy)
@@ -410,7 +417,7 @@ test("compiled memory survives replay with exact codes, knowledge, ranks and pro
 			assert.deepEqual(EventMemory.toBytes(described.memory), EventMemory.toBytes(memory))
 			const copy = yield* EventMemory.compile(described.memory, described.identities)
 			assert.deepEqual(EventMemoryArena.toBytes(copy), EventMemoryArena.toBytes(arena))
-			return { arena, goal, reach, policy: policy.region, codes: inspection.stateCodes }
+			return { arena, strategy, goal, reach, policy: policy.region, codes: inspection.stateCodes }
 		})
 	)
 	await run(
@@ -420,6 +427,9 @@ test("compiled memory survives replay with exact codes, knowledge, ranks and pro
 				const arena = Result.getOrThrow(EventMemoryArena.fromBytes(input))
 				input.fill(0)
 				const reach = yield* EventMemoryArena.reach(arena, retained.goal)
+				const strategy = yield* EventAction.describe(retained.strategy)
+				assert.ok(strategy.kind === "reach" && strategy.policy !== null)
+				assert.deepEqual(evbytes(strategy.policy), evbytes(retained.policy))
 				assert.deepEqual(evbytes(reach.winning), evbytes(retained.reach.winning))
 				assert.deepEqual(reach.ranks.map(evbytes), retained.reach.ranks.map(evbytes))
 				const policy = yield* EventDescriptor.inspect(reach.policy)

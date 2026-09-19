@@ -3,7 +3,7 @@
 import { Effect, Result } from "effect"
 import { dbNative } from "#db-native.ts"
 import { AuthoringError } from "#errors.ts"
-import { compileMemory } from "#event-memory-arena.ts"
+import { compileMemory, type EventMemoryIdentities } from "#event-memory-arena.ts"
 import {
 	decodeMemory,
 	decodeMemoryInspection,
@@ -85,6 +85,11 @@ const inspect = Effect.fn("EventMemory.inspect")(function* (value: EventMemory) 
 		decodeMemoryInspection
 	)
 })
-const EventMemory = Object.freeze({ fromBytes, toBytes, isMemory, admit, describe, inspect, compile: compileMemory })
+// Resolve the arena module only when invoked: either module may be imported
+// first, including through the general action adapter.
+function compile(memory: EventMemory, identities: EventMemoryIdentities) {
+	return compileMemory(memory, identities)
+}
+const EventMemory = Object.freeze({ fromBytes, toBytes, isMemory, admit, describe, inspect, compile })
 
 export { EventMemory, encodedMemory, toBytes as memoryBytes }

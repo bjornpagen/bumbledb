@@ -108,6 +108,8 @@ export {
 	NativeReportedError,
 	SdkInvariantError
 } from "#errors.ts"
+export { EventAction } from "#event-action.ts"
+export type { EventActionArenaDescription, EventActionDescription, EventActionInspection } from "#event-action-data.ts"
 export { EventDescriptor } from "#event-descriptor.ts"
 export type {
 	EventDescriptorDescription,

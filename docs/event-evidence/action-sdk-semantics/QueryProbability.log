@@ -1,0 +1,14 @@
+'QueryProbability.source_pair_retained' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryProbability.impossible_iff_zero_mass' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryProbability.observation_equality_requires_source_pair' does not depend on any axioms
+'QueryProbability.arms_union' does not depend on any axioms
+'QueryProbability.duplicate_arm_idempotent' depends on axioms: [propext, Quot.sound]
+'QueryProbability.body_enumeration_irrelevant' depends on axioms: [propext, Quot.sound]
+'QueryProbability.sum_add' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryProbability.complementary_numerators' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryProbability.equal_numbers_do_not_identify_events' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryProbability.nonempty_evidence_can_be_impossible' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryProbability.shared_parameter_hole' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryProbability.shared_parameter_exact' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryProbability.family_is_not_one_fixed_number' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryProbability.missing_law_remains_error' depends on axioms: [propext, Classical.choice, Quot.sound]

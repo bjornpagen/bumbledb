@@ -1,0 +1,15 @@
+'AlgebraicRoots.remainder_at_root' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicRoots.negative_remainder_at_middle_root' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicRoots.common_factor_root' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicRoots.bezout_common_root' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicRoots.gcd_zero_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicRoots.isolating_value_unique' does not depend on any axioms
+'AlgebraicRoots.endpoints_excluded' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicRoots.disjoint_intervals_order' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicRoots.common_root_in_overlap' does not depend on any axioms
+'AlgebraicRoots.interior_hit_is_exact' does not depend on any axioms
+'AlgebraicRoots.refine_left' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicRoots.refine_right' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicRoots.no_left_root_selects_right' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicRoots.opposite_neighbors' depends on axioms: [propext]
+'AlgebraicRoots.same_endpoint_signs_are_insufficient' depends on axioms: [propext, Classical.choice, Quot.sound]

@@ -1,0 +1,24 @@
+'Actions.replay_preserves_controlled_predecessor' depends on axioms: [propext, Quot.sound]
+'Actions.replay_preserves_reach_iterates' depends on axioms: [propext, Quot.sound]
+'Actions.replay_preserves_safety_iterates' depends on axioms: [propext, Quot.sound]
+'Actions.checked_restriction_retains_termination_bound' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Actions.checked_safety_restriction_retains_continuation' does not depend on any axioms
+'Actions.flattened_must_then_image' does not depend on any axioms
+'Actions.cpre_monotone' does not depend on any axioms
+'Actions.no_action_for_empty_goal' does not depend on any axioms
+'Actions.initial_reach_step_is_goal' does not depend on any axioms
+'Actions.enabled_retains_environment' does not depend on any axioms
+'Actions.permissions_are_inhabited_and_sound' does not depend on any axioms
+'Actions.permissions_are_greatest' does not depend on any axioms
+'Actions.different_hidden_actions_do_not_form_a_uniform_choice' does not depend on any axioms
+'Actions.first_entry_admits_an_earlier_action' does not depend on any axioms
+'Actions.ranked_choices_are_enabled' does not depend on any axioms
+'Actions.ranked_choices_strictly_decrease' depends on axioms: [propext, Quot.sound]
+'Actions.ranked_policy_domain' depends on axioms: [propext, Quot.sound]
+'Actions.decreasing_rank_guarantees_every_policy_run' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Actions.policy_restriction_retains_progress' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Actions.every_bounded_winning_policy_is_inside_a_reach_prefixed_point' does not depend on any axioms
+'Actions.safe_policy_covers_the_postfixed_region' does not depend on any axioms
+'Actions.safe_policy_always_has_an_enabled_next_step' does not depend on any axioms
+'Actions.safe_policy_preserves_the_invariant_on_every_path' does not depend on any axioms
+'Actions.safety_greatest_contains_every_enabled_invariant' does not depend on any axioms

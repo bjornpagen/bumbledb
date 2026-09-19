@@ -248,6 +248,7 @@ pub enum Output {
     Descriptor(crate::marshal::DescriptorWire),
     /// Owned structural Event data/inspection, encoded on the worker.
     EventDescriptor(crate::event_descriptor_wire::DescriptorOutput),
+    EventAction(crate::event_action_wire::ActionOutput),
     EventMemory(crate::event_memory_wire::MemoryOutput),
     EventMemoryArena(crate::event_memory_arena_wire::ArenaOutput),
     /// Fixed-law descriptions and observations, fully encoded on the worker.
