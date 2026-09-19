@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "scope": "Independent exact SymPy oracle regeneration; not formal verification or a production dependency",
+  "versions": {
+    "python": "3.9.6",
+    "sympy": "1.14.0",
+    "mpmath": "1.3.0"
+  },
+  "source": "scripts/event-root-oracle.py",
+  "source_sha256": "f357399cc3ffab351089455f6eb5c356e69857919f502a1c050390a850c1290b",
+  "fixture": "crates/bumbledb-event/tests/fixtures/algebraic-roots-sympy.txt",
+  "fixture_sha256": "25ead388e9cda779c0452b6cb9de44c0112920f6869e1cdf0c7b2fafb6a153f1",
+  "polynomial_cases": 105,
+  "distinct_roots": 160,
+  "polynomial_sign_judgments": 640,
+  "isolated_regeneration_identical": true
+}

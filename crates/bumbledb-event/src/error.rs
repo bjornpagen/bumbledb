@@ -30,6 +30,9 @@ pub enum Capacity {
     PolynomialFactors,
     PolynomialDegree,
     PolynomialSteps,
+    AlgebraicDegree,
+    AlgebraicRoots,
+    AlgebraicSteps,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +80,10 @@ pub enum Error {
     InvalidPolynomial,
     ParameterBinding,
     InvalidBetaPrior,
+    NotUnivariate,
+    IndeterminateRoots,
+    InvalidRootInterval,
+    AlgebraicInvariant,
 }
 
 impl fmt::Display for Error {
@@ -147,6 +154,16 @@ impl fmt::Display for Error {
             }
             Self::InvalidBetaPrior => {
                 f.write_str("Beta prior shapes must both be strictly positive")
+            }
+            Self::NotUnivariate => f.write_str("root solving requires one named parameter"),
+            Self::IndeterminateRoots => {
+                f.write_str("the zero polynomial has no finite root roster")
+            }
+            Self::InvalidRootInterval => {
+                f.write_str("interval does not isolate exactly one real root")
+            }
+            Self::AlgebraicInvariant => {
+                f.write_str("exact root solving violated its Sturm invariant")
             }
             Self::MissingLaw => f.write_str("the Event space has no designated probability law"),
         }

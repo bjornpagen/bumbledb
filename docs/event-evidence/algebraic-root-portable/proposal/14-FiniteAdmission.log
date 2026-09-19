@@ -1,0 +1,2 @@
+'FiniteAdmission.finite_admission_iff' depends on axioms: [propext, Quot.sound]
+'FiniteAdmission.cardinality_alone_is_insufficient' does not depend on any axioms

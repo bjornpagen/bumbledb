@@ -8,6 +8,7 @@
 compile_error!("bumbledb-event currently requires a 64-bit target");
 
 mod action;
+mod algebraic;
 mod arena;
 mod boolean;
 mod codec;
@@ -32,6 +33,7 @@ mod revision;
 mod space;
 
 pub use action::{ActionArena, ReachStrategy, SafetyStrategy};
+pub use algebraic::{AlgebraicRoot, RootLimits};
 pub use boolean::{BoolOp4, Signature};
 pub use descriptor::{
     AdmittedDescriptor, AdmittedSourceDescriptor, Descriptor, DescriptorLimits, FibreDescriptor,
@@ -109,3 +111,6 @@ mod source_descriptor_tests;
 
 #[cfg(test)]
 mod polynomial_tests;
+
+#[cfg(test)]
+mod algebraic_tests;
