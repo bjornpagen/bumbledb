@@ -50,6 +50,16 @@ impl std::hash::Hash for ObservationNumberImport {
 }
 
 impl ObservationNumberImport {
+    /// The query executor has already checked every node under its shared
+    /// budget. Capture identity without contracting its observations again.
+    pub(crate) fn checked(
+        value: ObservationNumber,
+        limits: ObservationNumberCodecLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let bytes = encode(&value, limits, work)?.into_boxed_slice();
+        Ok(Self(Arc::new(Import { value, bytes })))
+    }
     /// Capture through the same checked replay as untrusted input. Original
     /// source identities survive; reconstructed owners have fresh local keys.
     /// # Errors

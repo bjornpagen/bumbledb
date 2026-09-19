@@ -1,0 +1,18 @@
+'PriorBinding.normalized' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.integrate_append' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.integrate_scale' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.defined_exactly' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.impossible_even_when_numerator_zero' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.observation_uses_raw_integrals' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.shared_draws' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.independent_allocations' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.shared_is_not_independent' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.posterior_second_head' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.averaging_the_conditional_is_wrong' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.endpoint_conditional_remains_undefined' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.holes_refuse' does not depend on any axioms
+'PriorBinding.finite_exception_soundness' does not depend on any axioms
+'PriorBinding.endpoint_value_survives' depends on axioms: [propext, Quot.sound]
+'PriorBinding.endpoint_differs_from_zero' depends on axioms: [propext, Quot.sound]
+'PriorBinding.endpoint_polynomial_integral_zero' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PriorBinding.finite_exceptions_need_no_holes' depends on axioms: [propext, Quot.sound]

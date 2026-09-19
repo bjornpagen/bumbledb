@@ -135,6 +135,7 @@ impl<S> PreparedQuery<S> {
     }
 
     fn run_bound(&mut self, images: &SourceImages<'_>, out: &mut Answers) -> Result<()> {
+        self.derived.observations.clear();
         if self.pipeline.is_empty_cq() {
             return Ok(());
         }
@@ -161,12 +162,14 @@ impl<S> PreparedQuery<S> {
             None => None,
         };
 
-        let mut arithmetic = crate::event::ExactArithmetic::new(
-            crate::event::ArithmeticLimits::default(),
-            images.source().work(),
-        );
-        let ran = self.run_rules(images, &mut NoopCounters, &mut arithmetic)?;
-        self.finish_sink(images, ran, out, &mut arithmetic)
+        let mut budget = crate::event::ArithmeticBudget::default();
+        let ran = self.run_rules(images, &mut NoopCounters, &mut budget)?;
+        self.finish_sink(
+            images,
+            ran,
+            out,
+            &mut crate::event::ExactArithmetic::borrow(&mut budget, images.source().work()),
+        )
     }
 
     /// Route every Free Join rule through the complete cursor fallback —
@@ -210,7 +213,7 @@ impl<S> PreparedQuery<S> {
         &mut self,
         images: &SourceImages<'_>,
         counters: &mut Cnt,
-        arithmetic: &mut crate::event::ExactArithmetic<'_>,
+        arithmetic: &mut crate::event::ArithmeticBudget,
     ) -> Result<bool> {
         if self.pipeline.has_derived() {
             let derived_ran = self.run_derived(images, counters, arithmetic)?;
@@ -222,12 +225,19 @@ impl<S> PreparedQuery<S> {
             return Ok(false);
         }
         self.sink.reset();
-        let mut ran = false;
-        let rule_count = self.pipeline.main_rules().len();
-        for rule_idx in 0..rule_count {
-            ran |= self.run_rule(rule_idx, images, counters)?;
-        }
-        Ok(ran)
+        self.sink
+            .swap_numbers(&mut self.derived.observations, arithmetic);
+        let result = (|| {
+            let mut ran = false;
+            let rule_count = self.pipeline.main_rules().len();
+            for rule_idx in 0..rule_count {
+                ran |= self.run_rule(rule_idx, images, counters)?;
+            }
+            Ok(ran)
+        })();
+        self.sink
+            .swap_numbers(&mut self.derived.observations, arithmetic);
+        result
     }
 
     #[expect(

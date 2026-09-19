@@ -239,6 +239,7 @@ wire_tags! {
         TEST: FindTerm::Test(_) => "test",
         PROBABILITY: FindTerm::Probability { .. } => "probability",
         EXPECTATION: FindTerm::Expectation { .. } => "expectation",
+        NUMBER: FindTerm::Number(_) => "number",
         COUNT: FindTerm::Count => "count",
         AGGREGATE: FindTerm::Aggregate { .. } => "aggregate",
         PACK: FindTerm::Pack { .. } => "pack",

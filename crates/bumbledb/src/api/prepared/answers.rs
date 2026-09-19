@@ -17,6 +17,7 @@ impl Answers {
         self.text.clear();
         self.blob.clear();
         self.events.clear();
+        self.numbers.clear();
         self.probabilities.clear();
         self.expectations.clear();
         self.expectation_inputs.clear();
@@ -55,6 +56,7 @@ impl Answers {
     pub fn get(&self, answer: usize, column: usize) -> AnswerValue<'_> {
         assert!(column < self.arity && answer < self.len());
         match self.cells[answer * self.arity + column] {
+            Cell::Number(index) => AnswerValue::Number(&self.numbers[index]),
             Cell::Observed { kind, token } => self
                 .observed
                 .get(kind, token)
@@ -89,6 +91,11 @@ impl Answers {
     /// byte payloads land in this buffer's own heaps.
     pub(crate) fn push_value(&mut self, value: &AnswerValue<'_>) {
         let cell = match value {
+            AnswerValue::Number(value) => {
+                let index = self.numbers.len();
+                self.numbers.push((*value).clone());
+                Cell::Number(index)
+            }
             AnswerValue::Event(value) => self.event_cell(value),
             AnswerValue::Expectation(value) => {
                 let index = self.expectations.len();

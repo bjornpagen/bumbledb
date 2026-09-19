@@ -1,23 +1,27 @@
 /** Query domains include owned observations; stored schema fields do not. */
+
 import { AuthoringError } from "#errors.ts"
 import type { AnyField, Infer, SignatureOf } from "#fields.ts"
 import { rosterOf, signaturesAgree } from "#fields.ts"
 import type { ExpectationAnswer, ExpectationResult } from "#query/expectation.ts"
+import type { NumberAnswer, NumberResult } from "#query/number-result.ts"
 import type { ProbabilityAnswer, ProbabilityResult } from "#query/probability.ts"
 
-type ObservationResult = ProbabilityResult | ExpectationResult
+type ObservationResult = ProbabilityResult | ExpectationResult | NumberResult
 type QueryValue = AnyField | ObservationResult
-type QueryInfer<F extends QueryValue> = F extends ProbabilityResult
-	? ProbabilityAnswer
-	: F extends ExpectationResult
-		? ExpectationAnswer
-		: F extends AnyField
-			? Infer<F>
-			: never
+type QueryInfer<F extends QueryValue> = F extends NumberResult
+	? NumberAnswer
+	: F extends ProbabilityResult
+		? ProbabilityAnswer
+		: F extends ExpectationResult
+			? ExpectationAnswer
+			: F extends AnyField
+				? Infer<F>
+				: never
 type QuerySignature<F extends QueryValue> = F extends AnyField ? SignatureOf<F> : readonly [F["kind"]]
 
 function isObservation(field: QueryValue): field is ObservationResult {
-	return field.kind === "probability" || field.kind === "expectation"
+	return field.kind === "number" || field.kind === "probability" || field.kind === "expectation"
 }
 
 function queryValuesAgree(a: QueryValue, b: QueryValue): boolean {

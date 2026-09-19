@@ -7,8 +7,8 @@ use bumbledb::event::{ArithmeticLimits, Capacity, Error, ExactArithmetic, Source
 use bumbledb::work::WorkContext;
 
 pub(super) struct PayoffAdmission<'a> {
-    arithmetic: ExactArithmetic<'a>,
-    remaining: usize,
+    pub(super) arithmetic: ExactArithmetic<'a>,
+    pub(super) remaining: usize,
 }
 impl<'a> PayoffAdmission<'a> {
     pub(super) fn new(work: &'a WorkContext) -> Self {
@@ -49,6 +49,7 @@ impl<'a> PayoffAdmission<'a> {
         for find in input.finds {
             work.checkpoint()?;
             finds.push(match find {
+                FindTerm::Number(value) => bumbledb::FindTerm::Number(self.number(value, 1)?),
                 FindTerm::Expectation { value, when, given } => bumbledb::FindTerm::Expectation {
                     value: self.admit(value)?,
                     when,

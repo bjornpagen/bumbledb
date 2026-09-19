@@ -299,9 +299,14 @@ impl AggOp {
 }
 
 mod events;
+mod numbers;
 mod payoffs;
 
 enum HeadTerm {
+    Number {
+        label: Name,
+        expression: numbers::Expression,
+    },
     Expectation {
         label: Name,
         value: payoffs::Payoff,
@@ -756,6 +761,12 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
     if peek_punct(tokens, ':') {
         expect_colon(tokens, "the head column's `:`")?;
         let agg_name = expect_ident(tokens, "an aggregate")?;
+        if agg_name.text == "Number" {
+            return Ok(HeadTerm::Number {
+                label: name,
+                expression: numbers::parse(tokens)?,
+            });
+        }
         if agg_name.text == "Expectation" {
             let (mut args, _) =
                 take_paren_group(tokens, "Expectation's value, region, and evidence")?;
@@ -1936,6 +1947,10 @@ impl Emitter<'_> {
 
     fn find(&self, scope: &Scope, term: &HeadTerm) -> Parse<String> {
         Ok(match term {
+            HeadTerm::Number { expression, .. } => format!(
+                "::bumbledb::FindTerm::Number({})",
+                expression.emit(scope, self.imports, 0)?
+            ),
             HeadTerm::Expectation {
                 value, when, given, ..
             } => {
@@ -2000,6 +2015,7 @@ impl Emitter<'_> {
                     );
                 }
                 HeadTerm::Agg { over, .. }
+                | HeadTerm::Number { label: over, .. }
                 | HeadTerm::Event { label: over, .. }
                 | HeadTerm::Test { label: over, .. }
                 | HeadTerm::Expectation { label: over, .. }
@@ -2408,6 +2424,8 @@ enum ImportKind {
     Faces,
     Product,
     Payoff,
+    Number,
+    NumberDomain,
 }
 
 /// Parses the leading `use <name> = <expr>;` clauses — nonrecursive
@@ -2419,14 +2437,18 @@ fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
     while peek_ident_text(tokens).as_deref() == Some("use") {
         let keyword = expect_ident(tokens, "`use`")?;
         let first = expect_ident(tokens, "the imported template's local name or `map`")?;
-        let (kind, name) = if matches!(first.text.as_str(), "map" | "faces" | "product" | "payoff")
-            && !peek_punct(tokens, '=')
+        let (kind, name) = if matches!(
+            first.text.as_str(),
+            "map" | "faces" | "product" | "payoff" | "number" | "number_domain"
+        ) && !peek_punct(tokens, '=')
         {
             (
                 match first.text.as_str() {
                     "map" => ImportKind::Map,
                     "faces" => ImportKind::Faces,
                     "payoff" => ImportKind::Payoff,
+                    "number" => ImportKind::Number,
+                    "number_domain" => ImportKind::NumberDomain,
                     _ => ImportKind::Product,
                 },
                 expect_ident(tokens, "the imported Event descriptor's local name")?,
@@ -2645,10 +2667,11 @@ fn emit_import_prelude(imports: &[Import]) -> String {
         let name = &import.name.text;
         let expr = &import.expr;
         if import.kind != ImportKind::Template {
-            let ty = if import.kind == ImportKind::Payoff {
-                "PayoffImport"
-            } else {
-                "EventImport"
+            let ty = match import.kind {
+                ImportKind::Payoff => "PayoffImport",
+                ImportKind::Number => "ObservationNumberImport",
+                ImportKind::NumberDomain => "NumberDomain",
+                _ => "EventImport",
             };
             let _ = write!(
                 out,
@@ -2739,6 +2762,7 @@ fn agg_display(op: AggOp) -> &'static str {
 fn column_name(term: &HeadTerm) -> String {
     match term {
         HeadTerm::Event { label, .. }
+        | HeadTerm::Number { label, .. }
         | HeadTerm::Test { label, .. }
         | HeadTerm::Expectation { label, .. }
         | HeadTerm::Probability { label, .. } => label.text.clone(),

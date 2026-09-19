@@ -39,7 +39,7 @@ pub struct OutputProgram {
     /// must not discard the logical identities used by Event diagnostics.
     pub(crate) rules: Vec<u16>,
     pub(crate) expression: FindTerm,
-    pub(crate) inputs: Vec<(VarId, usize, ValueType)>,
+    pub(crate) inputs: Vec<(VarId, usize, crate::ir::validate::QueryType)>,
 }
 
 impl OutputProgram {
@@ -71,6 +71,8 @@ pub(in crate::api) struct ComputedSink {
     pub(super) work: Option<crate::work::WorkContext>,
     generation: Option<crate::work::GenerationHandle>,
     stage: Option<usize>,
+    pub(super) observations: super::observations::ObservationRegistry,
+    pub(super) arithmetic: crate::event::ArithmeticBudget,
 }
 
 /// A lowered find-spec list: the rewritten specs, the `(slot, program)`
@@ -118,6 +120,8 @@ impl ComputedSink {
     }
 
     pub(super) fn release_memory(&mut self) {
+        self.observations.clear();
+        self.arithmetic = crate::event::ArithmeticBudget::default();
         self.error = None;
         self.faults = events::Faults::default();
         self.expectation_inputs = Vec::new();
@@ -163,6 +167,8 @@ impl ComputedSink {
             work: None,
             generation: None,
             stage: None,
+            observations: super::observations::ObservationRegistry::default(),
+            arithmetic: crate::event::ArithmeticBudget::default(),
         }
     }
 
@@ -314,28 +320,13 @@ impl ComputedSink {
             }
             self.pieces.push((*slot, values, len, 0));
         }
-        for (slot, program) in &self.programs {
-            let FindTerm::Compute(expression) = &program.expression else {
-                continue;
-            };
-            let value = crate::scalar::evaluate_in_operation(expression, |var| {
-                read_value(&self.bindings, program, var)
-            });
-            let word = match value {
-                Ok(Value::U64(value)) => value,
-                Ok(Value::I64(value)) => value.cast_unsigned() ^ (1 << 63),
-                Ok(Value::F64(value)) => value.to_order_key(),
-                Ok(Value::Bool(value)) => u64::from(value),
-                Err(source) => {
-                    self.error = Some(Error::Scalar {
-                        find: FindIndex(program.find),
-                        source,
-                    });
-                    return;
-                }
-                Ok(_) => unreachable!("validated scalar output type"),
-            };
-            self.bindings.set(*slot, word);
+        if let Err(error) = self.number_outputs() {
+            self.error = Some(error);
+            return;
+        }
+        if let Err(error) = self.scalar_outputs() {
+            self.error = Some(error);
+            return;
         }
         if !admitted {
             return;
@@ -369,11 +360,93 @@ impl ComputedSink {
         }
     }
 
+    fn scalar_outputs(&mut self) -> crate::Result<()> {
+        for (slot, program) in &self.programs {
+            let FindTerm::Compute(expression) = &program.expression else {
+                continue;
+            };
+            let value = crate::scalar::evaluate_in_operation(expression, |var| {
+                read_value(&self.bindings, program, var)
+            });
+            let word = match value {
+                Ok(Value::U64(value)) => value,
+                Ok(Value::I64(value)) => value.cast_unsigned() ^ (1 << 63),
+                Ok(Value::F64(value)) => value.to_order_key(),
+                Ok(Value::Bool(value)) => u64::from(value),
+                Err(source) => {
+                    return Err(Error::Scalar {
+                        find: FindIndex(program.find),
+                        source,
+                    });
+                }
+                Ok(_) => unreachable!("validated scalar output type"),
+            };
+            self.bindings.set(*slot, word);
+        }
+        Ok(())
+    }
+
     fn aggregate_row(&mut self) -> Option<crate::Result<()>> {
         if let Err(error) = self.expectation_row() {
             return Some(Err(error));
         }
         self.pack_row()
+    }
+
+    fn number_outputs(&mut self) -> crate::Result<()> {
+        use crate::ir::validate::{ObservationKind, QueryType};
+        use crate::number_expr::NumberOperand;
+        if self
+            .programs
+            .iter()
+            .all(|(_, program)| !matches!(program.expression, FindTerm::Number(_)))
+        {
+            return Ok(());
+        }
+        let control = self.work.as_ref().ok_or(crate::event::Error::UnknownKey)?;
+        let mut arithmetic = crate::event::ExactArithmetic::borrow(&mut self.arithmetic, control);
+        let limits = crate::ObservationNumberCodecLimits::default();
+        for (slot, program) in &self.programs {
+            let FindTerm::Number(expression) = &program.expression else {
+                continue;
+            };
+            let value = expression.evaluate(
+                |var| {
+                    let (_, slot, ty) = program
+                        .inputs
+                        .iter()
+                        .find(|(id, _, _)| *id == var)
+                        .expect("validated numerical input");
+                    let word = self.bindings.get(*slot);
+                    Ok(match ty {
+                        QueryType::Stored(ValueType::U64) => NumberOperand::Integer(word.into()),
+                        QueryType::Stored(ValueType::I64) => {
+                            NumberOperand::Integer((word ^ (1 << 63)).cast_signed().into())
+                        }
+                        QueryType::Observation(kind) => match self.observations.get(*kind, word)? {
+                            crate::AnswerValue::Number(value) => {
+                                NumberOperand::Number(value.value().clone())
+                            }
+                            crate::AnswerValue::Probability(value) => {
+                                NumberOperand::Probability(value.clone())
+                            }
+                            crate::AnswerValue::Expectation(value) => {
+                                NumberOperand::Expectation(value.clone())
+                            }
+                            _ => unreachable!("owned observation"),
+                        },
+                        QueryType::Stored(_) => unreachable!("validated numerical input type"),
+                    })
+                },
+                &limits,
+                &mut arithmetic,
+            )?;
+            let value = crate::ObservationNumberImport::checked(value, limits, &mut arithmetic)?;
+            let token = self.observations.insert_number(value)?;
+            self.observations.get(ObservationKind::Number, token)?;
+            self.bindings.set(*slot, token);
+        }
+        Ok(())
     }
 
     fn expectation_row(&mut self) -> crate::Result<()> {
@@ -479,6 +552,7 @@ fn read_value(
         .find(|(id, _, _)| *id == var)
         .ok_or(ScalarError::UnboundVariable(var))?;
     let word = bindings.get(*slot);
+    let ty = ty.stored().ok_or(ScalarError::TypeMismatch)?;
     if let Some(element) = ty.interval_element() {
         let end = bindings.get(*slot + 1);
         return Ok(match element {

@@ -359,6 +359,14 @@ fn lower_rules(
 
     for (rule_idx, rule) in rules.iter().enumerate() {
         for (find, term) in rule.finds.iter().enumerate() {
+            if let FindTerm::Number(expression) = term {
+                expression
+                    .inputs()
+                    .map_err(|source| ValidationError::NumberExpression {
+                        find: FindIndex(find),
+                        source,
+                    })?;
+            }
             let shape = match term {
                 FindTerm::Event(expr) => expr.validate_shape(),
                 FindTerm::Test(test) => test.validate_shape(),
@@ -495,6 +503,7 @@ fn validate_rule(
             FindTerm::Var(var) => Some(*var),
             FindTerm::Segments { .. }
             | FindTerm::Compute(_)
+            | FindTerm::Number(_)
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }

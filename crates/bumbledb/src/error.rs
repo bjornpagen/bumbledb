@@ -560,6 +560,10 @@ pub enum ValidationError {
         find: FindIndex,
         source: crate::ScalarError,
     },
+    NumberExpression {
+        find: FindIndex,
+        source: crate::NumberExprError,
+    },
     EventExpression {
         find: FindIndex,
         source: crate::EventExprError,

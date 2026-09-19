@@ -420,8 +420,8 @@ fn family_observations_keep_their_parameter_holes_after_staging_and_owner_releas
     let template = query!(ObservationStages {
         use payoff utility = &utility;
         interior observed(id, chance: Probability(region, given), expected: Expectation(Payoff(utility), region, given)) | Trial(id, region, given);
-        interior copied(chance, expected) | observed(1: chance, 2: expected);
-        (chance, expected) | copied(chance, expected);
+        interior copied(chance, expected, zero: Number(0 * Value(expected)), difference: Number(Value(chance) - Value(chance)), power: Number(Pow(Value(chance),0))) | observed(1: chance, 2: expected);
+        (chance, expected, zero, difference, power) | copied(chance, expected, zero, difference, power);
     });
     let mut retained = Vec::new();
     for fallback in [false, true] {
@@ -471,6 +471,45 @@ fn family_observations_keep_their_parameter_holes_after_staging_and_owner_releas
             Some(q(1, 3))
         );
         assert_eq!(&evidence, mean.evidence());
+        for (column, expected) in [(2, 0), (3, 0), (4, 1)] {
+            let AnswerValue::Number(number) = answers.get(0, column) else {
+                panic!("number")
+            };
+            let bumbledb::event::PartialNumber::Parameter(function) = number.value().value() else {
+                panic!("function")
+            };
+            assert_eq!(
+                function
+                    .value_at(
+                        &q(0, 1),
+                        limits.parameters.region,
+                        limits.functions,
+                        &mut arithmetic()
+                    )
+                    .unwrap(),
+                None
+            );
+            assert_eq!(
+                function
+                    .value_at(
+                        &q(1, 3),
+                        limits.parameters.region,
+                        limits.functions,
+                        &mut arithmetic()
+                    )
+                    .unwrap(),
+                Some(q(expected, 1))
+            );
+            assert_eq!(
+                *number,
+                bumbledb::ObservationNumberImport::from_bytes(
+                    number.bytes(),
+                    bumbledb::ObservationNumberCodecLimits::default(),
+                    &mut arithmetic()
+                )
+                .unwrap()
+            );
+        }
     }
 }
 

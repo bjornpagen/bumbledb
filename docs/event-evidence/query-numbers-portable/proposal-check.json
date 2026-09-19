@@ -1,0 +1,1183 @@
+{
+  "passed": true,
+  "started_utc": "2026-09-19T19:13:49.633960+00:00",
+  "lean_binary": "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+  "lean_binary_sha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+  "lean_version": "Lean (version 4.32.0, arm64-apple-darwin24.6.0, commit 8c9756b28d64dab099da31a4c09229a9e6a2ef35, Release)",
+  "checker_sha256": "422df7d3de78b3fe04640ab3a1edd5a158f043bdf3cbeb75bc608b5a4de262ea",
+  "source_sha256": {
+    "experiments/event-repr-lab/lean/SharedExit.lean": "e903a7f77717159df98b9e0f48a8356a097526754cc8d07b2e4933b7cbad5b76",
+    "experiments/event-repr-lab/lean/UnaryProjection.lean": "02ec564c0ccbd848b4d704d866b0979ab14c9ff2e47c79f5b7883f534a339d3a",
+    "experiments/event-repr-lab/lean/UnaryChains.lean": "ac24a5c50c0838430f965826cbb6b60c8ba6d20b6c33c687496299fe4863f116",
+    "experiments/event-repr-lab/lean/ConstraintCounting.lean": "af62928fd16a473bf8b8de9580e58afa6264c401f3daf19d692aed271ef8787c",
+    "experiments/event-repr-lab/lean/Differential.lean": "71c7d81b0c85ed79dea81155492203c1c8d62448b6c2bc6ca5e9faedd547c0ae",
+    "experiments/event-repr-lab/lean/EventStorage.lean": "7bfc5d49a2041eea269d5e0140ab4c0cb741e43deca53d7f5513f069c8224007",
+    "experiments/event-repr-lab/lean/FusedProjection.lean": "8b19c4d12c637447bdb5706675b2e255a294ab77fc4e26107fa54833497ded90",
+    "experiments/event-repr-lab/lean/LocalCompletion.lean": "8791435d0c1cc57a9a35e9c24ab6d0bf0ce250c11725cca4ec933fb8a780cd87",
+    "experiments/event-repr-lab/lean/ProjectionGate.lean": "fa871804a6e62fa7e5b2571e342ab694dc46a4a024d71fe8736365673cc81a70",
+    "experiments/event-repr-lab/lean/DirectConditional.lean": "a70409ffe40c1d006140fc8b04c091f83da130846104baab31fe19c60578b1f8",
+    "experiments/event-repr-lab/lean/InformationReadout.lean": "749b7cae85c88fa3b79ee48784d646ee817f9b1d606275a2c2c617ad78642c5d",
+    "experiments/event-repr-lab/lean/FaceCounting.lean": "100cff6a296b19892ba655f8e23bb3ef142a424ede8bdcb022f59b5b02e753f5",
+    "experiments/event-repr-lab/lean/PrefixRetraction.lean": "7ddfc9b019ed6c4ee64d9df8a6acb4e3ff9f2da90bcea439e95d13aa7cb22a1a",
+    "experiments/event-repr-lab/lean/Retraction.lean": "9c38bf69c27c16f75f0acffe89b100669e68d354e2d47ae192224d7ebac8cfea",
+    "experiments/event-repr-lab/lean/FiniteAdmission.lean": "3c8cef8b26be612ff7188e92341e60efc85f305010a4e878bbaf68523a533e76",
+    "experiments/event-repr-lab/lean/EventSignatures.lean": "3d4544bd6616fdcfc1d2ac63f70c1a02dab99b6dc1b682a4b9e54c26d9e98542",
+    "experiments/event-repr-lab/lean/EssentialCoordinates.lean": "1b8cd049ead5d35326e4315a3e967f05b13fcb8960167a237d46287ab703618d",
+    "experiments/event-repr-lab/lean/SupportedDependence.lean": "f2ac657e713c0353ec27068123b6f9ff0192fa446fd80237720e4d6bf8cee82e",
+    "experiments/event-repr-lab/lean/ScopedProduct.lean": "90f8019ba3f1584b7bd215765113fcc9ad67fec3c55939b16ae2fa5ea047ced5",
+    "experiments/event-repr-lab/lean/LegalRelations.lean": "ae526506db739be5678a347df23e5cd52c70bd06087eab4d38741718284d2dcf",
+    "experiments/event-repr-lab/lean/Anchored.lean": "c1465ad33466821b164c4e66098673a947c6ea0627c348a41efb79d6cda2c8d8",
+    "experiments/event-repr-lab/lean/ReadoutMaps.lean": "18790ec4c7ae4a7deb82587b7684db8cc3c3f42f2f23e9fc36c6eaf29f1a06aa",
+    "experiments/event-repr-lab/lean/BaseChange.lean": "0610c96f77665b4bcc674ec1354eae8369eb13fa6ae159038c9bc25b558f3e10",
+    "experiments/event-repr-lab/lean/ViewProduct.lean": "d765669f67f2db84e283acf8f77d010560e30b1a39b2e280449704a288ee91fa",
+    "experiments/event-repr-lab/join-factorization/FactorizedPack.lean": "bd8b9301a082073362a07ae4e11e7148bc365edf348b5af0dfa8ff0144078cec",
+    "experiments/event-repr-lab/join-factorization/ParticipatingValidation.lean": "de9f8ea909b1f3d770e9800ce9a120e462be76e45f607bfee173fda15936544a",
+    "experiments/event-repr-lab/join-factorization/QuerySeparator.lean": "ba6c22856ac8478b5f71c8c5bce0a3ba85aaf927a997f53d829b70006c231588",
+    "experiments/event-repr-lab/join-factorization/RelationPack.lean": "4fb58f3f0fe394f86a931bfee628e7fba103de90c0fe5bf1e764ac62972035a8",
+    "semantics/FiniteMeasure.lean": "1a454c3ce89614ca8ee6d47bb9521b67b7742c068ddff705b70a3fe31798e7dc",
+    "semantics/ModalContract.lean": "099edfc4e756d56fd9d75d41d347fb36de2e0871e3f1a1e09229acefcae2b4c9"
+  },
+  "files": [
+    {
+      "source": "experiments/event-repr-lab/lean/SharedExit.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/SharedExit.lean"
+      ],
+      "exit_code": 0,
+      "log": "00-SharedExit.log",
+      "expected": [
+        "SharedExit.apply_shared",
+        "SharedExit.split_selector",
+        "SharedExit.complement",
+        "SharedExit.normalize",
+        "SharedExit.sparse_split",
+        "SharedExit.exists_hidden",
+        "SharedExit.no_hidden_selector",
+        "SharedExit.essential_selector",
+        "SharedExit.count_selector",
+        "SharedExit.unequal_selectors_obstruction"
+      ],
+      "axioms": {
+        "SharedExit.apply_shared": [],
+        "SharedExit.split_selector": [],
+        "SharedExit.complement": [],
+        "SharedExit.normalize": [],
+        "SharedExit.sparse_split": [
+          "propext"
+        ],
+        "SharedExit.exists_hidden": [
+          "propext",
+          "Quot.sound"
+        ],
+        "SharedExit.no_hidden_selector": [],
+        "SharedExit.essential_selector": [],
+        "SharedExit.count_selector": [
+          "propext",
+          "Quot.sound"
+        ],
+        "SharedExit.unequal_selectors_obstruction": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/UnaryProjection.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/UnaryProjection.lean"
+      ],
+      "exit_code": 0,
+      "log": "01-UnaryProjection.log",
+      "expected": [
+        "UnaryProjection.image_exact",
+        "UnaryProjection.image_composes",
+        "UnaryProjection.image_empty",
+        "UnaryProjection.image_domain",
+        "UnaryProjection.image_negation",
+        "UnaryProjection.image_preserves_occupancy",
+        "UnaryProjection.hidden_is_union",
+        "UnaryProjection.known_nonempty",
+        "UnaryProjection.hidden_nonempty",
+        "UnaryProjection.empty_fibre_obstruction",
+        "UnaryProjection.normalize_complement"
+      ],
+      "axioms": {
+        "UnaryProjection.image_exact": [],
+        "UnaryProjection.image_composes": [],
+        "UnaryProjection.image_empty": [],
+        "UnaryProjection.image_domain": [],
+        "UnaryProjection.image_negation": [],
+        "UnaryProjection.image_preserves_occupancy": [
+          "propext"
+        ],
+        "UnaryProjection.hidden_is_union": [],
+        "UnaryProjection.known_nonempty": [
+          "propext"
+        ],
+        "UnaryProjection.hidden_nonempty": [
+          "propext"
+        ],
+        "UnaryProjection.empty_fibre_obstruction": [],
+        "UnaryProjection.normalize_complement": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/UnaryChains.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/UnaryChains.lean"
+      ],
+      "exit_code": 0,
+      "log": "02-UnaryChains.log",
+      "expected": [
+        "UnaryChains.reify_step",
+        "UnaryChains.compose_eval",
+        "UnaryChains.compose_associative",
+        "UnaryChains.identity_left",
+        "UnaryChains.identity_right",
+        "UnaryChains.compile_exact",
+        "UnaryChains.run_append",
+        "UnaryChains.population_complement",
+        "UnaryChains.population_step"
+      ],
+      "axioms": {
+        "UnaryChains.reify_step": [],
+        "UnaryChains.compose_eval": [],
+        "UnaryChains.compose_associative": [],
+        "UnaryChains.identity_left": [],
+        "UnaryChains.identity_right": [],
+        "UnaryChains.compile_exact": [],
+        "UnaryChains.run_append": [
+          "propext"
+        ],
+        "UnaryChains.population_complement": [
+          "propext",
+          "Quot.sound"
+        ],
+        "UnaryChains.population_step": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/ConstraintCounting.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/ConstraintCounting.lean"
+      ],
+      "exit_code": 0,
+      "log": "03-ConstraintCounting.log",
+      "expected": [
+        "ConstraintCounting.character_orthogonality",
+        "ConstraintCounting.constraint_gap",
+        "ConstraintCounting.zero_count_from_gap",
+        "ConstraintCounting.constraint_zero_count",
+        "ConstraintCounting.and_gate_constraint",
+        "ConstraintCounting.not_gate_constraint",
+        "ConstraintCounting.output_constraint"
+      ],
+      "axioms": {
+        "ConstraintCounting.character_orthogonality": [
+          "propext",
+          "Quot.sound"
+        ],
+        "ConstraintCounting.constraint_gap": [
+          "propext",
+          "Quot.sound"
+        ],
+        "ConstraintCounting.zero_count_from_gap": [
+          "propext",
+          "Quot.sound"
+        ],
+        "ConstraintCounting.constraint_zero_count": [
+          "propext",
+          "Quot.sound"
+        ],
+        "ConstraintCounting.and_gate_constraint": [],
+        "ConstraintCounting.not_gate_constraint": [],
+        "ConstraintCounting.output_constraint": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/Differential.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/Differential.lean"
+      ],
+      "exit_code": 0,
+      "log": "04-Differential.log",
+      "expected": [
+        "Differential.decomposition",
+        "Differential.unique_coefficients",
+        "Differential.complement_preserves_difference",
+        "Differential.xor_coefficients",
+        "Differential.product_coefficients",
+        "Differential.exists_root",
+        "Differential.forall_root",
+        "Differential.coefficient_projection_obstruction",
+        "Differential.cofactor_population",
+        "Differential.tree_roundtrip",
+        "Differential.tree_injective"
+      ],
+      "axioms": {
+        "Differential.decomposition": [],
+        "Differential.unique_coefficients": [],
+        "Differential.complement_preserves_difference": [],
+        "Differential.xor_coefficients": [],
+        "Differential.product_coefficients": [],
+        "Differential.exists_root": [],
+        "Differential.forall_root": [],
+        "Differential.coefficient_projection_obstruction": [],
+        "Differential.cofactor_population": [],
+        "Differential.tree_roundtrip": [
+          "propext"
+        ],
+        "Differential.tree_injective": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/EventStorage.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/EventStorage.lean"
+      ],
+      "exit_code": 0,
+      "log": "05-EventStorage.log",
+      "expected": [
+        "EventStorage.coverage_empty_row",
+        "EventStorage.conflict_empty_row",
+        "EventStorage.complete_key_nonempty",
+        "EventStorage.empty_key_counterexample",
+        "EventStorage.lift_empty",
+        "EventStorage.projection_empty",
+        "EventStorage.universal_empty",
+        "EventStorage.empty_source_no_target",
+        "EventStorage.dropping_empty_changes_complement",
+        "EventStorage.nonempty_owner_distinguishes_constants"
+      ],
+      "axioms": {
+        "EventStorage.coverage_empty_row": [],
+        "EventStorage.conflict_empty_row": [],
+        "EventStorage.complete_key_nonempty": [],
+        "EventStorage.empty_key_counterexample": [],
+        "EventStorage.lift_empty": [],
+        "EventStorage.projection_empty": [],
+        "EventStorage.universal_empty": [],
+        "EventStorage.empty_source_no_target": [],
+        "EventStorage.dropping_empty_changes_complement": [],
+        "EventStorage.nonempty_owner_distinguishes_constants": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/FusedProjection.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/FusedProjection.lean"
+      ],
+      "exit_code": 0,
+      "log": "06-FusedProjection.log",
+      "expected": [
+        "FusedProjection.hidden_split",
+        "FusedProjection.observed_split",
+        "FusedProjection.graph_substitution",
+        "FusedProjection.absent_hidden_bit",
+        "FusedProjection.contract_union",
+        "FusedProjection.complement_memo_obstruction",
+        "FusedProjection.separate_witness_obstruction",
+        "FusedProjection.target_abstraction_obstruction"
+      ],
+      "axioms": {
+        "FusedProjection.hidden_split": [],
+        "FusedProjection.observed_split": [],
+        "FusedProjection.graph_substitution": [],
+        "FusedProjection.absent_hidden_bit": [],
+        "FusedProjection.contract_union": [],
+        "FusedProjection.complement_memo_obstruction": [],
+        "FusedProjection.separate_witness_obstruction": [],
+        "FusedProjection.target_abstraction_obstruction": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/LocalCompletion.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/LocalCompletion.lean"
+      ],
+      "exit_code": 0,
+      "log": "07-LocalCompletion.log",
+      "expected": [
+        "LocalCompletion.separately_invariant",
+        "LocalCompletion.existential_preserves_invariance",
+        "LocalCompletion.universal_preserves_invariance",
+        "LocalCompletion.local_completion_exact",
+        "LocalCompletion.resolved_environment_invariance",
+        "LocalCompletion.indexed_local_completion_exact",
+        "LocalCompletion.retained_gate_obstruction",
+        "LocalCompletion.coupled_decoder_obstruction"
+      ],
+      "axioms": {
+        "LocalCompletion.separately_invariant": [],
+        "LocalCompletion.existential_preserves_invariance": [],
+        "LocalCompletion.universal_preserves_invariance": [],
+        "LocalCompletion.local_completion_exact": [],
+        "LocalCompletion.resolved_environment_invariance": [],
+        "LocalCompletion.indexed_local_completion_exact": [],
+        "LocalCompletion.retained_gate_obstruction": [],
+        "LocalCompletion.coupled_decoder_obstruction": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/ProjectionGate.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/ProjectionGate.lean"
+      ],
+      "exit_code": 0,
+      "log": "08-ProjectionGate.log",
+      "expected": [
+        "ProjectionGate.elimination_iff_coverage",
+        "ProjectionGate.product_gate_elimination",
+        "ProjectionGate.completed_product_gate",
+        "ProjectionGate.coupled_support_counterexample",
+        "ProjectionGate.hidden_environment_counterexample",
+        "ProjectionGate.observable_gate_elimination"
+      ],
+      "axioms": {
+        "ProjectionGate.elimination_iff_coverage": [],
+        "ProjectionGate.product_gate_elimination": [],
+        "ProjectionGate.completed_product_gate": [],
+        "ProjectionGate.coupled_support_counterexample": [],
+        "ProjectionGate.hidden_environment_counterexample": [],
+        "ProjectionGate.observable_gate_elimination": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/DirectConditional.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/DirectConditional.lean"
+      ],
+      "exit_code": 0,
+      "log": "09-DirectConditional.log",
+      "expected": [
+        "DirectConditional.simultaneous_substitution",
+        "DirectConditional.substitution_composes",
+        "DirectConditional.identity_substitution",
+        "DirectConditional.conditional_polarities",
+        "DirectConditional.shannon_conditional",
+        "DirectConditional.sequential_is_not_simultaneous"
+      ],
+      "axioms": {
+        "DirectConditional.simultaneous_substitution": [
+          "propext"
+        ],
+        "DirectConditional.substitution_composes": [
+          "propext"
+        ],
+        "DirectConditional.identity_substitution": [
+          "propext"
+        ],
+        "DirectConditional.conditional_polarities": [],
+        "DirectConditional.shannon_conditional": [],
+        "DirectConditional.sequential_is_not_simultaneous": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/InformationReadout.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/InformationReadout.lean"
+      ],
+      "exit_code": 0,
+      "log": "10-InformationReadout.log",
+      "expected": [
+        "InformationReadout.sandwich",
+        "InformationReadout.complement_duality",
+        "InformationReadout.possible_stable",
+        "InformationReadout.guaranteed_stable",
+        "InformationReadout.possible_fixed_iff_dependency",
+        "InformationReadout.guaranteed_fixed_iff_dependency",
+        "InformationReadout.best_observable_bounds",
+        "InformationReadout.possible_group_union",
+        "InformationReadout.guaranteed_group_intersection",
+        "InformationReadout.possible_meet_iff_dependency",
+        "InformationReadout.guaranteed_join_iff_dependency",
+        "InformationReadout.observation_order_iff_fd",
+        "InformationReadout.coarser_absorbs_finer",
+        "InformationReadout.grouping_counterexamples"
+      ],
+      "axioms": {
+        "InformationReadout.sandwich": [],
+        "InformationReadout.complement_duality": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "InformationReadout.possible_stable": [],
+        "InformationReadout.guaranteed_stable": [],
+        "InformationReadout.possible_fixed_iff_dependency": [],
+        "InformationReadout.guaranteed_fixed_iff_dependency": [],
+        "InformationReadout.best_observable_bounds": [],
+        "InformationReadout.possible_group_union": [],
+        "InformationReadout.guaranteed_group_intersection": [],
+        "InformationReadout.possible_meet_iff_dependency": [],
+        "InformationReadout.guaranteed_join_iff_dependency": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "InformationReadout.observation_order_iff_fd": [],
+        "InformationReadout.coarser_absorbs_finer": [],
+        "InformationReadout.grouping_counterexamples": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/FaceCounting.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/FaceCounting.lean"
+      ],
+      "exit_code": 0,
+      "log": "11-FaceCounting.log",
+      "expected": [
+        "FaceCounting.omitted_factor_count",
+        "FaceCounting.indexed_factor_count",
+        "FaceCounting.raw_fibre_replacement",
+        "FaceCounting.coupled_support_counterexample"
+      ],
+      "axioms": {
+        "FaceCounting.omitted_factor_count": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FaceCounting.indexed_factor_count": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FaceCounting.raw_fibre_replacement": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FaceCounting.coupled_support_counterexample": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/PrefixRetraction.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/PrefixRetraction.lean"
+      ],
+      "exit_code": 0,
+      "log": "12-PrefixRetraction.log",
+      "expected": [
+        "PrefixRetraction.feasible_iff",
+        "PrefixRetraction.repair_lands",
+        "PrefixRetraction.repair_fixes",
+        "PrefixRetraction.prefix_preserved",
+        "PrefixRetraction.repair_covers_prefix_fibre",
+        "PrefixRetraction.prefix_exists",
+        "PrefixRetraction.prefix_dependency_reflected"
+      ],
+      "axioms": {
+        "PrefixRetraction.feasible_iff": [
+          "propext"
+        ],
+        "PrefixRetraction.repair_lands": [
+          "propext",
+          "Quot.sound"
+        ],
+        "PrefixRetraction.repair_fixes": [
+          "propext",
+          "Quot.sound"
+        ],
+        "PrefixRetraction.prefix_preserved": [],
+        "PrefixRetraction.repair_covers_prefix_fibre": [
+          "propext",
+          "Quot.sound"
+        ],
+        "PrefixRetraction.prefix_exists": [
+          "propext",
+          "Quot.sound"
+        ],
+        "PrefixRetraction.prefix_dependency_reflected": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/Retraction.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/Retraction.lean"
+      ],
+      "exit_code": 0,
+      "log": "13-Retraction.log",
+      "expected": [
+        "Retraction.exact_identity",
+        "Retraction.boolean_homomorphism",
+        "Retraction.complement_homomorphism",
+        "Retraction.normalization_idempotent",
+        "Retraction.normalized_iff_fibre_dependency",
+        "Retraction.possibility_reflected",
+        "Retraction.commuting_substitution",
+        "Retraction.fixed_point_obstruction",
+        "Retraction.no_commuting_decoder_for_legal_pair",
+        "Retraction.whole_face_exists",
+        "Retraction.whole_face_forall",
+        "Retraction.face_dependency_reflected",
+        "Retraction.composition_preserved",
+        "Retraction.decoded_identity_right",
+        "Retraction.partial_projection_counterexample",
+        "Retraction.alias_count_counterexample",
+        "Retraction.encoded_unit_is_not_raw_equality"
+      ],
+      "axioms": {
+        "Retraction.exact_identity": [],
+        "Retraction.boolean_homomorphism": [],
+        "Retraction.complement_homomorphism": [],
+        "Retraction.normalization_idempotent": [
+          "propext"
+        ],
+        "Retraction.normalized_iff_fibre_dependency": [],
+        "Retraction.possibility_reflected": [],
+        "Retraction.commuting_substitution": [
+          "propext"
+        ],
+        "Retraction.fixed_point_obstruction": [],
+        "Retraction.no_commuting_decoder_for_legal_pair": [],
+        "Retraction.whole_face_exists": [],
+        "Retraction.whole_face_forall": [],
+        "Retraction.face_dependency_reflected": [],
+        "Retraction.composition_preserved": [],
+        "Retraction.decoded_identity_right": [],
+        "Retraction.partial_projection_counterexample": [],
+        "Retraction.alias_count_counterexample": [],
+        "Retraction.encoded_unit_is_not_raw_equality": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/FiniteAdmission.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/FiniteAdmission.lean"
+      ],
+      "exit_code": 0,
+      "log": "14-FiniteAdmission.log",
+      "expected": [
+        "FiniteAdmission.finite_admission_iff",
+        "FiniteAdmission.cardinality_alone_is_insufficient"
+      ],
+      "axioms": {
+        "FiniteAdmission.finite_admission_iff": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteAdmission.cardinality_alone_is_insufficient": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/EventSignatures.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/EventSignatures.lean"
+      ],
+      "exit_code": 0,
+      "log": "15-EventSignatures.log",
+      "expected": [
+        "EventSignatures.possible_apply_iff",
+        "EventSignatures.full_apply_iff",
+        "EventSignatures.signature_nonempty",
+        "EventSignatures.swap",
+        "EventSignatures.complement_left",
+        "EventSignatures.complement_right",
+        "EventSignatures.signature_iff_all_binary_tests",
+        "EventSignatures.composition_distinguishes_same_signature",
+        "EventSignatures.no_signature_factorization"
+      ],
+      "axioms": {
+        "EventSignatures.possible_apply_iff": [],
+        "EventSignatures.full_apply_iff": [],
+        "EventSignatures.signature_nonempty": [],
+        "EventSignatures.swap": [],
+        "EventSignatures.complement_left": [
+          "propext"
+        ],
+        "EventSignatures.complement_right": [
+          "propext"
+        ],
+        "EventSignatures.signature_iff_all_binary_tests": [
+          "propext",
+          "Quot.sound"
+        ],
+        "EventSignatures.composition_distinguishes_same_signature": [
+          "propext",
+          "Quot.sound"
+        ],
+        "EventSignatures.no_signature_factorization": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/EssentialCoordinates.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/EssentialCoordinates.lean"
+      ],
+      "exit_code": 0,
+      "log": "16-EssentialCoordinates.log",
+      "expected": [
+        "EssentialCoordinates.essential_sufficient",
+        "EssentialCoordinates.essential_minimum",
+        "EssentialCoordinates.support_iff_contains_essential",
+        "EssentialCoordinates.complement_essential",
+        "EssentialCoordinates.canonical_projection",
+        "EssentialCoordinates.cofactor_characterization",
+        "EssentialCoordinates.quantified_coordinate_inessential",
+        "EssentialCoordinates.cofactor_essential_subset",
+        "EssentialCoordinates.cofactor_can_remove_other_dependence"
+      ],
+      "axioms": {
+        "EssentialCoordinates.essential_sufficient": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.essential_minimum": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.support_iff_contains_essential": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.complement_essential": [
+          "propext"
+        ],
+        "EssentialCoordinates.canonical_projection": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.cofactor_characterization": [
+          "propext",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.quantified_coordinate_inessential": [
+          "propext",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.cofactor_essential_subset": [
+          "propext",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.cofactor_can_remove_other_dependence": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/SupportedDependence.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/SupportedDependence.lean"
+      ],
+      "exit_code": 0,
+      "log": "17-SupportedDependence.log",
+      "expected": [
+        "SupportedDependence.product_support_rectangular",
+        "SupportedDependence.intersection_when_rectangular",
+        "SupportedDependence.copied_has_incomparable_dependencies",
+        "SupportedDependence.no_least_supported_dependency"
+      ],
+      "axioms": {
+        "SupportedDependence.product_support_rectangular": [
+          "propext"
+        ],
+        "SupportedDependence.intersection_when_rectangular": [
+          "propext"
+        ],
+        "SupportedDependence.copied_has_incomparable_dependencies": [],
+        "SupportedDependence.no_least_supported_dependency": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/ScopedProduct.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/ScopedProduct.lean"
+      ],
+      "exit_code": 0,
+      "log": "18-ScopedProduct.log",
+      "expected": [
+        "ScopedProduct.guarded_equals_staged",
+        "ScopedProduct.full_support_specialization",
+        "ScopedProduct.support_certificates_remove_gates",
+        "ScopedProduct.output_support_is_necessary",
+        "ScopedProduct.witness_support_is_necessary"
+      ],
+      "axioms": {
+        "ScopedProduct.guarded_equals_staged": [
+          "Quot.sound"
+        ],
+        "ScopedProduct.full_support_specialization": [
+          "propext",
+          "Quot.sound"
+        ],
+        "ScopedProduct.support_certificates_remove_gates": [],
+        "ScopedProduct.output_support_is_necessary": [],
+        "ScopedProduct.witness_support_is_necessary": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/LegalRelations.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/LegalRelations.lean"
+      ],
+      "exit_code": 0,
+      "log": "19-LegalRelations.log",
+      "expected": [
+        "LegalRelations.composition_associative",
+        "LegalRelations.identity_left",
+        "LegalRelations.identity_right",
+        "LegalRelations.residual_adjunction",
+        "LegalRelations.staged_is_lifted_composition",
+        "LegalRelations.exists_fixed_iff_cylindrical",
+        "LegalRelations.readout_fixed_iff_dependency",
+        "LegalRelations.full_fixed_does_not_test_support",
+        "LegalRelations.lifted_events_compose",
+        "LegalRelations.ambient_support_does_not_certify_role"
+      ],
+      "axioms": {
+        "LegalRelations.composition_associative": [],
+        "LegalRelations.identity_left": [],
+        "LegalRelations.identity_right": [],
+        "LegalRelations.residual_adjunction": [],
+        "LegalRelations.staged_is_lifted_composition": [],
+        "LegalRelations.exists_fixed_iff_cylindrical": [],
+        "LegalRelations.readout_fixed_iff_dependency": [],
+        "LegalRelations.full_fixed_does_not_test_support": [],
+        "LegalRelations.lifted_events_compose": [],
+        "LegalRelations.ambient_support_does_not_certify_role": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/Anchored.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/Anchored.lean"
+      ],
+      "exit_code": 0,
+      "log": "20-Anchored.log",
+      "expected": [
+        "Anchored.root_excludes_anchor",
+        "Anchored.root_excludes_outside",
+        "Anchored.decode_root",
+        "Anchored.complement_same_root",
+        "Anchored.complement_flips_polarity",
+        "Anchored.exact_identity",
+        "Anchored.adjusted_zero",
+        "Anchored.binary_apply_root"
+      ],
+      "axioms": {
+        "Anchored.root_excludes_anchor": [
+          "propext"
+        ],
+        "Anchored.root_excludes_outside": [
+          "propext"
+        ],
+        "Anchored.decode_root": [
+          "propext"
+        ],
+        "Anchored.complement_same_root": [
+          "propext"
+        ],
+        "Anchored.complement_flips_polarity": [
+          "propext"
+        ],
+        "Anchored.exact_identity": [
+          "propext"
+        ],
+        "Anchored.adjusted_zero": [
+          "propext"
+        ],
+        "Anchored.binary_apply_root": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/ReadoutMaps.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/ReadoutMaps.lean"
+      ],
+      "exit_code": 0,
+      "log": "21-ReadoutMaps.log",
+      "expected": [
+        "ReadoutMaps.possibility_iff_exact_support_image",
+        "ReadoutMaps.occupancy_preserved",
+        "ReadoutMaps.equality_reflected",
+        "ReadoutMaps.relative_complement_preserved",
+        "ReadoutMaps.fixing_coordinate_can_remove_possibility"
+      ],
+      "axioms": {
+        "ReadoutMaps.possibility_iff_exact_support_image": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "ReadoutMaps.occupancy_preserved": [],
+        "ReadoutMaps.equality_reflected": [],
+        "ReadoutMaps.relative_complement_preserved": [
+          "propext",
+          "Quot.sound"
+        ],
+        "ReadoutMaps.fixing_coordinate_can_remove_possibility": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/BaseChange.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/BaseChange.lean"
+      ],
+      "exit_code": 0,
+      "log": "22-BaseChange.log",
+      "expected": [
+        "BaseChange.relational_certificate_iff",
+        "BaseChange.automatic_inclusion",
+        "BaseChange.exact_iff_complete_fibres",
+        "BaseChange.universal_base_change",
+        "BaseChange.nonvacuous_base_change",
+        "BaseChange.copied_bit_counterexample",
+        "BaseChange.complete_fibres_need_not_have_unique_lifts"
+      ],
+      "axioms": {
+        "BaseChange.relational_certificate_iff": [],
+        "BaseChange.automatic_inclusion": [],
+        "BaseChange.exact_iff_complete_fibres": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "BaseChange.universal_base_change": [],
+        "BaseChange.nonvacuous_base_change": [],
+        "BaseChange.copied_bit_counterexample": [],
+        "BaseChange.complete_fibres_need_not_have_unique_lifts": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/lean/ViewProduct.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/lean/ViewProduct.lean"
+      ],
+      "exit_code": 0,
+      "log": "23-ViewProduct.log",
+      "expected": [
+        "ViewProduct.contraction_through_image",
+        "ViewProduct.contraction_exact_iff_image",
+        "ViewProduct.product_is_composition",
+        "ViewProduct.separate_surjectivity_is_insufficient",
+        "ViewProduct.same_roots_different_maps",
+        "ViewProduct.output_bijection",
+        "ViewProduct.joint_reindex_with_section",
+        "ViewProduct.shannon_merge"
+      ],
+      "axioms": {
+        "ViewProduct.contraction_through_image": [],
+        "ViewProduct.contraction_exact_iff_image": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "ViewProduct.product_is_composition": [],
+        "ViewProduct.separate_surjectivity_is_insufficient": [
+          "propext"
+        ],
+        "ViewProduct.same_roots_different_maps": [
+          "propext"
+        ],
+        "ViewProduct.output_bijection": [],
+        "ViewProduct.joint_reindex_with_section": [],
+        "ViewProduct.shannon_merge": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/join-factorization/FactorizedPack.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/join-factorization/FactorizedPack.lean"
+      ],
+      "exit_code": 0,
+      "log": "24-FactorizedPack.log",
+      "expected": [
+        "FactorizedPack.independent_product",
+        "FactorizedPack.factorization_iff_rectangular",
+        "FactorizedPack.clover",
+        "FactorizedPack.group_presence",
+        "FactorizedPack.coupled_counterexample",
+        "FactorizedPack.present_empty"
+      ],
+      "axioms": {
+        "FactorizedPack.independent_product": [],
+        "FactorizedPack.factorization_iff_rectangular": [],
+        "FactorizedPack.clover": [],
+        "FactorizedPack.group_presence": [],
+        "FactorizedPack.coupled_counterexample": [],
+        "FactorizedPack.present_empty": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/join-factorization/ParticipatingValidation.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/join-factorization/ParticipatingValidation.lean"
+      ],
+      "exit_code": 0,
+      "log": "25-ParticipatingValidation.log",
+      "expected": [
+        "ParticipatingValidation.all_joined_iff_participating",
+        "ParticipatingValidation.fault_set_exact"
+      ],
+      "axioms": {
+        "ParticipatingValidation.all_joined_iff_participating": [],
+        "ParticipatingValidation.fault_set_exact": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/join-factorization/QuerySeparator.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/join-factorization/QuerySeparator.lean"
+      ],
+      "exit_code": 0,
+      "log": "26-QuerySeparator.log",
+      "expected": [
+        "QuerySeparator.patch_left",
+        "QuerySeparator.patch_right",
+        "QuerySeparator.patch_keys",
+        "QuerySeparator.branch_existence",
+        "QuerySeparator.residual_pair",
+        "QuerySeparator.environment_counterexample"
+      ],
+      "axioms": {
+        "QuerySeparator.patch_left": [],
+        "QuerySeparator.patch_right": [],
+        "QuerySeparator.patch_keys": [],
+        "QuerySeparator.branch_existence": [],
+        "QuerySeparator.residual_pair": [],
+        "QuerySeparator.environment_counterexample": []
+      },
+      "passed": true
+    },
+    {
+      "source": "experiments/event-repr-lab/join-factorization/RelationPack.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/experiments/event-repr-lab/join-factorization/RelationPack.lean"
+      ],
+      "exit_code": 0,
+      "log": "27-RelationPack.log",
+      "expected": [
+        "RelationPack.composition",
+        "RelationPack.residual_union",
+        "RelationPack.residual_intersection",
+        "RelationPack.separate_witness_counterexample"
+      ],
+      "axioms": {
+        "RelationPack.composition": [],
+        "RelationPack.residual_union": [],
+        "RelationPack.residual_intersection": [],
+        "RelationPack.separate_witness_counterexample": []
+      },
+      "passed": true
+    },
+    {
+      "source": "semantics/FiniteMeasure.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/semantics/FiniteMeasure.lean"
+      ],
+      "exit_code": 0,
+      "log": "28-FiniteMeasure.log",
+      "expected": [
+        "FiniteMeasure.sum_congr",
+        "FiniteMeasure.sum_add",
+        "FiniteMeasure.sum_mul",
+        "FiniteMeasure.sum_zero",
+        "FiniteMeasure.sum_map",
+        "FiniteMeasure.key_and_coverage",
+        "FiniteMeasure.sum_swap",
+        "FiniteMeasure.complement_mass",
+        "FiniteMeasure.conditional_complement",
+        "FiniteMeasure.intersection_bound",
+        "FiniteMeasure.partial_partition_mass",
+        "FiniteMeasure.partition_mass",
+        "FiniteMeasure.schema_partition_mass",
+        "FiniteMeasure.repeated_evidence",
+        "FiniteMeasure.zero_evidence",
+        "FiniteMeasure.positive_evidence",
+        "FiniteMeasure.zero_mass_can_be_possible",
+        "FiniteMeasure.full_mass_need_not_be_full"
+      ],
+      "axioms": {
+        "FiniteMeasure.sum_congr": [
+          "propext"
+        ],
+        "FiniteMeasure.sum_add": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.sum_mul": [
+          "propext"
+        ],
+        "FiniteMeasure.sum_zero": [],
+        "FiniteMeasure.sum_map": [
+          "propext"
+        ],
+        "FiniteMeasure.key_and_coverage": [
+          "propext"
+        ],
+        "FiniteMeasure.sum_swap": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.complement_mass": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.conditional_complement": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.intersection_bound": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.partial_partition_mass": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.partition_mass": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.schema_partition_mass": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.repeated_evidence": [
+          "Quot.sound"
+        ],
+        "FiniteMeasure.zero_evidence": [
+          "propext"
+        ],
+        "FiniteMeasure.positive_evidence": [
+          "propext"
+        ],
+        "FiniteMeasure.zero_mass_can_be_possible": [
+          "propext"
+        ],
+        "FiniteMeasure.full_mass_need_not_be_full": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "semantics/ModalContract.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/private/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/bumbledb-event-checkout-zwfa0h8j/proposal/semantics/ModalContract.lean"
+      ],
+      "exit_code": 0,
+      "log": "29-ModalContract.log",
+      "expected": [
+        "ModalContract.may_composition",
+        "ModalContract.all_composition",
+        "ModalContract.must_composition_exact",
+        "ModalContract.dead_end_distinction",
+        "ModalContract.must_composition_counterexample",
+        "ModalContract.left_adjunction",
+        "ModalContract.right_adjunction",
+        "ModalContract.permission_exact",
+        "ModalContract.permission_sound",
+        "ModalContract.permission_greatest",
+        "ModalContract.uniform_action_counterexample",
+        "ModalContract.star_transitive",
+        "ModalContract.star_least",
+        "ModalContract.star_may_unfold",
+        "ModalContract.star_all_unfold"
+      ],
+      "axioms": {
+        "ModalContract.may_composition": [],
+        "ModalContract.all_composition": [],
+        "ModalContract.must_composition_exact": [],
+        "ModalContract.dead_end_distinction": [],
+        "ModalContract.must_composition_counterexample": [],
+        "ModalContract.left_adjunction": [],
+        "ModalContract.right_adjunction": [],
+        "ModalContract.permission_exact": [],
+        "ModalContract.permission_sound": [],
+        "ModalContract.permission_greatest": [],
+        "ModalContract.uniform_action_counterexample": [],
+        "ModalContract.star_transitive": [],
+        "ModalContract.star_least": [],
+        "ModalContract.star_may_unfold": [],
+        "ModalContract.star_all_unfold": []
+      },
+      "passed": true
+    }
+  ],
+  "scope": "central-plus-pack-plus-public-contract",
+  "boundary": "Denotational semantics with explicit premises. Not Rust refinement, solver correctness, canonical wire proof or native planner correctness.",
+  "reports": 246,
+  "axiom_free": 160,
+  "finished_utc": "2026-09-19T19:14:00.861645+00:00"
+}

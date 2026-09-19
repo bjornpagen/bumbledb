@@ -220,6 +220,7 @@ fn rule_arms(
                 | FindTerm::Event(_)
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
+                | FindTerm::Number(_)
                 | FindTerm::Expectation { .. } => {
                     return Err("computed heads are not translated to SQL".into());
                 }

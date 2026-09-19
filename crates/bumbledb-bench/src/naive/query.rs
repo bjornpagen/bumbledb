@@ -395,6 +395,7 @@ impl NaiveDb {
                     FindTerm::Event(_)
                         | FindTerm::Test(_)
                         | FindTerm::Probability { .. }
+                        | FindTerm::Number(_)
                         | FindTerm::Expectation { .. }
                 )
             })
@@ -510,6 +511,7 @@ impl NaiveDb {
                 | FindTerm::Event(_)
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
+                | FindTerm::Number(_)
                 | FindTerm::Expectation { .. } => false,
             })
             .collect()
@@ -610,6 +612,7 @@ impl NaiveDb {
                         FindTerm::Event(_)
                         | FindTerm::Test(_)
                         | FindTerm::Probability { .. }
+                        | FindTerm::Number(_)
                         | FindTerm::Expectation { .. } => Err(QueryError::UnsupportedEvent),
 
                         FindTerm::Count => Ok(Value::Bool(false)),
@@ -646,6 +649,7 @@ impl NaiveDb {
                             | FindTerm::Event(_)
                             | FindTerm::Test(_)
                             | FindTerm::Probability { .. }
+                            | FindTerm::Number(_)
                             | FindTerm::Expectation { .. } => Ok(group[0].0[index].clone()),
                             FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
                             FindTerm::Count
@@ -669,6 +673,7 @@ impl NaiveDb {
                     | FindTerm::Event(_)
                     | FindTerm::Test(_)
                     | FindTerm::Probability { .. }
+                    | FindTerm::Number(_)
                     | FindTerm::Expectation { .. } => Ok(group[0].0[index].clone()),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
@@ -782,6 +787,11 @@ fn count_vars(rule: &Rule) -> usize {
             }
             FindTerm::Expectation { value, when, given } => {
                 for var in value.variables().chain([*when, *given]) {
+                    see(&mut count, var);
+                }
+            }
+            FindTerm::Number(expression) => {
+                for var in expression.variables() {
                     see(&mut count, var);
                 }
             }
@@ -1126,6 +1136,7 @@ fn pack_group_rows(
                 FindTerm::Event(_)
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
+                | FindTerm::Number(_)
                 | FindTerm::Expectation { .. } => Err(QueryError::UnsupportedEvent),
                 FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {
@@ -1155,6 +1166,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 FindTerm::Event(_)
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
+                | FindTerm::Number(_)
                 | FindTerm::Expectation { .. } => {
                     return Err(QueryError::UnsupportedEvent);
                 }
@@ -1179,6 +1191,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                     FindTerm::Event(_)
                     | FindTerm::Test(_)
                     | FindTerm::Probability { .. }
+                    | FindTerm::Number(_)
                     | FindTerm::Expectation { .. } => Err(QueryError::UnsupportedEvent),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),

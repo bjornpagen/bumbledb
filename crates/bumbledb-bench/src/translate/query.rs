@@ -151,6 +151,7 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }
+            | FindTerm::Number(_)
             | FindTerm::Expectation { .. } => {
                 return Err("computed heads are not translated to SQL".into());
             }
@@ -186,6 +187,7 @@ fn head_projection_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }
+            | FindTerm::Number(_)
             | FindTerm::Expectation { .. } => {
                 return Err("computed heads are not translated to SQL".into());
             }
@@ -224,6 +226,7 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }
+            | FindTerm::Number(_)
             | FindTerm::Expectation { .. } => {
                 return Err("computed heads are not translated to SQL".into());
             }
@@ -313,6 +316,7 @@ fn fold_sql(
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }
+            | FindTerm::Number(_)
             | FindTerm::Expectation { .. } => {
                 return Err("computed heads are not translated to SQL".into());
             }

@@ -28,6 +28,7 @@ use crate::ingress::query::{
 };
 use crate::ingress::{CopyContext, ImportInput, ParamInput, ValueInput};
 use crate::tags;
+mod numbers;
 
 /// LMDB/file measurements, not process heap or mapped-page residency.
 pub(crate) fn storage_report<'env>(
@@ -1384,10 +1385,23 @@ fn fold_op_in(obj: &Object) -> napi::Result<FoldOp> {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one exhaustive dispatch for the find transport vocabulary"
+)]
 fn find_term_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<FindTerm> {
     let kind: String = req_text(obj, "kind", "find term")?;
     match kind.as_str() {
         tags::find_term::VAR => Ok(FindTerm::Var(var_in(obj, "var", "var find")?)),
+        tags::find_term::NUMBER => {
+            exact_fields(obj, &["kind", "expr"])?;
+            let expr: Object = req(obj, "expr", "number find")?;
+            Ok(FindTerm::Number(numbers::parse(
+                &expr,
+                1,
+                &mut EventBudget::new(copy),
+            )?))
+        }
         tags::find_term::SEGMENTS => {
             exact_fields(obj, &["kind", "op", "left", "right"])?;
             let op = req_text(obj, "op", "segment operator")?;
@@ -1777,6 +1791,7 @@ pub(crate) fn query_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<Que
 
 #[derive(Debug)]
 pub enum ValueOut {
+    Number(Box<crate::query_number::NumberOutput>),
     Probability(Box<crate::query_probability::ProbabilityOutput>),
     Expectation(Box<crate::query_expectation::ExpectationOutput>),
     Bool(bool),
@@ -1852,6 +1867,11 @@ impl ToNapiValue for ValueOut {
     // against it lines above.
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
         match val {
+            Self::Number(v) => {
+                let handle = Env::from_raw(env);
+                let object = v.object(&handle)?;
+                unsafe { Object::to_napi_value(env, object) }
+            }
             Self::Expectation(v) => {
                 let handle = Env::from_raw(env);
                 let object = v.object(&handle)?;
@@ -1917,6 +1937,9 @@ fn value_out_from_answer(
     Ok(match value {
         AnswerValue::Expectation(v) => ValueOut::Expectation(Box::new(
             crate::query_expectation::ExpectationOutput::new(v, control, budget)?,
+        )),
+        AnswerValue::Number(v) => ValueOut::Number(Box::new(
+            crate::query_number::NumberOutput::new(v, control, budget)?,
         )),
         AnswerValue::Probability(v) => ValueOut::Probability(Box::new(
             crate::query_probability::ProbabilityOutput::new(v, control, budget)?,

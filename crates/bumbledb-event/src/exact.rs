@@ -25,9 +25,39 @@ impl Default for ArithmeticLimits {
 
 /// Counts exact arithmetic primitives across one construction or observation.
 /// Cancellation is polled around each bounded bigint primitive, not each limb.
-pub struct ExactArithmetic<'a> {
+#[derive(Debug)]
+pub struct ArithmeticBudget {
     limits: ArithmeticLimits,
     operations: usize,
+}
+
+impl ArithmeticBudget {
+    #[must_use]
+    pub const fn new(limits: ArithmeticLimits) -> Self {
+        Self {
+            limits,
+            operations: 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn operations(&self) -> usize {
+        self.operations
+    }
+}
+impl Default for ArithmeticBudget {
+    fn default() -> Self {
+        Self::new(ArithmeticLimits::default())
+    }
+}
+
+enum BudgetOwner<'a> {
+    Owned(ArithmeticBudget),
+    Borrowed(&'a mut ArithmeticBudget),
+}
+
+pub struct ExactArithmetic<'a> {
+    budget: BudgetOwner<'a>,
     control: &'a dyn Control,
 }
 
@@ -35,15 +65,28 @@ impl<'a> ExactArithmetic<'a> {
     #[must_use]
     pub const fn new(limits: ArithmeticLimits, control: &'a dyn Control) -> Self {
         Self {
-            limits,
-            operations: 0,
+            budget: BudgetOwner::Owned(ArithmeticBudget::new(limits)),
+            control,
+        }
+    }
+
+    /// Resume one exclusively owned counter with the current cooperative
+    /// control. Dropping this borrow, including during unwind, keeps all spent
+    /// work in the budget. No allowance resets at an execution-stage boundary.
+    #[must_use]
+    pub fn borrow(budget: &'a mut ArithmeticBudget, control: &'a dyn Control) -> Self {
+        Self {
+            budget: BudgetOwner::Borrowed(budget),
             control,
         }
     }
 
     #[must_use]
     pub const fn operations(&self) -> usize {
-        self.operations
+        match &self.budget {
+            BudgetOwner::Owned(budget) => budget.operations,
+            BudgetOwner::Borrowed(budget) => budget.operations,
+        }
     }
 
     /// The cancellation/work control shared by this arithmetic operation.
@@ -58,13 +101,17 @@ impl<'a> ExactArithmetic<'a> {
 
     fn step(&mut self, bits: u64) -> Result<()> {
         self.control.checkpoint()?;
-        if bits > u64::try_from(self.limits.bits).unwrap_or(u64::MAX) {
+        let budget = match &mut self.budget {
+            BudgetOwner::Owned(budget) => budget,
+            BudgetOwner::Borrowed(budget) => budget,
+        };
+        if bits > u64::try_from(budget.limits.bits).unwrap_or(u64::MAX) {
             return Err(Error::Capacity(Capacity::ArithmeticBits));
         }
-        if self.operations >= self.limits.operations {
+        if budget.operations >= budget.limits.operations {
             return Err(Error::Capacity(Capacity::ArithmeticSteps));
         }
-        self.operations += 1;
+        budget.operations += 1;
         Ok(())
     }
 

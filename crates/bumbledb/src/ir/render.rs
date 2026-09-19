@@ -189,6 +189,7 @@ fn find_term(out: &mut String, term: &FindTerm) {
             var_name(out, *right);
             out.push(')');
         }
+        FindTerm::Number(expr) => write!(out, "Number({expr:?})").expect("writing to String"),
         FindTerm::Compute(expr) => {
             use std::fmt::Write as _;
             write!(out, "Compute({expr:?})").expect("writing to String");

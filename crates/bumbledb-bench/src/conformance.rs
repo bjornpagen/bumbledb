@@ -449,6 +449,7 @@ fn push_find(out: &mut String, find: &FindTerm) -> Result<(), Exclusion> {
         | FindTerm::Event(_)
         | FindTerm::Test(_)
         | FindTerm::Probability { .. }
+        | FindTerm::Number(_)
         | FindTerm::Expectation { .. } => return Err(Exclusion::ComputedHead),
         FindTerm::Count => out.push_str("{\"agg\":{\"op\":\"count\"}}"),
         FindTerm::Pack { over } => {
@@ -523,6 +524,11 @@ fn count_vars(rule: &Rule) -> u16 {
                 see(&mut count, *right);
             }
             FindTerm::Event(expr) => {
+                for var in expr.variables() {
+                    see(&mut count, var);
+                }
+            }
+            FindTerm::Number(expr) => {
                 for var in expr.variables() {
                     see(&mut count, var);
                 }

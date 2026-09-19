@@ -14,6 +14,7 @@ import type {
 	ScalarExprIr,
 	TermIr
 } from "#native.ts"
+import { parseNumberIr } from "#query/number-ir.ts"
 import { payoffFromBytes } from "#query/payoff.ts"
 import { roundingMode } from "#scalar.ts"
 import { arrayValue as array, bytesValue, recordValue, valueDescriptor } from "#values.ts"
@@ -312,6 +313,10 @@ function payoffRatioIr(context: string, input: unknown) {
 
 function find(context: string, input: unknown): FindTermIr {
 	const raw = tagged(context, input)
+	if (raw.kind === "number") {
+		recordValue(context, raw, ["kind", "expr"])
+		return Object.freeze({ kind: "number", expr: parseNumberIr(`${context}.expr`, raw.expr) })
+	}
 	if (raw.kind === "segments") {
 		recordValue(context, raw, ["kind", "op", "left", "right"])
 		if (raw.op !== "intersection" && raw.op !== "difference") return fail(context, "unknown segment operator")
@@ -459,7 +464,8 @@ function align(context: string, head: readonly HeadTermIr[], rules: readonly Rul
 				find.kind === "segments" ||
 				find.kind === "event" ||
 				find.kind === "test" ||
-				find.kind === "probability"
+				find.kind === "probability" ||
+				find.kind === "number"
 			if (term === undefined || (term.kind === "aggregate") === projects)
 				fail(`${context}.rules[${index}].finds[${position}]`, "find family does not match head")
 			if (term.kind === "aggregate") {

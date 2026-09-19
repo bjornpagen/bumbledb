@@ -735,6 +735,7 @@ impl fmt::Display for ValidationError {
                 "Observation variable {var:?} is not a stored scalar or Event operand at {find:?}"
             ),
             Self::EventExpression { find, source } => write!(f, "find {find}: {source}"),
+            Self::NumberExpression { find, source } => write!(f, "find {find}: {source}"),
             Self::TooManyRules { count } => {
                 write!(f, "{count} rules exceed the rule cap")
             }

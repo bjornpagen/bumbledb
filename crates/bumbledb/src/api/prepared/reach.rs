@@ -355,7 +355,7 @@ impl<S> PreparedQuery<S> {
         &mut self,
         images: &SourceImages<'_>,
         counters: &mut Cnt,
-        arithmetic: &mut crate::event::ExactArithmetic<'_>,
+        arithmetic: &mut crate::event::ArithmeticBudget,
     ) -> Result<bool> {
         let derived_count = match &self.pipeline {
             PreparedPipeline::PointProbe { .. } => 0,
@@ -393,42 +393,52 @@ impl<S> PreparedQuery<S> {
                     interiors[i].sink.bind_events(images.generation(), Some(i));
                 }
                 let rule_count = self.pipeline.interiors()[i].rules.len();
-                for rule_idx in 0..rule_count {
-                    fill_finished_images(
-                        &self.pipeline.interiors()[i].rules[rule_idx],
-                        &mut self.derived,
-                    );
-                    let mut ctx = RunCtx {
-                        schema: self.schema.as_ref(),
-                        images,
-                        interner: &interner,
-                        resolved_params: &self.resolved_params,
-                        missed_params: &self.missed_params,
-                        fast_eligible,
-                        fallback: self.forced_fallback,
-                        published: &mut self.derived.published,
-                        retained_texts: &mut self.execution_texts,
-                    };
-                    let occ_images = std::mem::take(&mut self.derived.occ_images);
-                    let mut retired = std::mem::take(&mut self.derived.retired);
-                    let interiors = self.pipeline.interiors_mut();
-                    let units = interiors[i].units;
-                    let interior = &mut interiors[i];
-                    ran |= run_into_projection(
-                        &mut ctx,
-                        &mut interior.rules,
-                        rule_idx,
-                        units,
-                        &occ_images,
-                        &mut retired,
-                        &mut interior.sink,
-                        &mut self.bindings,
-                        &mut self.key_scratch,
-                        counters,
-                    )?;
-                    self.derived.occ_images = occ_images;
-                    self.derived.retired = retired;
-                }
+                self.pipeline.interiors_mut()[i]
+                    .sink
+                    .swap_numbers(&mut self.derived.observations, arithmetic);
+                let result = (|| -> Result<()> {
+                    for rule_idx in 0..rule_count {
+                        fill_finished_images(
+                            &self.pipeline.interiors()[i].rules[rule_idx],
+                            &mut self.derived,
+                        );
+                        let mut ctx = RunCtx {
+                            schema: self.schema.as_ref(),
+                            images,
+                            interner: &interner,
+                            resolved_params: &self.resolved_params,
+                            missed_params: &self.missed_params,
+                            fast_eligible,
+                            fallback: self.forced_fallback,
+                            published: &mut self.derived.published,
+                            retained_texts: &mut self.execution_texts,
+                        };
+                        let occ_images = std::mem::take(&mut self.derived.occ_images);
+                        let mut retired = std::mem::take(&mut self.derived.retired);
+                        let interiors = self.pipeline.interiors_mut();
+                        let units = interiors[i].units;
+                        let interior = &mut interiors[i];
+                        ran |= run_into_projection(
+                            &mut ctx,
+                            &mut interior.rules,
+                            rule_idx,
+                            units,
+                            &occ_images,
+                            &mut retired,
+                            &mut interior.sink,
+                            &mut self.bindings,
+                            &mut self.key_scratch,
+                            counters,
+                        )?;
+                        self.derived.occ_images = occ_images;
+                        self.derived.retired = retired;
+                    }
+                    Ok(())
+                })();
+                self.pipeline.interiors_mut()[i]
+                    .sink
+                    .swap_numbers(&mut self.derived.observations, arithmetic);
+                result?;
                 // Seal the stage: aggregate/computed stages finalize HERE,
                 // so a required producer error (overflow, cardinality,
                 // scalar failure) fails the query before any consumer
@@ -442,7 +452,10 @@ impl<S> PreparedQuery<S> {
                         &mut self.answer_scratch,
                         images.source().work(),
                         images.generation(),
-                        arithmetic,
+                        &mut crate::event::ExactArithmetic::borrow(
+                            arithmetic,
+                            images.source().work(),
+                        ),
                     )?
                 };
             }

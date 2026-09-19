@@ -307,6 +307,10 @@ pub(super) fn imported(name: &Name, imports: &[Import], kind: ImportKind) -> Par
                     "query!: composition/residual/closure requires a declared `use product` import"
                 }
                 ImportKind::Payoff => "query!: Payoff requires a declared `use payoff` import",
+                ImportKind::Number => "query!: Imported requires a declared `use number` import",
+                ImportKind::NumberDomain => {
+                    "query!: OnDomain requires a declared `use number_domain` import"
+                }
                 ImportKind::Template => unreachable!("Event imports"),
             },
         );

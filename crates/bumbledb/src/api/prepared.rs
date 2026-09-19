@@ -169,6 +169,7 @@ impl<'a> BindArgs<'a> for &'a Vec<ParamArg<'a>> {
 /// One decoded answer cell, borrowed from [`Answers`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnswerValue<'a> {
+    Number(&'a crate::ObservationNumberImport),
     Probability(&'a crate::ProbabilityAnswer),
     Expectation(&'a crate::ExpectationAnswer),
     Event(&'a crate::Event),
@@ -197,6 +198,7 @@ pub enum AnswerValue<'a> {
 /// span collapses at materialization).
 #[derive(Debug, Clone, Copy)]
 enum Cell {
+    Number(usize),
     Observed {
         kind: crate::ir::validate::ObservationKind,
         token: u64,
@@ -238,6 +240,7 @@ pub struct Answers {
     /// The `bytes<N>` cells' heap: raw payloads, no text contract.
     blob: Vec<u8>,
     events: Vec<crate::Event>,
+    numbers: Vec<crate::ObservationNumberImport>,
     observed: observations::ObservationRegistry,
     probabilities: Vec<crate::ProbabilityAnswer>,
     expectations: Vec<crate::ExpectationAnswer>,

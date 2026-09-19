@@ -4,6 +4,7 @@ import type { AnyClosedRoster, AnyField, FloatIntervalValue, Infer, IntervalValu
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type { QueryNode } from "#query/compute.ts"
 import type { EventFind } from "#query/event.ts"
+import type { NumberExpr } from "#query/number.ts"
 import type {
 	AntiJoinOk,
 	AnyVar,
@@ -80,6 +81,7 @@ type AggData =
 type FindEntryData =
 	| Segments
 	| EventFind
+	| NumberExpr
 	| { readonly kind: "var"; readonly over: AnyVar }
 	| { readonly kind: "aggregate"; readonly agg: AggData }
 	| { readonly kind: "compute"; readonly expr: QueryNode; readonly result: ScalarKind }

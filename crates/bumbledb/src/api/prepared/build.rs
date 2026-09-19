@@ -506,6 +506,7 @@ fn prepare_reach(
 fn has_event_diagnostics(rule: crate::ir::validate::RuleWitness<'_>) -> bool {
     rule.rule().finds.iter().any(|term| match term {
         FindTerm::Event(_)
+        | FindTerm::Number(_)
         | FindTerm::Test(_)
         | FindTerm::Probability { .. }
         | FindTerm::Expectation { .. } => true,
@@ -763,6 +764,7 @@ fn prepare_rule(
                 // the computed sink declines every scan-fold pushdown.
                 FindTerm::Segments { .. }
                 | FindTerm::Compute(_)
+                | FindTerm::Number(_)
                 | FindTerm::Event(_)
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
@@ -936,15 +938,18 @@ fn seal_dnf_spans(rules: &mut [PreparedRule]) {
 }
 
 fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec> {
-    let input = |var| {
-        (
-            var,
-            layout.slot_of(var),
-            *rule
-                .var_type(var)
-                .stored()
-                .expect("validated stored operand"),
-        )
+    let compute = |find, term: &FindTerm, variables: Vec<crate::VarId>| {
+        FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
+            find,
+            rules: rule.minted().to_vec(),
+            expression: term.clone(),
+            inputs: variables
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .map(|var| (var, layout.slot_of(var), *rule.var_type(var)))
+                .collect(),
+        }))
     };
     rule.rule()
         .finds
@@ -955,64 +960,22 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                 slot: layout.slot_of(*var),
                 width: layout.width_of(*var),
             },
-            FindTerm::Compute(expr) => {
-                let inputs = expr
-                    .variables()
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .into_iter()
-                    .map(input)
-                    .collect();
-                FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
-                    find: find_idx,
-                    rules: rule.minted().to_vec(),
-                    expression: term.clone(),
-                    inputs,
-                }))
-            }
-            FindTerm::Segments { left, right, .. } => {
-                FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
-                    find: find_idx,
-                    rules: rule.minted().to_vec(),
-                    expression: term.clone(),
-                    inputs: [*left, *right].into_iter().map(input).collect(),
-                }))
-            }
-            FindTerm::Expectation { value, when, given } => {
-                FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
-                    find: find_idx,
-                    rules: rule.minted().to_vec(),
-                    expression: term.clone(),
-                    inputs: value
-                        .variables()
-                        .chain([*when, *given])
-                        .map(input)
-                        .collect(),
-                }))
-            }
-            FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
-                let inputs = term
-                    .event_variables()
-                    .expect("Event expression")
-                    .into_iter()
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .into_iter()
-                    .map(input)
-                    .collect();
-                FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
-                    find: find_idx,
-                    rules: rule.minted().to_vec(),
-                    expression: term.clone(),
-                    inputs,
-                }))
-            }
+            FindTerm::Number(expr) => compute(find_idx, term, expr.variables().collect()),
+            FindTerm::Compute(expr) => compute(find_idx, term, expr.variables().collect()),
+            FindTerm::Segments { left, right, .. } => compute(find_idx, term, vec![*left, *right]),
+            FindTerm::Expectation { value, when, given } => compute(
+                find_idx,
+                term,
+                value.variables().chain([*when, *given]).collect(),
+            ),
+            FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => compute(
+                find_idx,
+                term,
+                term.event_variables().expect("Event expression"),
+            ),
             FindTerm::Count => FindSpec::Agg(crate::exec::sink::AggSpec::Count),
             FindTerm::Pack { over } if rule.var_type(*over).stored() == Some(&ValueType::Event) => {
-                FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
-                    find: find_idx,
-                    rules: rule.minted().to_vec(),
-                    expression: term.clone(),
-                    inputs: vec![(*over, layout.slot_of(*over), ValueType::Event)],
-                }))
+                compute(find_idx, term, vec![*over])
             }
             FindTerm::Pack { over } => FindSpec::Pack {
                 slot: layout.slot_of(*over),
@@ -1098,6 +1061,7 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
             // slot the radix table cannot cover: stay hashed.
             FindTerm::Segments { .. }
             | FindTerm::Compute(_)
+            | FindTerm::Number(_)
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }

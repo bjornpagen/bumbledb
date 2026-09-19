@@ -53,7 +53,7 @@ pub use descriptor::{
 };
 pub use diagram::{Diagram, DiagramNode, DiagramView};
 pub use error::{Capacity, Control, Error, Limits, Result};
-pub use exact::{ArithmeticLimits, ExactArithmetic, ExactRational};
+pub use exact::{ArithmeticBudget, ArithmeticLimits, ExactArithmetic, ExactRational};
 pub use expectation::ExpectationObservation;
 pub use fixed_point::{
     FiniteCarrier, FixedPointLimits, FixedPointProgram, FixedPointResult, LayeredFixedPointResult,

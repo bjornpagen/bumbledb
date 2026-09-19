@@ -5,6 +5,8 @@ import type { IntervalVarOk, NumericVarOk } from "#query/atom.ts"
 import type { AnyComputeExpr, ComputeExpr, ComputeValue } from "#query/compute.ts"
 import type { EventExpr, EventFind, EventTest, ExpectationExpr, ProbabilityExpr } from "#query/event.ts"
 import type { ExpectationAnswer, ExpectationResult } from "#query/expectation.ts"
+import type { NumberExpr } from "#query/number.ts"
+import type { NumberAnswer, NumberResult } from "#query/number-result.ts"
 import type { ProbabilityAnswer, ProbabilityResult } from "#query/probability.ts"
 import type { AnyVar, MintSlotOf } from "#query/scope.ts"
 import type { Segments } from "#query/segments.ts"
@@ -24,7 +26,7 @@ interface Agg<Op extends FoldOpName, Over extends AnyVar> {
 
 type AnyAgg = CountAgg | Agg<FoldOpName, AnyVar>
 
-type FindEntry = AnyVar | AnyAgg | AnyComputeExpr | Segments | EventFind
+type FindEntry = AnyVar | AnyAgg | AnyComputeExpr | Segments | EventFind | NumberExpr
 
 type FindShape = Readonly<Record<string, FindEntry>>
 
@@ -77,7 +79,7 @@ type FindEntryOk<E> = E extends AnyVar
 					? V["field"]["kind"] extends "event"
 						? true
 						: IntervalVarOk<V>
-					: E extends AnyComputeExpr | Segments | EventFind
+					: E extends AnyComputeExpr | Segments | EventFind | NumberExpr
 						? true
 						: false
 
@@ -89,27 +91,29 @@ type CheckRecFind<F extends FindShape> = {
 	readonly [K in keyof F]: F[K] extends AnyVar ? F[K] : never
 }
 
-type FindValue<E> = E extends ExpectationExpr
-	? ExpectationAnswer
-	: E extends ProbabilityExpr
-		? ProbabilityAnswer
-		: E extends EventExpr
-			? Event
-			: E extends EventTest
-				? boolean
-				: E extends Segments<infer Element>
-					? Infer<IntervalField<Element, undefined>>
-					: E extends AnyVar
-						? QueryInfer<E["field"]>
-						: E extends CountAgg
-							? bigint
-							: E extends Agg<"sum" | "mean" | "min" | "max", infer O extends AnyVar>
-								? QueryInfer<O["field"]>
-								: E extends Agg<"pack", infer V extends AnyVar>
-									? QueryInfer<V["field"]>
-									: E extends ComputeExpr<infer K extends ScalarKind>
-										? ComputeValue<K>
-										: never
+type FindValue<E> = E extends NumberExpr
+	? NumberAnswer
+	: E extends ExpectationExpr
+		? ExpectationAnswer
+		: E extends ProbabilityExpr
+			? ProbabilityAnswer
+			: E extends EventExpr
+				? Event
+				: E extends EventTest
+					? boolean
+					: E extends Segments<infer Element>
+						? Infer<IntervalField<Element, undefined>>
+						: E extends AnyVar
+							? QueryInfer<E["field"]>
+							: E extends CountAgg
+								? bigint
+								: E extends Agg<"sum" | "mean" | "min" | "max", infer O extends AnyVar>
+									? QueryInfer<O["field"]>
+									: E extends Agg<"pack", infer V extends AnyVar>
+										? QueryInfer<V["field"]>
+										: E extends ComputeExpr<infer K extends ScalarKind>
+											? ComputeValue<K>
+											: never
 
 type RowOfFind<F extends FindShape> = { readonly [K in keyof F]: FindValue<F[K]> }
 
@@ -126,34 +130,36 @@ type ComputeFields = {
  * produce bare values, matching findColumnSlotOf at runtime.
  */
 type HeadRecordOf<Classes extends SchemaClasses, F extends FindShape> = {
-	readonly [K in keyof F]: F[K] extends ProbabilityExpr
-		? { readonly field: ProbabilityResult; readonly class: undefined }
-		: F[K] extends ExpectationExpr
-			? { readonly field: ExpectationResult; readonly class: undefined }
-			: F[K] extends EventExpr
-				? { readonly field: EventField; readonly class: undefined }
-				: F[K] extends EventTest
-					? { readonly field: BoolField; readonly class: undefined }
-					: F[K] extends Segments<infer Element>
-						? { readonly field: IntervalField<Element, undefined>; readonly class: undefined }
-						: F[K] extends AnyVar
-							? MintSlotOf<Classes, F[K]>
-							: F[K] extends ComputeExpr<infer Kind extends ScalarKind>
-								? { readonly field: ComputeFields[Kind]; readonly class: undefined }
-								: F[K] extends CountAgg
-									? { readonly field: U64Field; readonly class: undefined }
-									: F[K] extends Agg<"mean", AnyVar>
-										? { readonly field: F64Field; readonly class: undefined }
-										: F[K] extends Agg<"pack", infer Over extends AnyVar>
-											? {
-													readonly field: Over["field"] extends EventField
-														? EventField
-														: IntervalField<Over["field"] extends IntervalField<infer E> ? E : never, undefined>
-													readonly class: undefined
-												}
-											: F[K] extends Agg<FoldOpName, infer Over extends AnyVar>
-												? { readonly field: Over["field"]; readonly class: undefined }
-												: never
+	readonly [K in keyof F]: F[K] extends NumberExpr
+		? { readonly field: NumberResult; readonly class: undefined }
+		: F[K] extends ProbabilityExpr
+			? { readonly field: ProbabilityResult; readonly class: undefined }
+			: F[K] extends ExpectationExpr
+				? { readonly field: ExpectationResult; readonly class: undefined }
+				: F[K] extends EventExpr
+					? { readonly field: EventField; readonly class: undefined }
+					: F[K] extends EventTest
+						? { readonly field: BoolField; readonly class: undefined }
+						: F[K] extends Segments<infer Element>
+							? { readonly field: IntervalField<Element, undefined>; readonly class: undefined }
+							: F[K] extends AnyVar
+								? MintSlotOf<Classes, F[K]>
+								: F[K] extends ComputeExpr<infer Kind extends ScalarKind>
+									? { readonly field: ComputeFields[Kind]; readonly class: undefined }
+									: F[K] extends CountAgg
+										? { readonly field: U64Field; readonly class: undefined }
+										: F[K] extends Agg<"mean", AnyVar>
+											? { readonly field: F64Field; readonly class: undefined }
+											: F[K] extends Agg<"pack", infer Over extends AnyVar>
+												? {
+														readonly field: Over["field"] extends EventField
+															? EventField
+															: IntervalField<Over["field"] extends IntervalField<infer E> ? E : never, undefined>
+														readonly class: undefined
+													}
+												: F[K] extends Agg<FoldOpName, infer Over extends AnyVar>
+													? { readonly field: Over["field"]; readonly class: undefined }
+													: never
 }
 
 export type { Agg, CheckFind, CheckRecFind, FindEntry, FindShape, HeadRecordOf, RowOfFind }

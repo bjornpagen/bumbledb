@@ -424,6 +424,12 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
             }
             FindTerm::Count => {}
             FindTerm::Compute(expr) => vars.extend(expr.variables()),
+            FindTerm::Number(expr) => vars.extend(
+                expr.inputs()
+                    .expect("validated number")
+                    .into_iter()
+                    .map(|(var, _)| var),
+            ),
             FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
                 vars.extend(term.event_variables().expect("Event expression"));
             }

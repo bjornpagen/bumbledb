@@ -1,10 +1,12 @@
 /** Query observations are result values, never stored schema fields. */
+
 import { SdkInvariantError } from "#errors.ts"
 import { encodedEvent } from "#event-value.ts"
 import { encodedRational } from "#exact-value.ts"
 import type { ParameterProbabilityObservation } from "#parameter-source.ts"
 import { encodedParameter } from "#parameter-value.ts"
 import type { ExpectationWire } from "#query/expectation.ts"
+import type { NumberWire } from "#query/number-result.ts"
 import type { CellValue } from "#rows.ts"
 import type { ProbabilityObservation } from "#source-operation.ts"
 import { encodedSource } from "#source-value.ts"
@@ -32,7 +34,7 @@ export interface ProbabilityWire {
 	readonly value: Uint8Array | null
 	readonly defined: Uint8Array | null
 }
-export type AnswerCell = CellValue | ProbabilityWire | ExpectationWire
+export type AnswerCell = CellValue | ProbabilityWire | ExpectationWire | NumberWire
 
 export function decodeProbability(input: unknown): ProbabilityAnswer {
 	const data = recordValue("Query probability", input, [

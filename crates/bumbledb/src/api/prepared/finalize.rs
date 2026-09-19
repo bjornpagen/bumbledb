@@ -145,6 +145,10 @@ fn fill_resolved_answers(
     unsafe_code,
     reason = "Publish the reserved cells only after every column initialized every row"
 )]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one exhaustive column decoder keeps resident initialization and publication together"
+)]
 fn fill_resident_rows<'a>(
     out: &mut Answers,
     sources: AnswerSources<'_, '_>,
@@ -167,12 +171,16 @@ fn fill_resident_rows<'a>(
     let mut offset = 0;
     for (col, column) in columns.iter().enumerate() {
         work.checkpoint().map_err(work_error)?;
-        if let SignatureColumn::ProjectObservation(kind) = column {
+        if let Some(kind) = match column {
+            SignatureColumn::ProjectObservation(kind) => Some(*kind),
+            SignatureColumn::Number => Some(crate::ir::validate::ObservationKind::Number),
+            _ => None,
+        } {
             let mut answers = answers.clone();
             for row in 0..rows {
                 work.checkpoint().map_err(work_error)?;
                 let answer = answers.next().expect("resident sink length");
-                let cell = out.observed_cell(observations, *kind, answer[offset])?;
+                let cell = out.observed_cell(observations, kind, answer[offset])?;
                 out.cells.spare_capacity_mut()[row * arity + col].write(cell);
             }
             offset += 1;
@@ -368,8 +376,12 @@ fn push_resolved_answer(
     } = sources;
     let mut word = 0;
     for column in columns {
-        if let SignatureColumn::ProjectObservation(kind) = column {
-            let cell = out.observed_cell(observations, *kind, answer[word])?;
+        if let Some(kind) = match column {
+            SignatureColumn::ProjectObservation(kind) => Some(*kind),
+            SignatureColumn::Number => Some(crate::ir::validate::ObservationKind::Number),
+            _ => None,
+        } {
+            let cell = out.observed_cell(observations, kind, answer[word])?;
             out.cells.push(cell);
             word += 1;
             continue;

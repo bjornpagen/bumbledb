@@ -9,6 +9,8 @@ use crate::{AnswerValue, ExpectationAnswer, ProbabilityAnswer, Result};
 
 #[derive(Debug, Default)]
 pub(super) struct ObservationRegistry {
+    numbers: Vec<crate::ObservationNumberImport>,
+    number_keys: std::collections::HashMap<crate::ObservationNumberImport, u64>,
     probabilities: Vec<ProbabilityAnswer>,
     expectations: Vec<ExpectationAnswer>,
     probability_keys: BTreeMap<[u64; 4], u64>,
@@ -20,10 +22,19 @@ impl ObservationRegistry {
         *self = Self::default();
     }
 
-    pub(super) fn checkpoint(&self) -> (usize, usize) {
-        (self.probabilities.len(), self.expectations.len())
+    pub(super) fn checkpoint(&self) -> (usize, usize, usize) {
+        (
+            self.probabilities.len(),
+            self.expectations.len(),
+            self.numbers.len(),
+        )
     }
-    pub(super) fn rollback(&mut self, (probabilities, expectations): (usize, usize)) {
+    pub(super) fn rollback(
+        &mut self,
+        (probabilities, expectations, numbers): (usize, usize, usize),
+    ) {
+        self.numbers.truncate(numbers);
+        self.number_keys.retain(|_, token| *token < numbers as u64);
         self.probabilities.truncate(probabilities);
         self.expectations.truncate(expectations);
         self.probability_keys
@@ -35,6 +46,7 @@ impl ObservationRegistry {
     pub(super) fn get(&self, kind: ObservationKind, token: u64) -> Result<AnswerValue<'_>> {
         let index = usize::try_from(token).map_err(|_| crate::event::Error::UnknownKey)?;
         match kind {
+            ObservationKind::Number => self.numbers.get(index).map(AnswerValue::Number),
             ObservationKind::Probability => {
                 self.probabilities.get(index).map(AnswerValue::Probability)
             }
@@ -47,10 +59,28 @@ impl ObservationRegistry {
 
     pub(super) fn copy(&mut self, value: AnswerValue<'_>) -> Result<u64> {
         match value {
+            AnswerValue::Number(value) => self.insert_number(value.clone()),
             AnswerValue::Probability(value) => self.insert_probability(value.clone()),
             AnswerValue::Expectation(value) => self.insert_expectation(value.clone()),
             _ => unreachable!("observation registry resolves only observations"),
         }
+    }
+
+    pub(super) fn insert_number(&mut self, value: crate::ObservationNumberImport) -> Result<u64> {
+        if let Some(token) = self.number_keys.get(&value) {
+            return Ok(*token);
+        }
+        self.numbers
+            .try_reserve(1)
+            .map_err(crate::event::Error::from)?;
+        self.number_keys
+            .try_reserve(1)
+            .map_err(crate::event::Error::from)?;
+        let token =
+            u64::try_from(self.numbers.len()).map_err(|_| crate::Error::ResultBytesOverflow)?;
+        self.numbers.push(value.clone());
+        self.number_keys.insert(value, token);
+        Ok(token)
     }
 
     fn insert_probability(&mut self, value: ProbabilityAnswer) -> Result<u64> {
@@ -148,6 +178,11 @@ impl ObservationRegistry {
                 }
                 SignatureColumn::ProjectObservation(kind) => {
                     self.get(*kind, row[offset])?;
+                    out.push(row[offset]);
+                    offset += 1;
+                }
+                SignatureColumn::Number => {
+                    self.get(ObservationKind::Number, row[offset])?;
                     out.push(row[offset]);
                     offset += 1;
                 }

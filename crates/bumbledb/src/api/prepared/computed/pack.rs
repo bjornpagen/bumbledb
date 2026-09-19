@@ -282,7 +282,7 @@ mod tests {
                     find: 1,
                     rules: vec![0, 2],
                     expression: FindTerm::Pack { over: VarId(1) },
-                    inputs: vec![(VarId(1), 64, ValueType::Event)],
+                    inputs: vec![(VarId(1), 64, ValueType::Event.into())],
                 };
                 let mut row = Bindings::new(68);
                 for (i, event) in [
@@ -359,7 +359,7 @@ mod tests {
             find: 0,
             rules: vec![0],
             expression: FindTerm::Pack { over: VarId(0) },
-            inputs: vec![(VarId(0), 0, ValueType::Event)],
+            inputs: vec![(VarId(0), 0, ValueType::Event.into())],
         };
         let mut row = Bindings::new(4);
         for id in [53, 54] {

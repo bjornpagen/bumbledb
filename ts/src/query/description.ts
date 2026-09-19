@@ -11,6 +11,8 @@ import { eventFindFromIr } from "#query/event.ts"
 import { type ExpectationAnswer, type ExpectationResult, expectationResult } from "#query/expectation.ts"
 import type { AnyQuery, ChainContext, Query } from "#query/lower.ts"
 import { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, taggedCmpLiteral } from "#query/lower.ts"
+import { numberFromIr } from "#query/number.ts"
+import { type NumberAnswer, type NumberResult, numberResult } from "#query/number-result.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
 import { type ProbabilityAnswer, type ProbabilityResult, probabilityResult } from "#query/probability.ts"
 import { type AnyVar, type MatchOwner, makeParam, makeSetParam, type ParamsRecord, v } from "#query/scope.ts"
@@ -54,13 +56,15 @@ interface DescriptionParameter {
 
 type ResultShape = Readonly<Record<string, QueryValue>>
 type DescriptionRow<F extends ResultShape> = {
-	readonly [K in keyof F]: F[K] extends ExpectationResult
-		? ExpectationAnswer
-		: F[K] extends ProbabilityResult
-			? ProbabilityAnswer
-			: F[K] extends AnyField
-				? Infer<F[K]>
-				: never
+	readonly [K in keyof F]: F[K] extends NumberResult
+		? NumberAnswer
+		: F[K] extends ExpectationResult
+			? ExpectationAnswer
+			: F[K] extends ProbabilityResult
+				? ProbabilityAnswer
+				: F[K] extends AnyField
+					? Infer<F[K]>
+					: never
 }
 
 /** Checked result fields remain exact through v(imported), just as at runtime.
@@ -324,6 +328,7 @@ function replayRule(
 			let value: unknown
 			if (find.kind === "var") value = variableAt(find.var)
 			else if (find.kind === "compute") value = scalar(find.expr)
+			else if (find.kind === "number") value = numberFromIr(find.expr, variableAt)
 			else if (
 				find.kind === "event" ||
 				find.kind === "test" ||
@@ -357,7 +362,8 @@ function queryFromDescription<Rels extends SchemaRelations, Classes extends Sche
 		typeof result === "object" && result !== null ? Object.keys(result) : []
 	)
 	const fields = Object.fromEntries(
-		Object.entries(resultRecord).map(([name, field]): [string, AnyField | ExpectationResult | ProbabilityResult] => {
+		Object.entries(resultRecord).map(([name, field]): [string, QueryValue] => {
+			if (field === numberResult) return [name, numberResult]
 			if (field === expectationResult) return [name, expectationResult]
 			if (field === probabilityResult) return [name, probabilityResult]
 			return [name, fieldDescriptor(`query result.${name}`, field)]

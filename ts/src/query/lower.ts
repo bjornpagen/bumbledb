@@ -71,6 +71,8 @@ import {
 import { expectationResult } from "#query/expectation.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
 import { count, max, mean, min, pack, sum } from "#query/find.ts"
+import { isNumberExpr, numberIr, numberVars, snapshotNumberExpression } from "#query/number.ts"
+import { numberResult } from "#query/number-result.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
 import { probabilityResult } from "#query/probability.ts"
 import type {
@@ -903,7 +905,8 @@ function aggDataOf(name: string, entry: { readonly agg: string; readonly over?: 
 }
 
 function findColumnOf(name: string, entry: unknown): FindColumn {
-	if (isEventFind(entry)) return Object.freeze({ name, entry, closed: undefined, slot: undefined })
+	if (isEventFind(entry) || isNumberExpr(entry))
+		return Object.freeze({ name, entry, closed: undefined, slot: undefined })
 	if (isTerm(entry)) {
 		if (entry[term] === "var") {
 			return Object.freeze({
@@ -994,6 +997,7 @@ function assertNumeric(where: string, position: string, ref: AnyVar): void {
  */
 function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedField | undefined {
 	const entry = column.entry
+	if (entry.kind === "number") return { field: numberResult, class: undefined }
 	if (entry.kind === "probability") return { field: probabilityResult, class: undefined }
 	if (entry.kind === "expectation") return { field: expectationResult, class: undefined }
 	if (entry.kind === "event") return { field: eventField, class: undefined }
@@ -1029,6 +1033,12 @@ function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedFie
 function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, column: FindColumn): void {
 	const where = `${contextLabel(context)} find ${column.name}`
 	const entry = column.entry
+	if (entry.kind === "number") {
+		if (context.kind === "rec-base" || context.kind === "rec-arm")
+			throw new AuthoringError({ message: `${where}: produce numbers in a nonrecursive query stage` })
+		for (const ref of numberVars(entry)) assertBound(where, bound, ref)
+		return
+	}
 	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability" || entry.kind === "expectation") {
 		if (
 			(entry.kind === "probability" || entry.kind === "expectation") &&
@@ -1321,6 +1331,7 @@ const importOrigins = new WeakMap<InteriorData, InteriorData>()
 function snapshotQueryData<A>(input: A): A {
 	return snapshotData(input, (source, snapshot) => {
 		snapshotEventExpression(source, snapshot)
+		snapshotNumberExpression(source, snapshot)
 		// Detached imports retain their authoring identity for deduplication.
 		if (importTables.has(source as InteriorData)) {
 			const table = snapshot as InteriorData
@@ -1775,7 +1786,8 @@ function alignedHeadOf(label: string, rules: readonly RuleData[]): readonly Find
 					lead === undefined ||
 					lead.name !== column.name ||
 					headOperation(lead) !== headOperation(column) ||
-					(lead.entry.kind === "probability") !== (column.entry.kind === "probability")
+					(lead.entry.kind === "probability") !== (column.entry.kind === "probability") ||
+					(lead.entry.kind === "number") !== (column.entry.kind === "number")
 				)
 			})
 		) {
@@ -2316,6 +2328,7 @@ function lowerComputeGrammar(node: QueryNode, ids: VarIds): ScalarExprIr {
 }
 
 function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
+	if (entry.kind === "number") return { kind: "number", expr: numberIr(entry, (ref) => ids.of(ref)) }
 	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability" || entry.kind === "expectation")
 		return eventFindIr(entry, (ref) => ids.of(ref))
 	if (entry.kind === "segments")
@@ -2351,7 +2364,8 @@ function headOpOf(agg: AggData): HeadOpIr {
 function headTermOf(column: FindColumn): HeadTermIr {
 	const entry = column.entry
 	if (entry.kind === "expectation") return { kind: "aggregate", op: "expectation" }
-	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability") return { kind: "compute" }
+	if (entry.kind === "number" || entry.kind === "event" || entry.kind === "test" || entry.kind === "probability")
+		return { kind: "compute" }
 	if (entry.kind === "segments") return { kind: "compute" }
 	if (entry.kind === "var") {
 		return { kind: "var" }

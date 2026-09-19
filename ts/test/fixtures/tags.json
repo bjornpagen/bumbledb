@@ -47,6 +47,7 @@
 		"test",
 		"probability",
 		"expectation",
+		"number",
 		"count",
 		"aggregate",
 		"pack"

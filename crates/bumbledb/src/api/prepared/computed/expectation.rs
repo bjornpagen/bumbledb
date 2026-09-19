@@ -495,9 +495,9 @@ mod tests {
                 given: VarId(2),
             },
             inputs: vec![
-                (VarId(0), 64, ValueType::I64),
-                (VarId(1), 65, ValueType::Event),
-                (VarId(2), 67, ValueType::Event),
+                (VarId(0), 64, ValueType::I64.into()),
+                (VarId(1), 65, ValueType::Event.into()),
+                (VarId(2), 67, ValueType::Event.into()),
             ],
         })
     }
@@ -644,8 +644,8 @@ mod tests {
                 }
                 let mut relocated = (*program).clone();
                 relocated.inputs = vec![
-                    (VarId(1), 71, ValueType::Event),
-                    (VarId(2), 73, ValueType::Event),
+                    (VarId(1), 71, ValueType::Event.into()),
+                    (VarId(2), 73, ValueType::Event.into()),
                 ];
                 for group in 0..2 {
                     let mut row = Bindings::new(75);

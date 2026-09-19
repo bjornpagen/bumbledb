@@ -45,16 +45,12 @@ impl std::fmt::Display for Signature {
                 f.write_str(", ")?;
             }
             let Some(ty) = column.ty() else {
-                f.write_str(
-                    if matches!(
-                        column.binding_type(),
-                        QueryType::Observation(ObservationKind::Expectation)
-                    ) {
-                        "expectation"
-                    } else {
-                        "probability"
-                    },
-                )?;
+                f.write_str(match column.binding_type() {
+                    QueryType::Observation(ObservationKind::Expectation) => "expectation",
+                    QueryType::Observation(ObservationKind::Probability) => "probability",
+                    QueryType::Observation(ObservationKind::Number) => "number",
+                    QueryType::Stored(_) => unreachable!("stored columns have a type"),
+                })?;
                 continue;
             };
             if let Some(op) = column.op() {
@@ -102,6 +98,7 @@ pub enum QueryType {
 pub enum ObservationKind {
     Probability,
     Expectation,
+    Number,
 }
 
 impl QueryType {
@@ -149,6 +146,7 @@ pub enum SignatureColumn {
     /// Query-only owned observation; it is not a stored schema field.
     Probability,
     Expectation,
+    Number,
     /// Projection of an already finalized, source-owned observation.
     ProjectObservation(ObservationKind),
 
@@ -163,7 +161,9 @@ impl SignatureColumn {
     pub fn ty(&self) -> Option<&ValueType> {
         match self {
             Self::Project { ty } | Self::Fold { ty, .. } => Some(ty),
-            Self::Probability | Self::Expectation | Self::ProjectObservation(_) => None,
+            Self::Probability | Self::Expectation | Self::Number | Self::ProjectObservation(_) => {
+                None
+            }
         }
     }
 
@@ -173,6 +173,7 @@ impl SignatureColumn {
             Self::Project { ty } | Self::Fold { ty, .. } => QueryType::Stored(*ty),
             Self::Probability => QueryType::Observation(ObservationKind::Probability),
             Self::Expectation => QueryType::Observation(ObservationKind::Expectation),
+            Self::Number => QueryType::Observation(ObservationKind::Number),
             Self::ProjectObservation(kind) => QueryType::Observation(*kind),
         }
     }
@@ -180,7 +181,10 @@ impl SignatureColumn {
     #[must_use]
     pub fn op(&self) -> Option<AggKind> {
         match self {
-            Self::Project { .. } | Self::Probability | Self::ProjectObservation(_) => None,
+            Self::Project { .. }
+            | Self::Probability
+            | Self::Number
+            | Self::ProjectObservation(_) => None,
             Self::Fold { op, .. } => Some(*op),
             Self::Expectation => Some(AggKind::Expectation),
         }
@@ -737,6 +741,7 @@ impl<'a> RuleWitness<'a> {
             matches!(
                 term,
                 FindTerm::Compute(_)
+                    | FindTerm::Number(_)
                     | FindTerm::Event(_)
                     | FindTerm::Test(_)
                     | FindTerm::Probability { .. }

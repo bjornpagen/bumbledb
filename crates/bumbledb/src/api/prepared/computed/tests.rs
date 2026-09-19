@@ -24,14 +24,16 @@ fn fixture(producers: usize, project_one: bool) -> ComputedSink {
                             0,
                             ValueType::Interval {
                                 element: IntervalElement::U64,
-                            },
+                            }
+                            .into(),
                         ),
                         (
                             VarId(1),
                             2,
                             ValueType::Interval {
                                 element: IntervalElement::U64,
-                            },
+                            }
+                            .into(),
                         ),
                     ],
                 }),
@@ -143,7 +145,7 @@ fn batch_stops_after_product_cancellation_before_evaluating_later_scalars() {
                 Box::new(E::Literal(Value::U64(1))),
                 Box::new(E::Var(VarId(2))),
             )),
-            inputs: vec![(VarId(2), 0, ValueType::U64)],
+            inputs: vec![(VarId(2), 0, ValueType::U64.into())],
         }),
     ));
     let work = WorkContext::new();
@@ -187,8 +189,8 @@ fn event_fixture(
         rules: vec![0],
         expression: FindTerm::Event(expression),
         inputs: vec![
-            (VarId(0), 0, ValueType::Event),
-            (VarId(1), 2, ValueType::Event),
+            (VarId(0), 0, ValueType::Event.into()),
+            (VarId(1), 2, ValueType::Event.into()),
         ],
     });
     let projection = ProjectionSink::new(vec![4, 5]);
@@ -291,4 +293,90 @@ fn cancellation_during_fault_collection_is_not_reported_as_a_complete_set() {
     sink.row();
     sink.finish_events().unwrap();
     assert_eq!(rows(&mut sink).len(), 1);
+}
+
+#[test]
+fn numerical_sink_canonicalizes_before_spilled_projection_and_shares_contraction_work() {
+    use crate::event::{
+        ArithmeticBudget, ArithmeticLimits, DensityPiece, ExactArithmetic, ExactRational,
+        LawLimits, Space, SpaceId,
+    };
+    let control = WorkContext::new();
+    let make_sink = || {
+        let program = Arc::new(OutputProgram {
+            find: 0,
+            rules: vec![0],
+            expression: FindTerm::Number(crate::NumberExpr::Integer(VarId(0))),
+            inputs: vec![(VarId(0), 0, ValueType::U64.into())],
+        });
+        let mut sink = ComputedSink::new(
+            EitherSink::Projection(ProjectionSink::new(vec![1])),
+            vec![(1, program)],
+            1,
+            2,
+            &[],
+        );
+        sink.work = Some(control.clone());
+        projection(&mut sink).begin(Some(control.clone()));
+        sink.bindings.set(0, 7);
+        sink
+    };
+    let mut reference = make_sink();
+    reference.row();
+    reference.finish_events().unwrap();
+    let number_steps = reference.arithmetic.operations();
+    assert!(number_steps > 0);
+    let raw = Space::new(SpaceId([222; 32]), 0, &()).unwrap();
+    let source = raw
+        .with_density(
+            &[DensityPiece {
+                region: raw.full(),
+                density: ExactRational::one(),
+            }],
+            LawLimits::default(),
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &()),
+        )
+        .unwrap();
+    let mut observed = ExactArithmetic::new(ArithmeticLimits::default(), &());
+    crate::ProbabilityAnswer::new(source.full(), source.full(), &mut observed).unwrap();
+    let contraction_steps = observed.operations();
+    assert!(contraction_steps > 0);
+    for spill in [false, true] {
+        let mut sink = make_sink();
+        if spill {
+            projection(&mut sink).force_spill().unwrap();
+        }
+        for _ in 0..3 {
+            sink.row();
+        }
+        sink.finish_events().unwrap();
+        assert_eq!(rows(&mut sink), vec![vec![0]]);
+        assert_eq!(sink.observations.checkpoint(), (0, 0, 1));
+        let mut owners = super::super::observations::ObservationRegistry::default();
+        let mut budget = ArithmeticBudget::new(ArithmeticLimits {
+            operations: number_steps + contraction_steps - 1,
+            ..ArithmeticLimits::default()
+        });
+        let mut sink = EitherSink::Computed(Box::new(make_sink()));
+        sink.swap_numbers(&mut owners, &mut budget);
+        let EitherSink::Computed(computed) = &mut sink else {
+            unreachable!()
+        };
+        computed.row();
+        computed.finish_events().unwrap();
+        sink.swap_numbers(&mut owners, &mut budget);
+        assert_eq!(budget.operations(), number_steps);
+        assert_eq!(owners.checkpoint(), (0, 0, 1));
+        let result = crate::ProbabilityAnswer::new(
+            source.full(),
+            source.full(),
+            &mut ExactArithmetic::borrow(&mut budget, &control),
+        );
+        assert!(matches!(
+            result,
+            Err(crate::Error::Event(crate::event::Error::Capacity(
+                crate::event::Capacity::ArithmeticSteps
+            )))
+        ));
+    }
 }

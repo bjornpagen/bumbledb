@@ -175,6 +175,8 @@ pub enum FindTerm {
     Var(VarId),
 
     Compute(crate::ScalarExpr),
+    /// Exact source-retaining arithmetic, evaluated before relational grouping.
+    Number(crate::NumberExpr),
 
     /// One owned region per binding, including scoped empty.
     Event(crate::EventExpr),
@@ -230,6 +232,7 @@ impl FindTerm {
         match self {
             Self::Var(_) => HeadTerm::Var,
             Self::Compute(_)
+            | Self::Number(_)
             | Self::Event(_)
             | Self::Test(_)
             | Self::Probability { .. }

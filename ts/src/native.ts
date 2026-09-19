@@ -195,7 +195,22 @@ type EventTestIr<V = number, D = Uint8Array, S = Uint8Array> =
 			readonly right: EventExprIr<V, D, S>
 	  }
 
+type NumberExprIr<V = number, Q = Uint8Array, N = Uint8Array, D = Uint8Array> =
+	| { readonly kind: "var" | "integer"; readonly var: V }
+	| { readonly kind: "component"; readonly observation: V; readonly component: "value" | "numerator" | "evidenceMass" }
+	| { readonly kind: "literal"; readonly bytes: Q }
+	| { readonly kind: "imported"; readonly bytes: N }
+	| {
+			readonly kind: "add" | "subtract" | "multiply" | "divide" | "min" | "max"
+			readonly left: NumberExprIr<V, Q, N, D>
+			readonly right: NumberExprIr<V, Q, N, D>
+	  }
+	| { readonly kind: "negate" | "abs"; readonly value: NumberExprIr<V, Q, N, D> }
+	| { readonly kind: "pow"; readonly value: NumberExprIr<V, Q, N, D>; readonly exponent: number }
+	| { readonly kind: "onDomain"; readonly value: NumberExprIr<V, Q, N, D>; readonly domain: D }
+
 type FindTermIr =
+	| { readonly kind: "number"; readonly expr: NumberExprIr }
 	| {
 			readonly kind: "segments"
 			readonly op: import("#query/segments.ts").SegmentOp
@@ -791,6 +806,7 @@ export type {
 	LogResult,
 	LogSchemaHandle,
 	LogStateStamp,
+	NumberExprIr,
 	NumericCastIr,
 	OpenKind,
 	ParsedQuery,

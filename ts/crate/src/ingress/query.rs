@@ -88,7 +88,9 @@ pub(crate) struct Query {
     pub rec: Option<Rec>,
 }
 
+mod numbers;
 mod payoffs;
+pub(crate) use numbers::NumberExpr;
 use payoffs::PayoffAdmission;
 
 #[derive(Debug)]
@@ -103,6 +105,7 @@ pub(crate) enum Payoff {
 
 #[derive(Debug)]
 pub(crate) enum FindTerm {
+    Number(NumberExpr),
     Expectation {
         value: Payoff,
         when: VarId,
@@ -361,6 +364,7 @@ impl Admit for FindTerm {
         use bumbledb::FindTerm as O;
         work.checkpoint()?;
         Ok(match self {
+            Self::Number(v) => O::Number(PayoffAdmission::new(work).number(v, 1)?),
             Self::Var(v) => O::Var(v),
             Self::Compute(v) => O::Compute(v.admit(work)?),
             Self::Event(v) => O::Event(v.admit(work)?),

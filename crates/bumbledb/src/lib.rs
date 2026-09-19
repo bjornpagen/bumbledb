@@ -61,7 +61,9 @@ pub mod digest;
 pub(crate) mod encoding;
 pub mod error;
 mod event_expr;
+mod number_expr;
 mod observation;
+pub use number_expr::{NumberDomain, NumberExpr, NumberExprError};
 mod payoff;
 pub use observation::{
     ExpectationAnswer, ExpectationFunction, ExpectationPayoff, ExpectationValue,

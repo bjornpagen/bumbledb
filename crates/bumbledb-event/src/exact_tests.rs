@@ -1,4 +1,6 @@
-use crate::{ArithmeticLimits, Capacity, Control, Error, ExactArithmetic, ExactRational};
+use crate::{
+    ArithmeticBudget, ArithmeticLimits, Capacity, Control, Error, ExactArithmetic, ExactRational,
+};
 use std::cell::Cell;
 
 fn work() -> ExactArithmetic<'static> {
@@ -178,4 +180,63 @@ fn limits_refuse_without_rounding_and_poll_after_bigint_work() {
         ),
         Err(Error::Cancelled)
     );
+}
+
+#[test]
+fn borrowed_budget_keeps_spent_work_across_stages_errors_and_unwind() {
+    let mut budget = ArithmeticBudget::new(ArithmeticLimits {
+        bits: 100,
+        operations: 3,
+    });
+    let one = ExactRational::one();
+    {
+        let mut stage = ExactArithmetic::borrow(&mut budget, &());
+        stage.validate(&one).unwrap();
+        assert_eq!(stage.operations(), 1);
+    }
+    assert_eq!(budget.operations(), 1);
+    let stop = Stop(Cell::new(0));
+    // The cancellation arrives after the primitive spent work, so dropping
+    // its failed stage must not refund that operation.
+    assert_eq!(
+        one.add(&one, &mut ExactArithmetic::borrow(&mut budget, &stop)),
+        Err(Error::Cancelled)
+    );
+    assert_eq!(budget.operations(), 2);
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut stage = ExactArithmetic::borrow(&mut budget, &());
+        stage.validate(&one).unwrap();
+        panic!("stage abandoned after exact work");
+    }));
+    assert!(unwound.is_err());
+    assert_eq!(budget.operations(), 3);
+    assert_eq!(
+        ExactArithmetic::borrow(&mut budget, &()).validate(&one),
+        Err(Error::Capacity(Capacity::ArithmeticSteps))
+    );
+    assert_eq!(budget.operations(), 3);
+}
+
+#[test]
+fn borrowed_and_owned_arithmetic_have_identical_limits_and_values() {
+    for operations in 0..5 {
+        let limits = ArithmeticLimits {
+            bits: 100,
+            operations,
+        };
+        let mut budget = ArithmeticBudget::new(limits);
+        let mut owned = ExactArithmetic::new(limits, &());
+        let mut a = ExactRational::one();
+        let mut b = a.clone();
+        for _ in 0..6 {
+            let x = a.add(&a, &mut owned);
+            let y = b.add(&b, &mut ExactArithmetic::borrow(&mut budget, &()));
+            assert_eq!(x, y);
+            assert_eq!(owned.operations(), budget.operations());
+            if let (Ok(x), Ok(y)) = (x, y) {
+                a = x;
+                b = y;
+            }
+        }
+    }
 }

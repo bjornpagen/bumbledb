@@ -4,10 +4,22 @@ use crate::exec::run::Sink;
 use crate::exec::sink::FindSpec;
 
 impl EitherSink {
+    pub(super) fn swap_numbers(
+        &mut self,
+        observations: &mut super::observations::ObservationRegistry,
+        arithmetic: &mut crate::event::ArithmeticBudget,
+    ) {
+        if let Self::Computed(sink) = self {
+            std::mem::swap(&mut sink.observations, observations);
+            std::mem::swap(&mut sink.arithmetic, arithmetic);
+        }
+    }
     /// Install this execution's cooperative cancellation context.
     pub(super) fn begin_execution(&mut self, work: Option<crate::work::WorkContext>) {
         match self {
             Self::Computed(sink) => {
+                sink.observations.clear();
+                sink.arithmetic = crate::event::ArithmeticBudget::default();
                 sink.work.clone_from(&work);
                 sink.inner.begin_execution(work);
             }
