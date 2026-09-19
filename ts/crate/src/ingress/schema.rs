@@ -64,7 +64,7 @@ impl SchemaInput {
 
     pub(crate) fn admit(self, work: &WorkContext) -> Result<crate::SchemaResolution, RuntimeError> {
         work.checkpoint()?;
-        let spec = self.0.try_map_values(|value| value.admit(work))?;
+        let spec = self.0.try_into_spec(|value| value.admit(work))?;
         Ok(crate::resolve_spec(&spec))
     }
 }

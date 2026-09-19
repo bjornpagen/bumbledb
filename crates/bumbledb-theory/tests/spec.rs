@@ -10,6 +10,49 @@ use bumbledb_theory::schema::spec::{
 };
 use bumbledb_theory::schema::{FieldId, LiteralSet, RelationId, StatementDescriptor, ValueType};
 
+#[test]
+fn public_enum_variant_imports_and_unconstrained_constructors_remain_compatible() {
+    use bumbledb_theory::schema::spec::LiteralSetSpec::*;
+    use bumbledb_theory::schema::spec::LiteralSpec::{Handle, Value as LiteralValue};
+    use bumbledb_theory::schema::spec::StatementSpec::*;
+
+    // These have no surrounding expected type: defaults on generic enums do
+    // not preserve inference here, and aliases do not allow variant imports.
+    let fd = Fd {
+        relation: "R".into(),
+        projection: vec!["id".into()].into(),
+    };
+    let handle = Handle("Active".into());
+    let one = One(handle);
+    let many = Many(vec![
+        LiteralValue(Value::U64(1)),
+        LiteralValue(Value::U64(2)),
+    ]);
+    let side = || SideSpec {
+        relation: "R".into(),
+        projection: vec!["id".into()].into(),
+        selection: vec![],
+    };
+    let containment = Containment {
+        source: side(),
+        target: side(),
+        bidirectional: false,
+    };
+    let capacity = Capacity {
+        source: side(),
+        target: side(),
+        weight: bumbledb_theory::schema::spec::WeightSpec::Unit,
+        window: bumbledb_theory::schema::spec::CapacityWindowSpec::Exact(
+            bumbledb_theory::schema::spec::BoundSpec::Lit(1),
+        ),
+    };
+    assert!(matches!(fd, Fd { .. }));
+    assert!(matches!(one, One(Handle(_))));
+    assert!(matches!(many, Many(_)));
+    assert!(matches!(containment, Containment { .. }));
+    assert!(matches!(capacity, Capacity { .. }));
+}
+
 fn field(name: &str, newtype: Option<&str>) -> FieldSpec {
     FieldSpec {
         name: name.into(),

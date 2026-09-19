@@ -1,20 +1,23 @@
 //! The schema grammar is shared by owned input and admitted values. Mapping
 //! literal payloads cannot invent a descriptor, field, projection or statement.
 use super::spec::{
-    ClosedSpecData as ClosedSpec, LiteralSetSpecData as LiteralSetSpec,
-    LiteralSpecData as LiteralSpec, RelationSpecData as RelationSpec, RowSpecData as RowSpec,
-    SchemaSpecData as SchemaSpec, SideSpecData as SideSpec, StatementSpecData as StatementSpec,
+    ClosedSpec, LiteralSetSpec, LiteralSetSpecData as LiteralSetInput, LiteralSpec,
+    LiteralSpecData as LiteralInput, RelationSpec, RowSpec, SchemaSpec,
+    SchemaSpecData as SchemaInput, SideSpec, SideSpecData as SideInput, StatementSpec,
+    StatementSpecData as StatementInput,
 };
+use crate::Value;
 
-impl<V> SchemaSpec<V> {
-    /// Transform every literal payload in declaration order, stopping on the
-    /// first failure. Names, handles, field types and law structure are retained.
+impl<V> SchemaInput<V> {
+    /// Interpret literal payloads into the concrete authoring grammar in declaration
+    /// order, stopping on the first failure. Names, handles, field types and law
+    /// structure are retained.
     /// # Errors
     /// The literal interpreter's error, unchanged.
-    pub fn try_map_values<U, E>(
+    pub fn try_into_spec<E>(
         self,
-        mut map: impl FnMut(V) -> Result<U, E>,
-    ) -> Result<SchemaSpec<U>, E> {
+        mut map: impl FnMut(V) -> Result<Value, E>,
+    ) -> Result<SchemaSpec, E> {
         Ok(SchemaSpec {
             relations: self
                 .relations
@@ -53,14 +56,14 @@ impl<V> SchemaSpec<V> {
                 .into_iter()
                 .map(|statement| {
                     Ok(match statement {
-                        StatementSpec::Fd {
+                        StatementInput::Fd {
                             relation,
                             projection,
                         } => StatementSpec::Fd {
                             relation,
                             projection,
                         },
-                        StatementSpec::Containment {
+                        StatementInput::Containment {
                             source,
                             target,
                             bidirectional,
@@ -69,7 +72,7 @@ impl<V> SchemaSpec<V> {
                             target: side(target, &mut map)?,
                             bidirectional,
                         },
-                        StatementSpec::Capacity {
+                        StatementInput::Capacity {
                             target,
                             weight,
                             window,
@@ -87,19 +90,19 @@ impl<V> SchemaSpec<V> {
     }
 }
 
-fn literal<V, U, E>(
-    literal: LiteralSpec<V>,
-    map: &mut impl FnMut(V) -> Result<U, E>,
-) -> Result<LiteralSpec<U>, E> {
+fn literal<V, E>(
+    literal: LiteralInput<V>,
+    map: &mut impl FnMut(V) -> Result<Value, E>,
+) -> Result<LiteralSpec, E> {
     Ok(match literal {
-        LiteralSpec::Value(value) => LiteralSpec::Value(map(value)?),
-        LiteralSpec::Handle(handle) => LiteralSpec::Handle(handle),
+        LiteralInput::Value(value) => LiteralSpec::Value(map(value)?),
+        LiteralInput::Handle(handle) => LiteralSpec::Handle(handle),
     })
 }
-fn side<V, U, E>(
-    side: SideSpec<V>,
-    map: &mut impl FnMut(V) -> Result<U, E>,
-) -> Result<SideSpec<U>, E> {
+fn side<V, E>(
+    side: SideInput<V>,
+    map: &mut impl FnMut(V) -> Result<Value, E>,
+) -> Result<SideSpec, E> {
     Ok(SideSpec {
         relation: side.relation,
         projection: side.projection,
@@ -110,8 +113,8 @@ fn side<V, U, E>(
                 Ok((
                     field,
                     match set {
-                        LiteralSetSpec::One(value) => LiteralSetSpec::One(literal(value, map)?),
-                        LiteralSetSpec::Many(values) => LiteralSetSpec::Many(
+                        LiteralSetInput::One(value) => LiteralSetSpec::One(literal(value, map)?),
+                        LiteralSetInput::Many(values) => LiteralSetSpec::Many(
                             values
                                 .into_iter()
                                 .map(|value| literal(value, map))

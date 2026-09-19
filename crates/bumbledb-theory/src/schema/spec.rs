@@ -1,9 +1,9 @@
 //! `SchemaSpec` — the bindings contract: a schema as **named plain data**,
 //! the runtime peer of the `schema!` grammar. A foreign host (the Node
 //! bindings, ETL tooling, any language that can build owned strings,
-//! vectors, and integers) describes its theory here and lowers it to the
-//! produce indistinguishable descriptors, so the same theory built either
-//! way carries the same fingerprint.
+//! vectors, and integers) describes its theory here and lowers it to a
+//! descriptor. Macro and plain-data declarations produce indistinguishable
+//! descriptors, so the same theory carries the same fingerprint.
 use std::collections::BTreeMap;
 
 use super::{
@@ -11,57 +11,6 @@ use super::{
     SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
 use crate::value::Value;
-
-// Preserve the concrete admitted authoring API, including inference for empty
-// declarations and literal-free statements. The Data forms share its grammar
-// with transport stages; only Value payloads can lower to a descriptor.
-pub type SchemaSpec = SchemaSpecData<Value>;
-pub type RelationSpec = RelationSpecData<Value>;
-pub type ClosedSpec = ClosedSpecData<Value>;
-pub type RowSpec = RowSpecData<Value>;
-pub type LiteralSpec = LiteralSpecData<Value>;
-pub type LiteralSetSpec = LiteralSetSpecData<Value>;
-pub type SideSpec = SideSpecData<Value>;
-pub type StatementSpec = StatementSpecData<Value>;
-
-/// The whole theory as named plain data: relations (ordinary and closed)
-/// and dependency statements, each list in declaration order — the same
-/// declaration-order law that mints every id. The payload parameter permits
-/// owned transport inputs to share this grammar; only admitted [`Value`]s have
-/// a descriptor interpretation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SchemaSpecData<V = Value> {
-    pub relations: Vec<RelationSpecData<V>>,
-    pub statements: Vec<StatementSpecData<V>>,
-}
-
-/// One relation. `closed: Some(spec)` declares it **closed** (the option
-/// is the kind, mirroring [`RelationDescriptor::extension`]); a closed
-/// relation's `fields` are its declared intrinsic columns only — the
-/// synthetic (`id`, `u64`) handle field is materialized by schema
-/// validation, and statement field names address the sealed shape (`id`
-/// resolves to [`FieldId`] 0, declared columns shift by one), exactly as
-/// the macro resolves them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RelationSpecData<V = Value> {
-    pub name: Box<str>,
-    pub fields: Vec<FieldSpec>,
-
-    /// (ruled 2026-07-23, R7).
-    pub closed: Option<ClosedSpecData<V>>,
-}
-
-/// A closed relation's closed half, fused: the handle newtype and the
-/// ground axioms travel together, so the two states the grammar forbids
-/// — an ordinary relation carrying a handle newtype, a closed relation
-/// without one — are unrepresentable, exactly
-/// as the macro's mandatory `as NewType` makes them unspellable.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClosedSpecData<V = Value> {
-    pub newtype: Box<str>,
-
-    pub rows: Vec<RowSpecData<V>>,
-}
 
 /// One field: name, structural type, and host newtype name. [`ValueType`]
 /// is the one structural-type vocabulary — `bool`, `u64`, `i64`, `f64`,
@@ -78,49 +27,8 @@ pub struct FieldSpec {
     pub newtype: Option<Box<str>>,
 }
 
-/// One ground axiom of a closed relation: the handle plus one literal per
-/// declared intrinsic column, in field-declaration order. Column literals
-/// ride the same [`LiteralSpec`] machine as statement selections (one
-/// machine, same errors — the macro's own rule).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RowSpecData<V = Value> {
-    pub handle: Box<str>,
-    pub values: Vec<LiteralSpecData<V>>,
-}
-
-/// One literal as spelled: a plain [`Value`], or a closed relation's
-/// handle by name — the `| status == Frozen` spelling, resolved through
-/// the selected field's newtype to the handle's declaration-order row id
-/// (a `u64` word), exactly as the macro resolves it at expansion.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LiteralSpecData<V = Value> {
-    Value(V),
-    Handle(Box<str>),
-}
-
-/// One σ binding's right side: a single literal or a literal set (read
-/// disjunctively). The degenerate sets are banned exactly as the macro
-/// bans them (the canonical-utterance law): a one-element set is the bare
-/// literal, and an empty set selects nothing — write no binding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LiteralSetSpecData<V = Value> {
-    One(LiteralSpecData<V>),
-    Many(Vec<LiteralSpecData<V>>),
-}
-
 /// The name-bearing form of a typed dependency projection.
 pub type ProjectionSpec = super::Projection<Box<str>>;
-
-/// One side of a containment or capacity statement:
-/// `R(fields… | field == literal…)`, all names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SideSpecData<V = Value> {
-    pub relation: Box<str>,
-
-    pub projection: ProjectionSpec,
-
-    pub selection: Vec<(Box<str>, LiteralSetSpecData<V>)>,
-}
 
 /// A capacity statement's weight as spelled: the measure of one source
 /// fact — `Unit` the absent bracket (the count instance), `Field` a
@@ -171,31 +79,126 @@ pub enum CapacityWindowSpec {
     Floor(BoundSpec),
 }
 
-/// One dependency statement, tagged by form. `==` is not a variant:
-/// exactly as in the grammar, a bidirectional containment is the
-/// `Containment { bidirectional: true }` spelling, lowered to the two
-/// adjacent containment descriptors (`source <= target` first).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StatementSpecData<V = Value> {
-    Fd {
-        relation: Box<str>,
-        projection: ProjectionSpec,
-    },
+// One grammar generates the concrete public authoring types and the generic
+// owned-input forms. Public enums remain actual enums: variant imports and
+// literal-free declarations keep their original Rust inference behavior.
+macro_rules! schema_spec_types {
+    ($schema:ident, $relation:ident, $closed:ident, $row:ident,
+     $literal:ident, $literals:ident, $side:ident, $statement:ident;
+     $($v:ident)?; $value:ty) => {
+        /// The whole theory as named plain data: relations (ordinary and closed)
+        /// and dependency statements, each list in declaration order — the same
+        /// declaration-order law that mints every id. The admitted [`SchemaSpec`] and deferred
+        /// [`SchemaSpecData`] share this grammar. Only admitted values have a descriptor
+        /// interpretation.
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct $schema $(<$v = Value>)? {
+            pub relations: Vec<$relation $(<$v>)?>,
+            pub statements: Vec<$statement $(<$v>)?>,
+        }
 
-    Containment {
-        source: SideSpecData<V>,
-        target: SideSpecData<V>,
-        bidirectional: bool,
-    },
+        /// One relation. `closed: Some(spec)` declares it **closed** (the option
+        /// is the kind, mirroring [`RelationDescriptor::extension`]); a closed
+        /// relation's `fields` are its declared intrinsic columns only — the
+        /// synthetic (`id`, `u64`) handle field is materialized by schema
+        /// validation, and statement field names address the sealed shape (`id`
+        /// resolves to [`FieldId`] 0, declared columns shift by one), exactly as
+        /// the macro resolves them.
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct $relation $(<$v = Value>)? {
+            pub name: Box<str>,
+            pub fields: Vec<FieldSpec>,
 
-    /// weight, window, source (ruled 2026-07-24, C2).
-    Capacity {
-        target: SideSpecData<V>,
-        weight: WeightSpec,
-        window: CapacityWindowSpec,
-        source: SideSpecData<V>,
-    },
+            /// (ruled 2026-07-23, R7).
+            pub closed: Option<$closed $(<$v>)?>,
+        }
+
+        /// A closed relation's closed half, fused: the handle newtype and the
+        /// ground axioms travel together, so the two states the grammar forbids
+        /// — an ordinary relation carrying a handle newtype, a closed relation
+        /// without one — are unrepresentable, exactly
+        /// as the macro's mandatory `as NewType` makes them unspellable.
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct $closed $(<$v = Value>)? {
+            pub newtype: Box<str>,
+
+            pub rows: Vec<$row $(<$v>)?>,
+        }
+
+        /// One ground axiom of a closed relation: the handle plus one literal per
+        /// declared intrinsic column, in field-declaration order. Column literals
+        /// ride the same [`LiteralSpec`] machine as statement selections (one
+        /// machine, same errors — the macro's own rule).
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct $row $(<$v = Value>)? {
+            pub handle: Box<str>,
+            pub values: Vec<$literal $(<$v>)?>,
+        }
+
+        /// One literal as spelled: a plain [`Value`], or a closed relation's
+        /// handle by name — the `| status == Frozen` spelling, resolved through
+        /// the selected field's newtype to the handle's declaration-order row id
+        /// (a `u64` word), exactly as the macro resolves it at expansion.
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub enum $literal $(<$v = Value>)? {
+            Value($value),
+            Handle(Box<str>),
+        }
+
+        /// One σ binding's right side: a single literal or a literal set (read
+        /// disjunctively). The degenerate sets are banned exactly as the macro
+        /// bans them (the canonical-utterance law): a one-element set is the bare
+        /// literal, and an empty set selects nothing — write no binding.
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub enum $literals $(<$v = Value>)? {
+            One($literal $(<$v>)?),
+            Many(Vec<$literal $(<$v>)?>),
+        }
+
+        /// One side of a containment or capacity statement:
+        /// `R(fields… | field == literal…)`, all names.
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct $side $(<$v = Value>)? {
+            pub relation: Box<str>,
+
+            pub projection: ProjectionSpec,
+
+            pub selection: Vec<(Box<str>, $literals $(<$v>)?)>,
+        }
+
+        /// One dependency statement, tagged by form. `==` is not a variant:
+        /// exactly as in the grammar, a bidirectional containment is the
+        /// `Containment { bidirectional: true }` spelling, lowered to the two
+        /// adjacent containment descriptors (`source <= target` first).
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub enum $statement $(<$v = Value>)? {
+            Fd {
+                relation: Box<str>,
+                projection: ProjectionSpec,
+            },
+
+            Containment {
+                source: $side $(<$v>)?,
+                target: $side $(<$v>)?,
+                bidirectional: bool,
+            },
+
+            /// weight, window, source (ruled 2026-07-24, C2).
+            Capacity {
+                target: $side $(<$v>)?,
+                weight: WeightSpec,
+                window: CapacityWindowSpec,
+                source: $side $(<$v>)?,
+            },
+        }
+
+    };
 }
+
+schema_spec_types!(SchemaSpec, RelationSpec, ClosedSpec, RowSpec,
+    LiteralSpec, LiteralSetSpec, SideSpec, StatementSpec; ; Value);
+schema_spec_types!(SchemaSpecData, RelationSpecData, ClosedSpecData, RowSpecData,
+    LiteralSpecData, LiteralSetSpecData, SideSpecData, StatementSpecData; V; V);
 
 /// half of [`LiteralAt::Selection`]'s address. FDs carry no selection
 /// (the shape is unrepresentable), so two sides name every binding site.

@@ -1,0 +1,1148 @@
+{
+  "scope": "Native Event denotational contracts; not Rust, codec or allocator refinement",
+  "lean_version": "Lean (version 4.32.0, arm64-apple-darwin24.6.0, commit 8c9756b28d64dab099da31a4c09229a9e6a2ef35, Release)",
+  "lean_binary_sha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+  "checker_sha256": "ef2619662a9c5dcc01202c76558cc7765dc40862dd913a95cc405c2d09449a34",
+  "files": [
+    {
+      "source": "crates/bumbledb-event/semantics/Actions.lean",
+      "sha256": "a23a54c9177db1112fed967d95f8372906de99f3cb2a8e0b89cfb8c2ea6e042f",
+      "exit_code": 0,
+      "reports": {
+        "Actions.flattened_must_then_image": [],
+        "Actions.cpre_monotone": [],
+        "Actions.no_action_for_empty_goal": [],
+        "Actions.initial_reach_step_is_goal": [],
+        "Actions.enabled_retains_environment": [],
+        "Actions.permissions_are_inhabited_and_sound": [],
+        "Actions.permissions_are_greatest": [],
+        "Actions.different_hidden_actions_do_not_form_a_uniform_choice": [],
+        "Actions.first_entry_admits_an_earlier_action": [],
+        "Actions.ranked_choices_are_enabled": [],
+        "Actions.ranked_choices_strictly_decrease": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Actions.ranked_policy_domain": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Actions.decreasing_rank_guarantees_every_policy_run": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Actions.policy_restriction_retains_progress": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Actions.every_bounded_winning_policy_is_inside_a_reach_prefixed_point": [],
+        "Actions.safe_policy_covers_the_postfixed_region": [],
+        "Actions.safe_policy_always_has_an_enabled_next_step": [],
+        "Actions.safe_policy_preserves_the_invariant_on_every_path": [],
+        "Actions.safety_greatest_contains_every_enabled_invariant": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Admission.lean",
+      "sha256": "128f186a54a6bca2e7b2b43e3fbe489276e5ba82cf32cf23da19a0d19c3e310a",
+      "exit_code": 0,
+      "reports": {
+        "Admission.coverage_exact": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Admission.conflict_exact": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Admission.key_iff_no_conflicts": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Admission.containment_iff_union": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Admission.order_independent": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Admission.citation_exact": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Admission.empty_contribution": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Admission.empty_requires_no_target": [
+          "propext"
+        ],
+        "Admission.subtracting_coverage_is_not_deletion": [],
+        "Admission.duplicate_fact_creates_false_conflict": [],
+        "Admission.full_key_iff_scalar_unique": [],
+        "Admission.full_coverage_iff": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Admission.full_partition_iff": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Admission.full_cannot_be_covered_by_absence": [],
+        "Admission.full_full_iff_presence": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Admission.empty_world_breaks_full_key": [
+          "propext"
+        ],
+        "Admission.empty_world_breaks_full_presence": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Closure.lean",
+      "sha256": "82099dbc22e8bfd79000b761d4053ab56cc49f7d6e4727f63b0174cf3152db92",
+      "exit_code": 0,
+      "reports": {
+        "Closure.path_unfold": [],
+        "Closure.path_is_least_preclosed": [],
+        "Closure.least_closure_program_is_path": [],
+        "Closure.paths_preserve_environment": [],
+        "Closure.reach_is_preclosed": [],
+        "Closure.reach_is_least_preclosed": [],
+        "Closure.least_reach_program_is_reach": [],
+        "Closure.safe_is_postclosed": [],
+        "Closure.safe_is_greatest_postclosed": [],
+        "Closure.greatest_safe_program_is_safe": [],
+        "Closure.forcing_is_preclosed": [],
+        "Closure.forcing_is_least_preclosed": [],
+        "Closure.least_force_program_is_forcing": [],
+        "Closure.a_permanent_avoiding_cycle_is_not_forced": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/CoordinateMaps.lean",
+      "sha256": "67a274bb7173678671fb99e98511a6512866e74e5f21094cf2b538e5397f18af",
+      "exit_code": 0,
+      "reports": {
+        "CoordinateMaps.support_check_exact": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "CoordinateMaps.pull_boolean": [],
+        "CoordinateMaps.pull_complement": [],
+        "CoordinateMaps.pull_composition": [],
+        "CoordinateMaps.image_left_adjoint": [],
+        "CoordinateMaps.universal_right_adjoint": [],
+        "CoordinateMaps.image_union": [],
+        "CoordinateMaps.image_composition": [],
+        "CoordinateMaps.image_pull_intersection": [],
+        "CoordinateMaps.universal_duality": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "CoordinateMaps.must_is_range_and_all": [
+          "propext",
+          "Quot.sound"
+        ],
+        "CoordinateMaps.full_image_iff_onto": [
+          "propext",
+          "Quot.sound"
+        ],
+        "CoordinateMaps.onto_reflects_inclusion": [],
+        "CoordinateMaps.inclusion_reflection_requires_onto": [],
+        "CoordinateMaps.onto_preserves_occupancy": [],
+        "CoordinateMaps.substitution_exact": [
+          "propext"
+        ],
+        "CoordinateMaps.early_abstraction_preserves_image": [],
+        "CoordinateMaps.abstraction_moves_past_future_readout": [],
+        "CoordinateMaps.recursive_image_exact": [
+          "propext",
+          "Quot.sound"
+        ],
+        "CoordinateMaps.recursive_image_early_abstraction": [
+          "propext",
+          "Quot.sound"
+        ],
+        "CoordinateMaps.image_does_not_preserve_intersection": [],
+        "CoordinateMaps.unreachable_fibres_separate_all_and_must": [
+          "propext",
+          "Quot.sound"
+        ],
+        "CoordinateMaps.restriction_can_erase_possibility": [
+          "propext",
+          "Quot.sound"
+        ],
+        "CoordinateMaps.completed_target_full_cannot_check_support": [
+          "propext",
+          "Quot.sound"
+        ],
+        "CoordinateMaps.aliases_cannot_supply_legal_image_witnesses": [
+          "propext",
+          "Quot.sound"
+        ],
+        "CoordinateMaps.forgetting_a_future_readout_changes_image": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Descriptors.lean",
+      "sha256": "cc61d2164f68d8ae252b1d90c16e04787ba4fb352f861fcfb857a848ae0bc714",
+      "exit_code": 0,
+      "reports": {
+        "Descriptors.readouts_reconstruct_the_legal_map": [],
+        "Descriptors.reconstruction_preserves_onto": [],
+        "Descriptors.reconstruction_preserves_pullback": [],
+        "Descriptors.reconstruction_preserves_image": [],
+        "Descriptors.target_support_check_cannot_be_replaced_by_code_equality": [],
+        "Descriptors.original_support_and_environment_determine_product": [],
+        "Descriptors.converse_preserves_full_product": [],
+        "Descriptors.forgetting_orientation_changes_meaning": [],
+        "Descriptors.individual_onto_maps_do_not_certify_a_joint_square": [],
+        "Descriptors.onto_environment_maps_can_still_disagree": [],
+        "Descriptors.changed_environment_can_change_product_support": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/FiniteDensity.lean",
+      "sha256": "0c741238b2114b9ae7deab0a3192ae76ae3eb5a99c8d8e53c9f7b0cc31802d70",
+      "exit_code": 0,
+      "reports": {
+        "FiniteDensity.sum_congr": [
+          "propext"
+        ],
+        "FiniteDensity.sum_add": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteDensity.sum_zero": [
+          "propext"
+        ],
+        "FiniteDensity.sum_scale": [
+          "propext"
+        ],
+        "FiniteDensity.sum_swap": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteDensity.contraction_exact": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteDensity.disjoint_union_counts": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteDensity.merge_equal_density": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteDensity.omit_zero_density": [],
+        "FiniteDensity.conditional_complement": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteDensity.full_mass": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteDensity.zero_evidence": [
+          "propext"
+        ],
+        "FiniteDensity.positive_evidence": [
+          "propext"
+        ],
+        "FiniteDensity.repeated_evidence": [
+          "Quot.sound"
+        ],
+        "FiniteDensity.skipped_outcome_multiplicity": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteDensity.zero_mass_nonempty": [],
+        "FiniteDensity.equal_marginals_different_joint": [],
+        "FiniteDensity.unnormalized_refused": [],
+        "FiniteDensity.changed_measurement_distinct": [],
+        "FiniteDensity.missing_not_impossible": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/FixedPoint.lean",
+      "sha256": "afe66df1a84f979e3f351818c0cbd4686461a14598635826ea7d78fabde34c18",
+      "exit_code": 0,
+      "reports": {
+        "FixedPoint.strict_rank": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FixedPoint.ascending": [],
+        "FixedPoint.below_prefixed": [],
+        "FixedPoint.stabilizes": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "FixedPoint.least_fixed_point": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "FixedPoint.dual_monotone": [
+          "propext"
+        ],
+        "FixedPoint.greatest_fixed_point": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "FixedPoint.shared_environment_stabilizes": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "FixedPoint.environment_mixing_counterexample": [
+          "propext"
+        ],
+        "FixedPoint.negation_is_not_a_fixed_point_program": [],
+        "FixedPoint.legal_roster_complete": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FixedPoint.legal_roster_counts_original_support": [
+          "propext"
+        ],
+        "FixedPoint.legal_roster_bounded_by_codes": [
+          "propext"
+        ],
+        "FixedPoint.detection_sound": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FixedPoint.detection_complete": [
+          "propext"
+        ],
+        "FixedPoint.detected_least_is_extremal": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FixedPoint.detected_greatest_is_extremal": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FixedPoint.finite_detection_completes": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "FixedPoint.greatest_iteration_descends": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FixedPoint.ascending_between": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FixedPoint.first_entry_unique": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FixedPoint.first_entries_cover_iterate": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Information.lean",
+      "sha256": "d522240b18ef4d8898469d4e6ad463dbb15571abf398038acba8a4b02bd220f6",
+      "exit_code": 0,
+      "reports": {
+        "Information.image_pullback_exact": [],
+        "Information.complement_image_exact": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Information.observable_sandwich": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Information.possible_is_stable": [],
+        "Information.fixed_iff_membership_fd": [],
+        "Information.evidence_reach_is_union": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Information.evidence_guarantee_exact": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Information.three_cases_partition": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Information.impossible_evidence_has_no_cases": [],
+        "Information.bitwise_fd_iff_readout_fd": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Information.descended_bits_form_legal_factor": [
+          "Quot.sound"
+        ],
+        "Information.onto_factor_unique": [
+          "Quot.sound"
+        ],
+        "Information.kernel_is_equivalence": [],
+        "Information.kernel_may_is_possible": [],
+        "Information.kernel_all_is_guaranteed": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Information.kernel_inclusion_iff_fd": [],
+        "Information.kernel_product_gate_iff_bitwise_fd": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Information.clipping_changes_an_insufficient_observation": [],
+        "Information.evidence_answers_whole_cells": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Inspection.lean",
+      "sha256": "401702bbb6ae2a3e923f071b8cf63082fe888e304798dde946a7f20409c572ea",
+      "exit_code": 0,
+      "reports": {
+        "Inspection.read_exact": [],
+        "Inspection.node_exact": [],
+        "Inspection.graph_exact": [
+          "propext"
+        ],
+        "Inspection.root_exact": [
+          "propext"
+        ],
+        "Inspection.two_root_reconstruction": [
+          "propext"
+        ],
+        "Inspection.original_support_removes_decoder_aliases": [
+          "propext"
+        ],
+        "Inspection.retraction_rebuild_preserves_membership": [
+          "propext"
+        ],
+        "Inspection.split_polarity": [],
+        "Inspection.regular_sign_involution": [
+          "propext"
+        ],
+        "Inspection.true_leaf_is_not_a_legal_witness": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Pack.lean",
+      "sha256": "6be0baeee54980ade520cad2939e0f6218d91f432815178989a5b7bd4542cd91",
+      "exit_code": 0,
+      "reports": {
+        "Pack.union_exact": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Pack.union_membership_invariant": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Pack.absent_iff_no_rows": [
+          "propext"
+        ],
+        "Pack.empty_seed_is_present": [],
+        "Pack.duplicate_claim_is_idempotent": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Pack.union_full_is_not_absent": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Pack.anchor_exact": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Pack.anchor_none_iff": [
+          "propext"
+        ],
+        "Pack.anchor_membership_invariant": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Pack.faults_membership_invariant": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Pack.clear_iff_common_context": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Pack.a_later_minimum_requires_retaining_earlier_claims": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Pack.first_visited_context_is_not_a_semantic_anchor": [],
+        "Pack.a_foreign_empty_claim_still_faults_after_full": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Pack.value_dedup_can_destroy_fault_provenance": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Pack.members_exact": [
+          "propext"
+        ],
+        "Pack.invalid_key_has_no_invented_group": [
+          "propext"
+        ],
+        "Pack.prior_key_fault_cannot_suppress_later_participation": [
+          "propext"
+        ],
+        "Pack.group_reordering_preserves_context_and_faults": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Partitions.lean",
+      "sha256": "3b34e5e36c819ddd9a5777e6dbd47dd6f51fe53a6b74664cfd1b449daba57770",
+      "exit_code": 0,
+      "reports": {
+        "Partitions.clipped_admission_exact": [],
+        "Partitions.empty_parent_retains_only_empty_cells": [],
+        "Partitions.empty_roster_iff_empty_parent": [],
+        "Partitions.value_grouping_preserves_partition": [],
+        "Partitions.constant_grouping_is_certain_on_parent": [],
+        "Partitions.pullback_preserves_partition": [],
+        "Partitions.refinement_preserves_shared_world_partition": [],
+        "Partitions.readout_bits_exact": [],
+        "Partitions.full_partition_readout_is_total_and_legal": [],
+        "Partitions.collapsing_image_can_overlap": [],
+        "Partitions.bucket_exact": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Partitions.count_roster_forms_full_partition": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Partitions.duplicate_positions_count_twice": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Persistence.lean",
+      "sha256": "5fad53a44694f377d3bea50eada4851ba84e602bee952fdc12cf567ae5d6376e",
+      "exit_code": 0,
+      "reports": {
+        "Persistence.supported_identity": [
+          "Quot.sound"
+        ],
+        "Persistence.exact_identity": [
+          "Quot.sound"
+        ],
+        "Persistence.legal_decoder_erased": [
+          "Quot.sound"
+        ],
+        "Persistence.arbitrary_completions_agree": [
+          "Quot.sound"
+        ],
+        "Persistence.complement_is_relative": [],
+        "Persistence.empty_retains_source": [
+          "Quot.sound"
+        ],
+        "Persistence.empty_retains_support": [
+          "Quot.sound"
+        ],
+        "Persistence.inhabited_space_distinguishes_constants": [
+          "Quot.sound"
+        ],
+        "Persistence.equal_mass_distinct_events": [
+          "Quot.sound"
+        ],
+        "Persistence.registered_key_identity": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Programs.lean",
+      "sha256": "be3c7b3c7721ed62de89c94f78f1bd06574a0125afedd96e02bb7ac07055b83f",
+      "exit_code": 0,
+      "reports": {
+        "Programs.permits_iff_bounds": [],
+        "Programs.complement_sound": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Programs.binary_sound": [],
+        "Programs.ternary_sound": [],
+        "Programs.pullback_is_monotone": [],
+        "Programs.existential_readout_is_monotone": [],
+        "Programs.universal_readout_is_monotone": [],
+        "Programs.enabled_readout_is_monotone": [
+          "propext"
+        ],
+        "Programs.monotone_transports_variance": [],
+        "Programs.program_variance_sound": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Programs.sealed_program_is_monotone": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Programs.negation_is_refused": [],
+        "Programs.double_negation_is_admitted": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Query.lean",
+      "sha256": "5e947c1110920deba21e8d3321f878243b89d1275f45393d1252d71e03e81fea",
+      "exit_code": 0,
+      "reports": {
+        "Query.anchor_participates": [
+          "propext"
+        ],
+        "Query.compatible_iff_no_fault": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Query.truth_function_preserves_participation": [],
+        "Query.truth_function_preserves_faults": [],
+        "Query.constant_false_still_checks_other_operand": [
+          "propext"
+        ],
+        "Query.constant_true_still_checks_other_operand": [
+          "propext"
+        ],
+        "Query.unselected_ite_branch_participates": [
+          "propext"
+        ],
+        "Query.empty_is_a_constructed_value": [],
+        "Query.complement_of_empty_is_full": [],
+        "Query.contradiction_is_empty": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Query.excluded_middle_is_full": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Query.cardinality_exact": [
+          "propext"
+        ],
+        "Query.equal_roster_positions_are_counted_separately": [],
+        "Query.cardinality_counts_same_world": [],
+        "Query.collect_exact": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Query.traversal_invariant": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Query.duplicate_binding_is_idempotent": [
+          "propext"
+        ],
+        "Query.unmatched_operand_is_not_a_fault": [
+          "propext",
+          "Quot.sound"
+        ],
+        "Query.later_fault_survives_earlier_saturation": [],
+        "Query.program_schedule_invariant": [],
+        "Query.no_answer_with_participating_fault": [],
+        "Query.partial_collection_cannot_claim_completion": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/QueryMaps.lean",
+      "sha256": "d34a0c238d56850968f3bd215b54a4fc5e72e26ba5b17c38b7ab9faeecf7f14e",
+      "exit_code": 0,
+      "reports": {
+        "QueryMaps.evaluation_depends_only_on_demands": [
+          "propext",
+          "Quot.sound"
+        ],
+        "QueryMaps.constant_results_retain_demands": [],
+        "QueryMaps.conjunction_checks_both": [
+          "propext",
+          "Quot.sound"
+        ],
+        "QueryMaps.choice_checks_every_branch": [
+          "propext",
+          "Quot.sound"
+        ],
+        "QueryMaps.image_keeps_input_scope": [],
+        "QueryMaps.pullback_keeps_target_scope": [],
+        "QueryMaps.typed_boundaries_cannot_retag_a_shared_variable": [
+          "propext"
+        ],
+        "QueryMaps.repeated_variables_retain_distinct_expected_contexts": [
+          "propext",
+          "Quot.sound"
+        ],
+        "QueryMaps.no_faults_iff_every_occurrence_is_admitted": [
+          "propext",
+          "Quot.sound"
+        ],
+        "QueryMaps.image_query_exact": [],
+        "QueryMaps.universal_query_exact": [],
+        "QueryMaps.inhabited_query_keeps_nonvacuity": [],
+        "QueryMaps.possible_is_image_then_pullback": [],
+        "QueryMaps.guaranteed_is_universal_then_pullback": [],
+        "QueryMaps.possible_contains_the_input": [],
+        "QueryMaps.guaranteed_is_inside_the_input": [],
+        "QueryMaps.pullback_preserves_conditional": [],
+        "QueryMaps.unreachable_image_distinguishes_universal_and_nonvacuous": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/QueryRelations.lean",
+      "sha256": "f58b8849f7d34e018465976b0c48bab5f58385d9bb2f8b1354a4d93a1cc3cc17",
+      "exit_code": 0,
+      "reports": {
+        "QueryRelations.compose_transport": [],
+        "QueryRelations.left_residual_transport": [],
+        "QueryRelations.right_residual_transport": [],
+        "QueryRelations.identity_transport": [],
+        "QueryRelations.path_encode": [],
+        "QueryRelations.star_transport": [],
+        "QueryRelations.whole_program_transport": [
+          "propext",
+          "Quot.sound"
+        ],
+        "QueryRelations.may_transport": [],
+        "QueryRelations.all_transport": [],
+        "QueryRelations.must_transport": [
+          "propext",
+          "Quot.sound"
+        ],
+        "QueryRelations.dead_end_is_not_must": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Relations.lean",
+      "sha256": "e0e35cd87421497939cfef2bcc7d08538f72e889d766f69ce4a6c4ea2f29d39a",
+      "exit_code": 0,
+      "reports": {
+        "Relations.product_inhabited": [],
+        "Relations.left_projection_onto": [],
+        "Relations.right_projection_onto": [],
+        "Relations.product_completion_gates": [],
+        "Relations.readout_equality_exact": [
+          "Quot.sound"
+        ],
+        "Relations.joint_onto_iff_complete": [],
+        "Relations.square_existential_base_change": [],
+        "Relations.square_universal_base_change": [],
+        "Relations.descent_iff_membership_fd": [],
+        "Relations.descent_unique": [],
+        "Relations.triple_projects_complete_pairs": [],
+        "Relations.shared_product_exact": [],
+        "Relations.staged_left_residual": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Relations.staged_right_residual": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Relations.left_adjunction": [],
+        "Relations.right_adjunction": [],
+        "Relations.graph_total_iff_environment_preserved": [],
+        "Relations.bit_conflicts_iff_nonfunctional": [
+          "Quot.sound"
+        ],
+        "Relations.graph_bit_readout_exact": [],
+        "Relations.individually_onto_is_not_complete": [],
+        "Relations.full_has_every_role_but_does_not_certify_product": [],
+        "Relations.dropping_middle_witness_changes_composition": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Revisions.lean",
+      "sha256": "c1a06e8ace3273b2ecd5b66bf4d2c5eea760956dd747be5c63f9cc47b1f69efe",
+      "exit_code": 0,
+      "reports": {
+        "Revisions.sum_congr": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.sum_zero": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.sum_add": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.sum_scale": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.sum_div": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.impossible_likelihood": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.pearl_normalized": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.likelihood_scale": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.sequential_normalizer": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.sequential_likelihood": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.repeated_event": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.zero_mass_still_possible": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.zero_target": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.jeffrey_cell": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.jeffrey_within_cell": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.jeffrey_idempotent": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.expectation_numerator_add": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.zero_evidence_not_zero_expectation": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.signed_expectation": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.posterior_is_not_likelihood": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.positive_target_on_zero_prior": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.overlapping_jeffrey_noncommutes": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.sum_swap": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.sum_nonnegative": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.sum_pick": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.pearl_nonnegative": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.partition_total": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.jeffrey_normalized": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.jeffrey_nonnegative": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "Revisions.signed_cell_contraction": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/SchemaSelections.lean",
+      "sha256": "e6415d502203ad0023a6effcfa9c3aaa6300feeda2ccf1eb73a85916b90c5f24",
+      "exit_code": 0,
+      "reports": {
+        "SchemaSelections.singleton_exact": [
+          "propext"
+        ],
+        "SchemaSelections.alternatives_union": [
+          "propext"
+        ],
+        "SchemaSelections.order_irrelevant": [],
+        "SchemaSelections.duplicate_semantics": [
+          "propext"
+        ],
+        "SchemaSelections.exact_context": [
+          "propext"
+        ],
+        "SchemaSelections.exact_support": [
+          "propext"
+        ],
+        "SchemaSelections.exact_law": [
+          "propext"
+        ],
+        "SchemaSelections.empty_still_selects": [
+          "propext"
+        ],
+        "SchemaSelections.mass_not_used": [
+          "propext"
+        ],
+        "SchemaSelections.overlap_is_not_selection": [
+          "propext"
+        ],
+        "SchemaSelections.portable_selection": [
+          "propext",
+          "Quot.sound"
+        ],
+        "SchemaSelections.selection_preserves_projection": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/SourceTransport.lean",
+      "sha256": "2bdb18b31acff5eafd17a3c29d537928fb4161696c26d958844c26a15f277572",
+      "exit_code": 0,
+      "reports": {
+        "SourceTransport.sum_congr": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "SourceTransport.scalar_reconstruction": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "SourceTransport.zero_default_reconstructed": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "SourceTransport.fibre_reconstruction": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "SourceTransport.kernel_normalization_reconstructed": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "SourceTransport.likelihood_reconstruction": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "SourceTransport.unsupported_cons_retains_position": [
+          "propext",
+          "Quot.sound"
+        ],
+        "SourceTransport.admission_exact": [
+          "propext"
+        ],
+        "SourceTransport.replay_failure_preserved": [
+          "propext"
+        ],
+        "SourceTransport.forged_claim_rejected": [
+          "propext"
+        ],
+        "SourceTransport.zero_mass_channel_rows_cannot_be_skipped": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "SourceTransport.same_posterior_does_not_validate_a_scaled_receipt": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "SourceTransport.omitted_empty_target_changes_receipt": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "SourceTransport.replay_error_is_not_mathematical_impossibility": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/WeightedMaps.lean",
+      "sha256": "415ef2456a7e22c30331f632213d76716f5c409a6af810355e99b5771b3e6c09",
+      "exit_code": 0,
+      "reports": {
+        "WeightedMaps.sum_congr": [
+          "propext"
+        ],
+        "WeightedMaps.sum_zero": [
+          "propext"
+        ],
+        "WeightedMaps.sum_add": [
+          "propext",
+          "Quot.sound"
+        ],
+        "WeightedMaps.sum_scale": [
+          "propext"
+        ],
+        "WeightedMaps.sum_swap": [
+          "propext",
+          "Quot.sound"
+        ],
+        "WeightedMaps.sum_pick": [
+          "propext"
+        ],
+        "WeightedMaps.push_add": [
+          "propext",
+          "Quot.sound"
+        ],
+        "WeightedMaps.fibre_factor": [
+          "propext"
+        ],
+        "WeightedMaps.weighted_pairing": [
+          "propext",
+          "Quot.sound"
+        ],
+        "WeightedMaps.total_mass_preserved": [
+          "propext",
+          "Quot.sound"
+        ],
+        "WeightedMaps.channel_preserves_prior": [
+          "propext"
+        ],
+        "WeightedMaps.closed_channel_normalized": [
+          "propext",
+          "Quot.sound"
+        ],
+        "WeightedMaps.early_elimination": [
+          "propext",
+          "Quot.sound"
+        ],
+        "WeightedMaps.skipped_outcome_doubles": [
+          "propext",
+          "Quot.sound"
+        ],
+        "WeightedMaps.repeated_sum_is_wrong": [],
+        "WeightedMaps.existential_image_loses_multiplicity": [],
+        "WeightedMaps.closed_normalization_is_too_weak": [],
+        "WeightedMaps.copy_is_not_resample": []
+      },
+      "passed": true
+    }
+  ],
+  "passed": true
+}

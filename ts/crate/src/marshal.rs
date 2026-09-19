@@ -384,7 +384,7 @@ pub struct FieldAttrs {
 /// relation's synthetic `id` slot leads (never fresh, carrying the handle
 /// newtype), then the declared fields in declaration order — the same
 /// order `sealed_fields()` walks, restated from the same spec datum.
-pub(crate) fn field_attrs<V>(spec: &SchemaSpec<V>) -> Vec<Vec<FieldAttrs>> {
+pub(crate) fn field_attrs(spec: &bumbledb::schema::SchemaSpec) -> Vec<Vec<FieldAttrs>> {
     spec.relations
         .iter()
         .map(|relation| {
@@ -800,8 +800,8 @@ fn statement_in<V>(
     }
 }
 
-pub(crate) fn schema_spec(obj: &Object) -> napi::Result<SchemaSpec> {
-    schema_spec_with(obj, &tagged_value)
+pub(crate) fn schema_spec(obj: &Object) -> napi::Result<bumbledb::schema::SchemaSpec> {
+    schema_spec_with(obj, &tagged_value)?.try_into_spec(Ok)
 }
 
 pub(crate) fn schema_spec_with<V>(
