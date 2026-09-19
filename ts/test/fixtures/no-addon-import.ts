@@ -3,9 +3,11 @@
  * already made `@bjornpagen/bumbledb-*` unresolvable.
  */
 import assert from "node:assert/strict"
+import { Result } from "effect"
 import { alternatives } from "#alternatives.ts"
 import { closed, closedId } from "#closed.ts"
-import { bool, i64, interval, str, u64, uuid } from "#fields.ts"
+import { Event } from "#event.ts"
+import { bool, event, i64, interval, str, u64, uuid } from "#fields.ts"
 import { loadNativeBinding, nativeBindingIsLoaded } from "#native.ts"
 import { Compute } from "#query/compute.ts"
 import { query } from "#query/lower.ts"
@@ -25,6 +27,24 @@ assert.equal(pinned.result, "bool")
 const units = Compute.add(Compute.u64(2n), Compute.u64(1n))
 assert.equal(units.result, "u64")
 assert.equal(nativeBindingIsLoaded(), false, "pure constructors must not touch the addon")
+
+// Pure Event transport owns an envelope without claiming graph/law admission.
+const envelope = Uint8Array.from([66, 69, 86, 84, 1])
+const value = Result.getOrThrow(Event.fromBytes(envelope))
+envelope.fill(0)
+assert.deepEqual(Event.toBytes(value), Uint8Array.from([66, 69, 86, 84, 1]))
+const Region = relation("Region", { value: event })
+const Regions = schema("Regions", { Region }, [])
+assert.equal(
+	v(
+		query(Regions).rule((r) => {
+			const row = v(Region)
+			return r.match(Region, row).find({ value: r.pack(row.value) })
+		})
+	).value.field.kind,
+	"event"
+)
+assert.equal(nativeBindingIsLoaded(), false, "Event authoring must not load the addon")
 
 assert.throws(
 	() => loadNativeBinding(process.platform, process.arch),

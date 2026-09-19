@@ -1,0 +1,4 @@
+'FaceCounting.omitted_factor_count' depends on axioms: [propext, Quot.sound]
+'FaceCounting.indexed_factor_count' depends on axioms: [propext, Quot.sound]
+'FaceCounting.raw_fibre_replacement' depends on axioms: [propext, Quot.sound]
+'FaceCounting.coupled_support_counterexample' does not depend on any axioms

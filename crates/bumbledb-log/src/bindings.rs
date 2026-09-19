@@ -308,12 +308,6 @@ pub fn emit(schema: &SchemaDescriptor) -> Result<String, BindingError> {
     for relation in &schema.relations {
         name(&relation.name, &relation.name)?;
         for field in &relation.fields {
-            if field.value_type == ValueType::Event {
-                return Err(refuse(
-                    format!("{}.{}", relation.name, field.name),
-                    "Event SDK declarations await the native Event bridge",
-                ));
-            }
             name(&field.name, &format!("{}.{}", relation.name, field.name))?;
         }
     }

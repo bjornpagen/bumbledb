@@ -1,0 +1,42 @@
+{
+  "revision": "0.9",
+  "passed": true,
+  "scope": "Current proposal, exact Lean evidence and retained semantic references; no Rust or performance qualification",
+  "proposal_proof": {
+    "files": 30,
+    "reports": 246,
+    "manifest_sha256": "b70562622704c6f89a156754295b8b8d3afda194586205e68ea4b782e8d032b0"
+  },
+  "native_proof": {
+    "files": 20,
+    "reports": 348,
+    "manifest_sha256": "2708b518bdc4fadf63b5408fda5fdaa1fdc957cc0e8a4dc9c4e16e79ca60f026"
+  },
+  "references": {
+    "suites": 7,
+    "scope": "exact finite reference examples and historical source subtheories"
+  },
+  "native_documents_sha256": {
+    "docs/event-implementation.md": "45b0b8f1d0866db0384dde72161bfc81e64bbfbe11e343ea659cddd968d10634",
+    "docs/event-value-format.md": "f67104d800b22713ba5bdeeddeb1673ebf6b2f1d176f0770f5f1673f324e1d24",
+    "docs/event-projections.md": "623579ceeb43b69f6f8508e94d71630240ea59f25f97e6b5758cb5a1c257850c",
+    "docs/event-maps.md": "49c44fcdba2e1510e6f9a31a6ec17d8860f7df1d4504738abcbe2a5cdadd0470",
+    "docs/event-relations.md": "be31753272177fe6a539e7328b530e4dc70d79ae30eb63c321fd473be68a6566",
+    "docs/event-inspection.md": "033bb08b7e1a91e776967ef99fcdd2560e4f6b0a398ef8883d6af3c37bdf40d3",
+    "docs/event-information.md": "fa9a355dee86e2850feeae98f68676aaed8e7786e6772e46ccc752ca02be8db0",
+    "docs/event-fixed-points.md": "7865e938a41ddf87194b7c0bf834a3a9fcb8621510e3c17f9531e59836742311",
+    "docs/event-partitions.md": "ae0d8473ba4aa9f89d53f496b4f46c5aa2cb60266d5272524f1135deed34f377",
+    "docs/event-actions.md": "22ce4b4220911ed5db1c059600cbdbc786da1151efab332e21953e28ce592f4b",
+    "docs/event-queries.md": "7937b7a3e1b6896b0674da7746675808d6d3609a72018031fb7d41148b507836",
+    "docs/event-descriptors.md": "7b28ffc35de20fe2f0c20d38218c4d4e4fcf5a75268ff255d212d271ab1bc7b6",
+    "docs/event-sources.md": "57e58d4b64e577ebee365c8d47075d4b77ade7ab6a77a09e168662bed15ae619",
+    "docs/event-functions.md": "163bd9272a7605dd069591c8407ada63dd786ed39b2d19c8b490fc0deac48ae8",
+    "docs/event-revisions.md": "0ae128f045bf7a5fd27cb2e75057bf7183bf9255681a0c365a563387d52f58c4",
+    "docs/event-source-descriptors.md": "d5ba37614b87501309837d967fa6880edf0f0b589694051c16751e28eb8c7717",
+    "docs/event-sdk.md": "dc274231f03bf097a74aec71d5115c981b10ad1f8d2fb4b2f0e6487ac12fe9e3"
+  },
+  "baseline_archive_verified": true,
+  "historical_production_isolation_reasserted": false,
+  "implementation_complete": false,
+  "checker_sha256": "610a158468a2da1245ee885dbcfbc145708753662e53a4ba549a45de22ffd299"
+}

@@ -1,4 +1,5 @@
 import { AuthoringError } from "#errors.ts"
+import type { Event } from "#event-value.ts"
 import type { AnyClosedRoster, AnyField, FloatIntervalValue, Infer, IntervalValue } from "#fields.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type { QueryNode } from "#query/compute.ts"
@@ -228,6 +229,7 @@ type AnyNotInteriorAtom = NotInteriorAtom<unknown>
 type AnyCond = AnyCmp | Tree<readonly AnyTreeChild[]> | AnyNotAtom | AnyNotInteriorAtom
 
 type EqRight =
+	| Event
 	| AnyVar
 	| Param<string>
 	| SetParam<string>
@@ -240,6 +242,7 @@ type EqRight =
 	| FloatIntervalValue
 
 type NeRight =
+	| Event
 	| AnyVar
 	| Param<string>
 	| bigint

@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util"
 import { sealedFieldsOf } from "#closed.ts"
 import { AuthoringError } from "#errors.ts"
+import { encodedEvent } from "#event-value.ts"
 import { type AnyField, fieldDescriptor, type Infer, rosterOf, signaturesAgree } from "#fields.ts"
 import type { SchemaClasses } from "#law.ts"
 import type { AtomIr, ConditionTreeIr, QueryIr, RuleIr, ScalarExprIr, TaggedValue, TermIr } from "#native.ts"
@@ -138,6 +139,7 @@ function hostLiteral(
 ): unknown {
 	const roster = rosterOf(field)
 	let host: unknown = "value" in value ? value.value : { start: value.start, end: value.end }
+	if (value.kind === "event") host = encodedEvent(value.value)
 	if (roster !== undefined) host = handleOf("query literal", roster, host)
 	if (!isDeepStrictEqual(taggedCmpLiteral("query literal", field, host, op), value))
 		refused("query literal", "literal tag must match the field domain")

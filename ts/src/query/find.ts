@@ -1,4 +1,4 @@
-import type { BoolField, F64Field, I64Field, Infer, IntervalField, U64Field } from "#fields.ts"
+import type { BoolField, EventField, F64Field, I64Field, Infer, IntervalField, U64Field } from "#fields.ts"
 import type { SchemaClasses } from "#law.ts"
 import type { IntervalVarOk, NumericVarOk } from "#query/atom.ts"
 import type { AnyComputeExpr, ComputeExpr, ComputeValue } from "#query/compute.ts"
@@ -69,7 +69,9 @@ type FindEntryOk<E> = E extends AnyVar
 			: E extends Agg<"sum" | "min" | "max", infer O extends AnyVar>
 				? NumericVarOk<O>
 				: E extends Agg<"pack", infer V extends AnyVar>
-					? IntervalVarOk<V>
+					? V["field"]["kind"] extends "event"
+						? true
+						: IntervalVarOk<V>
 					: E extends AnyComputeExpr | Segments
 						? true
 						: false
@@ -124,7 +126,9 @@ type HeadRecordOf<Classes extends SchemaClasses, F extends FindShape> = {
 						? { readonly field: F64Field; readonly class: undefined }
 						: F[K] extends Agg<"pack", infer Over extends AnyVar>
 							? {
-									readonly field: IntervalField<Over["field"] extends IntervalField<infer E> ? E : never, undefined>
+									readonly field: Over["field"] extends EventField
+										? EventField
+										: IntervalField<Over["field"] extends IntervalField<infer E> ? E : never, undefined>
 									readonly class: undefined
 								}
 							: F[K] extends Agg<FoldOpName, infer Over extends AnyVar>

@@ -1,0 +1,10 @@
+'EventStorage.coverage_empty_row' does not depend on any axioms
+'EventStorage.conflict_empty_row' does not depend on any axioms
+'EventStorage.complete_key_nonempty' does not depend on any axioms
+'EventStorage.empty_key_counterexample' does not depend on any axioms
+'EventStorage.lift_empty' does not depend on any axioms
+'EventStorage.projection_empty' does not depend on any axioms
+'EventStorage.universal_empty' does not depend on any axioms
+'EventStorage.empty_source_no_target' does not depend on any axioms
+'EventStorage.dropping_empty_changes_complement' does not depend on any axioms
+'EventStorage.nonempty_owner_distinguishes_constants' does not depend on any axioms

@@ -1,3 +1,4 @@
+export { Event } from "#event.ts"
 /**
  * @bjornpagen/bumbledb — the Effect-native TypeScript SDK for the
  * bumbledb embedded relational engine. Pure
@@ -87,6 +88,7 @@ export type {
 	ClosedHandleTuple,
 	ClosedIdField,
 	ClosedRoster,
+	EventField,
 	F64Field,
 	FloatIntervalValue,
 	I64Field,
@@ -99,7 +101,7 @@ export type {
 	U64Field,
 	UuidField
 } from "#fields.ts"
-export { bool, bytes, f64, i64, interval, str, u64, uuid } from "#fields.ts"
+export { bool, bytes, event, f64, i64, interval, str, u64, uuid } from "#fields.ts"
 export type { Same, SameLen } from "#judgment.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
 export type {
@@ -108,9 +110,9 @@ export type {
 	CmpOpIr,
 	ComparisonIr,
 	ConditionTreeIr,
-	FindTermIr,
 	EventExprIr,
 	EventTestIr,
+	FindTermIr,
 	HeadTermIr,
 	InteriorIr,
 	QueryIr,
@@ -205,10 +207,10 @@ export type {
 	FieldSpec,
 	LiteralSetSpec,
 	LiteralSpec,
+	ProjectionSpec,
 	RelationSpec,
 	RowSpec,
 	SchemaSpec,
-	ProjectionSpec,
 	SideSpec,
 	StatementSpec,
 	ValueSpec,

@@ -33,7 +33,11 @@ function checkSource(directory: string) {
 			include: ["*.ts"]
 		})
 	)
-	execFileSync("pnpm", ["exec", "tsc", "-p", directory], { cwd: packageRoot, stdio: "pipe" })
+	execFileSync(path.join(packageRoot, "node_modules/.bin/tsc"), ["-p", directory], {
+		cwd: packageRoot,
+		stdio: "pipe",
+		encoding: "utf8"
+	})
 }
 
 async function roundtrip(theory: db.AnySchema | string, pins = "") {
@@ -69,6 +73,22 @@ async function roundtrip(theory: db.AnySchema | string, pins = "") {
 		fs.rmSync(directory, { recursive: true, force: true })
 	}
 }
+
+test("snapshot bindings preserve owned Event field types and dependency identity", async () => {
+	const Regions = db.relation("Regions", { id: db.u64, value: db.event })
+	const theory = db.schema("Events", { Regions }, [db.key(Regions, ["id"])])
+	await roundtrip(
+		theory,
+		`import type { Event, Fact } from "@bjornpagen/bumbledb"
+import { r0 } from "./bindings.ts"
+declare const row: Fact<typeof r0>
+const value: Event = row.value
+// @ts-expect-error Event is an owned opaque value, not raw bytes.
+const invalid: Fact<typeof r0>["value"] = new Uint8Array()
+void [value, invalid]
+`
+	)
+})
 
 test("snapshot bindings preserve every field kind, exact payload values, names and field order", async () => {
 	const columns = {

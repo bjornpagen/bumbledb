@@ -3,6 +3,7 @@ import { membersAgree } from "#closed.ts"
 import { schemaTables } from "#compile.ts"
 import { dbNative } from "#db-native.ts"
 import { AuthoringError } from "#errors.ts"
+import { encodedEvent, eventBytes, MAX_EVENT_BYTES } from "#event-value.ts"
 import { type AnyField, fieldDescriptor, type Infer } from "#fields.ts"
 import { lower } from "#lower.ts"
 import { type AnyRelation, type Fact, relationDescriptor, relationFields } from "#relation.ts"
@@ -107,6 +108,8 @@ function f64OfHex(text: unknown): number | undefined {
 function encodeBoundaryValue(context: string, field: AnyField, input: unknown): unknown {
 	if ("closed" in field) return fieldValue(context, field, input)
 	switch (field.kind) {
+		case "event":
+			return { $event: hexOfBytes(eventBytes(fieldValue(context, field, input))) }
 		case "bool":
 		case "str":
 		case "uuid":
@@ -146,6 +149,12 @@ function decodeBoundaryValue(context: string, field: AnyField, input: unknown): 
 	if ("closed" in field) return fieldValue(context, field, input)
 	let decoded: unknown = input
 	switch (field.kind) {
+		case "event": {
+			const wire = recordValue(context, input, ["$event"]).$event
+			if (typeof wire !== "string" || wire.length > MAX_EVENT_BYTES * 2) throw invalid(context)
+			decoded = encodedEvent(bytesOfHex(wire))
+			break
+		}
 		case "u64":
 		case "i64":
 			decoded = decodeInteger(input)

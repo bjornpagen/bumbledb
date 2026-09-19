@@ -1,4 +1,5 @@
 import { type AuthoringDiagnostic, AuthoringError } from "#errors.ts"
+import { eventBytes, eventValue } from "#event-value.ts"
 import type { AnyField, Infer } from "#fields.ts"
 import type { ValueSpec } from "#spec.ts"
 import { Uuid } from "#uuid.ts"
@@ -105,6 +106,8 @@ function fieldValue(context: string, field: AnyField, input: unknown): Infer<Any
 		return input
 	}
 	switch (field.kind) {
+		case "event":
+			return eventValue(context, input)
 		case "bool":
 			return typeof input === "boolean" ? input : invalid(context, "boolean")
 		case "str":
@@ -148,6 +151,8 @@ function taggedValueOf(context: string, field: AnyField, input: unknown): ValueS
 		return { kind: "u64", value: BigInt(field.closed.handles.indexOf(handle)) }
 	}
 	switch (field.kind) {
+		case "event":
+			return { kind: "event", value: eventBytes(eventValue(context, input)) }
 		case "bool":
 			return { kind: "bool", value: fieldValue(context, field, input) }
 		case "str":

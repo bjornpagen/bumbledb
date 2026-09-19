@@ -1,5 +1,6 @@
 import { regex } from "arkregex"
 import { AuthoringError } from "#errors.ts"
+import type { Event } from "#event-value.ts"
 import type { LiteralSpec } from "#spec.ts"
 import type { Uuid } from "#uuid.ts"
 import { arrayValue, fieldValue, recordValue, taggedValueOf, U64_MAX } from "#values.ts"
@@ -46,6 +47,10 @@ interface ClosedRoster<Name extends string, Handles extends ClosedHandleTuple> {
 
 /** The roster top type — what an erased carrier knows about any roster. */
 type AnyClosedRoster = ClosedRoster<string, ClosedHandleTuple>
+
+interface EventField {
+	readonly kind: "event"
+}
 
 interface BoolField {
 	readonly kind: "bool"
@@ -102,6 +107,7 @@ interface ClosedIdField<Name extends string, Handles extends ClosedHandleTuple> 
 type AnyClosedIdField = ClosedIdField<string, ClosedHandleTuple>
 
 type AnyField =
+	| EventField
 	| BoolField
 	| StrField
 	| U64Field
@@ -131,27 +137,29 @@ type SignatureOf<F extends AnyField> = readonly [
 		: undefined
 ]
 
-type Infer<F extends AnyField> = F extends { readonly kind: "bool" }
-	? boolean
-	: F extends { readonly kind: "str" }
-		? string
-		: F extends { readonly closed: { readonly handles: readonly (infer H extends string)[] } }
-			? H
-			: F extends { readonly kind: "u64" }
-				? bigint
-				: F extends { readonly kind: "i64" }
+type Infer<F extends AnyField> = F extends { readonly kind: "event" }
+	? Event
+	: F extends { readonly kind: "bool" }
+		? boolean
+		: F extends { readonly kind: "str" }
+			? string
+			: F extends { readonly closed: { readonly handles: readonly (infer H extends string)[] } }
+				? H
+				: F extends { readonly kind: "u64" }
 					? bigint
-					: F extends { readonly kind: "f64" }
-						? number
-						: F extends { readonly kind: "uuid" }
-							? Uuid
-							: F extends { readonly kind: "bytes" }
-								? Uint8Array
-								: F extends { readonly kind: "interval"; readonly element: infer Element }
-									? Element extends "f64"
-										? FloatIntervalValue
-										: IntervalValue
-									: never
+					: F extends { readonly kind: "i64" }
+						? bigint
+						: F extends { readonly kind: "f64" }
+							? number
+							: F extends { readonly kind: "uuid" }
+								? Uuid
+								: F extends { readonly kind: "bytes" }
+									? Uint8Array
+									: F extends { readonly kind: "interval"; readonly element: infer Element }
+										? Element extends "f64"
+											? FloatIntervalValue
+											: IntervalValue
+										: never
 
 /**
  * The typed shape refusal shared by every literal machine — the selection
@@ -286,6 +294,7 @@ function fieldDescriptor(context: string, input: unknown): AnyField {
 	}
 	assertDeclarationRecord(context, input)
 	switch (input.kind) {
+		case "event":
 		case "bool":
 		case "str":
 		case "i64":
@@ -327,6 +336,8 @@ function fieldDescriptor(context: string, input: unknown): AnyField {
 			throw new AuthoringError({ message: `${context}: unknown field kind` })
 	}
 }
+
+const event: EventField = Object.freeze({ kind: "event" })
 
 const u64: U64Field = Object.freeze({ kind: "u64" })
 
@@ -398,6 +409,7 @@ export type {
 	ClosedHandleTuple,
 	ClosedIdField,
 	ClosedRoster,
+	EventField,
 	F64Field,
 	FloatIntervalValue,
 	I64Field,
@@ -415,6 +427,7 @@ export {
 	assertDeclarationRecord,
 	bool,
 	bytes,
+	event,
 	f64,
 	fieldDescriptor,
 	i64,

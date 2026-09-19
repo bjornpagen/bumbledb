@@ -1,5 +1,6 @@
 import { membersAgree, sealedFieldsOf } from "#closed.ts"
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
+import { eventValue } from "#event-value.ts"
 import type { AnyClosedRoster, AnyField, IntervalField } from "#fields.ts"
 import {
 	assertDeclarationOrderKey,
@@ -986,7 +987,10 @@ function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedFie
 		}
 		case "pack":
 			return {
-				field: { kind: "interval", element: (agg.over.field as IntervalField).element, width: undefined },
+				field:
+					agg.over.field.kind === "event"
+						? agg.over.field
+						: { kind: "interval", element: (agg.over.field as IntervalField).element, width: undefined },
 				class: undefined
 			}
 	}
@@ -1028,7 +1032,7 @@ function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, colum
 		}
 		case "pack":
 			assertBound(where, bound, agg.over)
-			assertInterval(where, agg.over)
+			if (agg.over.field.kind !== "event") assertInterval(where, agg.over)
 			return
 	}
 }
@@ -1040,6 +1044,11 @@ function validateCond(context: ChainContext, bound: ReadonlySet<AnyVar>, cond: C
 			if (side.kind === "var") {
 				assertBound(label, bound, side.ref)
 				const roster = rosterOf(side.ref.field)
+				if (side.ref.field.kind === "event" && cond.op.kind !== "eq" && cond.op.kind !== "ne") {
+					throw new AuthoringError({
+						message: `${label}: Event values support equality comparisons, not ${cond.op.kind}`
+					})
+				}
 				if (isOrderOp(cond.op.kind) && roster !== undefined) {
 					throw closedOrderError(label, `the ${cond.op.kind} side ${side.ref.label}`, roster.name)
 				}
@@ -1123,9 +1132,9 @@ function completeRule(context: ChainContext, state: RuleBuildState, rawColumns: 
 	}
 	const aggregates = rawColumns.flatMap((column) => (column.entry.kind === "aggregate" ? [column.entry.agg] : []))
 	const packs = aggregates.filter((agg) => agg.op === "pack").length
-	if (packs > 1) throw new AuthoringError({ message: "a query stage can pack one interval column" })
+	if (packs > 1) throw new AuthoringError({ message: "a query stage can pack one interval or Event column" })
 	if (packs !== 0 && aggregates.length !== packs)
-		throw new AuthoringError({ message: "pack intervals and compute numeric aggregates in separate query stages" })
+		throw new AuthoringError({ message: "pack regions and compute numeric aggregates in separate query stages" })
 	if (rawColumns.some((c) => c.entry.kind === "segments") && aggregates.length !== 0)
 		throw new AuthoringError({ message: "aggregate generated segments in a following query stage" })
 	const columns = rawColumns.map(function enrichColumn(column): FindColumn {
@@ -2057,6 +2066,7 @@ function taggedCmpLiteral(context: string, sibling: AnyField, value: unknown, op
 function ownLiteral(context: string, field: AnyField, value: unknown, op: CmpKind | "binding"): unknown {
 	const tagged = taggedCmpLiteral(context, field, value, op)
 	if (rosterOf(field) !== undefined) return value
+	if (field.kind === "event") return eventValue(context, value)
 	if ("value" in tagged) return tagged.value
 	return Object.freeze({ start: tagged.start, end: tagged.end })
 }

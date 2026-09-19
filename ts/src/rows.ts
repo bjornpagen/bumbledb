@@ -1,4 +1,5 @@
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
+import { encodedEvent, eventByteLength, eventBytes, eventValue, isEvent } from "#event-value.ts"
 /**
  * The row codec: fact object ⇄ positional cell array by field
  * ordinal, schema-directed, in ONE place. The write side lowers named host
@@ -55,6 +56,7 @@ function recordOf(fact: object): Readonly<Record<string, unknown>> {
  * Strings use two bytes per UTF-16 code unit, not their UTF-8 wire size.
  */
 function hostCellCharge(value: unknown): bigint {
+	if (isEvent(value)) return BigInt(eventByteLength(value))
 	if (typeof value === "string") {
 		return BigInt(value.length) * 2n
 	}
@@ -87,6 +89,7 @@ function handleOf(context: string, closed: AnyClosedRoster, cell: unknown): stri
 }
 
 function cellOf(context: string, field: AnyField, value: unknown): CellValue {
+	if (field.kind === "event") return eventBytes(eventValue(context, value))
 	if ("closed" in field) {
 		return BigInt(field.closed.handles.indexOf(fieldValue(context, field, value)))
 	}
@@ -139,6 +142,7 @@ function decodeCell(context: string, field: AnyField, cell: unknown): unknown {
 	const roster = rosterOf(field)
 	if (roster !== undefined) return handleOf(context, roster, cell)
 	try {
+		if (field.kind === "event") return encodedEvent(cell)
 		return fieldValue(context, field, cell)
 	} catch (cause) {
 		if (cause instanceof AuthoringError) throw new SdkInvariantError({ message: cause.message })

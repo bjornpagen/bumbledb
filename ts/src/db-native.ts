@@ -93,6 +93,13 @@ export interface MutationReportWire {
 }
 
 interface DbBridge {
+	runtimeEvent(
+		runtime: RuntimeHandle,
+		operation: string,
+		inputs: readonly Uint8Array[],
+		argument: bigint,
+		callback: () => void
+	): OperationHandle
 	/** Schema admission/compilation; take yields detached descriptor data. */
 	runtimeSchemaCompile(runtime: RuntimeHandle, spec: SchemaSpec, callback: () => void): OperationHandle
 	runtimeSchemaTake(operation: OperationHandle): SealedDescriptor

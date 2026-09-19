@@ -13,7 +13,7 @@ import { recordValue } from "#values.ts"
 
 type KeyFace<K extends KeyStatement> = Face<K["owner"], K["projection"]>
 type ScalarKey<K extends KeyStatement> =
-	Extract<RelationFields<K["owner"]>[K["projection"][number]], { readonly kind: "interval" }> extends never
+	Extract<RelationFields<K["owner"]>[K["projection"][number]], { readonly kind: "interval" | "event" }> extends never
 		? unknown
 		: { readonly "alternative identity keys must be scalar": never }
 type Discriminator<P extends KeyStatement, C extends AnyClosed> = {
@@ -27,9 +27,9 @@ function scalarKey(input: KeyStatement): KeyStatement {
 	const checked = statementDescriptor(input)
 	if (checked.kind !== "key") throw new AuthoringError({ message: "alternatives: expected a key statement" })
 	for (const name of checked.projection) {
-		if (sealedFieldOf(checked.owner, name)?.kind === "interval")
+		if (["interval", "event"].includes(sealedFieldOf(checked.owner, name)?.kind ?? ""))
 			throw new AuthoringError({
-				message: "alternatives: identity keys must be scalar; interval keys prove point coverage"
+				message: "alternatives: identity keys must be scalar; region keys prove point coverage"
 			})
 	}
 	return checked

@@ -33,6 +33,8 @@ import type { Statement } from "#statements.ts"
 
 function valueTypeOf(field: AnyField): ValueTypeSpec {
 	switch (field.kind) {
+		case "event":
+			return { kind: "event" }
 		case "bool":
 			return { kind: "bool" }
 		case "u64":
