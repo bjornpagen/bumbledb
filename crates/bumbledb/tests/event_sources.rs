@@ -290,3 +290,146 @@ fn zero_mass_branches_still_obey_pointwise_keys_coverage_and_rollback() {
         ExactRational::zero()
     );
 }
+
+#[test]
+fn conditional_source_maps_flow_through_persisted_coup_queries() {
+    use bumbledb::{
+        EventImport,
+        event::{AdmittedDescriptor, DescriptorLimits},
+        query,
+    };
+    let (prior, extension) = tax_extension();
+    let import = EventImport::capture(
+        &AdmittedDescriptor::Map(extension.parent().clone()),
+        DescriptorLimits::default(),
+        &(),
+    )
+    .unwrap();
+    let dir = common::TempDir::new("event-source-coup-query");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    db.write(common::work(), |tx| {
+        tx.insert([
+            &Region {
+                id: 1,
+                condition: prior.coordinate(0, &())?,
+            },
+            &Region {
+                id: 2,
+                condition: prior.coordinate(1, &())?,
+            },
+        ])?;
+        tx.insert([&Observation {
+            id: 1,
+            condition: extension.space().coordinate(2, &())?,
+        }])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    drop((prior, extension, db));
+    let db = Db::open(dir.path(), SourceSchema, common::work()).unwrap();
+    let query = query!(SourceSchema {
+        use map parent = &import;
+        (player, taxed: Event(Pullback(holding, parent) & tax), given: Event(tax)) |
+            Region(id: player, condition: holding), Observation(condition: tax);
+    });
+    drop(import);
+    let mut retained = Vec::new();
+    for cursor in [false, true] {
+        let mut prepared = db.prepare(&query, common::work()).unwrap();
+        prepared.force_cursor_fallback(cursor);
+        retained.push(
+            db.read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((db, query));
+    for answers in retained {
+        assert_eq!(answers.len(), 2);
+        for row in 0..answers.len() {
+            let AnswerValue::U64(player) = answers.get(row, 0) else {
+                panic!("player")
+            };
+            let (AnswerValue::Event(numerator), AnswerValue::Event(evidence)) =
+                (answers.get(row, 1), answers.get(row, 2))
+            else {
+                panic!("Event")
+            };
+            let result = numerator.probability(evidence, &mut arithmetic()).unwrap();
+            assert_eq!(
+                result.value(&mut arithmetic()).unwrap(),
+                Some(if player == 1 {
+                    ratio(92, 147)
+                } else {
+                    ratio(5, 21)
+                })
+            );
+            assert_eq!(result.evidence_mass(), &ratio(49, 130));
+        }
+    }
+}
+
+fn tax_extension() -> (Space, bumbledb::event::SourceExtension) {
+    use bumbledb::event::{
+        BoolOp4, CoordinateMap, FiniteFunction, FiniteKernel, FunctionLimits, FunctionPiece,
+    };
+    let raw = Space::new(SpaceId([101; 32]), 2, &()).unwrap();
+    let pieces: Vec<_> = [36, 19, 19, 4]
+        .into_iter()
+        .enumerate()
+        .map(|(world, numerator)| DensityPiece {
+            region: raw.table(3, &[1 << world], &()).unwrap(),
+            density: ratio(numerator, 78),
+        })
+        .collect();
+    let prior = raw
+        .with_density(&pieces, LawLimits::default(), &mut arithmetic())
+        .unwrap();
+    let joint = Space::new(SpaceId([102; 32]), 3, &()).unwrap();
+    let parent = CoordinateMap::coordinates(&joint, &prior, &[0, 1], &()).unwrap();
+    let same = joint
+        .coordinate(0, &())
+        .unwrap()
+        .apply(
+            BoolOp4::EQUIVALENCE,
+            &joint.coordinate(2, &()).unwrap(),
+            &(),
+        )
+        .unwrap();
+    let likelihood = FiniteFunction::new(
+        &joint,
+        &[
+            FunctionPiece {
+                region: same.clone(),
+                value: ratio(4, 5),
+            },
+            FunctionPiece {
+                region: same.complement(),
+                value: ratio(1, 5),
+            },
+        ],
+        FunctionLimits::default(),
+        &mut arithmetic(),
+    )
+    .unwrap();
+    let kernel = FiniteKernel::new(
+        &parent,
+        &likelihood,
+        FunctionLimits::default(),
+        &mut arithmetic(),
+    )
+    .unwrap();
+    let extension = kernel
+        .close(
+            &prior,
+            FunctionLimits::default(),
+            LawLimits::default(),
+            &mut arithmetic(),
+        )
+        .unwrap();
+    (prior, extension)
+}

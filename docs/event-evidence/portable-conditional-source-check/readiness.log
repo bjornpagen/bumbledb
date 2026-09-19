@@ -1,0 +1,39 @@
+{
+  "revision": "0.9",
+  "passed": true,
+  "scope": "Current proposal, exact Lean evidence and retained semantic references; no Rust or performance qualification",
+  "proposal_proof": {
+    "files": 30,
+    "reports": 246,
+    "manifest_sha256": "42b95c1bcf9aa2e42d9a776340e3a15f42161f59321bf7477abf146af999b6c5"
+  },
+  "native_proof": {
+    "files": 18,
+    "reports": 304,
+    "manifest_sha256": "27254bf8d024ed4e70d5839cd9e9699104bd55df2821c3c440764e8607c17d81"
+  },
+  "references": {
+    "suites": 7,
+    "scope": "exact finite reference examples and historical source subtheories"
+  },
+  "native_documents_sha256": {
+    "docs/event-implementation.md": "7b51bb496e414e283554a50f367506bf4ed4789e942b4b0009a45e08e1f38326",
+    "docs/event-value-format.md": "f67104d800b22713ba5bdeeddeb1673ebf6b2f1d176f0770f5f1673f324e1d24",
+    "docs/event-projections.md": "623579ceeb43b69f6f8508e94d71630240ea59f25f97e6b5758cb5a1c257850c",
+    "docs/event-maps.md": "49c44fcdba2e1510e6f9a31a6ec17d8860f7df1d4504738abcbe2a5cdadd0470",
+    "docs/event-relations.md": "be31753272177fe6a539e7328b530e4dc70d79ae30eb63c321fd473be68a6566",
+    "docs/event-inspection.md": "033bb08b7e1a91e776967ef99fcdd2560e4f6b0a398ef8883d6af3c37bdf40d3",
+    "docs/event-information.md": "fa9a355dee86e2850feeae98f68676aaed8e7786e6772e46ccc752ca02be8db0",
+    "docs/event-fixed-points.md": "7865e938a41ddf87194b7c0bf834a3a9fcb8621510e3c17f9531e59836742311",
+    "docs/event-partitions.md": "ae0d8473ba4aa9f89d53f496b4f46c5aa2cb60266d5272524f1135deed34f377",
+    "docs/event-actions.md": "22ce4b4220911ed5db1c059600cbdbc786da1151efab332e21953e28ce592f4b",
+    "docs/event-queries.md": "7937b7a3e1b6896b0674da7746675808d6d3609a72018031fb7d41148b507836",
+    "docs/event-descriptors.md": "d3b76010743c884fb047f7b0247fcaadc4cbd64c395cbd6c028e2eaecf9b1efa",
+    "docs/event-sources.md": "b95477d988418824ebcd1b5e056c6a524f20f64e444ced79fe0b65f327c97815",
+    "docs/event-functions.md": "09ab1b50cf418b476364514abc522e1163f569173063329236f7c0ae698104cb"
+  },
+  "baseline_archive_verified": true,
+  "historical_production_isolation_reasserted": false,
+  "implementation_complete": false,
+  "checker_sha256": "394b44f79415c4e1424701594b6b91ad6802455530353bc77e3e542a69be8b24"
+}

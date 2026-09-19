@@ -16,7 +16,9 @@ mod diagram;
 mod error;
 mod exact;
 mod fixed_point;
+mod function;
 mod information;
+mod kernel;
 mod map;
 mod measure;
 mod partition;
@@ -37,7 +39,9 @@ pub use exact::{ArithmeticLimits, ExactArithmetic, ExactRational};
 pub use fixed_point::{
     FiniteCarrier, FixedPointLimits, FixedPointProgram, FixedPointResult, LayeredFixedPointResult,
 };
+pub use function::{FiniteFunction, FunctionLimits, FunctionPiece};
 pub use information::InformationCases;
+pub use kernel::{FiniteKernel, SourceExtension};
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use measure::{DensityPiece, LawLimits, ProbabilityObservation};
 pub use partition::{EventPartition, PartitionLimits};
@@ -82,3 +86,6 @@ mod exact_tests;
 
 #[cfg(test)]
 mod measure_tests;
+
+#[cfg(test)]
+mod function_tests;
