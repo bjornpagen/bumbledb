@@ -33,7 +33,10 @@ mod space;
 pub use action::{ActionArena, ReachStrategy, SafetyStrategy};
 pub use boolean::{BoolOp4, Signature};
 pub use descriptor::{
-    AdmittedDescriptor, Descriptor, DescriptorLimits, FibreDescriptor, MapDescriptor,
+    AdmittedDescriptor, AdmittedSourceDescriptor, Descriptor, DescriptorLimits, FibreDescriptor,
+    FunctionDescriptor, FunctionPieceDescriptor, KernelDescriptor, MapDescriptor,
+    RevisionDescriptor, RevisionOutcomeDescriptor, RevisionReceiptDescriptor, SourceDescriptor,
+    SourceDescriptorLimits,
 };
 pub use diagram::{Diagram, DiagramNode, DiagramView};
 pub use error::{Capacity, Control, Error, Limits, Result};
@@ -98,3 +101,6 @@ mod function_tests;
 
 #[cfg(test)]
 mod revision_tests;
+
+#[cfg(test)]
+mod source_descriptor_tests;

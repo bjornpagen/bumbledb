@@ -373,6 +373,19 @@ fn conditional_source_maps_flow_through_persisted_coup_queries() {
     }
 }
 
+fn portable_source(
+    value: bumbledb::event::AdmittedSourceDescriptor,
+) -> bumbledb::event::AdmittedSourceDescriptor {
+    use bumbledb::event::{SourceDescriptor, SourceDescriptorLimits};
+    let limits = SourceDescriptorLimits::default();
+    let bytes = SourceDescriptor::capture(&value, limits, &mut arithmetic())
+        .unwrap()
+        .to_bytes(limits, &())
+        .unwrap();
+    drop(value);
+    SourceDescriptor::import(&bytes, limits, &mut arithmetic()).unwrap()
+}
+
 fn tax_extension() -> (Space, bumbledb::event::SourceExtension) {
     use bumbledb::event::{
         BoolOp4, CoordinateMap, FiniteFunction, FiniteKernel, FunctionLimits, FunctionPiece,
@@ -423,6 +436,11 @@ fn tax_extension() -> (Space, bumbledb::event::SourceExtension) {
         &mut arithmetic(),
     )
     .unwrap();
+    let bumbledb::event::AdmittedSourceDescriptor::Kernel(kernel) =
+        portable_source(bumbledb::event::AdmittedSourceDescriptor::Kernel(kernel))
+    else {
+        panic!("imported channel")
+    };
     let extension = kernel
         .close(
             &prior,
@@ -438,7 +456,10 @@ fn tax_extension() -> (Space, bumbledb::event::SourceExtension) {
 fn conditioned_sources_reopen_translate_queries_and_retain_signed_expectations() {
     use bumbledb::{
         EventImport,
-        event::{AdmittedDescriptor, DescriptorLimits, FunctionLimits, RevisionReceipt},
+        event::{
+            AdmittedDescriptor, AdmittedSourceDescriptor, DescriptorLimits, FunctionLimits,
+            RevisionReceipt, SourceDescriptor, SourceDescriptorLimits,
+        },
         query,
     };
     let (prior, extension) = tax_extension();
@@ -453,11 +474,14 @@ fn conditioned_sources_reopen_translate_queries_and_retain_signed_expectations()
         )
         .unwrap();
     let revised = revision.revised().unwrap();
-    let import = EventImport::capture(
-        &AdmittedDescriptor::Map(revised.translation().clone()),
-        DescriptorLimits::default(),
-        &(),
+    let limits = SourceDescriptorLimits::default();
+    let receipt = SourceDescriptor::capture(
+        &AdmittedSourceDescriptor::Revision(revision.clone()),
+        limits,
+        &mut arithmetic(),
     )
+    .unwrap()
+    .to_bytes(limits, &())
     .unwrap();
     let dir = common::TempDir::new("event-source-revision-query");
     let db = Db::create(dir.path(), SourceSchema, common::work())
@@ -480,7 +504,22 @@ fn conditioned_sources_reopen_translate_queries_and_retain_signed_expectations()
     })
     .unwrap()
     .unwrap();
-    drop((prior, extension, tax, db));
+    // The envelope is an application-owned sidecar, not a new database field.
+    let receipt_path = dir.path().join("revision.besc");
+    std::fs::write(&receipt_path, receipt).unwrap();
+    drop((prior, extension, tax, db, revision));
+    let bytes = std::fs::read(&receipt_path).unwrap();
+    let AdmittedSourceDescriptor::Revision(revision) =
+        SourceDescriptor::import(&bytes, limits, &mut arithmetic()).unwrap()
+    else {
+        panic!("replayed revision")
+    };
+    let import = EventImport::capture(
+        &AdmittedDescriptor::Map(revision.revised().unwrap().translation().clone()),
+        DescriptorLimits::default(),
+        &(),
+    )
+    .unwrap();
     let db = Db::open(dir.path(), SourceSchema, common::work()).unwrap();
     let query = query!(SourceSchema {
         use map revision = &import;
@@ -556,6 +595,11 @@ fn check_revised_coup_answers(answers: &bumbledb::Answers) {
                 &mut arithmetic(),
             )
             .unwrap();
+            let bumbledb::event::AdmittedSourceDescriptor::Function(payoff) =
+                portable_source(bumbledb::event::AdmittedSourceDescriptor::Function(payoff))
+            else {
+                panic!("imported payoff")
+            };
             let result = payoff.expectation(tax, &mut arithmetic()).unwrap();
             drop(payoff);
             assert_eq!(

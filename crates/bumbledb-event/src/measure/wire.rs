@@ -114,6 +114,24 @@ pub(crate) fn decode(
     arithmetic: ArithmeticLimits,
     control: &dyn Control,
 ) -> Result<Event> {
+    decode_with_work(
+        bytes,
+        order,
+        events,
+        limits,
+        &mut ExactArithmetic::new(arithmetic, control),
+    )
+}
+
+/// Share one exact-arithmetic budget across a larger descriptor reconstruction.
+pub(crate) fn decode_with_work(
+    bytes: &[u8],
+    order: Option<&[u8]>,
+    events: Limits,
+    limits: LawLimits,
+    work: &mut ExactArithmetic<'_>,
+) -> Result<Event> {
+    let control = work.control();
     control.checkpoint()?;
     let mut input = Reader { bytes, offset: 5 };
     let raw_event = input.blob()?;
@@ -139,17 +157,16 @@ pub(crate) fn decode(
     }
     let event = structural(raw_event, order, events, control)?;
     let space = event.space();
-    let mut work = ExactArithmetic::new(arithmetic, control);
     let mut pieces = Vec::new();
     pieces.try_reserve_exact(count)?;
     for _ in 0..count {
         control.checkpoint()?;
-        let density = ExactRational::from_bytes(law.blob()?, &mut work)?;
+        let density = ExactRational::from_bytes(law.blob()?, work)?;
         let region = structural(law.blob()?, order, events, control)?.align_to(&space, control)?;
         pieces.push(DensityPiece { region, density });
     }
     law.finish()?;
-    let measured = space.with_density(&pieces, limits, &mut work)?;
+    let measured = space.with_density(&pieces, limits, work)?;
     if measured.measurement_bytes() != Some(raw_law) {
         return Err(Error::InvalidEncoding);
     }

@@ -1,0 +1,7 @@
+'PrefixRetraction.feasible_iff' depends on axioms: [propext]
+'PrefixRetraction.repair_lands' depends on axioms: [propext, Quot.sound]
+'PrefixRetraction.repair_fixes' depends on axioms: [propext, Quot.sound]
+'PrefixRetraction.prefix_preserved' does not depend on any axioms
+'PrefixRetraction.repair_covers_prefix_fibre' depends on axioms: [propext, Quot.sound]
+'PrefixRetraction.prefix_exists' depends on axioms: [propext, Quot.sound]
+'PrefixRetraction.prefix_dependency_reflected' depends on axioms: [propext, Quot.sound]

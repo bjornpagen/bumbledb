@@ -5,7 +5,14 @@ use crate::{
     Limits, RelationalProduct, Result, Space, SpaceId, WorldRelation,
 };
 
+mod source;
 mod wire;
+
+pub use source::{
+    AdmittedSourceDescriptor, FunctionDescriptor, FunctionPieceDescriptor, KernelDescriptor,
+    RevisionDescriptor, RevisionOutcomeDescriptor, RevisionReceiptDescriptor, SourceDescriptor,
+    SourceDescriptorLimits,
+};
 
 /// Source and target are canonical full-space BEVT values. Readouts are
 /// canonical Events on the source, in target semantic-coordinate order.

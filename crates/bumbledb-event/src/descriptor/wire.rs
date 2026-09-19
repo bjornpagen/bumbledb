@@ -154,14 +154,14 @@ impl Descriptor {
     }
 }
 
-struct Writer<'a> {
-    bytes: Vec<u8>,
-    limits: DescriptorLimits,
-    control: &'a dyn Control,
+pub(super) struct Writer<'a> {
+    pub(super) bytes: Vec<u8>,
+    pub(super) limits: DescriptorLimits,
+    pub(super) control: &'a dyn Control,
 }
 
 impl Writer<'_> {
-    fn put(&mut self, bytes: &[u8]) -> Result<()> {
+    pub(super) fn put(&mut self, bytes: &[u8]) -> Result<()> {
         let size = self
             .bytes
             .len()
@@ -178,14 +178,14 @@ impl Writer<'_> {
         }
         Ok(())
     }
-    fn number(&mut self, number: usize) -> Result<()> {
+    pub(super) fn number(&mut self, number: usize) -> Result<()> {
         self.put(&(number as u64).to_le_bytes())
     }
-    fn blob(&mut self, bytes: &[u8]) -> Result<()> {
+    pub(super) fn blob(&mut self, bytes: &[u8]) -> Result<()> {
         self.number(bytes.len())?;
         self.put(bytes)
     }
-    fn map(&mut self, value: &MapDescriptor) -> Result<()> {
+    pub(super) fn map(&mut self, value: &MapDescriptor) -> Result<()> {
         self.blob(&value.source)?;
         self.blob(&value.target)?;
         self.number(value.readouts.len())?;
@@ -202,14 +202,14 @@ impl Writer<'_> {
     }
 }
 
-struct Reader<'a> {
-    bytes: &'a [u8],
-    budget: Budget,
-    control: &'a dyn Control,
+pub(super) struct Reader<'a> {
+    pub(super) bytes: &'a [u8],
+    pub(super) budget: Budget,
+    pub(super) control: &'a dyn Control,
 }
 
 impl<'a> Reader<'a> {
-    fn take(&mut self, count: usize) -> Result<&'a [u8]> {
+    pub(super) fn take(&mut self, count: usize) -> Result<&'a [u8]> {
         self.control.checkpoint()?;
         let (value, rest) = self
             .bytes
@@ -218,13 +218,13 @@ impl<'a> Reader<'a> {
         self.bytes = rest;
         Ok(value)
     }
-    fn number(&mut self) -> Result<usize> {
+    pub(super) fn number(&mut self) -> Result<usize> {
         usize::try_from(u64::from_le_bytes(
             self.take(8)?.try_into().expect("eight bytes"),
         ))
         .map_err(|_| Error::InvalidEncoding)
     }
-    fn count(&mut self) -> Result<usize> {
+    pub(super) fn count(&mut self) -> Result<usize> {
         let count = self.number()?;
         if count > self.budget.limits.items.saturating_sub(self.budget.items) {
             return Err(Error::Capacity(Capacity::DescriptorItems));
@@ -238,7 +238,7 @@ impl<'a> Reader<'a> {
     fn identity(&mut self) -> Result<SpaceId> {
         Ok(SpaceId(self.take(32)?.try_into().expect("32 bytes")))
     }
-    fn blob(&mut self) -> Result<Vec<u8>> {
+    pub(super) fn blob(&mut self) -> Result<Vec<u8>> {
         let count = self.number()?;
         self.budget.item(count)?;
         let bytes = self.take(count)?;
@@ -250,7 +250,7 @@ impl<'a> Reader<'a> {
         }
         Ok(result)
     }
-    fn map(&mut self) -> Result<MapDescriptor> {
+    pub(super) fn map(&mut self) -> Result<MapDescriptor> {
         self.budget.item(0)?;
         let source = self.blob()?;
         let target = self.blob()?;

@@ -1,7 +1,8 @@
-# Event revision checkpoint — paused at user request
+# Event revision checkpoint — pause and resumption record
 
 Branch: `codex/event-algebra`. No release, tag or version bump.
-The full M0–M8 objective is unfinished. Resume here only when requested.
+The full M0–M8 objective is unfinished and active again. The sections below
+preserve the pause; the final section records the user-authorized resumption.
 
 ## Current changes
 
@@ -51,3 +52,18 @@ Current host revision receipts are mathematical records, not provider import
 receipts or persisted provenance. Posterior laws and translation maps already
 use BEVT v2 and BEDC. A total FiniteFunction's zero default does not satisfy the
 separate query-roster coverage contract. Do not mark M6, M7 or the goal complete.
+
+
+## Resumed from 8378ae1f0
+
+The user explicitly resumed the full implementation goal. The
+[resumed qualification](event-evidence/resumed-revision-qualification/check.json)
+passed all fourteen steps, and the
+[fresh staged checkout](event-evidence/resumed-revision-portable/check.json)
+passed package, proposal, native proof and readiness checks. These records qualify
+the checkpoint's source state, before subsequent source-transport implementation.
+The historical interrupted runs above remain preserved.
+
+Implementation continued with [BESC v1 source descriptors](event-source-descriptors.md).
+The active ledger tracks current evidence and remaining gates; this pause record
+does not redefine completion around an intermediate commit.

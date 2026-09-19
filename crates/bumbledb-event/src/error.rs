@@ -69,6 +69,7 @@ pub enum Error {
     FunctionOverlap,
     FunctionInvariant,
     KernelNotNormalized,
+    DescriptorClaimMismatch,
 }
 
 impl fmt::Display for Error {
@@ -129,6 +130,9 @@ impl fmt::Display for Error {
             }
             Self::KernelNotNormalized => {
                 f.write_str("conditional law does not sum to one on every parent fibre")
+            }
+            Self::DescriptorClaimMismatch => {
+                f.write_str("source descriptor claim disagrees with its recomputed result")
             }
             Self::MissingLaw => f.write_str("the Event space has no designated probability law"),
         }

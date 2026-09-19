@@ -50,10 +50,10 @@ impl FiniteKernel {
         limits: FunctionLimits,
         work: &mut ExactArithmetic<'_>,
     ) -> Result<Self> {
-        density
-            .space()
-            .full()
-            .align_to(parent.source(), work.control())?;
+        // Closure rebinds the resulting law and translates these map readouts
+        // within one shared arena. Independently decoded descriptors must own
+        // their scalar cells in that same source before retaining the channel.
+        let density = density.align_to(parent.source(), limits, work)?;
         if !density.is_nonnegative() {
             return Err(Error::NegativeMass);
         }
@@ -63,10 +63,7 @@ impl FiniteKernel {
             return Err(Error::KernelNotNormalized);
         }
         let parent = parent.certify_surjective(work.control())?;
-        Ok(Self {
-            parent,
-            density: density.clone(),
-        })
+        Ok(Self { parent, density })
     }
     #[must_use]
     pub fn parent(&self) -> &SurjectiveMap {
