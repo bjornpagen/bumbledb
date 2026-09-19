@@ -1,7 +1,8 @@
 #![allow(clippy::too_many_lines)]
 use bumbledb::{
     AnswerValue, BindValue, Db, ObservationComponent as Component, ObservationNumber as Number,
-    ObservationNumberExpr as Expr, ObservationNumberLimits as Limits,
+    ObservationNumberCodecLimits, ObservationNumberExpr as Expr, ObservationNumberImport,
+    ObservationNumberLimits as Limits,
     event::{
         ArithmeticLimits, DensityPiece, ExactArithmetic, ExactPolynomial as Poly,
         ExactRational as Rat, GuardedRationalFunction, LawLimits, NumberOp, NumberPredicateView,
@@ -28,6 +29,27 @@ fn fixed(value: &Number) -> Option<String> {
         panic!("fixed")
     };
     value.as_ref().map(ToString::to_string)
+}
+fn portable(value: &Number) -> Number {
+    let import = ObservationNumberImport::capture(
+        value,
+        ObservationNumberCodecLimits::default(),
+        &mut arithmetic(),
+    )
+    .unwrap();
+    let replayed = ObservationNumberImport::from_bytes(
+        import.bytes(),
+        ObservationNumberCodecLimits::default(),
+        &mut arithmetic(),
+    )
+    .unwrap();
+    assert_eq!(import, replayed);
+    assert!(
+        value
+            .equivalent(replayed.value(), Limits::default(), &mut arithmetic())
+            .unwrap()
+    );
+    replayed.value().clone()
 }
 
 #[test]
@@ -199,6 +221,7 @@ fn completed_database_observations_keep_their_full_derivations_after_close() {
                 &mut arithmetic(),
             )
             .unwrap();
+        let payoff = portable(&payoff);
         assert_eq!(fixed(&payoff), Some("7/2".into()));
         let Expr::Binary { right, .. } = payoff.expression() else {
             panic!("binary")
@@ -383,6 +406,7 @@ fn parameter_observation_numbers_retain_holes_sources_and_explicit_domain_restri
     let restricted = chance
         .on_domain(&smaller, Limits::default(), &mut arithmetic())
         .unwrap();
+    let restricted = portable(&restricted);
     assert!(
         restricted
             .compare(&one, Signs::ZERO, Limits::default(), &mut arithmetic())

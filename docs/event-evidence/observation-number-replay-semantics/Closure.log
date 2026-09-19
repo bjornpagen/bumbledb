@@ -1,0 +1,14 @@
+'Closure.path_unfold' does not depend on any axioms
+'Closure.path_is_least_preclosed' does not depend on any axioms
+'Closure.least_closure_program_is_path' does not depend on any axioms
+'Closure.paths_preserve_environment' does not depend on any axioms
+'Closure.reach_is_preclosed' does not depend on any axioms
+'Closure.reach_is_least_preclosed' does not depend on any axioms
+'Closure.least_reach_program_is_reach' does not depend on any axioms
+'Closure.safe_is_postclosed' does not depend on any axioms
+'Closure.safe_is_greatest_postclosed' does not depend on any axioms
+'Closure.greatest_safe_program_is_safe' does not depend on any axioms
+'Closure.forcing_is_preclosed' does not depend on any axioms
+'Closure.forcing_is_least_preclosed' does not depend on any axioms
+'Closure.least_force_program_is_forcing' does not depend on any axioms
+'Closure.a_permanent_avoiding_cycle_is_not_forced' does not depend on any axioms

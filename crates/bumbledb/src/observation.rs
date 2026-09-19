@@ -25,12 +25,16 @@ pub struct ProbabilityAnswer {
 }
 impl ProbabilityAnswer {
     pub(crate) fn new(event: Event, given: Event, work: &mut ExactArithmetic<'_>) -> Result<Self> {
+        Self::with_limits(event, given, ParameterSourceLimits::default(), work)
+    }
+    pub(super) fn with_limits(
+        event: Event,
+        given: Event,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
         let value = if event.space().parameter_domain().is_some() {
-            ProbabilityValue::Parameter(event.parameter_probability(
-                &given,
-                ParameterSourceLimits::default(),
-                work,
-            )?)
+            ProbabilityValue::Parameter(event.parameter_probability(&given, limits, work)?)
         } else {
             let observation = event.probability(&given, work)?;
             let value = observation.value(work)?;
@@ -84,8 +88,8 @@ pub enum ExpectationValue {
 
 mod number;
 pub use number::{
-    ObservationComponent, ObservationNumber, ObservationNumberExpr, ObservationNumberLimits,
-    ObservationPredicate,
+    ObservationComponent, ObservationNumber, ObservationNumberCodecLimits, ObservationNumberExpr,
+    ObservationNumberImport, ObservationNumberLimits, ObservationPredicate,
 };
 
 mod payoff;
@@ -110,23 +114,30 @@ pub struct ExpectationAnswer {
 
 impl ExpectationAnswer {
     pub(crate) fn new(input: ExpectationPayoff, work: &mut ExactArithmetic<'_>) -> Result<Self> {
+        Self::with_limits(
+            input,
+            &crate::event::SourceDescriptorLimits::default(),
+            work,
+        )
+    }
+    pub(super) fn with_limits(
+        input: ExpectationPayoff,
+        limits: &crate::event::SourceDescriptorLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
         let given = input.given();
         let (value, original) = if let ExpectationPayoff::Family(cover) = &input {
             let function = cover.function();
             (
-                ExpectationValue::Family(function.expectation(
-                    given,
-                    ParameterSourceLimits::default(),
-                    work,
-                )?),
+                ExpectationValue::Family(function.expectation(given, limits.parameters, work)?),
                 crate::ImportedPayoff::Family(function.clone()),
             )
         } else {
-            let function = input.finite_function(work)?;
+            let function = input.finite_function(limits.functions, work)?;
             let value = if given.space().parameter_domain().is_some() {
                 ExpectationValue::Parameter(function.parameter_expectation(
                     given,
-                    ParameterSourceLimits::default(),
+                    limits.parameters,
                     work,
                 )?)
             } else {
@@ -136,11 +147,7 @@ impl ExpectationAnswer {
             };
             (value, crate::ImportedPayoff::Finite(function))
         };
-        let identity = crate::PayoffImport::capture(
-            original,
-            crate::event::SourceDescriptorLimits::default(),
-            work,
-        )?;
+        let identity = crate::PayoffImport::capture(original, *limits, work)?;
         Ok(Self {
             input,
             value,

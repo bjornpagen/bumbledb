@@ -81,7 +81,11 @@ impl ExpectationPayoff {
             Self::Family(cover) => cover.parent(),
         }
     }
-    pub(super) fn finite_function(&self, work: &mut ExactArithmetic<'_>) -> Result<FiniteFunction> {
+    pub(super) fn finite_function(
+        &self,
+        limits: FunctionLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<FiniteFunction> {
         match self {
             Self::Finite(cover) => Ok(cover.function().clone()),
             Self::Family(_) => unreachable!("family contraction"),
@@ -99,7 +103,7 @@ impl ExpectationPayoff {
                 Ok(FiniteFunction::new(
                     &partition.parent().space(),
                     &pieces,
-                    FunctionLimits::default(),
+                    limits,
                     work,
                 )?)
             }

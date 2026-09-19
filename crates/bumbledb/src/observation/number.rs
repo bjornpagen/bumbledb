@@ -8,6 +8,9 @@ use crate::event::{
 };
 use crate::{ExpectationAnswer, ExpectationValue, ProbabilityAnswer, ProbabilityValue, Result};
 
+mod import;
+pub use import::{ObservationNumberCodecLimits, ObservationNumberImport};
+
 /// Selecting a numerical component never discards the original observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObservationComponent {
