@@ -1,0 +1,8 @@
+'Anchored.root_excludes_anchor' depends on axioms: [propext]
+'Anchored.root_excludes_outside' depends on axioms: [propext]
+'Anchored.decode_root' depends on axioms: [propext]
+'Anchored.complement_same_root' depends on axioms: [propext]
+'Anchored.complement_flips_polarity' depends on axioms: [propext]
+'Anchored.exact_identity' depends on axioms: [propext]
+'Anchored.adjusted_zero' depends on axioms: [propext]
+'Anchored.binary_apply_root' depends on axioms: [propext]

@@ -6,10 +6,12 @@ use crate::{
 };
 
 mod memory;
+mod memory_arena;
 mod source;
 mod wire;
 
 pub use memory::{BeliefActionDescriptor, BeliefDescriptor, BeliefDescriptorLimits};
+pub use memory_arena::BeliefArenaDescriptor;
 
 pub use source::{
     AdmittedFamilyDescriptor, AdmittedSourceDescriptor, BetaSourceDescriptor, FamilyDescriptor,

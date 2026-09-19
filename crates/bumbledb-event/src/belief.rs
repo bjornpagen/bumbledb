@@ -309,7 +309,7 @@ impl BeliefMemory {
 /// Explicit names for a finite memory presentation; labels/codes are meaningful
 /// only with its retained memory roster. No hidden-world environment is exposed
 /// as an observed coordinate of this fully observed arena.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BeliefSpaceIds {
     pub states: SpaceId,
     pub actions: SpaceId,
@@ -334,15 +334,30 @@ impl BeliefMemory {
     /// Refuses empty memory or an empty action vocabulary (Space is inhabited),
     /// too many product coordinates, cancellation or kernel/allocation capacity.
     pub fn arena(&self, ids: BeliefSpaceIds, control: &dyn Control) -> Result<BeliefArena> {
-        let states = code_space(ids.states, self.states().len(), control)?;
-        let actions = code_space(ids.actions, self.actions().len(), control)?;
-        let environment = Space::new(ids.environment, 0, control)?;
+        self.arena_with_limits(ids, crate::Limits::default(), control)
+    }
+
+    /// Compile with explicit per-owner limits on every newly created code/product
+    /// space. The already admitted memory retains its original owner policies.
+    /// # Errors
+    /// Has `arena`'s contract, plus the supplied kernel capacities.
+    pub fn arena_with_limits(
+        &self,
+        ids: BeliefSpaceIds,
+        limits: crate::Limits,
+        control: &dyn Control,
+    ) -> Result<BeliefArena> {
+        let states = code_space(ids.states, self.states().len(), limits, control)?;
+        let actions = code_space(ids.actions, self.actions().len(), limits, control)?;
+        let environment = Space::with_order(ids.environment, &[], limits, control)?;
         let base = |s: &Space| {
             CoordinateMap::new(s, &environment, &[], control)?.certify_surjective(control)
         };
         let s = base(&states)?;
-        let sa = FibreProduct::new(ids.state_actions, &s, &base(&actions)?, control)?;
-        let steps = FibreProduct::new(ids.transitions, &base(sa.space())?, &s, control)?;
+        let sa =
+            FibreProduct::with_limits(ids.state_actions, &s, &base(&actions)?, limits, control)?;
+        let steps =
+            FibreProduct::with_limits(ids.transitions, &base(sa.space())?, &s, limits, control)?;
         let mut region = steps.space().empty();
         for (source, state) in self.states().iter().enumerate() {
             let source = sa
@@ -383,6 +398,44 @@ impl BeliefMemory {
 }
 
 impl BeliefArena {
+    /// The five authored names retained by this compiled presentation.
+    #[must_use]
+    pub fn identities(&self) -> BeliefSpaceIds {
+        BeliefSpaceIds {
+            states: self.arena.states().identity(),
+            actions: self.arena.choices().identity(),
+            environment: self
+                .arena
+                .actions()
+                .left_environment()
+                .map()
+                .target()
+                .identity(),
+            state_actions: self.arena.actions().space().identity(),
+            transitions: self.arena.transition().product().space().identity(),
+        }
+    }
+
+    /// An ordinary Event selecting one retained memory state.
+    /// # Errors
+    /// Refuses an out-of-roster index, cancellation or kernel capacities.
+    pub fn state_code(&self, index: usize, control: &dyn Control) -> Result<Event> {
+        if index >= self.memory.states().len() {
+            return Err(Error::BeliefIndex);
+        }
+        code(self.arena.states(), index, control)
+    }
+
+    /// An ordinary Event selecting one authored public action label.
+    /// # Errors
+    /// Refuses an out-of-roster index, cancellation or kernel capacities.
+    pub fn action_code(&self, index: usize, control: &dyn Control) -> Result<Event> {
+        if index >= self.memory.actions().len() {
+            return Err(Error::BeliefIndex);
+        }
+        code(self.arena.choices(), index, control)
+    }
+
     #[must_use]
     pub fn memory(&self) -> &BeliefMemory {
         &self.memory
@@ -451,13 +504,21 @@ fn code(space: &Space, value: usize, control: &dyn Control) -> Result<Event> {
     Ok(result)
 }
 
-fn code_space(id: SpaceId, count: usize, control: &dyn Control) -> Result<Space> {
+fn code_space(
+    id: SpaceId,
+    count: usize,
+    limits: crate::Limits,
+    control: &dyn Control,
+) -> Result<Space> {
     if count == 0 {
         return Err(Error::EmptySpace);
     }
     let bits = u8::try_from((count - 1).bit_width())
         .map_err(|_| Error::Capacity(Capacity::Coordinates))?;
-    let raw = Space::new(id, bits, control)?;
+    let mut order = Vec::new();
+    order.try_reserve_exact(usize::from(bits))?;
+    order.extend(0..bits);
+    let raw = Space::with_order(id, &order, limits, control)?;
     if count.is_power_of_two() {
         return Ok(raw);
     }

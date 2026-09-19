@@ -49,8 +49,15 @@ impl BeliefDescriptor {
         limits: DescriptorLimits,
         control: &dyn Control,
     ) -> Result<Self> {
+        Self::capture_in(memory, &mut Budget::new(limits), control)
+    }
+
+    pub(super) fn capture_in(
+        memory: &BeliefMemory,
+        budget: &mut Budget,
+        control: &dyn Control,
+    ) -> Result<Self> {
         control.checkpoint()?;
-        let mut budget = Budget::new(limits);
         budget.item(0)?;
         let source = budget.event(memory.observations().parent(), control)?;
         let given = budget.event(memory.given(), control)?;
@@ -63,7 +70,7 @@ impl BeliefDescriptor {
         let mut actions = Vec::new();
         for action in memory.actions() {
             budget.item(0)?;
-            let product = FibreDescriptor::capture(action.product(), &mut budget, control)?;
+            let product = FibreDescriptor::capture(action.product(), budget, control)?;
             let region = budget.event(action.region(), control)?;
             actions.try_reserve(1)?;
             actions.push(BeliefActionDescriptor { product, region });
@@ -78,8 +85,11 @@ impl BeliefDescriptor {
     }
 
     fn preflight(&self, limits: DescriptorLimits, control: &dyn Control) -> Result<()> {
+        self.preflight_in(&mut Budget::new(limits), control)
+    }
+
+    pub(super) fn preflight_in(&self, budget: &mut Budget, control: &dyn Control) -> Result<()> {
         control.checkpoint()?;
-        let mut budget = Budget::new(limits);
         budget.item(0)?;
         for bytes in std::iter::once(&self.source)
             .chain([&self.given])
@@ -91,7 +101,7 @@ impl BeliefDescriptor {
         for action in &self.actions {
             control.checkpoint()?;
             budget.item(0)?;
-            action.product.preflight(&mut budget, control)?;
+            action.product.preflight(budget, control)?;
             budget.item(action.region.len())?;
         }
         Ok(())
@@ -168,6 +178,12 @@ impl BeliefDescriptor {
             control,
         };
         out.put(b"BEBM\x01")?;
+        self.write(&mut out)?;
+        control.checkpoint()?;
+        Ok(out.bytes)
+    }
+
+    pub(super) fn write(&self, out: &mut Writer<'_>) -> Result<()> {
         out.blob(&self.source)?;
         out.blob(&self.given)?;
         out.number(self.observations.len())?;
@@ -179,8 +195,7 @@ impl BeliefDescriptor {
             out.fibre(&action.product)?;
             out.blob(&action.region)?;
         }
-        control.checkpoint()?;
-        Ok(out.bytes)
+        Ok(())
     }
 
     /// Parse syntax into untrusted data; use `import` to reconstruct memory.
@@ -200,7 +215,6 @@ impl BeliefDescriptor {
             budget: Budget::new(limits),
             control,
         };
-        input.budget.item(0)?;
         if input.take(4)? != b"BEBM" {
             return Err(Error::InvalidEncoding);
         }
@@ -208,6 +222,16 @@ impl BeliefDescriptor {
         if version != 1 {
             return Err(Error::UnsupportedVersion(version));
         }
+        let result = Self::read(&mut input)?;
+        if !input.bytes.is_empty() {
+            return Err(Error::InvalidEncoding);
+        }
+        control.checkpoint()?;
+        Ok(result)
+    }
+
+    pub(super) fn read(input: &mut Reader<'_>) -> Result<Self> {
+        input.budget.item(0)?;
         let source = input.blob()?;
         let given = input.blob()?;
         let count = input.count()?;
@@ -225,10 +249,6 @@ impl BeliefDescriptor {
             let region = input.blob()?;
             actions.push(BeliefActionDescriptor { product, region });
         }
-        if !input.bytes.is_empty() {
-            return Err(Error::InvalidEncoding);
-        }
-        control.checkpoint()?;
         Ok(Self {
             source,
             given,

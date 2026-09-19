@@ -22,6 +22,7 @@ use napi_derive::napi;
 
 pub mod db_wire;
 pub mod event_descriptor_wire;
+pub mod event_memory_arena_wire;
 pub mod event_memory_wire;
 pub mod event_source_wire;
 pub mod event_wire;

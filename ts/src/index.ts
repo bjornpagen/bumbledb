@@ -116,6 +116,14 @@ export type {
 	EventMapDescription
 } from "#event-descriptor-data.ts"
 export { EventMemory } from "#event-memory.ts"
+export type {
+	EventMemoryArenaDescription,
+	EventMemoryArenaInspection,
+	EventMemoryIdentities,
+	EventMemoryReachResult,
+	EventMemorySafetyResult
+} from "#event-memory-arena.ts"
+export { EventMemoryArena } from "#event-memory-arena.ts"
 export type { EventMemoryDescription, EventMemoryInspection, EventMemoryTransition } from "#event-memory-data.ts"
 export type {
 	AnyFace,

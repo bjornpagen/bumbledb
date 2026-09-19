@@ -3,6 +3,7 @@
 import { Effect, Result } from "effect"
 import { dbNative } from "#db-native.ts"
 import { AuthoringError } from "#errors.ts"
+import { compileMemory } from "#event-memory-arena.ts"
 import {
 	decodeMemory,
 	decodeMemoryInspection,
@@ -84,6 +85,6 @@ const inspect = Effect.fn("EventMemory.inspect")(function* (value: EventMemory) 
 		decodeMemoryInspection
 	)
 })
-const EventMemory = Object.freeze({ fromBytes, toBytes, isMemory, admit, describe, inspect })
+const EventMemory = Object.freeze({ fromBytes, toBytes, isMemory, admit, describe, inspect, compile: compileMemory })
 
-export { EventMemory }
+export { EventMemory, encodedMemory, toBytes as memoryBytes }

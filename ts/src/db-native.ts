@@ -140,6 +140,13 @@ interface DbBridge {
 		input: EventMemoryWire | Uint8Array,
 		callback: () => void
 	): OperationHandle
+	runtimeEventMemoryArena(
+		runtime: RuntimeHandle,
+		operation: "compile" | "describe" | "inspect" | "known" | "possible" | "reach" | "safe",
+		inputs: readonly Uint8Array[],
+		callback: () => void
+	): OperationHandle
+	runtimeEventMemoryArenaTake(operation: OperationHandle): unknown
 	runtimeEventMemoryTake(operation: OperationHandle): EventMemoryWire | EventMemoryInspectionWire
 	runtimeEvent(
 		runtime: RuntimeHandle,

@@ -72,6 +72,37 @@ fn replay(memory: &BeliefMemory) -> BeliefMemory {
     result
 }
 
+fn replay_arena(arena: &BeliefArena) -> BeliefArena {
+    let limits = BeliefDescriptorLimits::default();
+    let data = BeliefArenaDescriptor::capture(arena, limits.descriptors, &()).unwrap();
+    let bytes = data.to_bytes(limits.descriptors, &()).unwrap();
+    let restored = BeliefArenaDescriptor::import(
+        &bytes,
+        limits,
+        &mut ExactArithmetic::new(ArithmeticLimits::default(), &()),
+    )
+    .unwrap();
+    assert_eq!(restored.identities(), arena.identities());
+    assert_eq!(
+        BeliefArenaDescriptor::capture(&restored, limits.descriptors, &()).unwrap(),
+        data
+    );
+    assert_eq!(
+        restored.initial().to_bytes(&()).unwrap(),
+        arena.initial().to_bytes(&()).unwrap()
+    );
+    assert_eq!(
+        restored
+            .arena()
+            .transition()
+            .region()
+            .to_bytes(&())
+            .unwrap(),
+        arena.arena().transition().region().to_bytes(&()).unwrap()
+    );
+    restored
+}
+
 // A separate dense graph oracle; it knows no Event operations or product maps.
 fn next(edges: u64, belief: u64, observation: u64, worlds: u64) -> Option<u64> {
     let mut post = 0;
@@ -177,7 +208,7 @@ fn compiled_memory_preserves_all_edges_support_and_modal_objectives() {
                 &(),
             )
             .unwrap();
-            let compiled = memory.arena(ids(), &()).unwrap();
+            let compiled = replay_arena(&memory.arena(ids(), &()).unwrap());
             let count = memory.states().len();
             let arena = compiled.arena();
             assert_eq!(arena.states().full().count(&()).unwrap(), count as u64);
@@ -284,7 +315,7 @@ fn remembered_observation_selects_the_right_action_after_the_display_is_erased()
     );
     assert_eq!(mask(memory.states()[left].possible(), 8), 16);
     assert_eq!(mask(memory.states()[right].possible(), 8), 32);
-    let compiled = memory.arena(ids(), &()).unwrap();
+    let compiled = replay_arena(&memory.arena(ids(), &()).unwrap());
     let goal = compiled.known(&table(&s, 64), &()).unwrap();
     let strategy = compiled
         .arena()
@@ -934,6 +965,21 @@ fn parameter_memory_replay_charges_one_counter_including_normalization() {
     let restored = data.admit(limits, &mut work).unwrap();
     let cost = work.operations();
     assert!(cost > 0);
+    let arena = replay_arena(&memory.arena(ids(), &()).unwrap());
+    let compiled = BeliefArenaDescriptor::capture(&arena, limits.descriptors, &()).unwrap();
+    let mut counted = ExactArithmetic::new(ArithmeticLimits::default(), &());
+    compiled.admit(limits, &mut counted).unwrap();
+    let mut short_compilation = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: counted.operations() - 1,
+            ..ArithmeticLimits::default()
+        },
+        &(),
+    );
+    assert!(matches!(
+        compiled.admit(limits, &mut short_compilation),
+        Err(Error::Capacity(Capacity::ArithmeticSteps))
+    ));
     assert_eq!(
         restored.states()[0].possible().to_bytes(&()).unwrap(),
         s.full().to_bytes(&()).unwrap()
@@ -991,5 +1037,206 @@ fn parameter_memory_replay_charges_one_counter_including_normalization() {
             &mut no_work,
         ),
         Err(Error::Capacity(Capacity::ArithmeticSteps))
+    ));
+}
+
+#[test]
+fn compiled_memory_transport_retains_names_codes_and_has_no_trusted_graph() {
+    let s = space(204, 1);
+    let memory = BeliefMemory::new(
+        &[relation(&pairs(&s, 205), 6), relation(&pairs(&s, 206), 9)],
+        &partition(&s, &[0, 1, 2]),
+        &s.full(),
+        BeliefLimits::default(),
+        &(),
+    )
+    .unwrap();
+    let original = memory.arena(ids(), &()).unwrap();
+    let restored = replay_arena(&original);
+    drop(original);
+    drop(memory);
+    for i in 0..2 {
+        assert_eq!(restored.state_code(i, &()).unwrap().count(&()).unwrap(), 1);
+        assert!(
+            restored
+                .state_code(i, &())
+                .unwrap()
+                .contains(i as u64)
+                .unwrap()
+        );
+        assert!(
+            restored
+                .action_code(i, &())
+                .unwrap()
+                .contains(i as u64)
+                .unwrap()
+        );
+    }
+    assert_eq!(restored.state_code(2, &()).unwrap_err(), Error::BeliefIndex);
+    assert_eq!(
+        restored.action_code(2, &()).unwrap_err(),
+        Error::BeliefIndex
+    );
+    let limits = BeliefDescriptorLimits::default();
+    let data = BeliefArenaDescriptor::capture(&restored, limits.descriptors, &()).unwrap();
+    let bytes = data.to_bytes(limits.descriptors, &()).unwrap();
+    for end in 0..bytes.len() {
+        assert!(BeliefArenaDescriptor::from_bytes(&bytes[..end], limits.descriptors, &()).is_err());
+    }
+    let mut bad = bytes.clone();
+    bad.push(0);
+    assert!(BeliefArenaDescriptor::from_bytes(&bad, limits.descriptors, &()).is_err());
+    let mut bad = bytes.clone();
+    bad[4] = 2;
+    assert_eq!(
+        BeliefArenaDescriptor::from_bytes(&bad, limits.descriptors, &()).unwrap_err(),
+        Error::UnsupportedVersion(2)
+    );
+    // Named output changes deliberately when the caller changes compilation names.
+    let mut renamed = data.clone();
+    renamed.identities.states = SpaceId([207; 32]);
+    let renamed = renamed
+        .admit(
+            limits,
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &()),
+        )
+        .unwrap();
+    assert_eq!(renamed.arena().states().identity(), SpaceId([207; 32]));
+    assert_eq!(
+        renamed.memory().states().len(),
+        restored.memory().states().len()
+    );
+    assert!(
+        restored
+            .known(&s.coordinate(0, &()).unwrap(), &())
+            .unwrap()
+            .align_to(renamed.arena().states(), &())
+            .is_err()
+    );
+    let mut empty = data.clone();
+    empty.memory.given = s.empty().to_bytes(&()).unwrap();
+    assert!(matches!(
+        empty.admit(
+            limits,
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &())
+        ),
+        Err(Error::EmptySpace)
+    ));
+    let mut no_actions = data;
+    no_actions.memory.actions.clear();
+    assert!(matches!(
+        no_actions.admit(
+            limits,
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &())
+        ),
+        Err(Error::EmptySpace)
+    ));
+}
+
+#[test]
+fn compiled_memory_budgets_cover_names_recipe_and_new_code_owners() {
+    struct Cancel;
+    impl Control for Cancel {
+        fn checkpoint(&self) -> Result<()> {
+            Err(Error::Cancelled)
+        }
+    }
+    let s = space(208, 1);
+    let memory = BeliefMemory::new(
+        &[relation(&pairs(&s, 209), 6)],
+        &partition(&s, &[1, 2]),
+        &s.full(),
+        BeliefLimits::default(),
+        &(),
+    )
+    .unwrap();
+    let arena = memory.arena(ids(), &()).unwrap();
+    let limits = BeliefDescriptorLimits::default();
+    let data = BeliefArenaDescriptor::capture(&arena, limits.descriptors, &()).unwrap();
+    let bytes = data.to_bytes(limits.descriptors, &()).unwrap();
+    let items = (0..100)
+        .find(|&items| {
+            data.memory
+                .to_bytes(
+                    DescriptorLimits {
+                        items,
+                        ..limits.descriptors
+                    },
+                    &(),
+                )
+                .is_ok()
+        })
+        .unwrap();
+    // Outer root plus all five identities are additional charged items.
+    for count in items..items + 6 {
+        let small = DescriptorLimits {
+            items: count,
+            ..limits.descriptors
+        };
+        assert!(matches!(
+            data.to_bytes(small, &()),
+            Err(Error::Capacity(Capacity::DescriptorItems))
+        ));
+        assert!(matches!(
+            BeliefArenaDescriptor::from_bytes(&bytes, small, &()),
+            Err(Error::Capacity(Capacity::DescriptorItems))
+        ));
+        assert!(matches!(
+            data.admit(
+                BeliefDescriptorLimits {
+                    descriptors: small,
+                    ..limits
+                },
+                &mut ExactArithmetic::new(ArithmeticLimits::default(), &())
+            ),
+            Err(Error::Capacity(Capacity::DescriptorItems))
+        ));
+    }
+    assert!(
+        data.to_bytes(
+            DescriptorLimits {
+                items: items + 6,
+                ..limits.descriptors
+            },
+            &()
+        )
+        .is_ok()
+    );
+    assert!(
+        BeliefArenaDescriptor::from_bytes(
+            &bytes,
+            DescriptorLimits {
+                items: items + 6,
+                ..limits.descriptors
+            },
+            &()
+        )
+        .is_ok()
+    );
+    assert!(matches!(
+        memory.arena_with_limits(
+            ids(),
+            Limits {
+                records: 1,
+                ..Limits::default()
+            },
+            &()
+        ),
+        Err(Error::Capacity(Capacity::Records))
+    ));
+    assert!(matches!(
+        data.admit(
+            limits,
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &Cancel)
+        ),
+        Err(Error::Cancelled)
+    ));
+    assert!(matches!(
+        BeliefArenaDescriptor::capture(&arena, limits.descriptors, &Cancel),
+        Err(Error::Cancelled)
+    ));
+    assert!(matches!(
+        data.to_bytes(limits.descriptors, &Cancel),
+        Err(Error::Cancelled)
     ));
 }

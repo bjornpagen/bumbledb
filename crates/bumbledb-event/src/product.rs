@@ -235,8 +235,21 @@ impl FibreProduct {
         right: &SurjectiveMap,
         control: &dyn Control,
     ) -> Result<Self> {
+        Self::with_limits(identity, left, right, Limits::default(), control)
+    }
+
+    /// Construct full legal fibres under explicit per-owner kernel limits.
+    /// # Errors
+    /// Has `new`'s contract plus the supplied capacity bounds.
+    pub fn with_limits(
+        identity: SpaceId,
+        left: &SurjectiveMap,
+        right: &SurjectiveMap,
+        limits: Limits,
+        control: &dyn Control,
+    ) -> Result<Self> {
         let order = interleaved(&[left.clone(), right.clone()], control)?;
-        Self::with_order(identity, left, right, &order, Limits::default(), control)
+        Self::with_order(identity, left, right, &order, limits, control)
     }
 
     /// Choose the working order/limits without changing product coordinates.

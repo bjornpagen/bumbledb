@@ -1,9 +1,10 @@
 use bumbledb::{
     AnswerValue, BindValue, Db,
     event::{
-        ArithmeticLimits, BeliefArena, BeliefDescriptor, BeliefDescriptorLimits, BeliefLimits,
-        BeliefMemory, BeliefSpaceIds, CoordinateMap, EventPartition, ExactArithmetic, FibreProduct,
-        FixedPointLimits, PartitionLimits, Space, SpaceId, WorldRelation,
+        ArithmeticLimits, BeliefArena, BeliefArenaDescriptor, BeliefDescriptor,
+        BeliefDescriptorLimits, BeliefLimits, BeliefMemory, BeliefSpaceIds, CoordinateMap,
+        EventPartition, ExactArithmetic, FibreProduct, FixedPointLimits, PartitionLimits, Space,
+        SpaceId, WorldRelation,
     },
 };
 mod common;
@@ -85,7 +86,19 @@ fn game() -> BeliefArena {
 }
 
 fn seed(db: &Db<MemorySchema>) {
-    let compiled = game();
+    let original = game();
+    let limits = BeliefDescriptorLimits::default();
+    let portable = BeliefArenaDescriptor::capture(&original, limits.descriptors, &())
+        .unwrap()
+        .to_bytes(limits.descriptors, &())
+        .unwrap();
+    drop(original);
+    let compiled = BeliefArenaDescriptor::import(
+        &portable,
+        limits,
+        &mut ExactArithmetic::new(ArithmeticLimits::default(), &()),
+    )
+    .unwrap();
     let hidden_goal = compiled
         .memory()
         .given()

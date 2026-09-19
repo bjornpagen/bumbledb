@@ -9,7 +9,9 @@ import {
 	EventDescriptor,
 	type EventFibreDescription,
 	EventMemory,
+	EventMemoryArena,
 	type EventMemoryDescription,
+	type EventMemoryIdentities,
 	type EventMemoryInspection,
 	ExactPolynomial,
 	ExactRational,
@@ -119,6 +121,16 @@ test("memory construction is lazy; pure transport owns bytes without loading the
 	assert.equal(EventMemory.isMemory(value), true)
 	assert.equal(EventMemory.isMemory({}), false)
 	assert.equal(Result.isFailure(EventMemory.fromBytes(Buffer.from("BEDC\x01"))), true)
+	const arena = Result.getOrThrow(EventMemoryArena.fromBytes(Buffer.from("BEBA\x01")))
+	assert.equal(EventMemoryArena.isArena(arena), true)
+	assert.equal(EventMemoryArena.isArena(value), false)
+	assert.equal(Result.isFailure(EventMemoryArena.fromBytes(Buffer.from("BEBM\x01"))), true)
+	const requests = [
+		EventMemory.compile(value, identities()),
+		EventMemoryArena.inspect(arena),
+		EventMemoryArena.describe(arena)
+	]
+	assert.equal(requests.length, 3)
 	assert.equal(nativeBindingIsLoaded(), false)
 })
 
@@ -255,6 +267,14 @@ test("parameter memory transport preserves one named unknown across transitions"
 			assert.deepEqual(evbytes(at(graph.states, 1).possible), evbytes(yield* Event.complement(given)))
 			assert.equal(successor(graph, 0, 0, 0), 1)
 			assert.equal(successor(graph, 1, 0, 0), 0)
+			const arena = yield* EventMemory.compile(memory, identities())
+			const compiled = yield* EventMemoryArena.inspect(arena)
+			assert.equal(yield* Event.count(compiled.states), 2n)
+			const known = yield* EventMemoryArena.known(arena, given)
+			assert.equal(yield* Event.contains(known, 0n), true)
+			assert.equal(yield* Event.contains(known, 1n), false)
+			assert.equal(yield* Event.isFull((yield* EventMemoryArena.safe(arena, compiled.states)).winning), true)
+
 			assert.deepEqual(bytes(yield* EventMemory.admit(yield* EventMemory.describe(memory))), bytes(memory))
 		})
 	)
@@ -340,6 +360,157 @@ test("independent BEBM grammar and raw submission preserve owned bytes and opera
 				)
 			)
 			assert.equal(registered, true)
+		})
+	)
+})
+
+function identities(): EventMemoryIdentities {
+	return { states: id(170), actions: id(171), environment: id(172), stateActions: id(173), transitions: id(174) }
+}
+
+test("compiled memory survives replay with exact codes, knowledge, ranks and progress policies", async () => {
+	const retained = await run(
+		Effect.gen(function* () {
+			const data = yield* recipe()
+			const memory = yield* EventMemory.admit(data)
+			const graph = yield* EventMemory.inspect(memory)
+			const arena = yield* EventMemory.compile(memory, identities())
+			const inspection = yield* EventMemoryArena.inspect(arena)
+			assert.equal(inspection.stateCodes.length, graph.states.length)
+			assert.equal(inspection.actionCodes.length, 4)
+			for (const [i, code] of inspection.stateCodes.entries()) {
+				assert.equal(yield* Event.count(code), 1n)
+				assert.equal(yield* Event.contains(code, BigInt(i)), true)
+			}
+			const uncertain = yield* region(data.source, 3, [0])
+			assert.equal(
+				yield* Event.isEmpty(yield* Event.and(inspection.initial, yield* EventMemoryArena.known(arena, uncertain))),
+				true
+			)
+			assert.equal(yield* Event.subset(inspection.initial, yield* EventMemoryArena.possible(arena, uncertain)), true)
+			const goal = yield* EventMemoryArena.known(arena, yield* region(data.source, 3, [6]))
+			const reach = yield* EventMemoryArena.reach(arena, goal)
+			assert.equal(yield* Event.subset(inspection.initial, reach.winning), true)
+			assert.equal(yield* Event.subset(inspection.initial, at(reach.ranks, 3)), true)
+			const policy = yield* EventDescriptor.inspect(reach.policy)
+			assert.equal(policy.kind, "relation")
+			assert.ok("region" in policy)
+			const left = successor(graph, successor(graph, 0, 0, 1), 1, 0)
+			const right = successor(graph, successor(graph, 0, 0, 2), 1, 0)
+			const bits = Math.ceil(Math.log2(graph.states.length))
+			assert.equal(yield* Event.contains(policy.region, BigInt(left | (2 << bits))), true)
+			assert.equal(yield* Event.contains(policy.region, BigInt(left | (3 << bits))), false)
+			assert.equal(yield* Event.contains(policy.region, BigInt(right | (3 << bits))), true)
+			assert.equal(yield* Event.contains(policy.region, BigInt(right | (2 << bits))), false)
+			// All game paths terminate; none can remain continuously enabled forever.
+			const safe = yield* EventMemoryArena.safe(arena, inspection.states)
+			assert.equal(yield* Event.isEmpty(safe.winning), true)
+			const described = yield* EventMemoryArena.describe(arena)
+			assert.deepEqual(described.identities, identities())
+			assert.deepEqual(EventMemory.toBytes(described.memory), EventMemory.toBytes(memory))
+			const copy = yield* EventMemory.compile(described.memory, described.identities)
+			assert.deepEqual(EventMemoryArena.toBytes(copy), EventMemoryArena.toBytes(arena))
+			return { arena, goal, reach, policy: policy.region, codes: inspection.stateCodes }
+		})
+	)
+	await run(
+		Effect.scoped(
+			Effect.gen(function* () {
+				const input = EventMemoryArena.toBytes(retained.arena)
+				const arena = Result.getOrThrow(EventMemoryArena.fromBytes(input))
+				input.fill(0)
+				const reach = yield* EventMemoryArena.reach(arena, retained.goal)
+				assert.deepEqual(evbytes(reach.winning), evbytes(retained.reach.winning))
+				assert.deepEqual(reach.ranks.map(evbytes), retained.reach.ranks.map(evbytes))
+				const policy = yield* EventDescriptor.inspect(reach.policy)
+				assert.ok("region" in policy)
+				const Policy = relation("Policy", { game: u64, when: event })
+				const Expected = relation("Expected", { game: u64, when: event })
+				const Theory = schema("CompiledMemory", { Policy, Expected }, [])
+				const db = yield* Db.create(storeDir("compiled-memory"), Theory)
+				const draft = yield* ChangeSet.builder(Theory)
+				yield* draft.insert(Policy, [{ game: 1n, when: policy.region }])
+				yield* draft.insert(Expected, [{ game: 1n, when: retained.policy }])
+				yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })
+				const scan = query(Theory).rule((r) => {
+					const row = v(Policy)
+					return r.match(Policy, row).match(Expected, row).find(row)
+				})
+				const snapshot = yield* db.snapshot()
+				assert.equal((yield* (yield* snapshot.execute(scan, {})).collect()).length, 1)
+			})
+		)
+	)
+})
+
+test("BEBA is an independent named recipe; incomplete memory, foreign objectives and malformed raw inputs refuse", async () => {
+	await run(
+		Effect.gen(function* () {
+			const data = yield* recipe()
+			const memory = yield* EventMemory.admit(data)
+			const ids = identities()
+			const compiled = yield* EventMemory.compile(memory, ids)
+			const expected = Buffer.concat([
+				Buffer.from("BEBA\x01"),
+				...Object.values(ids),
+				EventMemory.toBytes(memory).subarray(5)
+			])
+			assert.deepEqual(Buffer.from(EventMemoryArena.toBytes(compiled)), expected)
+			const independent = Result.getOrThrow(EventMemoryArena.fromBytes(expected))
+			assert.equal((yield* EventMemoryArena.inspect(independent)).actionCodes.length, 4)
+			assert.ok(yield* Effect.flip(EventMemory.compile(memory, { ...ids, states: new Uint8Array(31) })))
+			const empty = yield* Event.empty(data.source)
+			const emptyMemory = yield* EventMemory.admit({ ...data, given: empty })
+			const noActions = yield* EventMemory.admit({ ...data, actions: [] })
+			assert.ok(yield* Effect.flip(EventMemory.compile(emptyMemory, ids)))
+			assert.ok(yield* Effect.flip(EventMemory.compile(noActions, ids)))
+			const foreign = yield* Event.space(id(175), 3n)
+			for (const op of [
+				EventMemoryArena.known,
+				EventMemoryArena.possible,
+				EventMemoryArena.reach,
+				EventMemoryArena.safe
+			]) {
+				const attempt: Effect.Effect<unknown, unknown, NativeRuntime> = op(compiled, foreign)
+				assert.ok(yield* Effect.flip(attempt))
+			}
+			assert.ok(
+				yield* Effect.flip(EventMemoryArena.reach(compiled, data.source)),
+				"hidden goals require explicit known/possible interpretation"
+			)
+			const truncated = Result.getOrThrow(EventMemoryArena.fromBytes(expected.subarray(0, expected.length - 1)))
+			assert.ok(yield* Effect.flip(EventMemoryArena.inspect(truncated)))
+			const runtime = yield* runtimeHandle()
+			for (const inputs of [[], [EventMemoryArena.toBytes(compiled), new Uint8Array(1)]])
+				assert.ok(
+					yield* Effect.flip(
+						nativeOperationWith(
+							"arena raw arity",
+							(cb) => dbNative.runtimeEventMemoryArena(runtime, "inspect", inputs, cb),
+							dbNative.runtimeEventMemoryArenaTake,
+							(v) => v
+						)
+					)
+				)
+			const source = EventMemory.toBytes(memory)
+			const authoredNames = Object.values(ids).map((v) => new Uint8Array(v))
+			const owned = yield* nativeOperationWith(
+				"arena raw copy",
+				(cb) => {
+					const operation = dbNative.runtimeEventMemoryArena(runtime, "compile", [source, ...authoredNames], cb)
+					source.fill(0)
+					for (const v of authoredNames) v.fill(0)
+					return operation
+				},
+				dbNative.runtimeBytesTake,
+				(v) => Result.getOrThrow(EventMemoryArena.fromBytes(v))
+			)
+			assert.deepEqual(EventMemoryArena.toBytes(owned), EventMemoryArena.toBytes(compiled))
+			const fiber = yield* Effect.forkChild(Effect.forever(EventMemoryArena.inspect(compiled)))
+			yield* Effect.yieldNow
+			yield* Fiber.interrupt(fiber)
+			assert.equal(Exit.isFailure(yield* Fiber.await(fiber)), true)
+			assert.equal((yield* EventMemoryArena.inspect(compiled)).actionCodes.length, 4)
 		})
 	)
 })
