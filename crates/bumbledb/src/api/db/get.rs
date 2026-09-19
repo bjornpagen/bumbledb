@@ -191,19 +191,20 @@ pub(super) fn closed_row_by_key<'c>(
     rows: &'c [super::closed::ClosedRow],
     statement: &KeyStatement,
     key_values: &[Value],
-) -> Option<&'c super::closed::ClosedRow> {
-    // Closed schemas refuse Event fields; their validated keys remain scalar.
-    rows.iter().find(|row| {
-        statement
-            .projection
-            .iter()
-            .zip(key_values)
-            .all(|(&field, key)| {
-                row.values
-                    .get(usize::from(field.0))
-                    .is_some_and(|value| value == key)
-            })
-    })
+    control: &dyn crate::event::Control,
+) -> Result<Option<&'c super::closed::ClosedRow>> {
+    for row in rows {
+        control.checkpoint()?;
+        if projection_matches(
+            row.values.values(),
+            &statement.projection,
+            key_values,
+            control,
+        )? {
+            return Ok(Some(row));
+        }
+    }
+    Ok(None)
 }
 
 /// One keyed row hit from [`get_with_work`]: closed relations carry
@@ -229,7 +230,8 @@ pub(super) fn get_with_work<'a>(
     let (_, statement) = key_statement_of(schema, relation, key)?;
     check_key_shape(schema, relation, &statement.projection, key_values)?;
     if let Some(rows) = closed.get(relation) {
-        return Ok(closed_row_by_key(rows, statement, key_values).map(KeyedRowHit::Closed));
+        return closed_row_by_key(rows, statement, key_values, work)
+            .map(|row| row.map(KeyedRowHit::Closed));
     }
     find_snapshot_row(
         snapshot,

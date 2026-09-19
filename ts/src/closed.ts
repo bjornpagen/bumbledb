@@ -1,4 +1,5 @@
 import { AuthoringError } from "#errors.ts"
+import { eventBytes, isEvent } from "#event-value.ts"
 import {
 	type AnyField,
 	assertDeclarationOrderKey,
@@ -38,6 +39,10 @@ interface Closed<
 	readonly axioms: Axioms<Handles[number], Cols>
 }
 type AnyClosed = Closed
+
+type ClosedEventField<R extends AnyClosed> = {
+	[F in keyof R["columns"] & string]: R["columns"][F] extends { readonly kind: "event" } ? F : never
+}[keyof R["columns"] & string]
 
 function isClosedMember(member: AnyRelation | AnyClosed): member is AnyClosed {
 	return member.kind === "closed"
@@ -152,6 +157,7 @@ function sealedFieldOf(member: AnyRelation | AnyClosed, name: string): AnyField 
 
 function sameValue(a: unknown, b: unknown): boolean {
 	if (Object.is(a, b)) return true
+	if (isEvent(a) && isEvent(b)) return sameValue(eventBytes(a), eventBytes(b))
 	if (a instanceof Uint8Array && b instanceof Uint8Array)
 		return a.length === b.length && a.every((byte, i) => byte === b[i])
 	if (
@@ -198,7 +204,7 @@ function membersAgree(left: AnyRelation | AnyClosed | undefined, right: AnyRelat
 	return true
 }
 
-export type { AnyClosed, AxiomRow, Axioms, Closed, PayloadField }
+export type { AnyClosed, AxiomRow, Axioms, Closed, ClosedEventField, PayloadField }
 export {
 	closed,
 	closedDescriptor,

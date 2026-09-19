@@ -642,10 +642,8 @@ impl<E> Judge<'_, '_, E> {
         if let Some(extension) = sealed.body().closed_rows() {
             for (seq, row) in extension.iter().enumerate() {
                 self.work.checkpoint()?;
-                let decoded =
-                    crate::encoding::decode_values(sealed.layout().encoded(&row.fact), |_| {
-                        unreachable!("closed relations refuse str columns")
-                    })
+                let decoded = row
+                    .values(sealed.layout())
                     .expect("sealed extension rows decode by construction");
                 if !visit(self, seq as u64, &decoded)? {
                     return Ok(());

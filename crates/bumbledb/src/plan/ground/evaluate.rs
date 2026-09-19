@@ -213,8 +213,44 @@ pub(super) fn join_id_var(
         .filter(|var| !var_is_dead(normalized, c_idx, *var, output_vars))
 }
 
-struct SealedRow<'a> {
-    fact: crate::encoding::FactView<'a, 'a>,
+enum SealedRow<'a> {
+    Ground {
+        layout: &'a crate::encoding::FactLayout,
+        row: &'a crate::schema::SealedRow,
+    },
+    #[cfg(test)]
+    Encoded(crate::encoding::FactView<'a, 'a>),
+}
+impl SealedRow<'_> {
+    fn field_type(&self, field: FieldId) -> ValueType {
+        match self {
+            Self::Ground { layout, .. } => layout.field_type(usize::from(field.0)),
+            #[cfg(test)]
+            Self::Encoded(fact) => fact.layout().field_type(usize::from(field.0)),
+        }
+    }
+    fn operand(&self, field: FieldId) -> crate::exec::dispatch::FactOperand {
+        match self {
+            Self::Ground { layout, row } => {
+                let ty = self.field_type(field);
+                if ty == ValueType::Event {
+                    // A sealed row's Event cells share one checked registry.
+                    // Ground folding accepts field equality; Event literals remain
+                    // PendingEvent until the execution's own resolver binds them.
+                    let mut words = [0; 8];
+                    words[..2].copy_from_slice(&row.event(usize::from(field.0)).key().words());
+                    crate::exec::dispatch::FactOperand::Block { words, count: 2 }
+                } else {
+                    sealed_operand(ty, row.field_bytes(layout, usize::from(field.0)))
+                }
+            }
+            #[cfg(test)]
+            Self::Encoded(fact) => sealed_operand(
+                self.field_type(field),
+                crate::encoding::field_bytes(*fact, usize::from(field.0)),
+            ),
+        }
+    }
 }
 
 impl crate::image::view::Operands for SealedRow<'_> {
@@ -245,7 +281,7 @@ impl crate::image::view::Operands for SealedRow<'_> {
         &self,
         at: crate::image::view::OperandAddr,
     ) -> Result<crate::image::view::Loaded, Self::Error> {
-        Ok(match sealed_operand(self.fact, at.field()) {
+        Ok(match self.operand(at.field()) {
             crate::exec::dispatch::FactOperand::Word(w) => crate::image::view::Loaded::Word(w),
             crate::exec::dispatch::FactOperand::Pair(s, e) => {
                 crate::image::view::Loaded::Pair(s, e)
@@ -257,10 +293,7 @@ impl crate::image::view::Operands for SealedRow<'_> {
     }
 
     fn string_field(&self, at: crate::image::view::OperandAddr) -> bool {
-        matches!(
-            self.fact.layout().field_type(usize::from(at.field().0)),
-            ValueType::String
-        )
+        matches!(self.field_type(at.field()), ValueType::String)
     }
 }
 
@@ -272,16 +305,10 @@ impl crate::image::view::Operands for SealedRow<'_> {
 /// slot stores the start word and the layout width recovers the end), so
 /// each word is a direct big-endian load; the span widths mirror
 /// [`crate::image::column_spans`].
-fn sealed_operand(
-    fact: crate::encoding::FactView<'_, '_>,
-    field: FieldId,
-) -> crate::exec::dispatch::FactOperand {
-    use crate::encoding::{field_bytes, interval_words};
+fn sealed_operand(ty: ValueType, bytes: &[u8]) -> crate::exec::dispatch::FactOperand {
+    use crate::encoding::interval_words;
     use crate::exec::dispatch::FactOperand;
 
-    let idx = usize::from(field.0);
-    let ty = fact.layout().field_type(idx);
-    let bytes = field_bytes(fact, idx);
     match ty {
         ValueType::Bool => FactOperand::Word(u64::from(bytes[0])),
         ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => FactOperand::Word(
@@ -337,9 +364,7 @@ pub(crate) fn surviving_ids(
         .iter()
         .enumerate()
     {
-        let ops = SealedRow {
-            fact: layout.encoded(&row.fact),
-        };
+        let ops = SealedRow::Ground { layout, row };
         if sealed_row_survives(&ops, filters, text)? {
             ids.push(id as u64);
         }

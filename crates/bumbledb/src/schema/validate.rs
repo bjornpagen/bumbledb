@@ -15,7 +15,6 @@ use super::{
     SchemaDescriptor, SealedBound, SealedWeight, Side, StatementDescriptor, StatementId,
     StatementRef, ValueMismatch, ValueType, Weight, value_matches,
 };
-use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
 use crate::schema::compiled::{LMDB_KEY_LIMIT, select_key_encoding_width};
 use bumbledb_theory::Value;
@@ -69,7 +68,7 @@ impl ValidateDescriptor for SchemaDescriptor {
         }
 
         let descriptors = self.materialized_statements();
-        // Event capacity projections and closed rosters have separate contract gates.
+        // Event capacity projections retain a separate contract gate.
         let check_event = |relation: RelationId, field: FieldId| -> Result<(), SchemaError> {
             let Some(decl) = self.relations.get(relation.0 as usize) else {
                 return Ok(());
@@ -109,7 +108,7 @@ impl ValidateDescriptor for SchemaDescriptor {
         let mut relations = Vec::with_capacity(self.relations.len());
         for (rel_idx, decl) in self.relations.into_iter().enumerate() {
             let rel_id = RelationId(u32::try_from(rel_idx).expect("relation count fits u32"));
-            relations.push(validate_relation(rel_id, decl)?);
+            relations.push(validate_relation(rel_id, decl, control)?);
         }
 
         for (idx, relation) in relations.iter().enumerate() {
@@ -155,6 +154,7 @@ impl ValidateDescriptor for SchemaDescriptor {
                         projection,
                         &relations,
                         &descriptors,
+                        control,
                     )?;
                     let key_id =
                         KeyId(u16::try_from(keys.len()).expect("statement count fits u16"));
@@ -181,6 +181,7 @@ impl ValidateDescriptor for SchemaDescriptor {
                         &relations,
                         &descriptors,
                         &event_literals,
+                        control,
                     )?;
                     let containment_id = ContainmentId(
                         u16::try_from(containments.len()).expect("statement count fits u16"),
@@ -607,6 +608,7 @@ fn validate_functionality(
     projection: &TypedProjection,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
+    control: &dyn crate::event::Control,
 ) -> Result<FunctionalityEvidence, SchemaError> {
     let relation = known_relation(id, relation_id, relations)?;
     let is_full = projection.is_event_full();
@@ -647,30 +649,37 @@ fn validate_functionality(
         let scalar_len = projection.ordered().len() - usize::from(region.is_some());
         for (row_idx, row) in rows.iter().enumerate() {
             for earlier in &rows[..row_idx] {
+                control.checkpoint().map_err(SchemaError::EventLiteral)?;
                 let scalars_agree = projection.ordered()[..scalar_len].iter().all(|field| {
                     let idx = usize::from(field.0);
-                    field_bytes(layout.encoded(&row.fact), idx)
-                        == field_bytes(layout.encoded(&earlier.fact), idx)
+                    row.field_bytes(layout, idx) == earlier.field_bytes(layout, idx)
                 });
                 if !scalars_agree {
                     continue;
                 }
                 let collide = match region {
                     None => true,
+                    Some((pos, ValueType::Event)) => {
+                        let field = usize::from(projection.ordered()[pos].0);
+                        let a = row.event(field);
+                        let b = earlier
+                            .event(field)
+                            .align_to(&a.space(), control)
+                            .map_err(SchemaError::EventLiteral)?;
+                        !a.apply(crate::event::BoolOp4::AND, &b, control)
+                            .map_err(SchemaError::EventLiteral)?
+                            .is_empty()
+                    }
                     Some((pos, tail)) => {
                         let idx = usize::from(projection.ordered()[pos].0);
 
                         // programmer invariant, never data.
-                        let (a_start, a_end) = crate::encoding::interval_words(
-                            tail,
-                            field_bytes(layout.encoded(&row.fact), idx),
-                        )
-                        .expect("sealed rows hold canonical interval bytes");
-                        let (b_start, b_end) = crate::encoding::interval_words(
-                            tail,
-                            field_bytes(layout.encoded(&earlier.fact), idx),
-                        )
-                        .expect("sealed rows hold canonical interval bytes");
+                        let (a_start, a_end) =
+                            crate::encoding::interval_words(tail, row.field_bytes(layout, idx))
+                                .expect("sealed rows hold canonical interval bytes");
+                        let (b_start, b_end) =
+                            crate::encoding::interval_words(tail, earlier.field_bytes(layout, idx))
+                                .expect("sealed rows hold canonical interval bytes");
                         a_start < b_end && b_start < a_end
                     }
                 };
@@ -699,6 +708,7 @@ fn validate_containment(
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
     events: &EventLiterals,
+    control: &dyn crate::event::Control,
 ) -> Result<Enforcement, SchemaError> {
     let target_projection = validate_side_pair(id, source, target, relations, events)?;
 
@@ -710,12 +720,13 @@ fn validate_containment(
             &target_projection,
             relations,
             descriptors,
+            control,
         )?;
-        validate_closed_full_containment(id, source, target, relations)?;
+        validate_closed_event_containment(id, source, target, relations, events, control)?;
         return Ok(resolved);
     }
 
-    // Interval positions on closed containments: refused v0. A pointwise
+    // Interval positions on closed containments remain a separate contract.
 
     let target_fields = &relations[target.relation.0 as usize].fields;
     let source_closed = matches!(
@@ -727,7 +738,11 @@ fn validate_containment(
         RelationBody::Closed { .. }
     );
     if (source_closed || target_closed)
-        && !region_positions(target_fields, target.projection.fields()).is_empty()
+        && target
+            .projection
+            .fields()
+            .iter()
+            .any(|field| target_fields[usize::from(field.0)].value_type.is_interval())
     {
         return Err(StatementErrorKind::ClosedContainmentInterval {
             relation: if target_closed {
@@ -739,15 +754,30 @@ fn validate_containment(
         .at(id));
     }
 
-    let resolved = resolve_target_key(
-        id,
-        source,
-        target,
-        &target_projection,
-        relations,
-        descriptors,
-        relations[source.relation.0 as usize].region_tail(source.projection.fields()),
-    )?;
+    let target_relation = &relations[target.relation.0 as usize];
+    let members =
+        if target_relation.region_tail(target.projection.fields()) == Some(ValueType::Event) {
+            None
+        } else {
+            closed_target_members(id, target, target_relation, events)?
+        };
+    let resolved = if let Some(members) = members {
+        Enforcement::Closed { members }
+    } else {
+        resolve_target_key(
+            id,
+            source,
+            target,
+            &target_projection,
+            relations,
+            descriptors,
+            control,
+        )?
+    };
+
+    if matches!(resolved, Enforcement::EventCoverage { .. }) {
+        validate_closed_event_containment(id, source, target, relations, events, control)?;
+    }
 
     if let (Enforcement::Closed { members }, Some(rows)) = (
         &resolved,
@@ -757,12 +787,13 @@ fn validate_containment(
         let phi = encodable_checks(
             &source.selection,
             &relations[source.relation.0 as usize].fields,
+            events,
         );
         for (row_idx, row) in rows.iter().enumerate() {
-            if !sealed_satisfies(&phi, layout, &row.fact) {
+            if !sealed_satisfies(&phi, layout, row) {
                 continue;
             }
-            let word = decoded_word(layout, source.projection.fields()[0], &row.fact);
+            let word = decoded_word(layout, source.projection.fields()[0], row);
 
             if !AxiomIndex::try_from(word).is_ok_and(|index| members.contains(index)) {
                 return Err(StatementErrorKind::ClosedStatementRefuted {
@@ -911,6 +942,7 @@ fn validate_capacity(
         &target_projection,
         relations,
         descriptors,
+        events,
     )?;
 
     // Both sides are constant; evaluate the window during validation.
@@ -925,36 +957,32 @@ fn validate_capacity(
             .closed_rows()
             .expect("the Closed enforcement arm resolves only against a closed target");
         let source_layout = &relations[source.relation.0 as usize].layout;
-        let phi = encodable_checks(&source.selection, source_fields);
-        let psi = encodable_checks(&target.selection, &target_relation.fields);
+        let phi = encodable_checks(&source.selection, source_fields, events);
+        let psi = encodable_checks(&target.selection, &target_relation.fields, events);
         for (row_idx, parent) in target_rows.iter().enumerate() {
-            if !sealed_satisfies(&psi, &target_relation.layout, &parent.fact) {
+            if !sealed_satisfies(&psi, &target_relation.layout, parent) {
                 continue;
             }
 
-            let resolved_hi =
-                sealed_resolve_bound(sealed_hi, &target_relation.layout, &parent.fact)
-                    .expect("sealed extension rows carry no ray or inverted intervals");
+            let resolved_hi = sealed_resolve_bound(sealed_hi, &target_relation.layout, parent)
+                .expect("sealed extension rows carry no ray or inverted intervals");
             let measure: u128 = source_rows
                 .iter()
                 .filter(|child| {
-                    sealed_satisfies(&phi, source_layout, &child.fact)
+                    sealed_satisfies(&phi, source_layout, child)
                         && source
                             .projection
                             .fields()
                             .iter()
                             .zip(target.projection.fields().iter())
                             .all(|(s, t)| {
-                                field_bytes(source_layout.encoded(&child.fact), usize::from(s.0))
-                                    == field_bytes(
-                                        target_relation.layout.encoded(&parent.fact),
-                                        usize::from(t.0),
-                                    )
+                                child.field_bytes(source_layout, usize::from(s.0))
+                                    == parent.field_bytes(&target_relation.layout, usize::from(t.0))
                             })
                 })
                 .map(|child| {
                     u128::from(
-                        sealed_measure_weight(sealed_weight, source_layout, &child.fact)
+                        sealed_measure_weight(sealed_weight, source_layout, child)
                             .expect("sealed extension rows carry no ray or inverted intervals"),
                     )
                 })
@@ -992,27 +1020,42 @@ fn known_field(
         .ok_or(StatementErrorKind::UnknownField { relation, field }.at(id))
 }
 
-fn encoded_literal(literal: &Value, desc: bumbledb_theory::schema::ValueType) -> Box<[u8]> {
+fn encoded_literal(
+    literal: &Value,
+    desc: bumbledb_theory::schema::ValueType,
+    events: &EventLiterals,
+) -> Box<[u8]> {
     let mut bytes = Vec::with_capacity(16);
-    crate::encoding::encode_literal(literal, desc, &mut bytes);
+    if let Value::Event(event) = literal {
+        let value = events.bytes(event);
+        bytes.extend_from_slice(
+            &u32::try_from(value.len())
+                .expect("admitted Event literal")
+                .to_le_bytes(),
+        );
+        bytes.extend_from_slice(value);
+    } else {
+        crate::encoding::encode_literal(literal, desc, &mut bytes);
+    }
     bytes.into()
 }
 
 fn encodable_checks(
     selection: &[(FieldId, LiteralSet)],
     fields: &[FieldDescriptor],
+    events: &EventLiterals,
 ) -> Box<[EncodableCheck]> {
     selection
         .iter()
         .map(|(field, literals)| {
             let desc = fields[usize::from(field.0)].value_type;
-            match canonical_literals(literals, &EventLiterals::default()) {
+            match canonical_literals(literals, events) {
                 LiteralSet::One(Value::String(_)) => {
                     unreachable!("closed relations refuse str columns")
                 }
                 LiteralSet::One(literal) => EncodableCheck::Encoded {
                     field: *field,
-                    bytes: encoded_literal(&literal, desc),
+                    bytes: encoded_literal(&literal, desc, events),
                 },
                 LiteralSet::Many(values) if matches!(values.first(), Some(Value::String(_))) => {
                     unreachable!("closed relations refuse str columns")
@@ -1021,7 +1064,7 @@ fn encodable_checks(
                     field: *field,
                     alternatives: values
                         .iter()
-                        .map(|literal| encoded_literal(literal, desc))
+                        .map(|literal| encoded_literal(literal, desc, events))
                         .collect(),
                 },
             }
@@ -1029,12 +1072,20 @@ fn encodable_checks(
         .collect()
 }
 
-fn sealed_satisfies(checks: &[EncodableCheck], layout: &FactLayout, fact: &[u8]) -> bool {
+fn sealed_satisfies(
+    checks: &[EncodableCheck],
+    layout: &FactLayout,
+    fact: &super::SealedRow,
+) -> bool {
     checks.iter().all(|check| check.matches(layout, fact))
 }
 
-fn decoded_word(layout: &FactLayout, field: FieldId, fact: &[u8]) -> u64 {
-    u64::from_be_bytes(field_word_bytes(layout.encoded(fact), usize::from(field.0)))
+fn decoded_word(layout: &FactLayout, field: FieldId, fact: &super::SealedRow) -> u64 {
+    u64::from_be_bytes(
+        fact.field_bytes(layout, usize::from(field.0))
+            .try_into()
+            .expect("sealed word field"),
+    )
 }
 
 /// The sealed-extension twin of the judge's weight law
@@ -1044,7 +1095,11 @@ fn decoded_word(layout: &FactLayout, field: FieldId, fact: &[u8]) -> u64 {
 /// word space (`end − start` — both element encodings preserve
 /// differences). `None` only for a ray or inverted interval, which a
 /// validated extension refuses at sealing — callers expect.
-fn sealed_measure_weight(weight: SealedWeight, layout: &FactLayout, fact: &[u8]) -> Option<u64> {
+fn sealed_measure_weight(
+    weight: SealedWeight,
+    layout: &FactLayout,
+    fact: &super::SealedRow,
+) -> Option<u64> {
     match weight {
         SealedWeight::Unit => Some(1),
         SealedWeight::Field(field) => Some(decoded_word(layout, field, fact)),
@@ -1060,7 +1115,7 @@ fn sealed_measure_weight(weight: SealedWeight, layout: &FactLayout, fact: &[u8])
 fn sealed_resolve_bound(
     bound: SealedBound,
     layout: &FactLayout,
-    parent_fact: &[u8],
+    parent_fact: &super::SealedRow,
 ) -> Option<super::BoundCeiling> {
     match bound {
         SealedBound::Unbounded => Some(super::BoundCeiling::Unbounded),
@@ -1081,12 +1136,10 @@ fn sealed_interval_measure(
     tail: ValueType,
     layout: &FactLayout,
     field: FieldId,
-    fact: &[u8],
+    fact: &super::SealedRow,
 ) -> Option<u64> {
-    let (start, end) = crate::encoding::interval_words(
-        tail,
-        crate::encoding::field_bytes(layout.encoded(fact), usize::from(field.0)),
-    )?;
+    let (start, end) =
+        crate::encoding::interval_words(tail, fact.field_bytes(layout, usize::from(field.0)))?;
     if end == u64::MAX {
         return None; // a ray has no finite measure
     }
@@ -1292,6 +1345,7 @@ fn resolve_event_target(
     target_projection: &CheckedProjection<'_>,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
+    control: &dyn crate::event::Control,
 ) -> Result<Enforcement, SchemaError> {
     let target_relation = &relations[target.relation.0 as usize];
     if !target.projection.is_event_full() {
@@ -1313,6 +1367,7 @@ fn resolve_event_target(
         key_projection,
         relations,
         descriptors,
+        control,
     )? {
         FunctionalityEvidence::EventFull => DisjointDeterminantProof(()),
         FunctionalityEvidence::Pointwise(disjoint, ValueType::Event) => disjoint,
@@ -1347,14 +1402,20 @@ fn resolve_event_target(
     })
 }
 
-/// Full/full on two closed scalar rosters is a ground law. Reject a refuted
-/// declaration during sealing, just as for ordinary closed containments.
-fn validate_closed_full_containment(
+/// A dependency between two ground rosters is a law of the schema itself.
+/// Accumulate exact target unions and retain each scalar group's context using
+/// the same coverage judgment as transactions, including empty contributions.
+fn validate_closed_event_containment(
     id: StatementId,
     source: &Side,
     target: &Side,
     relations: &[Relation],
+    events: &EventLiterals,
+    control: &dyn crate::event::Control,
 ) -> Result<(), SchemaError> {
+    use super::coverage::{Coverage, covers};
+    use crate::event::BoolOp4;
+
     let source_relation = &relations[source.relation.0 as usize];
     let target_relation = &relations[target.relation.0 as usize];
     let (Some(sources), Some(targets)) = (
@@ -1363,30 +1424,60 @@ fn validate_closed_full_containment(
     ) else {
         return Ok(());
     };
-    // Event fields on closed rosters are separately refused. Positional typing
-    // therefore proves that both projections carry a full constant here.
-    let phi = encodable_checks(&source.selection, &source_relation.fields);
-    let psi = encodable_checks(&target.selection, &target_relation.fields);
-    for (index, row) in sources.iter().enumerate() {
-        if !sealed_satisfies(&phi, &source_relation.layout, &row.fact) {
+    let key = |side: &Side, relation: &Relation, row: &super::SealedRow| {
+        let mut key = Vec::new();
+        for field in side.projection.fields() {
+            if relation.field(*field).value_type != ValueType::Event {
+                key.extend_from_slice(row.field_bytes(&relation.layout, usize::from(field.0)));
+            }
+        }
+        key
+    };
+    let region = |side: &Side, relation: &Relation| {
+        side.projection
+            .fields()
+            .iter()
+            .find(|field| relation.field(**field).value_type == ValueType::Event)
+            .map(|field| usize::from(field.0))
+    };
+    let phi = encodable_checks(&source.selection, &source_relation.fields, events);
+    let psi = encodable_checks(&target.selection, &target_relation.fields, events);
+    let mut coverage: BTreeMap<Vec<u8>, Option<Coverage>> = BTreeMap::new();
+    for row in targets {
+        control.checkpoint().map_err(SchemaError::EventLiteral)?;
+        if !sealed_satisfies(&psi, &target_relation.layout, row) {
             continue;
         }
-        let covered = targets.iter().any(|candidate| {
-            sealed_satisfies(&psi, &target_relation.layout, &candidate.fact)
-                && source
-                    .projection
-                    .fields()
-                    .iter()
-                    .zip(target.projection.fields())
-                    .all(|(s, t)| {
-                        field_bytes(source_relation.layout.encoded(&row.fact), usize::from(s.0))
-                            == field_bytes(
-                                target_relation.layout.encoded(&candidate.fact),
-                                usize::from(t.0),
-                            )
-                    })
+        let entry = coverage
+            .entry(key(target, target_relation, row))
+            .or_default();
+        *entry = Some(if let Some(field) = region(target, target_relation) {
+            let value = row.event(field);
+            let union = if let Some(Coverage::Region(previous)) = entry {
+                let value = value
+                    .align_to(&previous.space(), control)
+                    .map_err(SchemaError::EventLiteral)?;
+                previous
+                    .apply(BoolOp4::OR, &value, control)
+                    .map_err(SchemaError::EventLiteral)?
+            } else {
+                value.clone()
+            };
+            Coverage::Region(union)
+        } else {
+            Coverage::ContextualFull
         });
-        if !covered {
+    }
+    for (index, row) in sources.iter().enumerate() {
+        control.checkpoint().map_err(SchemaError::EventLiteral)?;
+        if !sealed_satisfies(&phi, &source_relation.layout, row) {
+            continue;
+        }
+        let target = coverage
+            .entry(key(source, source_relation, row))
+            .or_default();
+        let value = region(source, source_relation).map(|field| row.event(field));
+        if !covers(target, value, control).map_err(SchemaError::EventLiteral)? {
             return Err(StatementErrorKind::ClosedStatementRefuted {
                 relation: source.relation,
                 row: RowIndex(index),
@@ -1404,28 +1495,9 @@ fn resolve_target_key(
     target_projection: &CheckedProjection<'_>,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
-    source_tail: Option<ValueType>,
+    control: &dyn crate::event::Control,
 ) -> Result<Enforcement, SchemaError> {
     let target_relation = &relations[target.relation.0 as usize];
-
-    // projection must be exactly the synthetic id — its OWN refusal, not
-
-    // the refused field set, and the rule here is closedness, not key
-
-    if let Some(rows) = target_relation.body.closed_rows() {
-        if target.projection.fields().len() != 1 || target.projection.fields()[0] != FieldId(0) {
-            return Err(StatementErrorKind::ClosedTargetNotHandle {
-                target: target.relation,
-                target_name: target_relation.name.clone(),
-                projection: target.projection.clone(),
-                projection_names: projection_field_names(target_relation, &target.projection),
-            }
-            .at(id));
-        }
-        return Ok(Enforcement::Closed {
-            members: compile_member_set(target_relation, target, rows),
-        });
-    }
 
     let target_fields = &target_relation.fields;
     let positions = region_positions(target_fields, target.projection.fields());
@@ -1462,11 +1534,14 @@ fn resolve_target_key(
             key_projection,
             relations,
             descriptors,
+            control,
         )?
         else {
             unreachable!("a set-equal region projection resolves to a pointwise key")
         };
-        let Some(source_tail) = source_tail else {
+        let Some(source_tail) =
+            relations[source.relation.0 as usize].region_tail(source.projection.fields())
+        else {
             unreachable!("positional type match: a coverage target implies a region source");
         };
         if target_tail == ValueType::Event {
@@ -1501,21 +1576,11 @@ fn resolve_capacity_target(
     target_projection: &CheckedProjection<'_>,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
+    events: &EventLiterals,
 ) -> Result<CapacityEnforcement, SchemaError> {
     let target_relation = &relations[target.relation.0 as usize];
-    if let Some(rows) = target_relation.body.closed_rows() {
-        if target.projection.fields().len() != 1 || target.projection.fields()[0] != FieldId(0) {
-            return Err(StatementErrorKind::ClosedTargetNotHandle {
-                target: target.relation,
-                target_name: target_relation.name.clone(),
-                projection: target.projection.clone(),
-                projection_names: projection_field_names(target_relation, &target.projection),
-            }
-            .at(id));
-        }
-        return Ok(CapacityEnforcement::Closed {
-            members: compile_member_set(target_relation, target, rows),
-        });
+    if let Some(members) = closed_target_members(id, target, target_relation, events)? {
+        return Ok(CapacityEnforcement::Closed { members });
     }
 
     let Some((key_idx, key_projection)) =
@@ -1670,13 +1735,41 @@ fn missing_target_key(
     }
 }
 
+/// Scalar closed targets keep their synthetic-id member-set access path.
+/// Event coverage instead resolves the explicit declared pointwise key.
+fn closed_target_members(
+    id: StatementId,
+    side: &Side,
+    relation: &Relation,
+    events: &EventLiterals,
+) -> Result<Option<MemberSet>, SchemaError> {
+    let Some(rows) = relation.body.closed_rows() else {
+        return Ok(None);
+    };
+    if side.projection.fields() != [FieldId(0)] {
+        return Err(StatementErrorKind::ClosedTargetNotHandle {
+            target: side.relation,
+            target_name: relation.name.clone(),
+            projection: side.projection.clone(),
+            projection_names: projection_field_names(relation, &side.projection),
+        }
+        .at(id));
+    }
+    Ok(Some(compile_member_set(relation, side, rows, events)))
+}
+
 /// The extension passed validation before statement resolution, so every
 /// declaration index is below [`super::MAX_EXTENSION_ROWS`].
-fn compile_member_set(target: &Relation, side: &Side, rows: &[super::SealedRow]) -> MemberSet {
-    let psi = encodable_checks(&side.selection, &target.fields);
+fn compile_member_set(
+    target: &Relation,
+    side: &Side,
+    rows: &[super::SealedRow],
+    events: &EventLiterals,
+) -> MemberSet {
+    let psi = encodable_checks(&side.selection, &target.fields, events);
     let mut members = MemberSet::empty();
     for (idx, row) in rows.iter().enumerate() {
-        if sealed_satisfies(&psi, &target.layout, &row.fact) {
+        if sealed_satisfies(&psi, &target.layout, row) {
             let index =
                 AxiomIndex(u8::try_from(idx).expect("the validated extension cap is below 256"));
             members.insert(index);
@@ -1695,7 +1788,10 @@ fn derived_columns(decl: &RelationDescriptor) -> usize {
             .fields
             .iter()
             .map(|field| match field.value_type {
-                ValueType::Interval { .. } | ValueType::FixedInterval { .. } | ValueType::Uuid => 2,
+                ValueType::Interval { .. }
+                | ValueType::FixedInterval { .. }
+                | ValueType::Uuid
+                | ValueType::Event => 2,
                 ValueType::FixedBytes { len } => crate::encoding::fixed_bytes_words(len).max(1),
                 _ => 1,
             })
@@ -1705,6 +1801,7 @@ fn derived_columns(decl: &RelationDescriptor) -> usize {
 fn validate_relation(
     rel_id: RelationId,
     decl: RelationDescriptor,
+    control: &dyn crate::event::Control,
 ) -> Result<Relation, SchemaError> {
     let RelationDescriptor {
         name,
@@ -1754,12 +1851,6 @@ fn validate_relation(
         // dictionary writes at open. No `fresh` refusal survives: the
         // generation attribute itself is deleted (ENG-004/ENG-007).
 
-        if extension.is_some() && field.value_type == ValueType::Event {
-            return Err(SchemaError::EventContractPending {
-                relation: rel_id,
-                field: field_id,
-            });
-        }
         if extension.is_some() && field.value_type == ValueType::String {
             return Err(SchemaError::StrOnClosedRelation {
                 relation: rel_id,
@@ -1773,7 +1864,7 @@ fn validate_relation(
     let body = match extension {
         None => RelationBody::Ordinary,
         Some(rows) => RelationBody::Closed {
-            extension: validate_extension(rel_id, &fields, &layout, &rows)?,
+            extension: validate_extension(rel_id, &fields, &rows, control)?,
         },
     };
 
@@ -1791,13 +1882,13 @@ fn validate_relation(
 
 /// The extension roster: ground axioms validated through the one shared
 /// [`value_matches`] check and canonically encoded ONCE — each sealed row
-/// carries its full fact bytes (synthetic id ‖ intrinsic values), never
-/// re-encoded after validate (the staging law applied to the feature itself).
+/// retains portable identity bytes (synthetic id ‖ intrinsic values). Event
+/// rows also retain their owners for binding into each execution's resolver.
 fn validate_extension(
     rel_id: RelationId,
     fields: &[FieldDescriptor],
-    layout: &FactLayout,
     rows: &[super::Row],
+    control: &dyn crate::event::Control,
 ) -> Result<Box<[super::SealedRow]>, SchemaError> {
     if rows.is_empty() {
         return Err(SchemaError::EmptyExtension { relation: rel_id });
@@ -1827,10 +1918,10 @@ fn validate_extension(
                 },
             });
         }
-        let mut fact = Vec::with_capacity(layout.fact_width());
-        fact.extend_from_slice(&crate::encoding::encode_u64(
+        control.checkpoint().map_err(SchemaError::EventLiteral)?;
+        let mut values = vec![Value::U64(
             u64::try_from(row_idx).expect("row count fits u64"),
-        ));
+        )];
         for (value, (field_idx, field)) in row.values.iter().zip(fields.iter().enumerate().skip(1))
         {
             let field_id = FieldId(u16::try_from(field_idx).expect("field count fits u16"));
@@ -1861,13 +1952,12 @@ fn validate_extension(
             // Total here: String and enums (refused columns) and AllenMask
             // (no field type) all fail `value_matches` before reaching the
 
-            crate::encoding::encode_literal(value, field.value_type, &mut fact);
+            values.push(value.clone());
         }
-        debug_assert_eq!(fact.len(), layout.fact_width());
-        sealed.push(super::SealedRow {
-            handle: row.handle.clone(),
-            fact: fact.into_boxed_slice(),
-        });
+        sealed.push(
+            super::SealedRow::from_values(row.handle.clone(), fields, values, control)
+                .map_err(SchemaError::EventLiteral)?,
+        );
     }
     Ok(sealed.into_boxed_slice())
 }

@@ -208,7 +208,7 @@ impl<'a> QuerySource<'a> {
             for row in extension {
                 work.checkpoint().map_err(work_error)?;
                 self.note_visits(1);
-                let values = crate::canonical::decode_sealed(descriptor, &row.fact, work)?;
+                let values = crate::canonical::decode_sealed(descriptor, row, work)?;
                 let canonical = crate::canonical::CanonicalRow::encode(
                     descriptor.fields(),
                     values.values(),

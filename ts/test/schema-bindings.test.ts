@@ -292,3 +292,43 @@ test("snapshot bindings preserve canonical Event selection literals and schema i
 		await runtime.dispose()
 	}
 })
+
+test("snapshot bindings preserve closed Event axioms and their explicit pointwise keys", async () => {
+	const runtime = ManagedRuntime.make(db.NativeRuntime.layer(runtimeOptions))
+	try {
+		const [a, b, empty] = await runtime.runPromise(
+			Effect.gen(function* () {
+				const full = yield* db.Event.space(new Uint8Array(32).fill(130), 2n)
+				const a = yield* db.Event.coordinate(full, 0n)
+				return [a, yield* db.Event.complement(a), yield* db.Event.empty(full)] as const
+			})
+		)
+		await runtime.dispose()
+		const Catalog = db.closed(
+			"Catalog",
+			["A", "B", "Empty"],
+			{ group: db.u64, when: db.event },
+			{
+				A: { group: 7n, when: a },
+				B: { group: 7n, when: b },
+				Empty: { group: 7n, when: empty }
+			}
+		)
+		const Claim = db.relation("Claim", { group: db.u64, when: db.event })
+		const source = await roundtrip(
+			db.schema("Ground", { Catalog, Claim }, [
+				db.key(Catalog, ["group", "when"]),
+				db.contained(db.on(Claim, ["group", "when"]), db.on(Catalog, ["group", "when"]))
+			]),
+			`import type { Event } from "@bjornpagen/bumbledb"
+import { r0 } from "./bindings.ts"
+const value: Event = r0.axioms.A.when
+void value
+`
+		)
+		assert.match(source, /import \{ Result \} from "effect"/)
+		assert.match(source, /db\.key\(r0, \["group", "when"\]\)/)
+	} finally {
+		await runtime.dispose()
+	}
+})

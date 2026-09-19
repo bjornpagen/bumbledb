@@ -1,0 +1,9 @@
+'UnaryChains.reify_step' does not depend on any axioms
+'UnaryChains.compose_eval' does not depend on any axioms
+'UnaryChains.compose_associative' does not depend on any axioms
+'UnaryChains.identity_left' does not depend on any axioms
+'UnaryChains.identity_right' does not depend on any axioms
+'UnaryChains.compile_exact' does not depend on any axioms
+'UnaryChains.run_append' depends on axioms: [propext]
+'UnaryChains.population_complement' depends on axioms: [propext, Quot.sound]
+'UnaryChains.population_step' depends on axioms: [propext, Quot.sound]

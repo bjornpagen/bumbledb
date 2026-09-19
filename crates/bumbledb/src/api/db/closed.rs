@@ -3,9 +3,8 @@
 //! scan / typed decode) speak the same canonical wire as ordinary rows and
 //! typed borrows have a stable owner for the handle's lifetime.
 //!
-//! Sealed rows are encoded at schema validation in the fixed-width sealed
-//! codec (they refuse text columns by construction); this module is the one
-//! bridge from that sealed form to canonical row bytes.
+//! Scalar sealed rows retain their fixed-width codec. Event rows additionally
+//! retain owned values; this module bridges both forms to canonical row bytes.
 
 use std::collections::BTreeMap;
 
@@ -40,7 +39,7 @@ impl ClosedRows {
             let id = RelationId(u32::try_from(index).expect("sealed relation ids fit u32"));
             let mut rows = Vec::with_capacity(extension.len());
             for sealed in extension {
-                let values = crate::canonical::decode_sealed(relation, &sealed.fact, work)?;
+                let values = crate::canonical::decode_sealed(relation, sealed, work)?;
                 let canonical =
                     CanonicalRow::encode(relation.fields(), &values, work).map_err(|error| {
                         crate::error::Error::from_store(crate::storage::store::StoreError::Changes(

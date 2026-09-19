@@ -210,6 +210,75 @@ fn a_filtered_closed_atom_folds_to_a_membership_set() {
 }
 
 #[test]
+fn event_field_equality_folds_only_with_row_local_alignment() {
+    use crate::event::{Space, SpaceId};
+    let a = Space::new(SpaceId([131; 32]), 2, &())
+        .unwrap()
+        .coordinate(0, &())
+        .unwrap();
+    let b = crate::Event::from_bytes(&a.to_bytes(&()).unwrap(), &()).unwrap();
+    assert_ne!(a, b);
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                name: "Link".into(),
+                fields: vec![field("id", ValueType::U64)],
+                extension: None,
+            },
+            RelationDescriptor {
+                name: "Ground".into(),
+                fields: vec![
+                    field("left", ValueType::Event),
+                    field("right", ValueType::Event),
+                    field("tag", ValueType::U64),
+                ],
+                extension: Some(Box::new([
+                    Row {
+                        handle: "Equal".into(),
+                        values: Box::new([
+                            Value::Event(a.clone()),
+                            Value::Event(b.clone()),
+                            Value::U64(9),
+                        ]),
+                    },
+                    Row {
+                        handle: "Unequal".into(),
+                        values: Box::new([
+                            Value::Event(a),
+                            Value::Event(b.complement()),
+                            Value::U64(9),
+                        ]),
+                    },
+                ])),
+            },
+        ],
+        statements: vec![],
+    }
+    .validate()
+    .unwrap();
+    let q = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            atom(0, &[(0, var(0))]),
+            atom(
+                1,
+                &[
+                    (0, var(0)),
+                    (1, var(1)),
+                    (2, var(1)),
+                    (3, Term::Literal(Value::U64(9))),
+                ],
+            ),
+        ],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let normalized = grounded(&schema, &q);
+    assert_eq!(roles(&normalized), [Role::Positive, folded_pos(1, &[0])]);
+    assert_eq!(attached_sets(&normalized, 0), [vec![0]]);
+}
+
+#[test]
 fn the_off_switch_bypasses_the_evaluator() {
     let schema = theory();
     let query = selected_fold_query(20);

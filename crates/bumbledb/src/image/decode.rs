@@ -110,12 +110,15 @@ pub(super) fn decode_plan(
                     start: words_start(columns[first]),
                 },
                 // Sixteen exact identity bytes over two word columns:
-                // verbatim big-endian words, no pad bytes to check.
-                (ColumnWidth::Words { .. }, ValueType::Uuid) => Decode::FixedBytes {
-                    offset,
-                    starts: (0..2).map(|i| words_start(columns[first + i])).collect(),
-                    pad_mask: 0,
-                },
+                // verbatim big-endian words, no pad bytes to check. Events have
+                // already been registered in the generation before reaching here.
+                (ColumnWidth::Words { .. }, ValueType::Uuid | ValueType::Event) => {
+                    Decode::FixedBytes {
+                        offset,
+                        starts: (0..2).map(|i| words_start(columns[first + i])).collect(),
+                        pad_mask: 0,
+                    }
+                }
                 (ColumnWidth::Word, _) => Decode::Word {
                     offset,
                     start: words_start(columns[first]),

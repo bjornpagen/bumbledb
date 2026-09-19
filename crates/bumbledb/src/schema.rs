@@ -17,6 +17,7 @@ pub mod judge;
 pub mod manifest;
 pub mod render;
 
+mod coverage;
 mod literals;
 mod relation;
 #[cfg(test)]
@@ -205,17 +206,16 @@ pub(crate) enum EncodableCheck {
 }
 
 impl EncodableCheck {
-    pub(crate) fn matches(&self, layout: &FactLayout, fact: &[u8]) -> bool {
-        use crate::encoding::field_bytes;
+    pub(crate) fn matches(&self, layout: &FactLayout, fact: &SealedRow) -> bool {
         match self {
             Self::Encoded { field, bytes } => {
-                field_bytes(layout.encoded(fact), usize::from(field.0)) == &bytes[..]
+                fact.field_bytes(layout, usize::from(field.0)) == &bytes[..]
             }
             Self::EncodedSet {
                 field,
                 alternatives,
             } => {
-                let actual = field_bytes(layout.encoded(fact), usize::from(field.0));
+                let actual = fact.field_bytes(layout, usize::from(field.0));
                 alternatives.iter().any(|bytes| actual == &bytes[..])
             }
         }
@@ -394,14 +394,8 @@ impl StatementView<'_> {
     }
 }
 
-/// One sealed ground axiom: the handle plus the row's canonical fact bytes
-/// — the synthetic id field (the declaration index) followed by each
-/// intrinsic value's canonical encoding. Validation encodes these once.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SealedRow {
-    pub handle: Box<str>,
-    pub fact: Box<[u8]>,
-}
+mod ground;
+pub use ground::SealedRow;
 
 /// The sealed relation kind (CONTRACT C9). Shared layout lives on
 /// [`Relation`]; the extension payload lives in the closed arm. Closed

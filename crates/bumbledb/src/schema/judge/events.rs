@@ -7,6 +7,7 @@
 use super::grouped::{GroupedMap, encode_value};
 use super::{CandidateFacts, Judge, JudgeError, PendingViolation, encode_projection};
 use crate::event::{BoolOp4, Event};
+use crate::schema::coverage::{Coverage, covers};
 use crate::schema::{ContainmentStatement, RelationId};
 use crate::{Value, WorkContext};
 
@@ -50,11 +51,6 @@ fn event(value: &Value) -> &Event {
 /// A full projection has no stored owner. It denotes the full set in every
 /// admitted context, and is instantiated when an Event operand supplies one.
 const CONTEXTUAL_FULL: &[u8] = &[0];
-
-enum Coverage {
-    ContextualFull,
-    Region(Event),
-}
 
 fn read_coverage<E>(
     map: &mut GroupedMap<E>,
@@ -165,39 +161,18 @@ impl<E> Judge<'_, '_, E> {
             }
             determinant.clear();
             encode_projection(&statement.source, row, Some(position), &mut determinant);
-            let target = read_coverage(&mut coverage, &determinant, &mut bytes, judge.work)?;
-            let covered = if statement.source.projection.is_event_full() {
-                match target {
-                    Some(Coverage::ContextualFull) => true,
-                    Some(Coverage::Region(target)) => target.is_full(),
-                    // Every admitted world space is nonempty; no target cannot
-                    // cover full. No invented space or probability is needed.
-                    None => false,
-                }
+            let mut target = read_coverage(&mut coverage, &determinant, &mut bytes, judge.work)?;
+            let source = if statement.source.projection.is_event_full() {
+                None
             } else {
                 let at = usize::from(statement.source.projection.fields()[position].0);
-                let value = event(&row[at]);
-                match target {
-                    Some(Coverage::ContextualFull) => {
-                        coverage.put(&determinant, &value.space().full().to_bytes(judge.work)?)?;
-                        true
-                    }
-                    Some(Coverage::Region(target)) => {
-                        let value = value.align_to(&target.space(), judge.work)?;
-                        value
-                            .apply(BoolOp4::AND, &target.complement(), judge.work)?
-                            .is_empty()
-                    }
-                    None => {
-                        // An empty source requires no target witness. Its scalar roster
-                        // containment, if declared, is judged separately and still applies.
-                        // Retain the group's context even when the target union is empty:
-                        // subsequent source rows must not mix owners behind that shortcut.
-                        coverage.put(&determinant, &value.space().empty().to_bytes(judge.work)?)?;
-                        value.is_empty()
-                    }
-                }
+                Some(event(&row[at]))
             };
+            let contextual = !matches!(target, Some(Coverage::Region(_)));
+            let covered = covers(&mut target, source, judge.work)?;
+            if contextual && let Some(Coverage::Region(target)) = target {
+                coverage.put(&determinant, &target.to_bytes(judge.work)?)?;
+            }
             if !covered {
                 pending.violated = true;
                 judge.offer(pending, statement.source.relation, row)?;

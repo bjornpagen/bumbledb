@@ -6,17 +6,20 @@ import { join } from "node:path"
 import { test } from "node:test"
 import {
 	ChangeSet,
+	closed,
 	contained,
 	Event,
 	event,
 	key,
 	NativeRuntime,
 	on,
+	query,
 	relation,
 	Schema,
 	schema,
 	select,
-	u64
+	u64,
+	v
 } from "@bjornpagen/bumbledb"
 import { Effect, ManagedRuntime, Result } from "effect"
 import { backup, restore, verifyBackup } from "#admin.ts"
@@ -30,12 +33,16 @@ import { Transition } from "#transition.ts"
 const Child = relation("Child", { id: u64, filter: event })
 const Parent = relation("Parent", { id: u64, filter: event })
 const ChildById = key(Child, ["id"])
-const theory = (literal: Event) =>
-	schema("SelectedLog", { Child, Parent }, [
+const theory = (literal: Event) => {
+	const Known = closed("Known", ["Literal"], { when: event }, { Literal: { when: literal } })
+	return schema("SelectedLog", { Child, Parent, Known }, [
 		ChildById,
 		key(Parent, ["id"]),
+		key(Known, ["when"]),
 		contained(on(select(Child, { filter: literal }), "id"), on(select(Parent, { filter: literal }), "id"))
 	])
+}
+
 const options = {
 	workers: 2,
 	queueCapacity: 16,
@@ -116,6 +123,14 @@ test("Event-selected log schemas survive command recovery, runtime release, cach
 						const row = yield* snapshot.get(ChildById, { id: 1n })
 						assert.ok(row._tag === "Some")
 						assert.deepEqual(Event.toBytes(row.value.filter), saved.literal)
+						const ground = query(s).rule((r) => {
+							const row = v(s.relations.Known)
+							return r.match(s.relations.Known, row).find({ when: row.when })
+						})
+						const groundRows = yield* (yield* snapshot.execute(ground, {})).collect()
+						assert.equal(groundRows.length, 1)
+						assert.ok(groundRows[0])
+						assert.deepEqual(Event.toBytes(groundRows[0].when), saved.literal)
 						// Overlap cannot replace an exact selected parent, including on
 						// a recovered history whose Event owners were all reconstructed.
 						const draft = yield* ChangeSet.builder(s)

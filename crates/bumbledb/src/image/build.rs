@@ -505,10 +505,20 @@ fn drain_encoded_rows(
 /// A slab length that cannot be represented.
 /// # Panics
 /// Only if `relation` is ordinary or its sealed rows violate the validated schema.
+#[cfg(test)]
 pub fn synthesize_closed(
     rel: RelationId,
     relation: &Relation,
     generation: GenerationHandle,
+) -> Result<Arc<RelationImage>> {
+    synthesize_closed_with_work(rel, relation, generation, &crate::WorkContext::new())
+}
+
+pub(crate) fn synthesize_closed_with_work(
+    rel: RelationId,
+    relation: &Relation,
+    generation: GenerationHandle,
+    work: &crate::WorkContext,
 ) -> Result<Arc<RelationImage>> {
     let extension = relation
         .body()
@@ -519,12 +529,16 @@ pub fn synthesize_closed(
     let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
     let mut frame = allocate(&field_types, row_count)?;
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
+    let interner = crate::image::intern::InternerHandle::new(&generation, work);
     for (position, row) in extension.iter().enumerate() {
+        work.checkpoint()
+            .map_err(crate::api::prepared::source::work_error)?;
+        let resident = row.resident(layout, &interner)?;
         decode_fact(
             rel,
             &plan,
             layout.fact_width(),
-            &row.fact,
+            &resident,
             position,
             &mut frame.words,
             &mut frame.bytes,

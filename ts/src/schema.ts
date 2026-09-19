@@ -244,8 +244,8 @@ function verifyTargetKeys(
 
 /**
  * One target face's key resolution (the {@link verifyTargetKeys} leaf).
- * Closed target: the handle id is the ONE probe-able identity of a closed
- * relation, so the projection must be exactly `["id"]` — its own refusal
+ * Scalar closed targets use their synthetic id. Event/full targets resolve an
+ * explicit pointwise key. Other closed targets retain their own refusal
  * (the engine's `ClosedTargetNotHandle`): the rule is CLOSEDNESS, not key
  * absence. Ordinary target: the projection's field-name SET must equal
  * some roster member's set (the engine's `matching_functionality` —
@@ -260,7 +260,10 @@ function verifyTargetKeyFace(
 	declared: ReadonlyMap<string, ReadonlyArray<readonly ProjectionTerm[]>>,
 	rendered: string
 ): void {
-	if (isClosedMember(face.owner) && face.projection.at(-1) !== true) {
+	if (
+		isClosedMember(face.owner) &&
+		!face.projection.some((field) => projectedField(face.owner, field)?.kind === "event")
+	) {
 		if (face.projection.length === 1 && face.projection[0] === "id") {
 			return
 		}

@@ -2433,7 +2433,8 @@ fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDesc
                             Some(super::{name}::{handle}));"
             );
         }
-        // The column accessors (ruled 2026-07-23, R14): one const fn per
+        // Scalar columns remain const accessors. An Event owns its decoded
+        // decision diagram, so its accessor constructs an owned value at runtime.
 
         let lowered = descriptor.relations[rel_idx]
             .extension
@@ -2461,11 +2462,15 @@ fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDesc
                     const_value_tokens(&row.values[column], field)
                 );
             }
+            let qualifier = if matches!(field.ty, FieldTy::Event) {
+                ""
+            } else {
+                "const "
+            };
             let _ = write!(
                 accessors,
-                "/// The `{column}` ground-axiom column — an expansion-time \
-                 constant per handle.\n\
-                 #[must_use] pub const fn {column}(self) -> {ty} {{\n\
+                "/// The `{column}` ground-axiom value for this handle.\n\
+                 #[must_use] pub {qualifier}fn {column}(self) -> {ty} {{\n\
                      match self {{ {arms} }}\n\
                  }}\n",
                 column = field.name,

@@ -56,7 +56,7 @@ import { AuthoringError } from "#errors.ts"
  * silently widened.
  */
 
-import type { AnyClosed } from "#closed.ts"
+import type { AnyClosed, ClosedEventField } from "#closed.ts"
 import { isClosedMember, sealedFieldsOf } from "#closed.ts"
 import type { AnyFace, FaceOwner } from "#face.ts"
 import type { Same } from "#judgment.ts"
@@ -333,11 +333,11 @@ type JudgeTargetFace<F extends AnyFace, Keys extends readonly KeyEntry[]> = stri
 	: string extends F["projection"][number]
 		? true
 		: F["owner"] extends AnyClosed
-			? true extends F["projection"][number]
-				? DeclaredKeyMatch<F["owner"]["name"], F["projection"][number], Keys>
-				: SetEq<F["projection"][number], "id"> extends true
+			? [Extract<F["projection"][number], true | ClosedEventField<F["owner"]>>] extends [never]
+				? SetEq<F["projection"][number], "id"> extends true
 					? true
 					: TargetKeyWall<F["owner"]["name"], F["projection"][number]>
+				: DeclaredKeyMatch<F["owner"]["name"], F["projection"][number], Keys>
 			: F["owner"] extends AnyRelation
 				? DeclaredKeyMatch<F["owner"]["name"], F["projection"][number], Keys>
 				: true

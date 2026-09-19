@@ -388,6 +388,7 @@ pub fn decode_field(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn decode_values(
     fact: FactView<'_, '_>,
     resolve_str: impl FnMut(u64) -> crate::error::Result<Box<str>>,
@@ -395,6 +396,7 @@ pub(crate) fn decode_values(
     decode_values_keyed(fact, &[], &[], resolve_str)
 }
 
+#[cfg(test)]
 pub(crate) fn decode_values_keyed(
     fact: FactView<'_, '_>,
     projection: &[bumbledb_theory::schema::FieldId],

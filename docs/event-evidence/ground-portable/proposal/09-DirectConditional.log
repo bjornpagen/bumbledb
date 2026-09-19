@@ -1,0 +1,6 @@
+'DirectConditional.simultaneous_substitution' depends on axioms: [propext]
+'DirectConditional.substitution_composes' depends on axioms: [propext]
+'DirectConditional.identity_substitution' depends on axioms: [propext]
+'DirectConditional.conditional_polarities' does not depend on any axioms
+'DirectConditional.shannon_conditional' does not depend on any axioms
+'DirectConditional.sequential_is_not_simultaneous' does not depend on any axioms

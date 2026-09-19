@@ -8,7 +8,7 @@ import {
 	unitWeight,
 	type WeightOnSource
 } from "#capacity.ts"
-import type { AnyClosed } from "#closed.ts"
+import type { AnyClosed, ClosedEventField } from "#closed.ts"
 import { isClosedMember, memberDescriptor, sealedFieldOf } from "#closed.ts"
 import { AuthoringError } from "#errors.ts"
 import {
@@ -170,9 +170,14 @@ const checkedStatement = descriptorCache((raw): Statement => {
 		recordValue("key", input, ["kind", "owner", "projection"])
 		const owner = memberDescriptor(input.owner as unknown)
 		const projection = projectionDescriptor(owner, input.projection, "key")
-		if (isClosedMember(owner) && projection.at(-1) !== true)
+		const tail = projection.at(-1)
+		if (
+			isClosedMember(owner) &&
+			tail !== true &&
+			(typeof tail !== "string" || sealedFieldOf(owner, tail)?.kind !== "event")
+		)
 			throw new AuthoringError({
-				message: `key(${owner.name}, ...): closedness already materializes its id key; additional SDK keys on closed relations require trailing true`
+				message: `key(${owner.name}, ...): closedness already materializes its id key; additional SDK keys on closed relations require a trailing Event field or true`
 			})
 		return Object.freeze({ kind: "key", owner, projection })
 	}
@@ -214,7 +219,7 @@ function key<R extends AnyRelation, const Projection extends NonemptyProjection<
 	relation: R,
 	fields: Projection
 ): KeyStatement<R, Projection>
-function key<R extends AnyClosed, const Projection extends readonly [...FaceFields<R>[], true]>(
+function key<R extends AnyClosed, const Projection extends readonly [...FaceFields<R>[], true | ClosedEventField<R>]>(
 	relation: R,
 	fields: Projection
 ): KeyStatement<R, Projection>

@@ -1,0 +1,44 @@
+{
+  "revision": "0.9",
+  "passed": true,
+  "scope": "Current proposal, exact Lean evidence and retained semantic references; no Rust or performance qualification",
+  "proposal_proof": {
+    "files": 30,
+    "reports": 246,
+    "manifest_sha256": "7f0e50bcb6fe3d6da6c73c1b581129775d08d3d6d1ea87ec56e731afd79ffc8f"
+  },
+  "native_proof": {
+    "files": 22,
+    "reports": 371,
+    "manifest_sha256": "3aca77933cd86acfb63ac28335febeca3f9d21b6ad7ddf8eae4bc2406a0a2faa"
+  },
+  "references": {
+    "suites": 7,
+    "scope": "exact finite reference examples and historical source subtheories"
+  },
+  "native_documents_sha256": {
+    "docs/event-implementation.md": "ce85a8bc5590698ddf3ab177ba3923650234fda4408b9372798d9afd11e8655b",
+    "docs/event-value-format.md": "f67104d800b22713ba5bdeeddeb1673ebf6b2f1d176f0770f5f1673f324e1d24",
+    "docs/event-projections.md": "4dea69e2df06fcb0b4a7d564cc9e0651a9be72677d4bee82f032f272dc9dadf4",
+    "docs/event-maps.md": "49c44fcdba2e1510e6f9a31a6ec17d8860f7df1d4504738abcbe2a5cdadd0470",
+    "docs/event-relations.md": "be31753272177fe6a539e7328b530e4dc70d79ae30eb63c321fd473be68a6566",
+    "docs/event-inspection.md": "033bb08b7e1a91e776967ef99fcdd2560e4f6b0a398ef8883d6af3c37bdf40d3",
+    "docs/event-information.md": "fa9a355dee86e2850feeae98f68676aaed8e7786e6772e46ccc752ca02be8db0",
+    "docs/event-fixed-points.md": "7865e938a41ddf87194b7c0bf834a3a9fcb8621510e3c17f9531e59836742311",
+    "docs/event-partitions.md": "ae0d8473ba4aa9f89d53f496b4f46c5aa2cb60266d5272524f1135deed34f377",
+    "docs/event-actions.md": "22ce4b4220911ed5db1c059600cbdbc786da1151efab332e21953e28ce592f4b",
+    "docs/event-queries.md": "a8b6763a4e37da8efbf712cad1e55388e32dd746acd17bff2254005fedfcfbdf",
+    "docs/event-descriptors.md": "7b28ffc35de20fe2f0c20d38218c4d4e4fcf5a75268ff255d212d271ab1bc7b6",
+    "docs/event-sources.md": "79866c61c1a3aae0194149179b7cead9d6d32a6a09d930e2ea90a11a5f598d51",
+    "docs/event-functions.md": "10c582e742dba8c7d90eb980e03227305f4e0e1e0d2862028d08d99685b814d6",
+    "docs/event-revisions.md": "0ae128f045bf7a5fd27cb2e75057bf7183bf9255681a0c365a563387d52f58c4",
+    "docs/event-source-descriptors.md": "d5ba37614b87501309837d967fa6880edf0f0b589694051c16751e28eb8c7717",
+    "docs/event-sdk.md": "e180b501d75921d9296fdef9bde7822b872d0ebe33f47741949a3f2fff5f0e48",
+    "docs/event-selections.md": "6272ad067113afebfa2409959e25d4d0685226e2e7e57900a4e950dcd2514a76",
+    "docs/event-ground.md": "a97fa6a507801495bea51b801edcbdd9ac3e78c3932fb23d869bfd93dcfe591c"
+  },
+  "baseline_archive_verified": true,
+  "historical_production_isolation_reasserted": false,
+  "implementation_complete": false,
+  "checker_sha256": "a787d0ddc715ac4d35f673c2b4afa36a3977e6b62fbe46cf4abfa7d10a1f07b9"
+}

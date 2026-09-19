@@ -541,29 +541,31 @@ pub fn decode(
     Ok(DecodedRow { values })
 }
 
-/// The schema's fixed-width closed extension enters the same owned row
+/// The schema's ground extension enters the same owned row
 /// representation as a stored canonical row. Only one row is decoded at a
 /// time; a closed source need not acquire a resident relation image.
 pub(crate) fn decode_sealed(
     relation: &crate::schema::Relation,
-    bytes: &[u8],
+    row: &crate::schema::SealedRow,
     work: &WorkContext,
 ) -> crate::error::Result<DecodedRow> {
     work.checkpoint()
         .map_err(crate::api::prepared::source::work_error)?;
-    let mut values = Vec::new();
-    values
-        .try_reserve_exact(relation.fields().len())
-        .map_err(|_| {
-            crate::error::Error::from_store(crate::storage::store::StoreError::Allocation)
-        })?;
-    crate::encoding::decode_values_keyed_into(
-        relation.layout().encoded(bytes),
-        &[],
-        &[],
-        |_| unreachable!("sealed closed extensions refuse text fields"),
-        &mut values,
-    )?;
+    let values = match row.values(relation.layout())? {
+        std::borrow::Cow::Owned(values) => values,
+        std::borrow::Cow::Borrowed(values) => {
+            let mut owned = Vec::new();
+            owned.try_reserve_exact(values.len()).map_err(|_| {
+                crate::error::Error::from_store(crate::storage::store::StoreError::Allocation)
+            })?;
+            for value in values {
+                work.checkpoint()
+                    .map_err(crate::api::prepared::source::work_error)?;
+                owned.push(value.clone());
+            }
+            owned
+        }
+    };
     Ok(DecodedRow { values })
 }
 

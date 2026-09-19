@@ -325,7 +325,15 @@ pub fn emit(schema: &SchemaDescriptor) -> Result<String, BindingError> {
     let mut out = String::from(
         "// Generated from a native-verified schema snapshot.\nimport * as db from \"@bjornpagen/bumbledb\"\n\n",
     );
-    if schema.statements.iter().any(|statement| match statement {
+    if schema.relations.iter().any(|relation| {
+        relation.extension.as_ref().is_some_and(|rows| {
+            rows.iter().any(|row| {
+                row.values
+                    .iter()
+                    .any(|value| matches!(value, Value::Event(_)))
+            })
+        })
+    }) || schema.statements.iter().any(|statement| match statement {
         StatementDescriptor::Functionality { .. } => false,
         StatementDescriptor::Containment { source, target }
         | StatementDescriptor::Capacity { source, target, .. } => {
@@ -441,7 +449,14 @@ fn statement(
             relation,
             projection: fields,
         } => {
-            if schema.relations[relation.0 as usize].extension.is_some() && !fields.is_event_full()
+            if schema.relations[relation.0 as usize].extension.is_some()
+                && !fields.is_event_full()
+                && !fields.fields().last().is_some_and(|at| {
+                    schema.relations[relation.0 as usize]
+                        .sealed_fields()
+                        .nth(usize::from(at.0))
+                        .is_some_and(|field| *field.value_type() == ValueType::Event)
+                })
             {
                 return Err(refuse(
                     format!("relation {}", relation.0),

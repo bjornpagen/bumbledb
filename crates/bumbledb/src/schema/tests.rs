@@ -1,5 +1,6 @@
 use super::*;
 
+mod event_closed;
 mod event_selections;
 mod member_set;
 mod obligations;

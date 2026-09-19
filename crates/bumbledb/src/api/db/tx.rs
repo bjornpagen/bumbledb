@@ -555,7 +555,7 @@ impl<'a, S> WriteTx<'a, S> {
             &key_values,
         )?;
         if let Some(rows) = self.closed.get(relation) {
-            return match get_path::closed_row_by_key(rows, statement, &key_values) {
+            return match get_path::closed_row_by_key(rows, statement, &key_values, self.work)? {
                 Some(row) => {
                     K::Fact::decode(RowReader::with_work(&row.canonical, self.work)?).map(Some)
                 }
@@ -594,7 +594,7 @@ impl<'a, S> WriteTx<'a, S> {
             &key_values,
         )?;
         if let Some(rows) = self.closed.get(relation) {
-            return match get_path::closed_row_by_key(rows, statement, &key_values) {
+            return match get_path::closed_row_by_key(rows, statement, &key_values, &work)? {
                 Some(row) => {
                     K::Fact::decode(RowReader::with_work(&row.canonical, &work)?).map(Some)
                 }
@@ -629,7 +629,7 @@ impl<'a, S> WriteTx<'a, S> {
             key_values,
         )?;
         if let Some(rows) = self.closed.get(relation) {
-            return get_path::closed_row_by_key(rows, statement, key_values)
+            return get_path::closed_row_by_key(rows, statement, key_values, &work)?
                 .map(|row| {
                     crate::canonical::decode(
                         self.schema.relation(relation).fields(),

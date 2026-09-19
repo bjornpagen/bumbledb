@@ -28,9 +28,7 @@ fn sealed_row_string_filter_uses_the_exact_pinned_text_identity() {
     let mut fact = Vec::from(7u64.to_be_bytes());
     fact.extend_from_slice(&shared.word.to_be_bytes());
     fact.extend_from_slice(&(1u64 << 63).to_be_bytes());
-    let ops = SealedRow {
-        fact: layout.encoded(&fact),
-    };
+    let ops = SealedRow::Encoded(layout.encoded(&fact));
     assert!(!ops.string_field(OperandAddr::from(FieldId(0))));
     assert!(ops.string_field(OperandAddr::from(FieldId(1))));
     assert!(!ops.string_field(OperandAddr::from(FieldId(2))));
@@ -49,9 +47,7 @@ fn sealed_row_missing_resolver_is_error_not_a_dropped_id() {
         .unwrap();
     let layout = FactLayout::new(&[ValueType::String]);
     let fact = shared.word.to_be_bytes();
-    let ops = SealedRow {
-        fact: layout.encoded(&fact),
-    };
+    let ops = SealedRow::Encoded(layout.encoded(&fact));
     let filters = [eq_text(0, Const::Text(shared))];
     let verdict = sealed_row_survives(&ops, &filters, TextEq::from_optional_generation(None));
     assert!(

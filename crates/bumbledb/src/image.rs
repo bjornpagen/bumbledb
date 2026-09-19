@@ -26,7 +26,9 @@ pub(crate) use bind::{ImageBind, SourceImages};
 pub(crate) use build::build_from_source;
 pub(crate) use epoch::{CacheGeneration, ViewEpoch};
 
-pub use build::{TransientImage, synthesize_closed};
+pub use build::TransientImage;
+#[cfg(test)]
+pub use build::synthesize_closed;
 pub use text_eq::TextEq;
 
 // M2 Max's measured stream-tracker pitch period. Small nonzero residues
