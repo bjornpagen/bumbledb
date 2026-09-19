@@ -359,6 +359,10 @@ impl Context {
                     self.var_types.get(&var),
                     Some(QueryType::Stored(ValueType::Event))
                 ),
+                ObservationInputKind::Identity => matches!(
+                    self.var_types.get(&var),
+                    Some(QueryType::Stored(ValueType::FixedBytes { len: 32 }))
+                ),
                 ObservationInputKind::Integer => matches!(
                     self.var_types.get(&var),
                     Some(QueryType::Stored(ValueType::I64 | ValueType::U64))

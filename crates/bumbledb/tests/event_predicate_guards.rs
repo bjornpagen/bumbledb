@@ -18,6 +18,9 @@ bumbledb::schema! {
     pub PredicateGuards;
     relation Trial { game: u64, claim: event, given: event }
     relation Decision { game: u64 }
+    relation Presentation { game: u64, source: event, identity: bytes<32> }
+    relation WrongPresentation { source: event, short: bytes<31>, long: bytes<33> }
+    Presentation(game) -> Presentation;
     relation Truth { game: u64, case: u64, when: event }
     relation Claim { game: u64, when: event }
     Trial(game) -> Trial;
@@ -38,6 +41,9 @@ fn q(n: i64, d: u64) -> Rat {
     Rat::fraction(&n.to_string(), &d.to_string(), &mut work()).unwrap()
 }
 fn source() -> Space {
+    named_source(SpaceId([211; 32]), false)
+}
+fn named_source(identity: SpaceId, reverse: bool) -> Space {
     let limits = ParameterSourceLimits::default();
     let parameter = ParameterId([210; 32]);
     let p = Poly::parameter(parameter);
@@ -65,7 +71,7 @@ fn source() -> Space {
             .unwrap(),
     )
     .unwrap();
-    let raw = Space::new(SpaceId([211; 32]), 1, &())
+    let raw = Space::new(identity, 1, &())
         .unwrap()
         .with_parameters(domain.clone(), &[], limits, &mut work())
         .unwrap();
@@ -80,6 +86,7 @@ fn source() -> Space {
         )
         .unwrap()
     };
+    let (p, tail) = if reverse { (tail, p) } else { (p, tail) };
     raw.with_parameter_density(
         &[
             ParameterDensityPiece {
@@ -900,4 +907,229 @@ fn parameter_region_queries_share_guards_with_partial_observations_without_a_new
             .len(),
         2
     );
+}
+
+#[test]
+fn bound_guard_plans_retain_row_sources_names_laws_and_exact_transport() {
+    let path = common::TempDir::new("bound-query-guards");
+    let db = Db::create(path.path(), PredicateGuards, common::work())
+        .unwrap()
+        .unwrap();
+    let sources = [
+        named_source(SpaceId([234; 32]), false),
+        named_source(SpaceId([235; 32]), true),
+    ];
+    let identities: [[u8; 32]; 2] = [
+        std::array::from_fn(|i| u8::try_from(i).unwrap()),
+        std::array::from_fn(|i| 255 - u8::try_from(i).unwrap()),
+    ];
+    for (i, source) in sources.iter().enumerate() {
+        let game = u64::try_from(i).unwrap();
+        db.write(common::work(), |tx| {
+            tx.insert([&Trial {
+                game,
+                claim: source.coordinate(0, &()).unwrap(),
+                given: source.full(),
+            }])?;
+            tx.insert([&Presentation {
+                game,
+                source: source.full(),
+                identity: identities[i],
+            }])
+        })
+        .unwrap()
+        .unwrap();
+    }
+    let program = query!(PredicateGuards {
+        interior observed(game,claim,p: Probability(claim,given)) | Trial(game,claim,given);
+        interior truth(game,claim,known: Predicate(Value(p)/Value(p)>0),low: Predicate(Value(p)<1/2)) | observed(game,claim,p);
+        interior cases(game,source,identity,known,low,
+            yes: Guard(Holds(known,Common(Refine(source,identity),low))),
+            hole: Guard(Undefined(known,Common(Refine(source,identity),low))),
+            held: Guard(Lift(known,Common(Refine(source,identity),low),claim)))
+            | truth(game,claim,known,low), Presentation(game,source,identity);
+        (game,yes,hole,original: Guard(Descend(known,Common(Refine(source,identity),low),held)))
+            | cases(game,source,identity,known,low,yes,hole,held);
+    });
+    let existing = query!(PredicateGuards {
+        (game,yes: Guard(Holds(Sign(1,4),Existing(source)))) | Presentation(game,source,identity);
+    });
+    let mut retained = Vec::new();
+    for fallback in [false, true] {
+        let mut prepared = db.prepare(&program, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        retained.push(
+            db.read(common::work(), |tx| {
+                tx.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+        let mut prepared = db.prepare(&existing, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        let answers = db
+            .read(common::work(), |tx| {
+                tx.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap();
+        assert_eq!(answers.len(), 2);
+        for (i, source) in sources.iter().enumerate() {
+            let AnswerValue::Event(event) = answers.get(i, 1) else {
+                panic!("event")
+            };
+            assert_eq!(
+                event.to_bytes(&()).unwrap(),
+                source.full().to_bytes(&()).unwrap()
+            );
+        }
+    }
+    let invalid = query!(PredicateGuards {(e: Guard(Holds(Sign(1,4),Existing(game)))) | Presentation(game,source,identity);});
+    assert!(db.prepare(&invalid, common::work()).is_err());
+    let invalid = query!(PredicateGuards {(e: Guard(Holds(Sign(1,4),Refine(source,game)))) | Presentation(game,source,identity);});
+    assert!(db.prepare(&invalid, common::work()).is_err());
+    let invalid = query!(PredicateGuards {(e: Guard(Holds(Sign(1,4),Refine(source,short)))) | WrongPresentation(source,short,long);});
+    assert!(db.prepare(&invalid, common::work()).is_err());
+    let invalid = query!(PredicateGuards {(e: Guard(Holds(Sign(1,4),Refine(source,long)))) | WrongPresentation(source,short,long);});
+    assert!(db.prepare(&invalid, common::work()).is_err());
+    drop((db, program, existing));
+    let limits = ParameterSourceLimits::default();
+    for answers in retained {
+        assert_eq!(answers.len(), 2);
+        for i in 0..2 {
+            let AnswerValue::Event(yes) = answers.get(i, 1) else {
+                panic!("event")
+            };
+            let AnswerValue::Event(hole) = answers.get(i, 2) else {
+                panic!("event")
+            };
+            let AnswerValue::Event(original) = answers.get(i, 3) else {
+                panic!("event")
+            };
+            assert_eq!(yes.space().identity(), SpaceId(identities[i]));
+            assert_eq!(
+                original.to_bytes(&()).unwrap(),
+                sources[i]
+                    .coordinate(0, &())
+                    .unwrap()
+                    .to_bytes(&())
+                    .unwrap()
+            );
+            for n in 0..=4 {
+                for outcomes in 0..2 {
+                    let world = ParameterWorld {
+                        parameter: RealWitness::Rational(q(n, 4)),
+                        outcomes,
+                    };
+                    let defined = if i == 0 { n != 0 } else { n != 4 };
+                    assert_eq!(
+                        yes.contains_parameter(&world, limits, &mut work()).unwrap(),
+                        defined
+                    );
+                    assert_eq!(
+                        hole.contains_parameter(&world, limits, &mut work())
+                            .unwrap(),
+                        !defined
+                    );
+                }
+            }
+        }
+    }
+    // Persisted inputs and all four identity words replay after owner closure.
+    drop(sources);
+    let db = Db::open(path.path(), PredicateGuards, common::work()).unwrap();
+    let probe = query!(PredicateGuards {(e: Guard(Holds(Sign(1,4),Existing(source)))) | Presentation(game,source,identity);});
+    let mut prepared = db.prepare(&probe, common::work()).unwrap();
+    assert_eq!(
+        db.read(common::work(), |tx| tx
+            .execute_collect(&mut prepared, &[] as &[BindValue]))
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn bound_guard_sources_refuse_partial_markers_and_keep_transport_faults() {
+    let path = common::TempDir::new("bound-source-faults");
+    let db = Db::create(path.path(), PredicateGuards, common::work())
+        .unwrap()
+        .unwrap();
+    let source = source();
+    let foreign = named_source(SpaceId([236; 32]), false);
+    db.write(common::work(), |tx| {
+        tx.insert([
+            &Trial {
+                game: 1,
+                claim: source.coordinate(0, &()).unwrap(),
+                given: source.full(),
+            },
+            &Trial {
+                game: 2,
+                claim: source.empty(),
+                given: source.full(),
+            },
+        ])?;
+        tx.insert([
+            &Presentation {
+                game: 1,
+                source: foreign.full(),
+                identity: [237; 32],
+            },
+            &Presentation {
+                game: 2,
+                source: Space::new(SpaceId([238; 32]), 1, &()).unwrap().full(),
+                identity: [239; 32],
+            },
+        ])
+    })
+    .unwrap()
+    .unwrap();
+    let invalid = query!(PredicateGuards {
+        interior invalid(game,e:Guard(Holds(Sign(0,4),Existing(claim)))) | Trial(game,claim,given),game==?game;
+        (e) | invalid(game,e), game == 999;
+    });
+    let finite_refinement = query!(PredicateGuards {
+        (e:Guard(Holds(Sign(0,4),Refine(source,identity)))) | Presentation(game,source,identity),game==2;
+    });
+    let wrong_source = query!(PredicateGuards {
+        (e:Guard(Lift(Sign(1,4),Existing(source),claim))) | Trial(game: id,claim,given),Presentation(game: id,source,identity);
+    });
+    let mut faults = None;
+    for fallback in [false, true] {
+        let mut prepared = db.prepare(&invalid, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        for game in [1, 2] {
+            assert!(matches!(
+                db.read(common::work(), |tx| tx
+                    .execute_collect(&mut prepared, &[BindValue::U64(game)])),
+                Err(bumbledb::Error::Event(
+                    bumbledb::event::Error::InvalidEncoding
+                ))
+            ));
+        }
+        let mut prepared = db.prepare(&finite_refinement, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        assert!(matches!(
+            db.read(common::work(), |tx| tx
+                .execute_collect(&mut prepared, &[] as &[BindValue])),
+            Err(bumbledb::Error::Event(
+                bumbledb::event::Error::MissingParameter
+            ))
+        ));
+        let mut prepared = db.prepare(&wrong_source, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        let error = db
+            .read(common::work(), |tx| {
+                tx.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap_err();
+        let bumbledb::Error::EventFaults(found) = error else {
+            panic!("transport context")
+        };
+        assert_eq!(found.len(), 2);
+        if let Some(previous) = &faults {
+            assert_eq!(previous, &found);
+        } else {
+            faults = Some(found);
+        }
+    }
 }

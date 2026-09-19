@@ -30,7 +30,22 @@ module.exports = async ({ native, runtime, snapshot, operation, close, collect, 
   // Resolving an undefined companion does not make a defined primary undefined.
   const resolved=await collect(query({kind:'guard',expr:{...base,resolve:[hole,truth]}}));
   assert.deepEqual(Buffer.from(resolved[0][0]),full);evaluations++;
+  // Binding the source retains it even when it is not projected. Stage a full
+  // marker from each existing Event and then interpret a bound source plan.
+  const sourceStage = query({kind:'event',expr:{kind:'full',var:0}});
+  const dynamic = query({kind:'guard',expr:{kind:'holds',predicate:truth,plan:{kind:'boundExisting',source:0}}});
+  dynamic.interiors=[{head:sourceStage.head,rules:sourceStage.rules}];
+  dynamic.rules[0].atoms[0].source={kind:'interior',interior:0};
+  const dynamicRows=await collect(dynamic);
+  assert.deepEqual(Buffer.from(dynamicRows[0][0]),full);evaluations++;
+  await assert.rejects(()=>collect(query({kind:'guard',expr:{kind:'holds',predicate:truth,plan:{kind:'boundExisting',source:0}}})));
   const malformed = [
+    {...base,plan:{kind:'boundExisting',source:-1}},
+    {...base,plan:{kind:'boundExisting',source:0,identity:1}},
+    {...base,plan:{kind:'boundRefine',source:0,identity:0}},
+    {...base,plan:{kind:'boundRefine',source:0,identity:1}},
+    {...base,plan:{kind:'boundRefine',source:0}},
+    {...base,plan:{kind:'boundExisting',source:full}},
     {...base,kind:'maybe'}, {...base,ignored:true}, {...base,input:0},
     {...base,predicate:{kind:'var',var:0}},
     {...base,plan:{...plan,source:fixture}},

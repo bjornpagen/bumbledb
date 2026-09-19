@@ -1,15 +1,45 @@
-//! Captured source plans keep guard construction and exact transport explicit.
+//! Captured and row-bound plans keep sources and exact transport explicit.
 use super::{
     Import, ImportKind, Name, Parse, Scope, Tokens, events, expect_ident, expect_punct, fail,
-    peek_punct, predicates, take_paren_group,
+    predicates, take_paren_group,
 };
 
 pub(super) struct Expression {
     predicate: predicates::Expression,
     companions: Vec<predicates::Expression>,
-    plan: Name,
+    plan: Plan,
     operation: Name,
     input: Option<Name>,
+}
+enum Plan {
+    Captured(Name),
+    Bound {
+        source: Name,
+        identity: Option<Name>,
+    },
+}
+fn plan(tokens: &mut Tokens) -> Parse<Plan> {
+    let name = expect_ident(tokens, "a guard import, Existing or Refine")?;
+    if matches!(name.text.as_str(), "Existing" | "Refine")
+        && matches!(tokens.peek(), Some(proc_macro::TokenTree::Group(_)))
+    {
+        let (mut args, _) = take_paren_group(tokens, "the bound source plan")?;
+        let source = expect_ident(&mut args, "a full Event variable")?;
+        let identity = if name.text == "Refine" {
+            expect_punct(
+                &mut args,
+                ',',
+                "a comma before the bytes<32> identity variable",
+            )?;
+            Some(expect_ident(&mut args, "a bytes<32> identity variable")?)
+        } else {
+            None
+        };
+        end(&mut args)?;
+        Ok(Plan::Bound { source, identity })
+    } else {
+        Ok(Plan::Captured(name))
+    }
 }
 fn end(tokens: &mut Tokens) -> Parse<()> {
     if let Some(extra) = tokens.next() {
@@ -33,29 +63,35 @@ pub(super) fn parse(tokens: &mut Tokens) -> Parse<Expression> {
     let mut nodes = 1;
     predicates::check_shape(&predicate, 2, &mut nodes)?;
     expect_punct(&mut args, ',', "a comma before the guard plan")?;
-    let mut plan = expect_ident(&mut args, "a declared guard plan or Common")?;
     let mut companions = Vec::new();
-    if plan.text == "Common" && !peek_punct(&mut args, ',') && args.peek().is_some() {
-        let (mut roster, _) = take_paren_group(&mut args, "Common's plan and predicates")?;
-        plan = expect_ident(&mut roster, "a declared guard plan")?;
-        expect_punct(
-            &mut roster,
-            ',',
-            "a comma before Common's nonempty predicate roster",
-        )?;
-        loop {
-            let companion = predicates::expression(&mut roster, 0, 1)?;
-            predicates::check_shape(&companion, 2, &mut nodes)?;
-            companions.push(companion);
-            if roster.peek().is_none() {
-                break;
+    let mut trial = args.clone();
+    let name = expect_ident(&mut trial, "a guard plan or Common")?;
+    let plan =
+        if name.text == "Common" && matches!(trial.peek(), Some(proc_macro::TokenTree::Group(_))) {
+            args = trial;
+            let (mut roster, _) = take_paren_group(&mut args, "Common's plan and predicates")?;
+            let source = plan(&mut roster)?;
+            expect_punct(
+                &mut roster,
+                ',',
+                "a comma before Common's nonempty predicate roster",
+            )?;
+            loop {
+                let companion = predicates::expression(&mut roster, 0, 1)?;
+                predicates::check_shape(&companion, 2, &mut nodes)?;
+                companions.push(companion);
+                if roster.peek().is_none() {
+                    break;
+                }
+                expect_punct(&mut roster, ',', "a comma between Common predicates")?;
+                if roster.peek().is_none() {
+                    break;
+                }
             }
-            expect_punct(&mut roster, ',', "a comma between Common predicates")?;
-            if roster.peek().is_none() {
-                break;
-            }
-        }
-    }
+            source
+        } else {
+            plan(&mut args)?
+        };
     let input = if matches!(operation.text.as_str(), "Lift" | "Descend") {
         expect_punct(&mut args, ',', "a comma before the Event input")?;
         Some(expect_ident(&mut args, "an Event variable")?)
@@ -74,7 +110,23 @@ pub(super) fn parse(tokens: &mut Tokens) -> Parse<Expression> {
 }
 impl Expression {
     pub(super) fn emit(&self, scope: &Scope, imports: &[Import]) -> Parse<String> {
-        let plan = events::imported(&self.plan, imports, ImportKind::Guard)?;
+        let plan = match &self.plan {
+            Plan::Captured(name) => format!(
+                "::bumbledb::GuardPlanExpr::Captured({})",
+                events::imported(name, imports, ImportKind::Guard)?
+            ),
+            Plan::Bound { source, identity } => {
+                let source = scope.head_var(source)?;
+                if let Some(identity) = identity {
+                    format!(
+                        "::bumbledb::GuardPlanExpr::Refine {{ source: ::bumbledb::VarId({source}), identity: ::bumbledb::VarId({}) }}",
+                        scope.head_var(identity)?
+                    )
+                } else {
+                    format!("::bumbledb::GuardPlanExpr::Existing(::bumbledb::VarId({source}))")
+                }
+            }
+        };
         let predicate = self.predicate.emit(scope, imports, 1)?;
         let companions = self
             .companions

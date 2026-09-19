@@ -92,7 +92,7 @@ mod guards;
 mod numbers;
 mod payoffs;
 mod predicates;
-pub(crate) use guards::GuardExpr;
+pub(crate) use guards::{GuardExpr, GuardPlan};
 pub(crate) use numbers::NumberExpr;
 use payoffs::PayoffAdmission;
 pub(crate) use predicates::PredicateExpr;

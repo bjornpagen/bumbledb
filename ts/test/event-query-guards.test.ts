@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Effect, ManagedRuntime, Result } from "effect"
 import {
+	bytes,
 	ChangeSet,
 	ParameterDomain as D,
 	Db,
@@ -34,7 +35,8 @@ import { parseGuardIr } from "#query/guard-ir.ts"
 import { runtimeOptions, storeDir } from "#test/fixtures/learning.ts"
 
 const Trial = relation("Trial", { id: u64, claim: event, given: event })
-const Theory = schema("QueryGuards", { Trial }, [key(Trial, ["id"])])
+const Presentation = relation("Presentation", { id: u64, source: event, identity: bytes(32) })
+const Theory = schema("QueryGuards", { Trial, Presentation }, [key(Trial, ["id"]), key(Presentation, ["id"])])
 const observed = query(Theory).rule((r) => {
 	const c = v(Trial)
 	return r.match(Trial, c).find({ id: c.id, claim: c.claim, p: probability(c.claim, c.given) })
@@ -42,6 +44,10 @@ const observed = query(Theory).rule((r) => {
 function types(plan: GuardPlan) {
 	const q = query(Theory).rule((r) => {
 		const c = v(observed)
+		// @ts-expect-error Bound source must be an Event variable.
+		GuardPlan.bound(c.id)
+		// @ts-expect-error Bound identity must be a bytes<32> variable.
+		GuardPlan.boundRefine(c.id, c.claim)
 		// @ts-expect-error Guard interpretation requires a predicate.
 		Guard.holds(c.p, plan)
 		// @ts-expect-error Guard transport requires an Event column.
@@ -78,6 +84,21 @@ test("guard plans and expression shape are pure, owned and strict", () => {
 	const unbound = Guard.common(plan, [T.sign(N.integer(v(Trial).id), 4)])
 	assert.throws(
 		() => query(Theory).rule((r) => r.match(Trial, trial).find({ when: Guard.holds(value, unbound) })),
+		/not bound/
+	)
+	const row = v(Presentation)
+	assert.throws(() => GuardPlan.bound(row.id as never), /Event variable/)
+	assert.throws(() => GuardPlan.boundRefine(row.id as never, row.source), /bytes<32>/)
+	const dynamic = query(Theory).rule((r) =>
+		r.match(Presentation, row).find({
+			when: Guard.holds(T.sign(N.integer(row.id), 4), GuardPlan.boundRefine(row.identity, row.source))
+		})
+	)
+	const dynamicDescription = describeQuery(dynamic)
+	assert.deepEqual(describeQuery(queryFromDescription(Theory, dynamicDescription, { when: event })), dynamicDescription)
+	assert.throws(
+		() =>
+			query(Theory).rule((r) => r.match(Trial, trial).find({ when: Guard.holds(value, GuardPlan.bound(row.source)) })),
 		/not bound/
 	)
 	let deep = N.integer(v(Trial).id)
@@ -304,4 +325,102 @@ test("query guard refinements preserve all truth cases, law, transport and owner
 	)
 	assert.equal(retained.length, 1)
 	assert.ok(retained.every((row) => Object.values(row).every(Event.isEvent)))
+})
+
+test("row-bound guard plans retain stored sources and presentation identities through staging", async () => {
+	const retained = await run(
+		Effect.scoped(
+			Effect.gen(function* () {
+				const parameter = new Uint8Array(32).fill(250)
+				const domain = yield* D.new(yield* R.full(parameter))
+				const p = yield* P.parameter(parameter)
+				const positive = yield* R.whereSign(parameter, p, S.positive)
+				const truth = T.region(domain, positive)
+				const one = yield* Q.fraction(1n)
+				const constant = T.equal(N.literal(one), N.literal(one))
+				const sourceA = yield* Event.withParameters(yield* Event.space(new Uint8Array(32).fill(251), 1n), domain, [])
+				const sourceB = yield* Event.withParameters(yield* Event.space(new Uint8Array(32).fill(252), 1n), domain, [])
+				const sources = [sourceA, sourceB]
+				const identities = [
+					Uint8Array.from({ length: 32 }, (_, i) => i),
+					Uint8Array.from({ length: 32 }, (_, i) => 255 - i)
+				]
+				const db = yield* Db.create(storeDir("sdk-bound-guards"), Theory)
+				const changes = yield* ChangeSet.builder(Theory)
+				for (const [i, source] of sources.entries()) {
+					const identity = identities[i]
+					assert.ok(identity)
+					yield* changes.insert(Presentation, [{ id: BigInt(i), source, identity }])
+					yield* changes.insert(Trial, [{ id: BigInt(i), claim: yield* Event.coordinate(source, 0n), given: source }])
+				}
+				assert.equal((yield* db.apply(yield* changes.finish(), { expected: { kind: "any" } })).kind, "accepted")
+				const snapshot = yield* db.snapshot()
+				const cases = query(Theory).rule((r) => {
+					const s = v(Presentation)
+					const t = v(Trial)
+					const plan = Guard.common(GuardPlan.boundRefine(s.identity, s.source), [truth, constant])
+					return r
+						.match(Presentation, s)
+						.match(Trial, t)
+						.where(r.eq(s.id, t.id))
+						.find({
+							id: s.id,
+							source: s.source,
+							identity: s.identity,
+							yes: Guard.holds(truth, plan),
+							no: Guard.fails(truth, plan),
+							held: Guard.lift(truth, plan, t.claim)
+						})
+				})
+				const program = query(Theory).rule((r) => {
+					const c = v(cases)
+					const plan = Guard.common(GuardPlan.boundRefine(c.identity, c.source), [truth, constant])
+					return r
+						.match(cases, c)
+						.find({ id: c.id, yes: c.yes, no: c.no, original: Guard.descend(truth, plan, c.held) })
+				})
+				const description = describeQuery(program)
+				const fields = { id: u64, yes: event, no: event, original: event }
+				const replay = queryFromDescription(Theory, description, fields)
+				assert.deepEqual(describeQuery(replay), description)
+				const rows = yield* (yield* snapshot.execute(replay, {})).collect()
+				assert.equal(rows.length, 2)
+				for (const row of rows) {
+					const i = Number(row.id)
+					const source = sources[i]
+					const identity = identities[i]
+					assert.ok(source && identity)
+					const expected = query(Theory).rule((r) =>
+						r.match(Trial, v(Trial)).find({
+							yes: Guard.holds(truth, Guard.common(GuardPlan.refine(identity, source), [truth, constant]))
+						})
+					)
+					const captured = yield* (yield* snapshot.execute(expected, {})).collect()
+					assert.equal(captured.length, 1)
+					const first = captured[0]
+					assert.ok(first)
+					assert.deepEqual(Event.toBytes(row.yes), Event.toBytes(first.yes))
+					assert.equal(yield* Event.equal(row.no, yield* Event.complement(row.yes)), true)
+					assert.deepEqual(Event.toBytes(row.original), Event.toBytes(yield* Event.coordinate(source, 0n)))
+				}
+				const existing = query(Theory).rule((r) => {
+					const s = v(Presentation)
+					return r.match(Presentation, s).find({ id: s.id, value: Guard.holds(constant, GuardPlan.bound(s.source)) })
+				})
+				assert.equal((yield* (yield* snapshot.execute(existing, {})).collect()).length, 2)
+				const bad = query(Theory).rule((r) => {
+					const t = v(Trial)
+					return r.match(Trial, t).find({ value: Guard.holds(constant, GuardPlan.bound(t.claim)) })
+				})
+				const downstream = query(Theory).rule((r) => {
+					const c = v(bad)
+					const t = v(Trial)
+					return r.match(bad, c).match(Trial, t).where(r.eq(t.id, 99n)).find(c)
+				})
+				assert.ok(Result.isFailure(yield* Effect.result(snapshot.execute(downstream, {}))))
+				return rows.map((row) => row.yes)
+			})
+		)
+	)
+	for (const value of retained) assert.equal(await run(Event.isEmpty(value)), false)
 })

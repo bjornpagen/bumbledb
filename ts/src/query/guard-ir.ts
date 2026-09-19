@@ -27,25 +27,36 @@ export function parseGuardIr(context: string, input: unknown): GuardExprIr {
 		...(transport ? ["input"] : []),
 		...(common ? ["resolve"] : [])
 	])
+	if (typeof raw.plan !== "object" || raw.plan === null || !("kind" in raw.plan)) return fail(context)
 	const p = recordValue(context, raw.plan, [
 		"kind",
 		"source",
-		...(typeof raw.plan === "object" && raw.plan !== null && "kind" in raw.plan && raw.plan.kind === "refine"
-			? ["identity"]
-			: [])
+		...(raw.plan.kind === "refine" || raw.plan.kind === "boundRefine" ? ["identity"] : [])
 	])
-	if (p.kind !== "existing" && p.kind !== "refine") return fail(context)
 	const budget = { nodes: 4095, bytes: 16 * 1024 * 1024 }
-	const source = bytesValue(context, p.source, budget.bytes)
-	budget.bytes -= source.length
-	encodedEvent(source)
+	function variable(value: unknown): number {
+		if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 0xffff) return fail(context)
+		return value
+	}
 	let plan: GuardPlanIr
-	if (p.kind === "refine") {
-		const identity = bytesValue(context, p.identity, Math.min(32, budget.bytes))
-		if (identity.length !== 32) return fail(context)
-		budget.bytes -= identity.length
-		plan = Object.freeze({ kind: p.kind, source, identity })
-	} else plan = Object.freeze({ kind: p.kind, source })
+	if (p.kind === "boundExisting" || p.kind === "boundRefine") {
+		const source = variable(p.source)
+		plan =
+			p.kind === "boundExisting"
+				? Object.freeze({ kind: p.kind, source })
+				: Object.freeze({ kind: p.kind, source, identity: variable(p.identity) })
+	} else {
+		if (p.kind !== "existing" && p.kind !== "refine") return fail(context)
+		const source = bytesValue(context, p.source, budget.bytes)
+		budget.bytes -= source.length
+		encodedEvent(source)
+		if (p.kind === "refine") {
+			const identity = bytesValue(context, p.identity, Math.min(32, budget.bytes))
+			if (identity.length !== 32) return fail(context)
+			budget.bytes -= identity.length
+			plan = Object.freeze({ kind: p.kind, source, identity })
+		} else plan = Object.freeze({ kind: p.kind, source })
+	}
 	const predicate = parsePredicateIr(`${context}.predicate`, raw.predicate, 2, budget)
 	if (common && (!Array.isArray(raw.resolve) || raw.resolve.length === 0 || raw.resolve.length > budget.nodes))
 		return fail(`${context}: invalid common roster or shape budget`)

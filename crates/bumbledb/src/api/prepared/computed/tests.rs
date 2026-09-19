@@ -470,10 +470,21 @@ fn predicate_sink_canonicalizes_before_spilled_projection_and_shares_contraction
     }
 }
 
-#[test]
-fn guard_sink_retains_empty_events_through_spill_and_shares_execution_work() {
-    use crate::event::{ArithmeticBudget, ArithmeticLimits, ExactArithmetic, PolynomialSigns};
+fn guard_fixture(bound: bool) -> (ComputedSink, crate::work::GenerationHandle) {
+    use crate::event::{ArithmeticLimits, ExactArithmetic, PolynomialSigns};
     let (mut sink, source, generation) = event_fixture(crate::EventExpr::Full(VarId(0)));
+    let mut admission = ExactArithmetic::new(ArithmeticLimits::default(), &());
+    let source = source
+        .with_density(
+            &[crate::event::DensityPiece {
+                region: source.full(),
+                density: crate::event::ExactRational::fraction("1", "4", &mut admission).unwrap(),
+            }],
+            crate::event::LawLimits::default(),
+            &mut admission,
+        )
+        .unwrap();
+    set_event(&mut sink, &generation, 2, &source.full());
     let limits = crate::ObservationNumberCodecLimits::default();
     let plan = crate::PredicateGuardPlan::capture(
         &source,
@@ -485,9 +496,16 @@ fn guard_sink_retains_empty_events_through_spill_and_shares_execution_work() {
     sink.programs[0].1 = Arc::new(OutputProgram {
         find: 0,
         rules: vec![0],
-        inputs: vec![(VarId(0), 0, ValueType::U64.into())],
+        inputs: vec![
+            (VarId(0), 0, ValueType::U64.into()),
+            (VarId(1), 2, ValueType::Event.into()),
+        ],
         expression: FindTerm::Guard(crate::GuardExpr {
-            plan,
+            plan: if bound {
+                crate::GuardPlanExpr::Existing(VarId(1))
+            } else {
+                plan.into()
+            },
             companions: vec![crate::PredicateExpr::Sign {
                 number: crate::NumberExpr::Integer(VarId(0)),
                 signs: PolynomialSigns::POSITIVE,
@@ -499,66 +517,75 @@ fn guard_sink_retains_empty_events_through_spill_and_shares_execution_work() {
             operation: crate::GuardOp::Holds,
         }),
     });
-    let mut steps = 0;
-    for spill in [false, true] {
-        sink.reset();
-        sink.arithmetic = ArithmeticBudget::new(ArithmeticLimits::default());
-        projection(&mut sink).begin(Some(WorkContext::new()));
-        if spill {
-            projection(&mut sink).force_spill().unwrap();
+    (sink, generation)
+}
+
+#[test]
+fn guard_sink_retains_empty_events_through_spill_and_shares_execution_work() {
+    use crate::event::{ArithmeticBudget, ArithmeticLimits};
+    for bound in [false, true] {
+        let (mut sink, generation) = guard_fixture(bound);
+        let mut steps = 0;
+        for spill in [false, true] {
+            sink.reset();
+            sink.arithmetic = ArithmeticBudget::new(ArithmeticLimits::default());
+            projection(&mut sink).begin(Some(WorkContext::new()));
+            if spill {
+                projection(&mut sink).force_spill().unwrap();
+            }
+            for value in [0, 1, 1] {
+                sink.bindings.set(0, value);
+                sink.row();
+            }
+            sink.finish_events().unwrap();
+            let answers = rows(&mut sink);
+            assert_eq!(
+                answers.len(),
+                2,
+                "empty guard is a value, not an absent row"
+            );
+            let events: Vec<_> = answers
+                .iter()
+                .map(|row| {
+                    generation
+                        .lock_resolver()
+                        .events
+                        .resolve([row[0], row[1]], &())
+                        .unwrap()
+                })
+                .collect();
+            assert!(events.iter().any(crate::Event::is_empty));
+            assert!(events.iter().any(crate::Event::is_full));
+            steps = sink.arithmetic.operations();
         }
+        assert!(steps > 0);
+        sink.reset();
+        projection(&mut sink).begin(Some(WorkContext::new()));
+        sink.arithmetic = ArithmeticBudget::new(ArithmeticLimits {
+            operations: steps - 1,
+            ..ArithmeticLimits::default()
+        });
         for value in [0, 1, 1] {
             sink.bindings.set(0, value);
             sink.row();
         }
-        sink.finish_events().unwrap();
-        let answers = rows(&mut sink);
-        assert_eq!(
-            answers.len(),
-            2,
-            "empty guard is a value, not an absent row"
-        );
-        let events: Vec<_> = answers
-            .iter()
-            .map(|row| {
-                generation
-                    .lock_resolver()
-                    .events
-                    .resolve([row[0], row[1]], &())
-                    .unwrap()
-            })
-            .collect();
-        assert!(events.iter().any(crate::Event::is_empty));
-        assert!(events.iter().any(crate::Event::is_full));
-        steps = sink.arithmetic.operations();
-    }
-    assert!(steps > 0);
-    sink.reset();
-    projection(&mut sink).begin(Some(WorkContext::new()));
-    sink.arithmetic = ArithmeticBudget::new(ArithmeticLimits {
-        operations: steps - 1,
-        ..ArithmeticLimits::default()
-    });
-    for value in [0, 1, 1] {
-        sink.bindings.set(0, value);
+        assert!(matches!(
+            sink.finish_events(),
+            Err(Error::Event(crate::event::Error::Capacity(
+                crate::event::Capacity::ArithmeticSteps
+            )))
+        ));
+        sink.reset();
+        sink.arithmetic = ArithmeticBudget::new(ArithmeticLimits::default());
+        sink.work.as_ref().unwrap().cancel();
         sink.row();
+        assert!(sink.finish_events().is_err());
+        sink.reset();
+        sink.work = Some(WorkContext::new());
+        let control = sink.work.clone();
+        projection(&mut sink).begin(control);
+        sink.row();
+        sink.finish_events().unwrap();
+        assert_eq!(rows(&mut sink).len(), 1);
     }
-    assert!(matches!(
-        sink.finish_events(),
-        Err(Error::Event(crate::event::Error::Capacity(
-            crate::event::Capacity::ArithmeticSteps
-        )))
-    ));
-    sink.reset();
-    sink.arithmetic = ArithmeticBudget::new(ArithmeticLimits::default());
-    sink.work.as_ref().unwrap().cancel();
-    sink.row();
-    assert!(sink.finish_events().is_err());
-    sink.reset();
-    sink.work = Some(WorkContext::new());
-    let control = sink.work.clone();
-    projection(&mut sink).begin(control);
-    sink.row();
-    sink.finish_events().unwrap();
-    assert_eq!(rows(&mut sink).len(), 1);
 }

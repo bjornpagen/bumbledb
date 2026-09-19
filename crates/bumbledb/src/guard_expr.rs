@@ -1,5 +1,5 @@
-//! Explicit source-bound interpretation of numerical truth. A captured plan
-//! names its original source and, optionally, a new deterministic presentation.
+//! Explicit source-bound interpretation of numerical truth. A captured or
+//! row-bound plan names its source and optionally a deterministic presentation.
 //! Query construction never invents a source identity, prior or conditioning.
 use crate::event::{Error, Event, ExactArithmetic, ParameterRefinement, Space, SpaceId};
 use crate::number_expr::ObservationInputKind;
@@ -139,6 +139,34 @@ impl PredicateGuardPlan {
     }
 }
 
+/// A source plan is either captured at authoring or read from a complete row.
+/// Bound sources are full Event markers, and bound identities are bytes<32>.
+/// The latter name presentations; execution never generates an identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuardPlanExpr {
+    Captured(PredicateGuardPlan),
+    Existing(VarId),
+    Refine { source: VarId, identity: VarId },
+}
+impl From<PredicateGuardPlan> for GuardPlanExpr {
+    fn from(value: PredicateGuardPlan) -> Self {
+        Self::Captured(value)
+    }
+}
+impl GuardPlanExpr {
+    pub(crate) fn inputs(&self) -> impl Iterator<Item = (VarId, ObservationInputKind)> {
+        let (source, identity) = match self {
+            Self::Captured(_) => (None, None),
+            Self::Existing(source) => (Some(*source), None),
+            Self::Refine { source, identity } => (Some(*source), Some(*identity)),
+        };
+        source
+            .map(|v| (v, ObservationInputKind::Event))
+            .into_iter()
+            .chain(identity.map(|v| (v, ObservationInputKind::Identity)))
+    }
+}
+
 /// Guard cases are ordinary Events. Transport is explicit; exact descent
 /// refuses any Event that depends essentially on an added guard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,7 +187,7 @@ impl GuardOp {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuardExpr {
-    pub plan: PredicateGuardPlan,
+    pub plan: GuardPlanExpr,
     pub predicate: PredicateExpr,
     /// Additional predicates resolved in the same named presentation. A
     /// nonempty roster requests canonical common refinement, even if repeated.
@@ -171,6 +199,7 @@ impl GuardExpr {
         self.predicate
             .variables()
             .chain(self.companions.iter().flat_map(PredicateExpr::variables))
+            .chain(self.plan.inputs().map(|(var, _)| var))
             .chain(self.operation.input())
     }
     pub(crate) fn inputs(
@@ -182,6 +211,7 @@ impl GuardExpr {
         for companion in &self.companions {
             companion.collect_inputs(2, &mut nodes, &mut inputs)?;
         }
+        inputs.extend(self.plan.inputs());
         if let Some(var) = self.operation.input() {
             inputs.push((var, ObservationInputKind::Event));
         }
@@ -274,7 +304,7 @@ mod tests {
         )
         .unwrap();
         let guard = |predicate| GuardExpr {
-            plan: plan.clone(),
+            plan: plan.clone().into(),
             predicate,
             companions: Vec::new(),
             operation: GuardOp::Holds,

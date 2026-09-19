@@ -225,6 +225,8 @@ type PredicateExprIr<V = number, N = NumberExprIr, P = Uint8Array, D = Uint8Arra
 type PredicateQuantifier = "possibly" | "always" | "isTotal"
 
 type GuardPlanIr =
+	| { readonly kind: "boundExisting"; readonly source: number }
+	| { readonly kind: "boundRefine"; readonly source: number; readonly identity: number }
 	| { readonly kind: "existing"; readonly source: Uint8Array }
 	| { readonly kind: "refine"; readonly source: Uint8Array; readonly identity: Uint8Array }
 type GuardExprIr<V = number, P = PredicateExprIr, G = GuardPlanIr> = {

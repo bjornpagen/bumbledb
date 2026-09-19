@@ -1,0 +1,15 @@
+'FunctionCovers.mask_inside' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FunctionCovers.mask_outside' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FunctionCovers.mask_idempotent' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FunctionCovers.empty_cover_iff' depends on axioms: [propext, Quot.sound]
+'FunctionCovers.zero_is_not_missing_coverage' depends on axioms: [propext, Quot.sound]
+'FunctionCovers.representation_requires_agreement' does not depend on any axioms
+'FunctionCovers.unique_on_parent' does not depend on any axioms
+'FunctionCovers.glue_represents' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FunctionCovers.glue_outside' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FunctionCovers.unique_zero_extension' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FunctionCovers.covers_same_members' does not depend on any axioms
+'FunctionCovers.represents_same_members' does not depend on any axioms
+'FunctionCovers.glue_order_independent' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FunctionCovers.duplicate_does_not_add_value' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FunctionCovers.incompatible_overlap_has_no_representation' does not depend on any axioms

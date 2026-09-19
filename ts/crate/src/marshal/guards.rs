@@ -3,7 +3,7 @@ use super::{
     Array, EventBudget, Object, err, exact_fields, numbers, predicates, req, req_at, req_text,
     var_in,
 };
-use crate::ingress::query::GuardExpr;
+use crate::ingress::query::{GuardExpr, GuardPlan};
 use bumbledb::{GuardOp, event::SpaceId};
 
 pub(super) fn parse(obj: &Object, budget: &mut EventBudget<'_, '_>) -> napi::Result<GuardExpr> {
@@ -32,21 +32,38 @@ pub(super) fn parse(obj: &Object, budget: &mut EventBudget<'_, '_>) -> napi::Res
     exact_fields(obj, &fields)?;
     let plan = req::<Object>(obj, "plan", "guard plan")?;
     let mode = req_text(&plan, "kind", "guard plan mode")?;
-    let refinement = match mode.as_str() {
-        "existing" => {
-            exact_fields(&plan, &["kind", "source"])?;
-            None
+    let plan = match mode.as_str() {
+        "existing" | "refine" => {
+            let refinement = if mode == "refine" {
+                exact_fields(&plan, &["kind", "source", "identity"])?;
+                let identity = numbers::bytes(&plan, "identity", budget)?;
+                Some(SpaceId(identity.try_into().map_err(|_| {
+                    err("guard refinement identity must have 32 bytes".into())
+                })?))
+            } else {
+                exact_fields(&plan, &["kind", "source"])?;
+                None
+            };
+            GuardPlan::Captured {
+                source: numbers::bytes(&plan, "source", budget)?,
+                refinement,
+            }
         }
-        "refine" => {
-            exact_fields(&plan, &["kind", "source", "identity"])?;
-            let identity = numbers::bytes(&plan, "identity", budget)?;
-            Some(SpaceId(identity.try_into().map_err(|_| {
-                err("guard refinement identity must have 32 bytes".into())
-            })?))
+        "boundExisting" | "boundRefine" => {
+            let refinement = if mode == "boundRefine" {
+                exact_fields(&plan, &["kind", "source", "identity"])?;
+                Some(var_in(&plan, "identity", "guard identity variable")?)
+            } else {
+                exact_fields(&plan, &["kind", "source"])?;
+                None
+            };
+            GuardPlan::Bound {
+                source: var_in(&plan, "source", "guard source variable")?,
+                refinement,
+            }
         }
         _ => return Err(err("unknown guard plan mode".into())),
     };
-    let source = numbers::bytes(&plan, "source", budget)?;
     let predicate = predicates::parse(
         &req::<Object>(obj, "predicate", "guard predicate")?,
         2,
@@ -71,8 +88,7 @@ pub(super) fn parse(obj: &Object, budget: &mut EventBudget<'_, '_>) -> napi::Res
         }
     }
     Ok(GuardExpr {
-        source,
-        refinement,
+        plan,
         predicate,
         companions,
         operation,

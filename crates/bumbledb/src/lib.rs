@@ -63,7 +63,7 @@ pub mod error;
 mod event_expr;
 mod guard_expr;
 mod number_expr;
-pub use guard_expr::{GuardExpr, GuardOp, PredicateGuardPlan};
+pub use guard_expr::{GuardExpr, GuardOp, GuardPlanExpr, PredicateGuardPlan};
 mod parameter_region_import;
 mod predicate_expr;
 pub use parameter_region_import::ParameterRegionImport;

@@ -2,12 +2,22 @@
 use super::{PayoffAdmission, PredicateExpr};
 use crate::{ingress::event_error, runtime::RuntimeError};
 use bumbledb::event::SpaceId;
-use bumbledb::{GuardOp, ObservationNumberCodecLimits, PredicateGuardPlan};
+use bumbledb::{GuardOp, GuardPlanExpr, ObservationNumberCodecLimits, PredicateGuardPlan, VarId};
 
 #[derive(Debug)]
+pub(crate) enum GuardPlan {
+    Captured {
+        source: Vec<u8>,
+        refinement: Option<SpaceId>,
+    },
+    Bound {
+        source: VarId,
+        refinement: Option<VarId>,
+    },
+}
+#[derive(Debug)]
 pub(crate) struct GuardExpr {
-    pub(crate) source: Vec<u8>,
-    pub(crate) refinement: Option<SpaceId>,
+    pub(crate) plan: GuardPlan,
     pub(crate) predicate: PredicateExpr,
     pub(crate) companions: Vec<PredicateExpr>,
     pub(crate) operation: GuardOp,
@@ -18,17 +28,27 @@ impl PayoffAdmission<'_> {
             .control()
             .checkpoint()
             .map_err(event_error)?;
-        self.number_bytes(&value.source)?;
-        if value.refinement.is_some() {
-            self.number_bytes(&[0; 32])?;
-        }
-        let plan = PredicateGuardPlan::from_parts(
-            &value.source,
-            value.refinement,
-            ObservationNumberCodecLimits::default(),
-            &mut self.arithmetic,
-        )
-        .map_err(|e| crate::db_wire::engine_error(&e))?;
+        let plan = match value.plan {
+            GuardPlan::Captured { source, refinement } => {
+                self.number_bytes(&source)?;
+                if refinement.is_some() {
+                    self.number_bytes(&[0; 32])?;
+                }
+                GuardPlanExpr::Captured(
+                    PredicateGuardPlan::from_parts(
+                        &source,
+                        refinement,
+                        ObservationNumberCodecLimits::default(),
+                        &mut self.arithmetic,
+                    )
+                    .map_err(|e| crate::db_wire::engine_error(&e))?,
+                )
+            }
+            GuardPlan::Bound { source, refinement } => match refinement {
+                None => GuardPlanExpr::Existing(source),
+                Some(identity) => GuardPlanExpr::Refine { source, identity },
+            },
+        };
         let predicate = self.predicate(value.predicate, 2)?;
         let mut companions = crate::marshal::output_vec(value.companions.len())?;
         for companion in value.companions {
@@ -64,8 +84,10 @@ mod tests {
             ))
             .unwrap();
         let input = |source| GuardExpr {
-            source,
-            refinement: None,
+            plan: GuardPlan::Captured {
+                source,
+                refinement: None,
+            },
             companions: vec![PredicateExpr::Sign {
                 number: NumberExpr::Literal(scalar.clone()),
                 signs: PolynomialSigns::POSITIVE,
