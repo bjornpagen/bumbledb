@@ -1228,21 +1228,31 @@ impl Runtime {
         operation.context.checkpoint() == Err(WorkError::Cancelled)
     }
 
+    fn reclaim_cancelled_operations(&self, state: &mut State) -> Vec<Result<Output, RuntimeError>> {
+        let completed: Vec<_> = state
+            .operations
+            .iter()
+            .filter_map(|(&id, operation)| {
+                Self::reclaim_cancelled_operation(operation).then_some(id)
+            })
+            .collect();
+        if !completed.is_empty() {
+            // Cleanup workers can already be asleep after observing an owner
+            // blocked by this operation. Removing its slot changes their wait
+            // predicate even when an error has no owned output to discard.
+            self.changed.notify_all();
+        }
+        completed
+            .into_iter()
+            .filter_map(|id| state.remove(id))
+            .collect()
+    }
+
     fn supervise(&self, workers: Vec<JoinHandle<()>>) {
         let mut workers = Some(workers);
         loop {
             let mut state = lock(&self.state);
-            let completed: Vec<_> = state
-                .operations
-                .iter()
-                .filter_map(|(&id, operation)| {
-                    Self::reclaim_cancelled_operation(operation).then_some(id)
-                })
-                .collect();
-            let discarded: Vec<_> = completed
-                .into_iter()
-                .filter_map(|id| state.remove(id))
-                .collect();
+            let discarded = self.reclaim_cancelled_operations(&mut state);
             if !discarded.is_empty() {
                 drop(state);
                 drop(discarded);

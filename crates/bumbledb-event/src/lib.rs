@@ -15,6 +15,7 @@ mod descriptor;
 mod diagram;
 mod error;
 mod exact;
+mod expectation;
 mod fixed_point;
 mod function;
 mod information;
@@ -26,6 +27,7 @@ mod product;
 mod program;
 mod registry;
 mod relation;
+mod revision;
 mod space;
 
 pub use action::{ActionArena, ReachStrategy, SafetyStrategy};
@@ -36,6 +38,7 @@ pub use descriptor::{
 pub use diagram::{Diagram, DiagramNode, DiagramView};
 pub use error::{Capacity, Control, Error, Limits, Result};
 pub use exact::{ArithmeticLimits, ExactArithmetic, ExactRational};
+pub use expectation::ExpectationObservation;
 pub use fixed_point::{
     FiniteCarrier, FixedPointLimits, FixedPointProgram, FixedPointResult, LayeredFixedPointResult,
 };
@@ -52,6 +55,9 @@ pub use program::{
 };
 pub use registry::Registry;
 pub use relation::{RelationalProduct, WorldRelation};
+pub use revision::{
+    RevisedSource, RevisionImpossible, RevisionOutcome, RevisionReceipt, SourceRevision,
+};
 pub use space::{Event, EventKey, Space, SpaceId, Statistics};
 
 #[cfg(test)]
@@ -89,3 +95,6 @@ mod measure_tests;
 
 #[cfg(test)]
 mod function_tests;
+
+#[cfg(test)]
+mod revision_tests;

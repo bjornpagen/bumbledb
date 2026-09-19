@@ -1,0 +1,31 @@
+{
+  "runtime_sha256": "07fd6a569ecf2990841a83d1830c35e8a2a401c8f308c4b14029e19f72e5d774",
+  "test_sha256": "632eff9638660e8357e32459e140434f428bac4649b42ceadf9330eae4f322e3",
+  "checker_sha256": "89454c3fdd3ff4e833bdff2ea8032e54d444c7e51ec21c750caf1aeeb13632a5",
+  "command": [
+    "cargo",
+    "test",
+    "--manifest-path",
+    "ts/crate/Cargo.toml",
+    "--lib",
+    "runtime::tests::cancellation_reclamation_wakes_waiters_for_success_and_error_slots",
+    "--",
+    "--exact"
+  ],
+  "checks": [
+    {
+      "name": "without-wakeup",
+      "exit_code": 101,
+      "expected_regression": true,
+      "log_sha256": "752b46764536f222f7cb4671fa273d31b05d5d8907456eb813df335fa174fa7b",
+      "mutant_sha256": "787b869ad1e4d7bec85680c7bfa29ccc80556a5acc05b4b7cdffa86a3f7f5e6e"
+    },
+    {
+      "name": "with-wakeup",
+      "exit_code": 0,
+      "log_sha256": "83e64faff10ae945a28578b1847a8c52edcb3b90a44ecff008485ea3c9d0a340"
+    }
+  ],
+  "source_restored": true,
+  "passed": true
+}

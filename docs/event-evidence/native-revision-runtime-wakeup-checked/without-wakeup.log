@@ -1,0 +1,22 @@
+
+running 1 test
+test runtime::tests::cancellation_reclamation_wakes_waiters_for_success_and_error_slots ... FAILED
+
+failures:
+
+---- runtime::tests::cancellation_reclamation_wakes_waiters_for_success_and_error_slots stdout ----
+
+thread 'runtime::tests::cancellation_reclamation_wakes_waiters_for_success_and_error_slots' (11923156) panicked at src/runtime/tests.rs:129:9:
+registry removal must wake cleanup without another job
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runtime::tests::cancellation_reclamation_wakes_waiters_for_success_and_error_slots
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 103 filtered out; finished in 2.01s
+
+   Compiling bumbledb-node v1.3.1 (/Users/bjorn/Documents/bumbledb/ts/crate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.55s
+     Running unittests src/lib.rs (ts/crate/target/debug/build/bumbledb-node/1270aa65ef9ee7bd/out/bumbledb_node-1270aa65ef9ee7bd)
+error: test failed, to rerun pass `--lib`

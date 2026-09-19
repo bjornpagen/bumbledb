@@ -433,3 +433,135 @@ fn tax_extension() -> (Space, bumbledb::event::SourceExtension) {
         .unwrap();
     (prior, extension)
 }
+
+#[test]
+fn conditioned_sources_reopen_translate_queries_and_retain_signed_expectations() {
+    use bumbledb::{
+        EventImport,
+        event::{AdmittedDescriptor, DescriptorLimits, FunctionLimits, RevisionReceipt},
+        query,
+    };
+    let (prior, extension) = tax_extension();
+    let tax = extension.space().coordinate(2, &()).unwrap();
+    let revision = extension
+        .space()
+        .condition(
+            &tax,
+            FunctionLimits::default(),
+            LawLimits::default(),
+            &mut arithmetic(),
+        )
+        .unwrap();
+    let revised = revision.revised().unwrap();
+    let import = EventImport::capture(
+        &AdmittedDescriptor::Map(revised.translation().clone()),
+        DescriptorLimits::default(),
+        &(),
+    )
+    .unwrap();
+    let dir = common::TempDir::new("event-source-revision-query");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    db.write(common::work(), |tx| {
+        for id in 1..=2 {
+            tx.insert([&Region {
+                id,
+                condition: extension
+                    .parent()
+                    .pullback(&prior.coordinate(u8::try_from(id - 1).unwrap(), &())?, &())?,
+            }])?;
+        }
+        tx.insert([&Observation {
+            id: 1,
+            condition: revised.translation().pullback(&tax, &())?,
+        }])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    drop((prior, extension, tax, db));
+    let db = Db::open(dir.path(), SourceSchema, common::work()).unwrap();
+    let query = query!(SourceSchema {
+        use map revision = &import;
+        (player, posterior: Event(Pullback(holding, revision)), observed: Event(tax)) |
+            Region(id: player, condition: holding), Observation(condition: tax);
+    });
+    drop(import);
+    let mut retained = Vec::new();
+    for cursor in [false, true] {
+        let mut prepared = db.prepare(&query, common::work()).unwrap();
+        prepared.force_cursor_fallback(cursor);
+        retained.push(
+            db.read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((db, query));
+    let RevisionReceipt::Condition { evidence, mass } = revision.receipt() else {
+        panic!("owned conditioning receipt")
+    };
+    assert_eq!(mass, &ratio(49, 130));
+    assert_eq!(evidence.mass(&mut arithmetic()).unwrap(), *mass);
+    drop(revision);
+    for answers in retained {
+        check_revised_coup_answers(&answers);
+    }
+}
+
+fn check_revised_coup_answers(answers: &bumbledb::Answers) {
+    use bumbledb::event::{FiniteFunction, FunctionLimits, FunctionPiece};
+    assert_eq!(answers.len(), 2);
+    for row in 0..answers.len() {
+        let AnswerValue::U64(player) = answers.get(row, 0) else {
+            panic!("player")
+        };
+        let (AnswerValue::Event(duke), AnswerValue::Event(tax)) =
+            (answers.get(row, 1), answers.get(row, 2))
+        else {
+            panic!("Events")
+        };
+        assert_eq!(
+            duke.mass(&mut arithmetic()).unwrap(),
+            if player == 1 {
+                ratio(92, 147)
+            } else {
+                ratio(5, 21)
+            }
+        );
+        assert_eq!(tax.mass(&mut arithmetic()).unwrap(), ratio(1, 1));
+        assert!(!tax.is_full());
+        assert!(!tax.complement().is_empty());
+        assert_eq!(
+            tax.complement().mass(&mut arithmetic()).unwrap(),
+            ratio(0, 1)
+        );
+        if player == 1 {
+            // Explicit toy utility: gain one on a bluff, lose one on a Duke.
+            let payoff = FiniteFunction::new(
+                &duke.space(),
+                &[
+                    FunctionPiece {
+                        region: duke.clone(),
+                        value: (-1i64).into(),
+                    },
+                    FunctionPiece {
+                        region: duke.complement(),
+                        value: 1u64.into(),
+                    },
+                ],
+                FunctionLimits::default(),
+                &mut arithmetic(),
+            )
+            .unwrap();
+            let result = payoff.expectation(tax, &mut arithmetic()).unwrap();
+            drop(payoff);
+            assert_eq!(
+                result.value(&mut arithmetic()).unwrap(),
+                Some(ExactRational::fraction("-37", "147", &mut arithmetic()).unwrap())
+            );
+        }
+    }
+}

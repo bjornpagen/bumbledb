@@ -69,6 +69,71 @@ fn retained_completion_keeps_its_operation_slot_until_taken() {
 }
 
 #[test]
+fn cancellation_reclamation_wakes_waiters_for_success_and_error_slots() {
+    for failure in [false, true] {
+        let runtime = Runtime::start(options()).unwrap();
+        let (operation, done) = submit(
+            &runtime,
+            Box::new(move |_| {
+                if failure {
+                    Err(RuntimeError::InvalidArgument)
+                } else {
+                    Ok(Output::Ready)
+                }
+            }),
+        );
+        done.recv_timeout(Duration::from_secs(2)).unwrap();
+        // Wait for the worker's final active-count notification before parking
+        // the registry waiter. No job/close/timer wakeup can mask reclamation.
+        {
+            let mut state = lock(&runtime.state);
+            while state.active != 0 {
+                state = runtime.changed.wait(state).unwrap();
+            }
+        }
+        let (parked, waiting) = mpsc::channel();
+        let observed = Arc::clone(&runtime);
+        let id = operation.id;
+        let waiter = thread::spawn(move || {
+            let mut state = lock(&observed.state);
+            assert!(state.operations.contains_key(&id));
+            parked.send(()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while state.operations.contains_key(&id) {
+                let (next, timeout) = observed
+                    .changed
+                    .wait_timeout(state, deadline.saturating_duration_since(Instant::now()))
+                    .unwrap();
+                state = next;
+                // A timeout that discovers the new predicate is still a missed
+                // wakeup. wait_timeout_while hides that distinction by checking
+                // the predicate before reporting its final timeout.
+                if timeout.timed_out() {
+                    return false;
+                }
+            }
+            true
+        });
+        waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+        // Acquiring this lock proves the waiter released it in wait(). Delay
+        // cancellation until now, so the live supervisor cannot steal the slot
+        // before the exact reclamation path under test gets it.
+        let discarded = {
+            let mut state = lock(&runtime.state);
+            operation.cancel();
+            runtime.reclaim_cancelled_operations(&mut state)
+        };
+        drop(discarded);
+        let woke = waiter.join().unwrap();
+        assert_eq!(close(&runtime), CloseReport::Closed);
+        assert!(
+            woke,
+            "registry removal must wake cleanup without another job"
+        );
+    }
+}
+
+#[test]
 fn saturated_workers_still_report_incomplete_then_reclaim_late_success() {
     let runtime = Runtime::start(options()).unwrap();
     let (release, blocked) = mpsc::channel();

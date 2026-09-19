@@ -1,0 +1,9 @@
+
+running 1 test
+test runtime::tests::cancellation_reclamation_wakes_waiters_for_success_and_error_slots ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 103 filtered out; finished in 4.01s
+
+   Compiling bumbledb-node v1.3.1 (/Users/bjorn/Documents/bumbledb/ts/crate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.40s
+     Running unittests src/lib.rs (ts/crate/target/debug/build/bumbledb-node/1270aa65ef9ee7bd/out/bumbledb_node-1270aa65ef9ee7bd)
