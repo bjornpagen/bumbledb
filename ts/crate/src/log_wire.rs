@@ -40,6 +40,8 @@ use napi::bindgen_prelude::{BigInt, Buffer, Env, External, Function, Object, Uin
 use napi_derive::napi;
 
 use crate::db_wire::{SnapshotHandle, spawn_teardown};
+use crate::ingress::CopyContext;
+use crate::ingress::schema::{ResolvedSchema, SchemaInput};
 use crate::marshal;
 use crate::runtime::owners::{DbLease, DirectoryOwner, ManagedDb};
 use crate::runtime::{Output, RetainedNative, Runtime, RuntimeError};
@@ -902,7 +904,7 @@ pub(crate) enum CredentialsSpec {
 }
 
 #[derive(Clone)]
-pub(crate) struct OpenSpec {
+pub(crate) struct OpenSpec<S = ResolvedSchema> {
     pub(crate) create: bool,
     pub(crate) directory: String,
     pub(crate) identity: DatabaseIdentity,
@@ -911,11 +913,25 @@ pub(crate) struct OpenSpec {
     /// `(operation, artifact)`: required for create; the artifact is the
     /// checked canonical schema snapshot (`schema_file::render`).
     pub(crate) creation: Option<(OperationId, Vec<u8>)>,
-    pub(crate) descriptor: SchemaDescriptor,
-    pub(crate) attrs: crate::FieldAttrsTable,
+    pub(crate) schema: S,
     /// The hosted durable-tail envelope (C08/STORE-07); `UNBOUNDED` when the
     /// wire carries none. Local histories ignore it (LMDB is complete).
     pub(crate) tail_policy: bumbledb_log::manifest::TailPolicy,
+}
+
+impl OpenSpec<SchemaInput> {
+    fn resolve(self, work: &WorkContext) -> Result<OpenSpec, RuntimeError> {
+        Ok(OpenSpec {
+            create: self.create,
+            directory: self.directory,
+            identity: self.identity,
+            backend: self.backend,
+            discard_mismatched: self.discard_mismatched,
+            creation: self.creation,
+            schema: self.schema.resolve(work)?,
+            tail_policy: self.tail_policy,
+        })
+    }
 }
 
 /// Optional wire fields cross as ABSENT or NULL interchangeably (the TS
@@ -1271,7 +1287,7 @@ fn open_local(
             .as_ref()
             .ok_or_else(|| protocol("UnsupportedArtifact", "creation options are required"))?;
         check_artifact(artifact, spec.identity.schema_id)?;
-        match recovery::create_local(directory, spec.descriptor.clone(), &binding, context) {
+        match recovery::create_local(directory, spec.schema.0.clone(), &binding, context) {
             Ok((held, db)) => {
                 let owner = runtime.install_owner_lock(owner_id, held)?;
                 match finish_local_create(runtime, &owner, db, spec, *operation, context) {
@@ -1322,7 +1338,7 @@ fn open_local_existing(
         prefix: spec.directory.as_str().into(),
         identity: spec.identity,
     };
-    let (held, db) = recovery::open_local(directory, spec.descriptor.clone(), &expected, context)
+    let (held, db) = recovery::open_local(directory, spec.schema.0.clone(), &expected, context)
         .map_err(fail_of_recovery)?;
     let owner = runtime.install_owner_lock(owner_id, held)?;
     // Every refusal past this point holds an INSTALLED owner: release it
@@ -1350,7 +1366,7 @@ fn finish_local_create(
     operation: OperationId,
     context: &WorkContext,
 ) -> MachineResult<(ManagedDb, DbLease, HistoryKind, RetainedNative, u64)> {
-    let sealed = Arc::new(crate::seal(spec.descriptor.clone(), spec.attrs.clone()));
+    let sealed = Arc::new(crate::seal(spec.schema.0.clone(), spec.schema.1.clone()));
     let inner = crate::DbInner {
         db: Arc::clone(&db),
         sealed: Arc::clone(&sealed),
@@ -1413,7 +1429,7 @@ fn finish_local_existing(
     // specialization).
     bumbledb_log::local_roots::clean_roots(&db, directory, context)
         .map_err(|error| protocol("Corruption", format!("{error:?}")))?;
-    let sealed = Arc::new(crate::seal(spec.descriptor.clone(), spec.attrs.clone()));
+    let sealed = Arc::new(crate::seal(spec.schema.0.clone(), spec.schema.1.clone()));
     let inner = crate::DbInner {
         db: Arc::clone(&db),
         sealed: Arc::clone(&sealed),
@@ -1495,11 +1511,11 @@ fn open_hosted(
             identity: spec.identity,
         };
         let (held, db) =
-            recovery::create_local(directory, spec.descriptor.clone(), &binding, context)
+            recovery::create_local(directory, spec.schema.0.clone(), &binding, context)
                 .map_err(fail_of_recovery)?;
         let owner = runtime.install_owner_lock(owner_id, held)?;
         let finish = || -> MachineResult<(ManagedDb, DbLease, HistoryKind, RetainedNative, u64)> {
-            let sealed = Arc::new(crate::seal(spec.descriptor.clone(), spec.attrs.clone()));
+            let sealed = Arc::new(crate::seal(spec.schema.0.clone(), spec.schema.1.clone()));
             let inner = crate::DbInner {
                 db: Arc::clone(&db),
                 sealed: Arc::clone(&sealed),
@@ -1563,7 +1579,7 @@ fn open_hosted(
     } else {
         let recovered = match recovery::open_hosted(
             directory,
-            spec.descriptor.clone(),
+            spec.schema.0.clone(),
             &backend,
             &origin,
             prefix,
@@ -1581,7 +1597,7 @@ fn open_hosted(
                 quarantine_cache(directory)?;
                 recovery::open_hosted(
                     directory,
-                    spec.descriptor.clone(),
+                    spec.schema.0.clone(),
                     &backend,
                     &origin,
                     prefix,
@@ -1601,7 +1617,7 @@ fn open_hosted(
         } = recovered;
         let owner = runtime.install_owner_lock(owner_id, held)?;
         let finish = || -> MachineResult<(ManagedDb, DbLease, HistoryKind, RetainedNative, u64)> {
-            let sealed = Arc::new(crate::seal(spec.descriptor.clone(), spec.attrs.clone()));
+            let sealed = Arc::new(crate::seal(spec.schema.0.clone(), spec.schema.1.clone()));
             let inner = crate::DbInner {
                 db: Arc::clone(&db),
                 sealed: Arc::clone(&sealed),
@@ -1861,7 +1877,7 @@ pub(crate) fn fail_output(fail: LogFail) -> Output {
 // logHistoryOpen / logHistoryTake.
 // ---------------------------------------------------------------------------
 
-fn open_spec_in(env: Env, request: &Object) -> napi::Result<OpenSpec> {
+fn open_spec_in(copy: &CopyContext, request: &Object) -> napi::Result<OpenSpec<SchemaInput>> {
     let ctx = "history open";
     let mode: String = marshal::req(request, "mode", ctx)?;
     let create = match mode.as_str() {
@@ -1888,18 +1904,7 @@ fn open_spec_in(env: Env, request: &Object) -> napi::Result<OpenSpec> {
         }
     };
     let spec_object: Object = marshal::req(request, "schema", ctx)?;
-    let (descriptor, attrs) = match crate::descriptor_of(&spec_object)? {
-        Ok(parsed) => parsed,
-        Err(
-            crate::OpenOutcome::SchemaError(message) | crate::OpenOutcome::NewtypeMismatch(message),
-        ) => {
-            return Err(marshal::throw_kind_message(
-                env,
-                crate::tags::error_family::SCHEMA,
-                message,
-            ));
-        }
-    };
+    let schema = SchemaInput::copy_with(copy, &spec_object)?;
     Ok(OpenSpec {
         create,
         directory,
@@ -1907,8 +1912,7 @@ fn open_spec_in(env: Env, request: &Object) -> napi::Result<OpenSpec> {
         backend,
         discard_mismatched,
         creation,
-        descriptor,
-        attrs,
+        schema,
         tail_policy: tail_policy_in(request, ctx)?,
     })
 }
@@ -1922,24 +1926,22 @@ pub fn log_history_open(
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = runtime_owner(handle).map_err(|error| thrown(env, error))?;
-    let spec = open_spec_in(env, &request)?;
     let shared = Arc::clone(runtime);
+    let mut shape_error = None;
     let operation = runtime
-        .submit(
-            WorkContext::new(),
-            notification(callback)?,
-            move |context| {
-                context.checkpoint()?;
-                Ok(Box::new(move |context| {
-                    match open_history(&shared, &spec, context) {
-                        Ok(opened) => Ok(Output::Machine(MachineOutput::History(opened))),
-                        Err(LogFail::Core(error)) => Err(error),
-                        Err(fail) => Ok(fail_output(fail)),
-                    }
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
+        .submit(WorkContext::new(), notification(callback)?, |context| {
+            let copy = CopyContext::new(env, context);
+            let spec = copy.finish_preserving(open_spec_in(&copy, &request), &mut shape_error)?;
+            Ok(Box::new(move |context| {
+                let spec = spec.resolve(context)?;
+                match open_history(&shared, &spec, context) {
+                    Ok(opened) => Ok(Output::Machine(MachineOutput::History(opened))),
+                    Err(LogFail::Core(error)) => Err(error),
+                    Err(fail) => Ok(fail_output(fail)),
+                }
+            }))
+        })
+        .map_err(|error| shape_error.unwrap_or_else(|| thrown(env, error)))?;
     Ok(operation_handle(runtime, operation))
 }
 
@@ -3078,68 +3080,53 @@ pub fn log_command_decode(
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = runtime_owner(handle).map_err(|error| thrown(env, error))?;
     let bytes = crate::runtime_wire::unshared_input(env, bytes)?;
-    let (descriptor, _attrs) = match crate::descriptor_of(&schema)? {
-        Ok(parsed) => parsed,
-        Err(
-            crate::OpenOutcome::SchemaError(message) | crate::OpenOutcome::NewtypeMismatch(message),
-        ) => {
-            return Err(marshal::throw_kind_message(
-                env,
-                crate::tags::error_family::SCHEMA,
-                message,
-            ));
-        }
-    };
+    let mut shape_error = None;
     let operation = runtime
-        .submit(
-            WorkContext::new(),
-            notification(callback)?,
-            move |context| {
-                context.checkpoint()?;
-                let owned = bytes.to_vec();
-                Ok(Box::new(move |context| {
-                    use bumbledb::schema::ValidateDescriptor as _;
-                    context.checkpoint()?;
-                    let schema = match descriptor.clone().validate_with_control(context) {
-                        Ok(schema) => schema,
-                        Err(error) => {
-                            return Err(RuntimeError::Engine {
-                                diagnostic: None,
-                                kind: crate::tags::error_family::SCHEMA,
-                                message: error.to_string(),
-                            });
-                        }
-                    };
-                    match Command::parse(&schema, &owned, LIMITS, context) {
-                        Ok(command) => {
-                            // The log retains opaque core scalar bytes. At
-                            // this public input boundary, establish their
-                            // grammar before a command can be submitted.
-                            if let Err(error) = decode_result(
-                                command.result().as_bytes(),
-                                LIMITS.result_bytes,
-                                context,
-                            ) {
-                                return match fail_of_result(error, "Misuse") {
-                                    LogFail::Core(core) => Err(core),
-                                    fail => Ok(fail_output(fail)),
-                                };
-                            }
-                            let reference = command.command_ref();
-                            Ok(Output::Machine(MachineOutput::Command(CommandOwned {
-                                command: Arc::new(command),
-                                reference,
-                            })))
-                        }
-                        Err(error) => match fail_of_command(error) {
-                            LogFail::Core(core) => Err(core),
-                            fail => Ok(fail_output(fail)),
-                        },
+        .submit(WorkContext::new(), notification(callback)?, |context| {
+            let copy = CopyContext::new(env, context);
+            let schema =
+                copy.finish_preserving(SchemaInput::copy_with(&copy, &schema), &mut shape_error)?;
+            let owned = crate::runtime::QueuedBytes::copy_from(context, &bytes)?.bytes;
+            Ok(Box::new(move |context| {
+                use bumbledb::schema::ValidateDescriptor as _;
+                let (descriptor, _) = schema.resolve(context)?;
+                let schema = match descriptor.validate_with_control(context) {
+                    Ok(schema) => schema,
+                    Err(error) => {
+                        return Err(RuntimeError::Engine {
+                            diagnostic: None,
+                            kind: crate::tags::error_family::SCHEMA,
+                            message: error.to_string(),
+                        });
                     }
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
+                };
+                match Command::parse(&schema, &owned, LIMITS, context) {
+                    Ok(command) => {
+                        // The log retains opaque core scalar bytes. At
+                        // this public input boundary, establish their
+                        // grammar before a command can be submitted.
+                        if let Err(error) =
+                            decode_result(command.result().as_bytes(), LIMITS.result_bytes, context)
+                        {
+                            return match fail_of_result(error, "Misuse") {
+                                LogFail::Core(core) => Err(core),
+                                fail => Ok(fail_output(fail)),
+                            };
+                        }
+                        let reference = command.command_ref();
+                        Ok(Output::Machine(MachineOutput::Command(CommandOwned {
+                            command: Arc::new(command),
+                            reference,
+                        })))
+                    }
+                    Err(error) => match fail_of_command(error) {
+                        LogFail::Core(core) => Err(core),
+                        fail => Ok(fail_output(fail)),
+                    },
+                }
+            }))
+        })
+        .map_err(|error| shape_error.unwrap_or_else(|| thrown(env, error)))?;
     Ok(operation_handle(runtime, operation))
 }
 
@@ -3285,23 +3272,17 @@ pub fn log_cache_make(
     let runtime = runtime_owner(handle).map_err(|error| thrown(env, error))?;
     let max_open = marshal::ordinal(marshal::req::<f64>(&request, "maxOpen", ctx)?, ctx)? as usize;
     let spec_object: Object = marshal::req(&request, "schema", ctx)?;
-    let (descriptor, attrs) = match crate::descriptor_of(&spec_object)? {
-        Ok(parsed) => parsed,
-        Err(
-            crate::OpenOutcome::SchemaError(message) | crate::OpenOutcome::NewtypeMismatch(message),
-        ) => {
-            return Err(marshal::throw_kind_message(
-                env,
-                crate::tags::error_family::SCHEMA,
-                message,
-            ));
-        }
-    };
     let shared = Arc::clone(runtime);
+    let mut shape_error = None;
     let operation = runtime
-        .submit(WorkContext::new(), notification(callback)?, move |_| {
+        .submit(WorkContext::new(), notification(callback)?, |context| {
+            let copy = CopyContext::new(env, context);
+            let schema = copy.finish_preserving(
+                SchemaInput::copy_with(&copy, &spec_object),
+                &mut shape_error,
+            )?;
             Ok(Box::new(move |context| {
-                context.checkpoint()?;
+                let (descriptor, attrs) = schema.resolve(context)?;
                 if max_open == 0 {
                     return Err(RuntimeError::InvalidArgument);
                 }
@@ -3320,7 +3301,7 @@ pub fn log_cache_make(
                 })))
             }))
         })
-        .map_err(|error| thrown(env, error))?;
+        .map_err(|error| shape_error.unwrap_or_else(|| thrown(env, error)))?;
     Ok(operation_handle(runtime, operation))
 }
 
@@ -3441,8 +3422,7 @@ fn acquire_borrow(
                     backend: backend.clone(),
                     discard_mismatched: false,
                     creation: None,
-                    descriptor: shared.descriptor.clone(),
-                    attrs: shared.attrs.clone(),
+                    schema: (shared.descriptor.clone(), shared.attrs.clone()),
                     // Cache acquires carry no per-tenant envelope on the wire
                     // yet; the machine default applies.
                     tail_policy: bumbledb_log::manifest::TailPolicy::UNBOUNDED,

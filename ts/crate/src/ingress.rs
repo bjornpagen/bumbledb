@@ -43,6 +43,20 @@ impl<'a> CopyContext<'a> {
     pub fn finish<T>(&self, result: napi::Result<T>) -> Result<T, RuntimeError> {
         result.map_err(|_| self.error.take().unwrap_or(RuntimeError::InvalidArgument))
     }
+    /// Keep a caller's existing shape/protocol diagnostic on the JS thread.
+    /// Recorded work/resource refusals take precedence and retain their type.
+    pub fn finish_preserving<T>(
+        &self,
+        result: napi::Result<T>,
+        shape_error: &mut Option<napi::Error>,
+    ) -> Result<T, RuntimeError> {
+        result.map_err(|error| {
+            self.error.take().unwrap_or_else(|| {
+                *shape_error = Some(error);
+                RuntimeError::InvalidArgument
+            })
+        })
+    }
     pub(crate) fn checked<T>(&self, result: Result<T, RuntimeError>) -> napi::Result<T> {
         result.map_err(|error| {
             self.error.set(Some(error));

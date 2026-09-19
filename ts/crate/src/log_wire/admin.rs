@@ -11,7 +11,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use bumbledb::SchemaDescriptor;
 use bumbledb::work::WorkContext;
 use bumbledb_log::certainty::{AdminCertainty, PublicationPhase};
 use bumbledb_log::checkpointer::{
@@ -31,6 +30,8 @@ use bumbledb_log::store::s3::S3Store;
 use bumbledb_log::store::{TransportContext, get_verified};
 use napi::bindgen_prelude::{BigInt, Env, External, Function, Object};
 
+use crate::ingress::CopyContext;
+use crate::ingress::schema::{ResolvedSchema, SchemaInput};
 use crate::marshal;
 use crate::runtime::owners::DbLease;
 use crate::runtime::{Output, Runtime, RuntimeError};
@@ -168,34 +169,40 @@ fn destination_in(obj: &Object, ctx: &str) -> napi::Result<DestinationSpec> {
     }
 }
 
-struct BindingSpec {
+struct BindingSpec<S = ResolvedSchema> {
     directory: String,
     identity: DatabaseIdentity,
     backend: BackendSpec,
     /// The lowered `SchemaSpec`, parsed when present (verbs that must open
     /// the local materialization require it unless the tenant is already
     /// open in this runtime's registry).
-    descriptor: Option<(SchemaDescriptor, crate::FieldAttrsTable)>,
+    descriptor: Option<S>,
 }
 
-fn binding_with_schema_in(env: Env, request: &Object, ctx: &str) -> napi::Result<BindingSpec> {
+impl BindingSpec<SchemaInput> {
+    fn resolve(self, work: &WorkContext) -> Result<BindingSpec, RuntimeError> {
+        Ok(BindingSpec {
+            directory: self.directory,
+            identity: self.identity,
+            backend: self.backend,
+            descriptor: self
+                .descriptor
+                .map(|schema| schema.resolve(work))
+                .transpose()?,
+        })
+    }
+}
+
+fn binding_with_schema_in(
+    copy: &CopyContext,
+    request: &Object,
+    ctx: &str,
+) -> napi::Result<BindingSpec<SchemaInput>> {
     let binding: Object = marshal::req(request, "binding", ctx)?;
     let (directory, identity, backend) = binding_spec_in(&binding, ctx)?;
     let descriptor = match optional_object(request, "schema")? {
         None => None,
-        Some(spec) => match crate::descriptor_of(&spec)? {
-            Ok(parsed) => Some(parsed),
-            Err(
-                crate::OpenOutcome::SchemaError(message)
-                | crate::OpenOutcome::NewtypeMismatch(message),
-            ) => {
-                return Err(marshal::throw_kind_message(
-                    env,
-                    crate::tags::error_family::SCHEMA,
-                    message,
-                ));
-            }
-        },
+        Some(spec) => Some(SchemaInput::copy_with(copy, &spec)?),
     };
     Ok(BindingSpec {
         directory,
@@ -212,36 +219,36 @@ fn operation_in(request: &Object, ctx: &str) -> napi::Result<OperationId> {
     )?))
 }
 
-enum AdminVerb {
+enum AdminVerb<S = ResolvedSchema> {
     Checkpoint {
-        binding: BindingSpec,
+        binding: BindingSpec<S>,
         operation: OperationId,
     },
     PinRoot {
-        binding: BindingSpec,
+        binding: BindingSpec<S>,
         operation: OperationId,
         label: String,
     },
     ReleaseRoot {
-        binding: BindingSpec,
+        binding: BindingSpec<S>,
         operation: OperationId,
         root: OperationId,
     },
     RotateEpoch {
-        binding: BindingSpec,
+        binding: BindingSpec<S>,
         operation: OperationId,
     },
     RetireReceipts {
-        binding: BindingSpec,
+        binding: BindingSpec<S>,
         operation: OperationId,
         through: u64,
     },
     CollectGarbage {
-        binding: BindingSpec,
+        binding: BindingSpec<S>,
         operation: OperationId,
     },
     Backup {
-        binding: BindingSpec,
+        binding: BindingSpec<S>,
         operation: OperationId,
         destination: DestinationSpec,
     },
@@ -251,33 +258,33 @@ enum AdminVerb {
     },
     Restore {
         source: DestinationSpec,
-        target: BindingSpec,
+        target: BindingSpec<S>,
         operation: OperationId,
         backup: Option<OperationId>,
     },
     Erase {
-        binding: BindingSpec,
+        binding: BindingSpec<S>,
         operation: OperationId,
         retain_roots: Vec<OperationId>,
     },
 }
 
 #[allow(clippy::too_many_lines)]
-fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
+fn admin_verb_in(copy: &CopyContext, request: &Object) -> napi::Result<AdminVerb<SchemaInput>> {
     let ctx = "admin request";
     let verb: String = marshal::req(request, "verb", ctx)?;
     Ok(match verb.as_str() {
         "checkpoint" => AdminVerb::Checkpoint {
-            binding: binding_with_schema_in(env, request, ctx)?,
+            binding: binding_with_schema_in(copy, request, ctx)?,
             operation: operation_in(request, ctx)?,
         },
         "pin-root" => AdminVerb::PinRoot {
-            binding: binding_with_schema_in(env, request, ctx)?,
+            binding: binding_with_schema_in(copy, request, ctx)?,
             operation: operation_in(request, ctx)?,
             label: marshal::req(request, "label", ctx)?,
         },
         "release-root" => AdminVerb::ReleaseRoot {
-            binding: binding_with_schema_in(env, request, ctx)?,
+            binding: binding_with_schema_in(copy, request, ctx)?,
             operation: operation_in(request, ctx)?,
             root: OperationId::from_core(marshal::uuid_in(
                 &marshal::req::<String>(request, "root", ctx)?,
@@ -285,20 +292,20 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
             )?),
         },
         "rotate-receipt-epoch" => AdminVerb::RotateEpoch {
-            binding: binding_with_schema_in(env, request, ctx)?,
+            binding: binding_with_schema_in(copy, request, ctx)?,
             operation: operation_in(request, ctx)?,
         },
         "retire-receipts" => AdminVerb::RetireReceipts {
-            binding: binding_with_schema_in(env, request, ctx)?,
+            binding: binding_with_schema_in(copy, request, ctx)?,
             operation: operation_in(request, ctx)?,
             through: marshal::u64_in(&marshal::req::<BigInt>(request, "through", ctx)?, ctx)?,
         },
         "collect-garbage" => AdminVerb::CollectGarbage {
-            binding: binding_with_schema_in(env, request, ctx)?,
+            binding: binding_with_schema_in(copy, request, ctx)?,
             operation: operation_in(request, ctx)?,
         },
         "backup" => AdminVerb::Backup {
-            binding: binding_with_schema_in(env, request, ctx)?,
+            binding: binding_with_schema_in(copy, request, ctx)?,
             operation: operation_in(request, ctx)?,
             destination: destination_in(
                 &marshal::req::<Object>(request, "destination", ctx)?,
@@ -321,19 +328,7 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
                 let (directory, identity, backend) = binding_spec_in(&target, ctx)?;
                 let descriptor = match optional_object(request, "schema")? {
                     None => None,
-                    Some(spec) => match crate::descriptor_of(&spec)? {
-                        Ok(parsed) => Some(parsed),
-                        Err(
-                            crate::OpenOutcome::SchemaError(message)
-                            | crate::OpenOutcome::NewtypeMismatch(message),
-                        ) => {
-                            return Err(marshal::throw_kind_message(
-                                env,
-                                crate::tags::error_family::SCHEMA,
-                                message,
-                            ));
-                        }
-                    },
+                    Some(spec) => Some(SchemaInput::copy_with(copy, &spec)?),
                 };
                 BindingSpec {
                     directory,
@@ -357,7 +352,7 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
                 )?));
             }
             AdminVerb::Erase {
-                binding: binding_with_schema_in(env, request, ctx)?,
+                binding: binding_with_schema_in(copy, request, ctx)?,
                 operation: operation_in(request, ctx)?,
                 retain_roots,
             }
@@ -374,6 +369,89 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
 // The registered admin operation.
 // ---------------------------------------------------------------------------
 
+impl AdminVerb<SchemaInput> {
+    fn resolve(self, work: &WorkContext) -> Result<AdminVerb, RuntimeError> {
+        work.checkpoint()?;
+        Ok(match self {
+            Self::Checkpoint { binding, operation } => AdminVerb::Checkpoint {
+                binding: binding.resolve(work)?,
+                operation,
+            },
+            Self::PinRoot {
+                binding,
+                operation,
+                label,
+            } => AdminVerb::PinRoot {
+                binding: binding.resolve(work)?,
+                operation,
+                label,
+            },
+            Self::ReleaseRoot {
+                binding,
+                operation,
+                root,
+            } => AdminVerb::ReleaseRoot {
+                binding: binding.resolve(work)?,
+                operation,
+                root,
+            },
+            Self::RotateEpoch { binding, operation } => AdminVerb::RotateEpoch {
+                binding: binding.resolve(work)?,
+                operation,
+            },
+            Self::RetireReceipts {
+                binding,
+                operation,
+                through,
+            } => AdminVerb::RetireReceipts {
+                binding: binding.resolve(work)?,
+                operation,
+                through,
+            },
+            Self::CollectGarbage { binding, operation } => AdminVerb::CollectGarbage {
+                binding: binding.resolve(work)?,
+                operation,
+            },
+            Self::Backup {
+                binding,
+                operation,
+                destination,
+            } => AdminVerb::Backup {
+                binding: binding.resolve(work)?,
+                operation,
+                destination,
+            },
+            Self::VerifyBackup {
+                destination,
+                backup,
+            } => AdminVerb::VerifyBackup {
+                destination,
+                backup,
+            },
+            Self::Restore {
+                source,
+                target,
+                operation,
+                backup,
+            } => AdminVerb::Restore {
+                source,
+                target: target.resolve(work)?,
+                operation,
+                backup,
+            },
+            Self::Erase {
+                binding,
+                operation,
+                retain_roots,
+            } => AdminVerb::Erase {
+                binding: binding.resolve(work)?,
+                operation,
+                retain_roots,
+            },
+        })
+    }
+}
+
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn admin_verb(
     env: Env,
@@ -382,11 +460,14 @@ pub(crate) fn admin_verb(
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = runtime_owner(handle).map_err(|error| thrown(env, error))?;
-    let verb = admin_verb_in(env, request)?;
     let shared = Arc::clone(runtime);
+    let mut shape_error = None;
     let operation = runtime
-        .submit(WorkContext::new(), notification(callback)?, move |_| {
+        .submit(WorkContext::new(), notification(callback)?, |context| {
+            let copy = CopyContext::new(env, context);
+            let verb = copy.finish_preserving(admin_verb_in(&copy, request), &mut shape_error)?;
             Ok(Box::new(move |context| {
+                let verb = verb.resolve(context)?;
                 let owned = match run_admin(&shared, verb, context) {
                     Ok(owned) => owned,
                     Err(LogFail::Core(core)) => return Err(core),
@@ -398,7 +479,7 @@ pub(crate) fn admin_verb(
                 Ok(Output::Machine(MachineOutput::Admin(owned)))
             }))
         })
-        .map_err(|error| thrown(env, error))?;
+        .map_err(|error| shape_error.unwrap_or_else(|| thrown(env, error)))?;
     Ok(operation_handle(runtime, operation))
 }
 

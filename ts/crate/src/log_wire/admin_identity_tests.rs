@@ -95,8 +95,7 @@ fn open_spec(directory: &Path, create: bool, seed: u8) -> OpenSpec {
                 artifact,
             )
         }),
-        descriptor,
-        attrs: Vec::new(),
+        schema: (descriptor, Vec::new()),
         tail_policy: bumbledb_log::manifest::TailPolicy::UNBOUNDED,
     }
 }

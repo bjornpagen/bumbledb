@@ -89,8 +89,7 @@ fn open_spec_for(
                 artifact,
             )
         }),
-        descriptor,
-        attrs: Vec::new(),
+        schema: (descriptor, Vec::new()),
         tail_policy: bumbledb_log::manifest::TailPolicy::UNBOUNDED,
     }
 }
@@ -224,7 +223,7 @@ fn at_least_proves_exact_ancestry_never_a_sequence_floor() {
     let spec = open_spec_for(GateMini.descriptor(), &dir, true, 41);
     let opened = open_history(&runtime, &spec, &work).expect("creates");
     let identity = opened.resource.identity;
-    let schema = validated(&spec.descriptor);
+    let schema = validated(&spec.schema.0);
     let relation = bumbledb::RelationId(0);
 
     // Three real committed decisions: seq 1, 2, 3.
@@ -345,7 +344,7 @@ fn at_least_with_pruned_evidence_is_witness_unavailable_never_a_claim() {
     let spec = open_spec_for(GateMini.descriptor(), &dir, true, 43);
     let opened = open_history(&runtime, &spec, &work).expect("creates");
     let identity = opened.resource.identity;
-    let schema = validated(&spec.descriptor);
+    let schema = validated(&spec.schema.0);
     let relation = bumbledb::RelationId(0);
 
     let mut stamps = Vec::new();
@@ -429,7 +428,7 @@ fn rejected_submissions_expose_the_complete_decoded_violation_set() {
     let spec = open_spec_for(GateMini.descriptor(), &dir, true, 47);
     let opened = open_history(&runtime, &spec, &work).expect("creates");
     let identity = opened.resource.identity;
-    let schema = validated(&spec.descriptor);
+    let schema = validated(&spec.schema.0);
     let relation = bumbledb::RelationId(0);
 
     // Two rows with the same key `a` violate `Item(a) -> Item`.
@@ -527,7 +526,7 @@ fn d13_cancelled_resolve_refuses_and_retry_returns_complete_evidence() {
     let work = policy();
     let spec = open_spec_for(GateMini.descriptor(), &dir, true, 73);
     let opened = open_history(&runtime, &spec, &work).expect("creates");
-    let schema = validated(&spec.descriptor);
+    let schema = validated(&spec.schema.0);
     let command = seal_command(
         &schema,
         opened.resource.identity,
@@ -590,7 +589,7 @@ fn multiple_statements_and_truncation_labels_survive_the_decode() {
     let spec = open_spec_for(GatePair.descriptor(), &dir, true, 53);
     let opened = open_history(&runtime, &spec, &work).expect("creates");
     let identity = opened.resource.identity;
-    let schema = validated(&spec.descriptor);
+    let schema = validated(&spec.schema.0);
     let relation = bumbledb::RelationId(0);
 
     // Eight rows sharing BOTH keys violate BOTH statements, with more
@@ -755,7 +754,7 @@ fn submit_owned_carries_terminal_evidence() {
 
     let spec = open_spec_for(GateMini.descriptor(), &dir, true, 51);
     let opened = open_history(&runtime, &spec, &work).expect("creates");
-    let schema = validated(&spec.descriptor);
+    let schema = validated(&spec.schema.0);
     let command = seal_command(
         &schema,
         opened.resource.identity,

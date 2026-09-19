@@ -35,6 +35,81 @@ async function operation(start, take, failure) {
 }
 const eventError = { _tag: 'Engine', kind: 'event' };
 const close = (verb, handle) => new Promise(resolve => verb(handle, resolve));
+async function logSchemaInputs(runtime) {
+  const uuid = byte => [4, 2, 2, 2, 6].map(n => byte.repeat(n)).join('-');
+  const selected = bytes => ({ relations: ['Child', 'Parent'].map(name => ({ name,
+    fields: [{ name: 'id', valueType: { kind: 'u64' } }, { name: 'filter', valueType: { kind: 'event' } }] })),
+    statements: [
+      { kind: 'fd', relation: 'Parent', projection: ['id'] },
+      { kind: 'containment', bidirectional: false,
+        source: { relation: 'Child', projection: ['id'], selection: [['filter',
+          { kind: 'one', literal: { kind: 'value', value: tagged(bytes) } }]] },
+        target: { relation: 'Parent', projection: ['id'], selection: [] } }
+    ] });
+  const descriptor = await operation(cb => native.runtimeSchemaCompile(runtime, spec, cb), native.runtimeSchemaTake);
+  const artifact = await operation(cb => native.runtimeSchemaSnapshot(runtime, spec, cb), native.runtimeBytesTake);
+  const identity = { databaseId: uuid('10'), incarnationId: uuid('20'), schemaId: descriptor.fingerprint };
+  const binding = { kind: 'local', directory: path.join(temp, 'log-input'), identity };
+  const request = { mode: 'create', binding, discardMismatchedCache: false,
+    creation: { operationId: uuid('30'), artifact }, schema: selected(malformed) };
+  await operation(cb => native.logHistoryOpen(runtime, request, cb), native.logHistoryTake, eventError);
+  assert.equal(fs.existsSync(binding.directory), false, 'bad Event never reaches storage');
+  await operation(cb => native.logCacheMake(runtime, { maxOpen: 1, schema: selected(malformed) }, cb), native.logCacheTake, eventError);
+  await operation(cb => native.logCommandDecode(runtime, Buffer.alloc(0), selected(malformed), cb), native.logCommandTake, eventError);
+  const destination = { kind: 'filesystem', directory: path.join(temp, 'log-backup') };
+  await operation(cb => native.logAdmin(runtime, { verb: 'backup', binding, operationId: uuid('40'),
+    destination, schema: selected(malformed) }, cb), native.logAdminTake, eventError);
+  await operation(cb => native.logAdmin(runtime, { verb: 'restore', source: destination, target: binding,
+    operationId: uuid('50'), schema: selected(malformed) }, cb), native.logAdminTake, eventError);
+  assert.equal(fs.existsSync(binding.directory), false);
+  assert.equal(fs.existsSync(destination.directory), false);
+  const unexpected = () => assert.fail('shared input was scheduled');
+  const shared = new Uint8Array(new SharedArrayBuffer(valid.length));
+  shared.set(valid);
+  Object.defineProperty(shared, 'buffer', { value: new ArrayBuffer(valid.length) });
+  for (const start of [
+    () => native.logHistoryOpen(runtime, { ...request, schema: selected(shared) }, unexpected),
+    () => native.logCacheMake(runtime, { maxOpen: 1, schema: selected(shared) }, unexpected),
+    () => native.logCommandDecode(runtime, Buffer.alloc(0), selected(shared), unexpected),
+    () => native.logAdmin(runtime, { verb: 'backup', binding, operationId: uuid('40'), destination,
+      schema: selected(shared) }, unexpected)
+  ]) assert.throws(start, { _tag: 'InvalidArgument' });
+  assert.throws(() => native.logCacheMake(runtime, { maxOpen: 1,
+    schema: selected(new Uint8Array(16 * 1024 * 1024 + 1)) }, unexpected), eventError);
+  assert.throws(() => native.logHistoryOpen(runtime, { ...request, mode: 'unknown' }, unexpected), /unknown open mode/);
+  assert.throws(() => native.logAdmin(runtime, { verb: 'unknown' }, unexpected), /unknown admin verb/);
+  const opened = await operation(cb => native.logHistoryOpen(runtime, { ...request, schema: spec }, cb), native.logHistoryTake);
+  try {
+    const contract = { operationId: uuid('60'), source: identity,
+      target: { ...identity, incarnationId: uuid('70') }, commitment: '80'.repeat(32) };
+    for (const verb of ['begin', 'resolve', 'abort']) {
+      await operation(cb => native.logTransitionCall(opened.history, { verb, contract,
+        schema: selected(malformed) }, cb), native.logTransitionResult, eventError);
+    }
+    assert.throws(() => native.logTransitionCall(opened.history, { verb: 'begin', contract,
+      schema: selected(shared) }, unexpected), { _tag: 'InvalidArgument' });
+    // This parser already carries a structured protocol error. Registration
+    // must not flatten it to InvalidArgument while copying pending schemas.
+    assert.throws(() => native.logTransitionCall(opened.history, { verb: 'activate',
+      evidence: Buffer.from('bad'), schema: spec }, unexpected), error => {
+      assert.equal(error.source, 'protocol');
+      assert.equal(error.reason._tag, 'UnsupportedArtifact');
+      return true;
+    });
+    assert.equal(fs.existsSync(path.join(binding.directory, 'targets')), false,
+      'bad schema and evidence never start a transition');
+  } finally {
+    await close(native.logHistoryClose, opened.history);
+  }
+  // The cache keeps only the owned, admitted schema, never a host byte view.
+  const input = Uint8Array.from(valid);
+  const cache = await operation(cb => {
+    const handle = native.logCacheMake(runtime, { maxOpen: 1, schema: selected(input) }, cb);
+    input.fill(0);
+    return handle;
+  }, native.logCacheTake);
+  await close(native.logCacheClose, cache);
+}
 async function main() {
   const runtime = native.runtimeOpen({ workers: 1, queueCapacity: 16, cleanupCapacity: 32,
     ownerCapacity: 16, nativeHandleCapacity: 64, cleanupTimeoutMs: 1000 });
@@ -102,6 +177,7 @@ async function main() {
     assert.deepEqual(Buffer.from(decoded[0][0]), valid);
     const emptyResult = await operation(cb => native.runtimePreparedExecute(prepared, [tagged(valid)], cb), native.runtimeResultTake);
     await close(native.runtimeResultClose, emptyResult);
+    await logSchemaInputs(runtime);
     assert.equal(native.runtimeInspect(runtime).retained, baseline);
     console.log(JSON.stringify({ passed: true, deferred_semantic_refusals: deferred,
       addon_sha256: createHash('sha256').update(fs.readFileSync(binary)).digest('hex') }));

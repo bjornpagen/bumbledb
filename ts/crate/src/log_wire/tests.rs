@@ -107,8 +107,7 @@ fn open_spec(directory: &std::path::Path, create: bool, seed: u8) -> OpenSpec {
                 artifact,
             )
         }),
-        descriptor,
-        attrs: Vec::new(),
+        schema: (descriptor, Vec::new()),
         tail_policy: bumbledb_log::manifest::TailPolicy::UNBOUNDED,
     }
 }
@@ -334,9 +333,9 @@ fn local_create_open_and_identity_refusals() {
     // A wrong-schema open refuses through the engine's own fingerprint
     // check (a core failure, never a silent adoption).
     let mut wrong = open_spec(&dir, false, 3);
-    wrong.descriptor = Other.descriptor();
+    wrong.schema.0 = Other.descriptor();
     wrong.identity.schema_id =
-        bumbledb_log::schema_file::schema_id(&wrong.descriptor).expect("valid");
+        bumbledb_log::schema_file::schema_id(&wrong.schema.0).expect("valid");
     assert!(open_history(&runtime, &wrong, &work).is_err());
 
     assert_eq!(drain_runtime(&runtime), CloseReport::Closed);

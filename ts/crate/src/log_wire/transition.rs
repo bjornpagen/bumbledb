@@ -21,6 +21,8 @@ use super::{
     uuid_text,
 };
 use crate::db_wire::{ChangesHandle, changes_from_payload, changes_route};
+use crate::ingress::CopyContext;
+use crate::ingress::schema::SchemaInput;
 use crate::runtime::registry::{NativeKind, Payload, RegistryAdmission};
 use crate::runtime::{Capability, Output, Runtime, RuntimeError};
 use crate::runtime_wire::{
@@ -86,18 +88,9 @@ fn contract_in(value: &Object) -> napi::Result<Contract> {
     })
 }
 
-fn descriptor_in(env: Env, request: &Object) -> napi::Result<SchemaDescriptor> {
+fn descriptor_in(copy: &CopyContext, request: &Object) -> napi::Result<SchemaInput> {
     let spec: Object = marshal::req(request, "schema", "transition schema")?;
-    match crate::descriptor_of(&spec)? {
-        Ok((descriptor, _)) => Ok(descriptor),
-        Err(
-            crate::OpenOutcome::SchemaError(message) | crate::OpenOutcome::NewtypeMismatch(message),
-        ) => Err(marshal::throw_kind_message(
-            env,
-            crate::tags::error_family::SCHEMA,
-            message,
-        )),
-    }
+    SchemaInput::copy_with(copy, &spec)
 }
 
 fn installed_in(env: Env, request: &Object) -> napi::Result<Installed> {
@@ -116,31 +109,47 @@ fn installed_in(env: Env, request: &Object) -> napi::Result<Installed> {
     })
 }
 
-enum Call {
-    Begin(Contract, SchemaDescriptor),
-    Resolve(Contract, SchemaDescriptor),
-    Activate(Installed, SchemaDescriptor),
-    Abort(Contract, SchemaDescriptor),
+enum Call<S = SchemaDescriptor> {
+    Begin(Contract, S),
+    Resolve(Contract, S),
+    Activate(Installed, S),
+    Abort(Contract, S),
     Inspect(Installed),
 }
 
-fn call_in(env: Env, request: &Object) -> napi::Result<Call> {
+impl Call<SchemaInput> {
+    fn resolve(self, work: &WorkContext) -> Result<Call, RuntimeError> {
+        work.checkpoint()?;
+        Ok(match self {
+            Self::Begin(contract, schema) => Call::Begin(contract, schema.resolve(work)?.0),
+            Self::Resolve(contract, schema) => Call::Resolve(contract, schema.resolve(work)?.0),
+            Self::Activate(installed, schema) => Call::Activate(installed, schema.resolve(work)?.0),
+            Self::Abort(contract, schema) => Call::Abort(contract, schema.resolve(work)?.0),
+            Self::Inspect(installed) => Call::Inspect(installed),
+        })
+    }
+}
+
+fn call_in(copy: &CopyContext, request: &Object) -> napi::Result<Call<SchemaInput>> {
     let verb: String = marshal::req(request, "verb", "transition")?;
     Ok(match verb.as_str() {
         "begin" => Call::Begin(
             contract_in(&marshal::req(request, "contract", "transition")?)?,
-            descriptor_in(env, request)?,
+            descriptor_in(copy, request)?,
         ),
         "resolve" => Call::Resolve(
             contract_in(&marshal::req(request, "contract", "transition")?)?,
-            descriptor_in(env, request)?,
+            descriptor_in(copy, request)?,
         ),
-        "activate" => Call::Activate(installed_in(env, request)?, descriptor_in(env, request)?),
+        "activate" => Call::Activate(
+            installed_in(copy.env, request)?,
+            descriptor_in(copy, request)?,
+        ),
         "abort" => Call::Abort(
             contract_in(&marshal::req(request, "contract", "transition")?)?,
-            descriptor_in(env, request)?,
+            descriptor_in(copy, request)?,
         ),
-        "inspect" => Call::Inspect(installed_in(env, request)?),
+        "inspect" => Call::Inspect(installed_in(copy.env, request)?),
         _ => return Err(marshal::err("unknown transition verb".into())),
     })
 }
@@ -387,7 +396,6 @@ pub fn log_transition_call(
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let resource = Arc::clone(history_handle(handle).map_err(|error| thrown(env, error))?);
-    let call = call_in(env, &request)?;
     let guard = handle
         .borrow
         .as_ref()
@@ -396,19 +404,23 @@ pub fn log_transition_call(
         .map_err(|error| thrown(env, error))?;
     let runtime = Arc::clone(&resource.runtime);
     let job = Arc::clone(&resource);
+    let mut shape_error = None;
     let operation = runtime
         .submit_db(
             &resource.managed,
             WorkContext::new(),
             notification(callback)?,
-            move |_| {
+            |work| {
+                let copy = CopyContext::new(env, work);
+                let call = copy.finish_preserving(call_in(&copy, &request), &mut shape_error)?;
                 Ok(Box::new(move |work| {
                     let _guard = guard;
+                    let call = call.resolve(work)?;
                     output(run(&job, call, work))
                 }))
             },
         )
-        .map_err(|error| thrown(env, error))?;
+        .map_err(|error| shape_error.unwrap_or_else(|| thrown(env, error)))?;
     Ok(operation_handle(&runtime, operation))
 }
 

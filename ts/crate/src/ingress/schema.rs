@@ -8,13 +8,17 @@ use napi::bindgen_prelude::{Env, Object};
 
 pub(crate) struct SchemaInput(SchemaSpec<ValueInput>);
 
+pub(crate) type ResolvedSchema = (bumbledb::SchemaDescriptor, crate::FieldAttrsTable);
+
 impl SchemaInput {
     pub(crate) fn copy(env: Env, spec: &Object, work: &WorkContext) -> Result<Self, RuntimeError> {
         let copy = CopyContext::new(env, work);
-        copy.finish(crate::marshal::schema_spec_with(spec, &|value| {
-            copy.tagged_value(value)
-        }))
-        .map(Self)
+        copy.finish(Self::copy_with(&copy, spec))
+    }
+
+    pub(crate) fn copy_with(copy: &CopyContext, spec: &Object) -> napi::Result<Self> {
+        copy.checkpoint()?;
+        crate::marshal::schema_spec_with(spec, &|value| copy.tagged_value(value)).map(Self)
     }
 
     // Shape metadata used only for copying row envelopes. Validation and row
@@ -47,10 +51,7 @@ impl SchemaInput {
         Ok((&relation.name, fields))
     }
 
-    pub(crate) fn resolve(
-        self,
-        work: &WorkContext,
-    ) -> Result<(bumbledb::SchemaDescriptor, crate::FieldAttrsTable), RuntimeError> {
+    pub(crate) fn resolve(self, work: &WorkContext) -> Result<ResolvedSchema, RuntimeError> {
         self.admit(work)?.map_err(|error| RuntimeError::Engine {
             diagnostic: None,
             kind: crate::tags::error_family::SCHEMA,
