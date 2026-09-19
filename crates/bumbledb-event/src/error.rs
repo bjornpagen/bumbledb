@@ -33,6 +33,8 @@ pub enum Capacity {
     AlgebraicDegree,
     AlgebraicRoots,
     AlgebraicSteps,
+    ParameterCells,
+    ParameterSteps,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +86,10 @@ pub enum Error {
     IndeterminateRoots,
     InvalidRootInterval,
     AlgebraicInvariant,
+    InvalidRootOrder,
+    ParameterScopeMismatch,
+    EmptyParameterDomain,
+    ParameterDomainMismatch,
 }
 
 impl fmt::Display for Error {
@@ -164,6 +170,16 @@ impl fmt::Display for Error {
             }
             Self::AlgebraicInvariant => {
                 f.write_str("exact root solving violated its Sturm invariant")
+            }
+            Self::InvalidRootOrder => {
+                f.write_str("a rational separator needs strictly increasing roots")
+            }
+            Self::ParameterScopeMismatch => {
+                f.write_str("parameter regions require the same named parameter")
+            }
+            Self::EmptyParameterDomain => f.write_str("a source parameter domain must be nonempty"),
+            Self::ParameterDomainMismatch => {
+                f.write_str("functions require the same admitted parameter domain")
             }
             Self::MissingLaw => f.write_str("the Event space has no designated probability law"),
         }

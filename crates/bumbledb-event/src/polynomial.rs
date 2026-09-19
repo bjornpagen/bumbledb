@@ -102,6 +102,14 @@ impl ExactPolynomial {
         self.terms.is_empty()
     }
 
+    pub(crate) fn validate(
+        &self,
+        limits: PolynomialLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<()> {
+        Operation::new(limits, work)?.validate(self)
+    }
+
     /// Combine equal monomials and remove zero coefficients. Every supplied
     /// term is checked before simplification, including zero coefficients.
     /// # Errors

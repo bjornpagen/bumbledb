@@ -23,6 +23,7 @@ mod information;
 mod kernel;
 mod map;
 mod measure;
+mod parameter;
 mod partition;
 mod polynomial;
 mod product;
@@ -53,6 +54,10 @@ pub use information::InformationCases;
 pub use kernel::{FiniteKernel, SourceExtension};
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use measure::{DensityPiece, LawLimits, ProbabilityObservation};
+pub use parameter::{
+    GuardedRationalFunction, ParameterCell, ParameterDomain, ParameterLimits, ParameterRegion,
+    PolynomialSigns, RealWitness,
+};
 pub use partition::{EventPartition, PartitionLimits};
 pub use polynomial::{ExactPolynomial, ParameterId, PolynomialLimits, PolynomialTerm};
 pub use product::{CompleteFibreSquare, FaceProduct, FibreProduct};
@@ -114,3 +119,6 @@ mod polynomial_tests;
 
 #[cfg(test)]
 mod algebraic_tests;
+
+#[cfg(test)]
+mod parameter_tests;

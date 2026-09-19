@@ -229,6 +229,10 @@ impl AlgebraicRoot {
         let mut op = Operation::new(limits, work)?;
         op.validate_root(self)?;
         op.validate_root(other)?;
+        self.compare_with(other, &mut op)
+    }
+
+    fn compare_with(&self, other: &Self, op: &mut Operation<'_, '_>) -> Result<Ordering> {
         let common = op.gcd(
             self.basis.square_free.clone(),
             other.basis.square_free.clone(),
@@ -269,6 +273,65 @@ impl AlgebraicRoot {
                 if op.count(&sturm, lower, upper)? == 1 {
                     return Ok(Ordering::Equal);
                 }
+            }
+            a.refine(&self.basis, op)?;
+            b.refine(&other.basis, op)?;
+        }
+    }
+
+    /// Compare this exact value with a rational without changing its description.
+    /// # Errors
+    /// Input/intermediate capacities or cancellation.
+    pub fn compare_rational(
+        &self,
+        value: &ExactRational,
+        limits: RootLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Ordering> {
+        let mut op = Operation::new(limits, work)?;
+        op.validate_root(self)?;
+        op.work.validate(value)?;
+        let mut interval = Interval::from(self);
+        loop {
+            op.step()?;
+            if interval.lower == interval.upper {
+                return op.compare(&interval.lower, value);
+            }
+            if op.compare(&interval.upper, value)? != Ordering::Greater {
+                return Ok(Ordering::Less);
+            }
+            if op.compare(&interval.lower, value)? != Ordering::Less {
+                return Ok(Ordering::Greater);
+            }
+            if op.evaluate(&self.basis.square_free, value)?.is_zero() {
+                return Ok(Ordering::Equal);
+            }
+            interval.refine(&self.basis, &mut op)?;
+        }
+    }
+
+    /// Produce a certified rational strictly between two distinct ordered roots.
+    /// This is a cell witness, never an approximation substituted for either root.
+    /// # Errors
+    /// Reversed/equal roots, input/intermediate limits or cancellation.
+    pub fn rational_between(
+        &self,
+        other: &Self,
+        limits: RootLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<ExactRational> {
+        let mut op = Operation::new(limits, work)?;
+        op.validate_root(self)?;
+        op.validate_root(other)?;
+        if self.compare_with(other, &mut op)? != Ordering::Less {
+            return Err(Error::InvalidRootOrder);
+        }
+        let mut a = Interval::from(self);
+        let mut b = Interval::from(other);
+        loop {
+            op.step()?;
+            if op.compare(&a.upper, &b.lower)? == Ordering::Less {
+                return op.midpoint(&a.upper, &b.lower);
             }
             a.refine(&self.basis, &mut op)?;
             b.refine(&other.basis, &mut op)?;
