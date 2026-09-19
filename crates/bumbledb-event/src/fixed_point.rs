@@ -6,27 +6,28 @@ use crate::{
     MapOp, ModalOp, PartitionLimits, RelationalProduct, Result, Space, Variance, WorldRelation,
 };
 
-/// A finite native code space with the exact count of original legal worlds.
-/// Decision-diagram nodes and completed-code aliases are not counted as worlds.
-/// This is not a certificate for a continuous source or an unbounded transcript.
+/// A sealed finite Event presentation with its exact number of legal cells.
+/// A parameter cell may contain infinitely many worlds. Every Event in this
+/// presentation is constant on each cell; no new guards appear during iteration.
+/// Decision-diagram nodes and completed-code aliases are not cells.
 #[derive(Debug, Clone)]
 pub struct FiniteCarrier {
     space: Space,
-    worlds: u64,
+    atoms: u64,
 }
 
 impl FiniteCarrier {
-    /// Seal the existing finite Space and count original legal support.
+    /// Seal the existing presentation and count original legal cells.
     /// # Errors
     /// Refuses cancellation or count-kernel resource exhaustion.
     pub fn new(space: &Space, control: &dyn Control) -> Result<Self> {
-        let worlds = space.full().count(control)?;
-        if worlds == 0 || worlds > (1u64 << space.dimensions()) {
+        let atoms = space.full().atom_count(control)?;
+        if atoms == 0 || atoms > (1u64 << space.dimensions()) {
             return Err(Error::FixedPointInvariant);
         }
         Ok(Self {
             space: space.clone(),
-            worlds,
+            atoms,
         })
     }
     #[must_use]
@@ -34,8 +35,8 @@ impl FiniteCarrier {
         &self.space
     }
     #[must_use]
-    pub fn worlds(&self) -> u64 {
-        self.worlds
+    pub fn atoms(&self) -> u64 {
+        self.atoms
     }
 }
 
@@ -111,7 +112,7 @@ pub struct FixedPointProgram {
 }
 
 impl EventProgram {
-    /// Validate endocontext, positive variance and a finite original-world bound.
+    /// Validate endocontext, positive variance and a finite logical-atom bound.
     /// # Errors
     /// Refuses differing input/output contexts, unproved monotonicity or resources.
     pub fn fixed_points(&self, control: &dyn Control) -> Result<FixedPointProgram> {
@@ -196,7 +197,7 @@ impl FixedPointProgram {
         let mut steps = 0;
         let mut layers = Vec::new();
         // Space has at most 2^62 legal codes, so the detection application fits.
-        for iteration in 1..=self.carrier.worlds() + 1 {
+        for iteration in 1..=self.carrier.atoms() + 1 {
             control.checkpoint()?;
             if iteration > limits.iterations {
                 return Err(Error::Capacity(Capacity::FixedPointIterations));

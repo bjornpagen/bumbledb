@@ -37,6 +37,9 @@ pub enum Capacity {
     ParameterSteps,
     AlgebraicCandidates,
     AlgebraicIdentitySteps,
+    ParameterSourceCells,
+    ParameterSourceSteps,
+    WorldCount,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,9 +95,20 @@ pub enum Error {
     ParameterScopeMismatch,
     EmptyParameterDomain,
     ParameterDomainMismatch,
+    EmptyParameterFibre,
+    MissingParameter,
+    IllegalParameter,
+    ParameterRefinementRequired,
+    ParameterGuardMismatch,
+    ParameterGuardElimination,
+    InfiniteWorlds,
+    ParameterizedMeasurement,
+    UndefinedDensity,
 }
 
 impl fmt::Display for Error {
+    // Keep the complete error-to-message mapping in one exhaustive match.
+    #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cancelled => f.write_str("event operation cancelled"),
@@ -184,6 +198,23 @@ impl fmt::Display for Error {
                 f.write_str("functions require the same admitted parameter domain")
             }
             Self::MissingLaw => f.write_str("the Event space has no designated probability law"),
+            Self::EmptyParameterFibre => f.write_str("an admitted parameter has no legal outcome"),
+            Self::MissingParameter => f.write_str("the Event space has no parameter domain"),
+            Self::IllegalParameter => f.write_str("parameter value is outside the admitted domain"),
+            Self::ParameterRefinementRequired => {
+                f.write_str("the map requires an explicit common guard refinement")
+            }
+            Self::ParameterGuardMismatch => {
+                f.write_str("map readouts change a parameter guard's meaning")
+            }
+            Self::ParameterGuardElimination => {
+                f.write_str("parameter guards cannot be forgotten as outcome coordinates")
+            }
+            Self::InfiniteWorlds => f.write_str("the Event contains infinitely many worlds"),
+            Self::ParameterizedMeasurement => {
+                f.write_str("the designated law requires a parameter-valued observation")
+            }
+            Self::UndefinedDensity => f.write_str("density is undefined on a legal source fibre"),
         }
     }
 }

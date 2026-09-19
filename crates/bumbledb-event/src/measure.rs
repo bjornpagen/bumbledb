@@ -110,6 +110,35 @@ impl Space {
     ) -> Result<Self> {
         let control = work.control();
         control.checkpoint()?;
+        if let Some(domain) = self.parameter_domain() {
+            if pieces.len() > limits.cells {
+                return Err(Error::Capacity(Capacity::LawCells));
+            }
+            let parameters = crate::ParameterSourceLimits {
+                laws: limits,
+                ..crate::ParameterSourceLimits::default()
+            };
+            let mut family = Vec::new();
+            family.try_reserve_exact(pieces.len())?;
+            for piece in pieces {
+                self.full().aligned(&piece.region)?;
+                piece.density.to_bytes(work)?;
+                if piece.density.is_negative() {
+                    return Err(Error::NegativeMass);
+                }
+                family.push(crate::ParameterDensityPiece {
+                    region: piece.region.clone(),
+                    density: crate::GuardedRationalFunction::new(
+                        domain.clone(),
+                        crate::ExactPolynomial::constant(piece.density.clone()),
+                        crate::ExactPolynomial::one(),
+                        parameters.parameters.region,
+                        work,
+                    )?,
+                });
+            }
+            return self.with_parameter_density(&family, parameters, work);
+        }
         if pieces.len() > limits.cells {
             return Err(Error::Capacity(Capacity::LawCells));
         }
@@ -180,6 +209,11 @@ impl Space {
     #[must_use]
     pub fn is_measured(&self) -> bool {
         self.0.law.is_some()
+            || self
+                .0
+                .parameter
+                .as_ref()
+                .is_some_and(|context| context.law.is_some())
     }
 
     /// Inspect the canonical nonzero density partition. Returned regions retain
@@ -211,6 +245,14 @@ impl Event {
         let control = work.control();
         control.checkpoint()?;
         let space = self.space();
+        if space
+            .0
+            .parameter
+            .as_ref()
+            .is_some_and(|context| context.law.is_some())
+        {
+            return Err(Error::ParameterizedMeasurement);
+        }
         let law = space.0.law.as_ref().ok_or(Error::MissingLaw)?;
         let mut result = ExactRational::zero();
         for cell in &law.cells {

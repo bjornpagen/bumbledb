@@ -55,8 +55,10 @@ pub use kernel::{FiniteKernel, SourceExtension};
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use measure::{DensityPiece, LawLimits, ProbabilityObservation};
 pub use parameter::{
-    GuardedRationalFunction, ParameterCell, ParameterCodecLimits, ParameterDomain, ParameterLimits,
-    ParameterRegion, PolynomialSigns, RealWitness,
+    GuardedRationalFunction, ParameterCell, ParameterCodecLimits, ParameterDensityPiece,
+    ParameterDomain, ParameterFunction, ParameterGuard, ParameterLimits,
+    ParameterProbabilityObservation, ParameterRegion, ParameterSourceLimits, ParameterWorld,
+    PolynomialSigns, RealWitness, WorldCardinality,
 };
 pub use partition::{EventPartition, PartitionLimits};
 pub use polynomial::{ExactPolynomial, ParameterId, PolynomialLimits, PolynomialTerm};
@@ -125,3 +127,6 @@ mod parameter_tests;
 
 #[cfg(test)]
 mod algebraic_identity_tests;
+
+#[cfg(test)]
+mod parameter_source_tests;

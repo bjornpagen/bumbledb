@@ -36,9 +36,9 @@ function encodedEvent(input: unknown): Event {
 		bytes[1] !== 69 ||
 		bytes[2] !== 86 ||
 		bytes[3] !== 84 ||
-		(bytes[4] !== 1 && bytes[4] !== 2)
+		(bytes[4] !== 1 && bytes[4] !== 2 && bytes[4] !== 3)
 	)
-		throw new AuthoringError({ message: "Event encoding: expected a BEVT v1 or v2 envelope" })
+		throw new AuthoringError({ message: "Event encoding: expected a BEVT v1, v2 or v3 envelope" })
 	const value: Event = Object.freeze({ [eventTag]: true as const })
 	encodings.set(value, bytes)
 	return value

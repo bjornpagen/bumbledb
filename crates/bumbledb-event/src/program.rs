@@ -513,7 +513,7 @@ struct Program {
 /// let root = builder.apply(BoolOp4::OR, &seed, &next, &())?;
 /// let fixed = builder.finish(&root, &())?.fixed_points(&())?;
 /// let result = fixed.least(FixedPointLimits::default(), &())?;
-/// assert_eq!(fixed.carrier().worlds(), 3);
+/// assert_eq!(fixed.carrier().atoms(), 3);
 /// assert!(result.event().is_full());
 /// assert_eq!(result.iterations(), 4);
 /// # Ok(())

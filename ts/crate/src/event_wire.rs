@@ -24,6 +24,7 @@ enum Op {
     Apply,
     Ite,
     Count,
+    AtomCount,
     Signature,
     IsEmpty,
     IsFull,
@@ -45,6 +46,7 @@ impl Op {
             "apply" => Self::Apply,
             "ite" => Self::Ite,
             "count" => Self::Count,
+            "atomCount" => Self::AtomCount,
             "signature" => Self::Signature,
             "isEmpty" => Self::IsEmpty,
             "isFull" => Self::IsFull,
@@ -161,6 +163,12 @@ fn execute(
             .ite(&events[1], &events[2], control)
             .map_err(event_error)?,
         Op::Count => return first.count(control).map(ValueOut::U64).map_err(event_error),
+        Op::AtomCount => {
+            return first
+                .atom_count(control)
+                .map(ValueOut::U64)
+                .map_err(event_error);
+        }
         Op::Contains => {
             return first
                 .contains(argument)

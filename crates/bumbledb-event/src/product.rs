@@ -95,7 +95,31 @@ impl FaceProduct {
             }
             offset += source.dimensions();
         }
-        let space = raw.restrict(&legal, control)?;
+        let mut space = raw.restrict(&legal, control)?;
+        if let Some(domain) = first.map().source().parameter_domain() {
+            let mut guards = Vec::new();
+            let mut offset = 0u8;
+            for face in faces {
+                let source = face.map().source();
+                let declared = source
+                    .parameter_guards()
+                    .ok_or(Error::ParameterScopeMismatch)?;
+                guards.try_reserve(declared.len())?;
+                for guard in declared {
+                    guards.push(crate::ParameterGuard {
+                        coordinate: offset + guard.coordinate,
+                        region: guard.region.clone(),
+                    });
+                }
+                offset += source.dimensions();
+            }
+            space = space.with_parameters(
+                domain.clone(),
+                &guards,
+                crate::ParameterSourceLimits::default(),
+                &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), control),
+            )?;
+        }
         let mut projections = Vec::new();
         projections.try_reserve_exact(faces.len())?;
         let mut environments = Vec::new();

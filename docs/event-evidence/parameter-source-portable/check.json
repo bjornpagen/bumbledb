@@ -1,0 +1,67 @@
+{
+  "passed": true,
+  "source_tree": "d40a304e0a9437db4fbabba6d324441b4a108b31",
+  "scope": "Staged-only Event proposal package, fresh Lean elaboration and readiness; no Rust refinement or performance claim",
+  "checker_sha256": "c50f0e606e674c8cdd2aff0388b8e397d78265b171b1d72aa7039d3e1367b33f",
+  "checks": [
+    {
+      "name": "package",
+      "command": [
+        "python3",
+        "scripts/check-event-package.py"
+      ],
+      "exit_code": 0,
+      "log": "package.log",
+      "sha256": "3b15227769988d71dbd75ce2f7c72d767967796bdac9b17b26213e91deb1bf41"
+    },
+    {
+      "name": "proposal",
+      "command": [
+        "python3",
+        "proposal/semantics/check.py",
+        "--label",
+        "fresh-checkout",
+        "--lean",
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean"
+      ],
+      "exit_code": 0,
+      "log": "proposal.log",
+      "sha256": "0eb0500a35dd187271b8006c9cc87c632e787a326d7be403c532d94ac9a8abd4"
+    },
+    {
+      "name": "native",
+      "command": [
+        "python3",
+        "scripts/check-event-semantics.py",
+        "--lean",
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "--output",
+        "docs/event-evidence/fresh-checkout-native"
+      ],
+      "exit_code": 0,
+      "log": "native.log",
+      "sha256": "f6daad1dfcbaf16f83b236930fdd432073fce006f33cd4cc1add4d93e572e5ce"
+    },
+    {
+      "name": "readiness",
+      "command": [
+        "python3",
+        "scripts/check-event-readiness.py",
+        "--proposal-proof",
+        "proposal/semantics/results/fresh-checkout",
+        "--native-proof",
+        "docs/event-evidence/fresh-checkout-native",
+        "--output",
+        "docs/event-evidence/fresh-checkout-readiness"
+      ],
+      "exit_code": 0,
+      "log": "readiness.log",
+      "sha256": "a085db5d633b2ccd532d88d7a8ac7f80c8dbd4c320730dd0f5bdf06bc5d16cbe"
+    }
+  ],
+  "proposal_manifest_sha256": "a7ad537ff063905672178c528186516c38c9c50eae2f80695eb82abc9558a796",
+  "native_manifest_sha256": "c01ff479a0421d14344f60d02a26ea705a339f34e1ba624a08346247ccf606fa",
+  "readiness_manifest_sha256": "223dc5966fdd4471d157c7479dd7308599f9cec3488959a0ffb2105c5051ed30",
+  "package_manifest_sha256": "4e8dde95bfc78054e0875cc0e5c631040fcb208e33c07727b798022447618d1c",
+  "index_unchanged": true
+}

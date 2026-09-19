@@ -113,8 +113,13 @@ function equivalence(left: Event, right: Event) {
 function ite(condition: Event, high: Event, low: Event) {
 	return eventResult("ite", [condition, high, low])
 }
+/** Exact world count; an infinite parameter region refuses. */
 function count(value: Event) {
 	return integerResult("count", [value])
+}
+/** Finite cells of the sealed Event presentation, never probability weights. */
+function atomCount(value: Event) {
+	return integerResult("atomCount", [value])
 }
 function signature(left: Event, right: Event) {
 	return integerResult("signature", [left, right])
@@ -161,6 +166,7 @@ const Event = Object.freeze({
 	equivalence,
 	ite,
 	count,
+	atomCount,
 	signature,
 	isEmpty,
 	isFull,

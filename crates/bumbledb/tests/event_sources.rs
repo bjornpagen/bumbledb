@@ -724,3 +724,262 @@ fn check_revised_coup_answers(answers: &bumbledb::Answers) {
         }
     }
 }
+
+fn parameterized_draws() -> Space {
+    use bumbledb::event::{
+        BoolOp4, ExactPolynomial as Poly, GuardedRationalFunction, ParameterDensityPiece,
+        ParameterDomain, ParameterGuard, ParameterId, ParameterRegion, ParameterSourceLimits,
+        PolynomialSigns,
+    };
+    let limits = ParameterSourceLimits::default();
+    let mut work = arithmetic();
+    let name = ParameterId([97; 32]);
+    let p = Poly::parameter(name);
+    let q = Poly::one()
+        .sub(&p, limits.parameters.region.polynomial, &mut work)
+        .unwrap();
+    let lower = ParameterRegion::from_polynomial(
+        name,
+        &p,
+        PolynomialSigns::NON_NEGATIVE,
+        limits.parameters.region,
+        &mut work,
+    )
+    .unwrap();
+    let upper = ParameterRegion::from_polynomial(
+        name,
+        &q,
+        PolynomialSigns::NON_NEGATIVE,
+        limits.parameters.region,
+        &mut work,
+    )
+    .unwrap();
+    let domain = ParameterDomain::new(
+        lower
+            .apply(BoolOp4::AND, &upper, limits.parameters.region, &mut work)
+            .unwrap(),
+    )
+    .unwrap();
+    let zero = ParameterRegion::from_polynomial(
+        name,
+        &p,
+        PolynomialSigns::ZERO,
+        limits.parameters.region,
+        &mut work,
+    )
+    .unwrap();
+    let base = Space::new(SpaceId([97; 32]), 3, &())
+        .unwrap()
+        .with_parameters(
+            domain.clone(),
+            &[ParameterGuard {
+                coordinate: 2,
+                region: zero,
+            }],
+            limits,
+            &mut work,
+        )
+        .unwrap();
+    let mut pieces = Vec::new();
+    for (world, (a, b)) in [(&q, &q), (&p, &q), (&q, &p), (&p, &p)]
+        .into_iter()
+        .enumerate()
+    {
+        pieces.push(ParameterDensityPiece {
+            region: base.table(3, &[1 << world], &()).unwrap(),
+            density: GuardedRationalFunction::new(
+                domain.clone(),
+                a.mul(b, limits.parameters.region.polynomial, &mut work)
+                    .unwrap(),
+                Poly::one(),
+                limits.parameters.region,
+                &mut work,
+            )
+            .unwrap(),
+        });
+    }
+    base.with_parameter_density(&pieces, limits, &mut work)
+        .unwrap()
+}
+
+#[test]
+fn shared_unknown_parameter_survives_reopen_both_free_join_paths_and_owner_release() {
+    use bumbledb::{
+        event::{ParameterSourceLimits, WorldCardinality},
+        query,
+    };
+    let dir = common::TempDir::new("event-parameter-source");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let source = parameterized_draws();
+    let first = source.coordinate(0, &()).unwrap();
+    let second = source.coordinate(1, &()).unwrap();
+    let bytes = first.to_bytes(&()).unwrap();
+    let decoded = bumbledb::event::Event::from_bytes(&bytes, &()).unwrap();
+    db.write(common::work(), |tx| {
+        assert_eq!(
+            tx.insert([&Region {
+                id: 1,
+                condition: first.clone()
+            }])?
+            .changed(),
+            1
+        );
+        assert_eq!(
+            tx.insert([&Region {
+                id: 1,
+                condition: decoded.clone()
+            }])?
+            .changed(),
+            0
+        );
+        tx.insert([&Observation {
+            id: 1,
+            condition: second.clone(),
+        }])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    drop((source, first, second, decoded, db));
+    let db = Db::open(dir.path(), SourceSchema, common::work()).unwrap();
+    let query = query!(SourceSchema {
+        (both: Event(a & b), first: Event(a), differ: Event(a ^ b)) |
+            Region(id: source_id, condition: a), Observation(id: source_id, condition: b);
+    });
+    let mut retained = Vec::new();
+    for cursor in [false, true] {
+        let mut prepared = db.prepare(&query, common::work()).unwrap();
+        prepared.force_cursor_fallback(cursor);
+        retained.push(
+            db.read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((query, db));
+    let limits = ParameterSourceLimits::default();
+    for answers in retained {
+        assert_eq!(answers.len(), 1);
+        let (AnswerValue::Event(both), AnswerValue::Event(first), AnswerValue::Event(differ)) =
+            (answers.get(0, 0), answers.get(0, 1), answers.get(0, 2))
+        else {
+            panic!("owned Events")
+        };
+        assert_eq!(first.to_bytes(&()).unwrap(), bytes);
+        assert_eq!(
+            first.world_cardinality(&()).unwrap(),
+            WorldCardinality::Continuum
+        );
+        let mass = both.parameter_mass(limits, &mut arithmetic()).unwrap();
+        let observation = first
+            .parameter_probability(differ, limits, &mut arithmetic())
+            .unwrap();
+        for n in 0..=8 {
+            let at = ratio(n, 8);
+            assert_eq!(
+                mass.value_at(
+                    &at,
+                    limits.parameters.region,
+                    limits.functions,
+                    &mut arithmetic()
+                )
+                .unwrap(),
+                Some(ratio(n * n, 64))
+            );
+            assert_eq!(
+                observation
+                    .value_at(&at, limits, &mut arithmetic())
+                    .unwrap(),
+                if n == 0 || n == 8 {
+                    None
+                } else {
+                    Some(ratio(1, 2))
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn parameter_guarded_zero_mass_worlds_still_participate_in_fd_and_ind_admission() {
+    use bumbledb::event::{BoolOp4, ParameterSourceLimits};
+    let dir = common::TempDir::new("event-parameter-admission");
+    let db = Db::create(dir.path(), PartitionSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let source = parameterized_draws();
+    let zero_region = source
+        .coordinate(0, &())
+        .unwrap()
+        .apply(BoolOp4::AND, &source.coordinate(2, &()).unwrap(), &())
+        .unwrap();
+    assert!(!zero_region.is_empty());
+    let zero = Child {
+        group: 1,
+        branch: 0,
+        condition: zero_region.clone(),
+    };
+    let rest = Child {
+        group: 1,
+        branch: 1,
+        condition: zero_region.complement(),
+    };
+    let missing = db
+        .write(common::work(), |tx| {
+            tx.insert([&Parent {
+                group: 1,
+                condition: source.full(),
+            }])?;
+            tx.insert([&rest])?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(matches!(missing, Admission::Rejected(_)));
+    db.write(common::work(), |tx| {
+        tx.insert([&Parent {
+            group: 1,
+            condition: source.full(),
+        }])?;
+        tx.insert([&rest, &zero])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        db.write(common::work(), |tx| tx.insert([&Child {
+            branch: 2,
+            ..zero.clone()
+        }]))
+        .unwrap(),
+        Admission::Rejected(_)
+    ));
+    assert!(matches!(
+        db.write(common::work(), |tx| tx.delete([&zero])).unwrap(),
+        Admission::Rejected(_)
+    ));
+    drop(db);
+    let db = Db::open(dir.path(), PartitionSchema, common::work()).unwrap();
+    let rows: Vec<Child> = db
+        .read(common::work(), |snapshot| snapshot.scan_facts()?.collect())
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    let retained = rows
+        .iter()
+        .find(|r| r.branch == 0)
+        .unwrap()
+        .condition
+        .clone();
+    drop((db, rows, source));
+    let observation = retained
+        .parameter_probability(
+            &retained,
+            ParameterSourceLimits::default(),
+            &mut arithmetic(),
+        )
+        .unwrap();
+    assert!(observation.is_impossible());
+    assert_eq!(retained.count(&()).unwrap(), 2);
+}

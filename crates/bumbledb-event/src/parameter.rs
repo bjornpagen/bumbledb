@@ -9,8 +9,15 @@ use crate::{
 };
 
 mod function;
+mod piecewise;
+pub(crate) mod source;
 mod wire;
 pub use function::GuardedRationalFunction;
+pub use piecewise::ParameterFunction;
+pub use source::{
+    ParameterDensityPiece, ParameterGuard, ParameterProbabilityObservation, ParameterSourceLimits,
+    ParameterWorld, WorldCardinality,
+};
 pub use wire::ParameterCodecLimits;
 
 /// A subset of the three exact polynomial signs: negative, zero, positive.

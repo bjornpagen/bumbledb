@@ -103,7 +103,7 @@ fn finite_original_world_rank_controls_least_and_greatest_iteration() {
             .unwrap()
             .fixed_points(&())
             .unwrap();
-        assert_eq!(program.carrier().worlds(), 3);
+        assert_eq!(program.carrier().atoms(), 3);
         let least = program.least(FixedPointLimits::default(), &()).unwrap();
         let greatest = program.greatest(FixedPointLimits::default(), &()).unwrap();
         assert_eq!(members(least.event(), 22, 8), least_expected);
@@ -302,7 +302,7 @@ fn shared_environments_remain_separate_through_star() {
     let plan = RelationalProduct::new(SpaceId([4; 32]), &pair, &pair, &pair, &()).unwrap();
     let r = WorldRelation::new(&pair, &table(pair.space(), (1 << 8) | (1 << 7)), &()).unwrap(); // 0→2,3→1
     let star_program = plan.star_program(&r, &()).unwrap();
-    assert_eq!(star_program.carrier().worlds(), 8);
+    assert_eq!(star_program.carrier().atoms(), 8);
     let closure = plan.star(&r, FixedPointLimits::default(), &()).unwrap();
     assert_eq!(closure.region().count(&()).unwrap(), 6);
     assert_eq!(closure.region().contains(4), Err(Error::IllegalWorld(4))); // 0→1, foreign environment
@@ -547,7 +547,7 @@ fn budget_exhaustion_never_returns_a_partial_fixed_point() {
         .unwrap()
         .fixed_points(&())
         .unwrap();
-    assert_eq!(fixed.carrier().worlds(), 1);
+    assert_eq!(fixed.carrier().atoms(), 1);
     assert_eq!(
         fixed
             .least(
@@ -612,7 +612,7 @@ fn symbolic_programs_and_star_do_not_enumerate_their_finite_carriers() {
         .unwrap()
         .fixed_points(&())
         .unwrap();
-    assert_eq!(fixed.carrier().worlds(), 1 << 62);
+    assert_eq!(fixed.carrier().atoms(), 1 << 62);
     let result = fixed.least(FixedPointLimits::default(), &()).unwrap();
     assert_eq!(result.iterations(), 63);
     assert_eq!(result.event().count(&()).unwrap(), (1 << 62) - 1);
@@ -621,7 +621,7 @@ fn symbolic_programs_and_star_do_not_enumerate_their_finite_carriers() {
     let plan = RelationalProduct::new(SpaceId([4; 32]), &pair, &pair, &pair, &()).unwrap();
     let identity = WorldRelation::identity(&pair, &()).unwrap();
     let prepared = plan.star_program(&identity, &()).unwrap();
-    assert_eq!(prepared.carrier().worlds(), 1 << 40);
+    assert_eq!(prepared.carrier().atoms(), 1 << 40);
     let closed = prepared
         .least(
             FixedPointLimits {

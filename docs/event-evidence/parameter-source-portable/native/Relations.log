@@ -1,0 +1,22 @@
+'Relations.product_inhabited' does not depend on any axioms
+'Relations.left_projection_onto' does not depend on any axioms
+'Relations.right_projection_onto' does not depend on any axioms
+'Relations.product_completion_gates' does not depend on any axioms
+'Relations.readout_equality_exact' depends on axioms: [Quot.sound]
+'Relations.joint_onto_iff_complete' does not depend on any axioms
+'Relations.square_existential_base_change' does not depend on any axioms
+'Relations.square_universal_base_change' does not depend on any axioms
+'Relations.descent_iff_membership_fd' does not depend on any axioms
+'Relations.descent_unique' does not depend on any axioms
+'Relations.triple_projects_complete_pairs' does not depend on any axioms
+'Relations.shared_product_exact' does not depend on any axioms
+'Relations.staged_left_residual' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Relations.staged_right_residual' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Relations.left_adjunction' does not depend on any axioms
+'Relations.right_adjunction' does not depend on any axioms
+'Relations.graph_total_iff_environment_preserved' does not depend on any axioms
+'Relations.bit_conflicts_iff_nonfunctional' depends on axioms: [Quot.sound]
+'Relations.graph_bit_readout_exact' does not depend on any axioms
+'Relations.individually_onto_is_not_complete' does not depend on any axioms
+'Relations.full_has_every_role_but_does_not_certify_product' does not depend on any axioms
+'Relations.dropping_middle_witness_changes_composition' does not depend on any axioms

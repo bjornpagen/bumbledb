@@ -363,3 +363,58 @@ test("interrupting completed Event delivery drains the output and leaves the run
 		await runtime.dispose()
 	}
 })
+
+test("parameterized Event sources retain their domains through SDK storage and joins", async () => {
+	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const path = storeDir("event-parameter-sdk")
+	const hex = readFileSync(new URL("./fixtures/event-v3-parameter-source.hex", import.meta.url), "utf8").trim()
+	const value = decoded(Buffer.from(hex, "hex"))
+	let retained: Event | undefined
+	try {
+		await runtime.runPromise(
+			Effect.scoped(
+				Effect.gen(function* () {
+					assert.equal(bytes(yield* Event.validate(value)), hex)
+					const full = yield* Event.full(value)
+					assert.equal(yield* Event.atomCount(full), 12n)
+					assert.ok(Result.isFailure(yield* Effect.result(Event.count(full))))
+					assert.ok(Result.isFailure(yield* Effect.result(Event.mass(full))))
+					const endpoint = yield* Event.coordinate(value, 2n)
+					const impossibleMeasurement = yield* Event.and(value, endpoint)
+					assert.equal(yield* Event.isEmpty(impossibleMeasurement), false)
+					assert.equal(yield* Event.count(impossibleMeasurement), 2n)
+					const restricted = yield* Event.restrict(full, endpoint)
+					assert.equal(yield* Event.count(restricted), 4n)
+					assert.equal(Event.toBytes(restricted)[4], 3)
+					const db = yield* Db.create(path, Theory)
+					const changes = yield* ChangeSet.builder(Theory)
+					yield* changes.insert(Region, [{ id: 1n, value }])
+					yield* changes.insert(Marker, [{ value: decoded(Event.toBytes(value)) }])
+					assert.equal((yield* db.apply(yield* changes.finish(), { expected: { kind: "any" } })).kind, "accepted")
+					const snapshot = yield* db.snapshot()
+					const rows = yield* (yield* snapshot.execute(joined, {})).collect()
+					assert.equal(rows.length, 1)
+					assert.ok(rows[0])
+					retained = rows[0].value
+					assert.equal(bytes(retained), hex)
+				})
+			)
+		)
+		await runtime.runPromise(
+			Effect.scoped(
+				Effect.gen(function* () {
+					const db = yield* Db.open(path, Theory)
+					const snapshot = yield* db.snapshot()
+					const rows = yield* (yield* snapshot.execute(joined, {})).collect()
+					assert.equal(rows.length, 1)
+					assert.ok(rows[0])
+					assert.equal(bytes(rows[0].value), hex)
+				})
+			)
+		)
+	} finally {
+		await Effect.runPromise(runtime.disposeEffect)
+	}
+	assert.ok(retained)
+	assert.equal(bytes(retained), hex)
+})

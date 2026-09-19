@@ -110,6 +110,9 @@ impl FiniteFunction {
         limits: FunctionLimits,
         work: &mut ExactArithmetic<'_>,
     ) -> Result<Self> {
+        if space.parameter_domain().is_some() && space.is_measured() {
+            return Err(Error::ParameterizedMeasurement);
+        }
         let pieces = space.density_pieces().ok_or(Error::MissingLaw)?;
         let mut inputs = Vec::new();
         inputs.try_reserve_exact(pieces.len())?;

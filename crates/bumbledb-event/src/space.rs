@@ -36,6 +36,7 @@ pub(crate) struct Owner {
     dimensions: u8,
     pub(crate) support: Ref,
     pub(crate) law: Option<Arc<crate::measure::FiniteLaw>>,
+    pub(crate) parameter: Option<Arc<crate::parameter::source::Context>>,
     anchor: u64,
     arena: Arc<Mutex<Arena>>,
 }
@@ -119,6 +120,7 @@ impl Space {
             dimensions,
             support: 1,
             law: None,
+            parameter: None,
             anchor: 0,
             arena: Arc::new(Mutex::new(arena)),
         })))
@@ -256,6 +258,13 @@ impl Space {
         let mut op = Operation::new(&mut arena, control)?;
         let support = op.apply(BoolOp4::AND, self.0.support, legal.root)?;
         let anchor = op.arena.witness(support).ok_or(Error::EmptySpace)?;
+        drop(arena);
+        let parameter = self
+            .0
+            .parameter
+            .as_ref()
+            .map(|context| context.restricted(self, support, control))
+            .transpose()?;
         control.checkpoint()?;
         Ok(Self(Arc::new(Owner {
             token: token()?,
@@ -263,13 +272,24 @@ impl Space {
             dimensions: self.dimensions(),
             support,
             law: None,
+            parameter,
             anchor,
             arena: self.0.arena.clone(),
         })))
     }
 
     pub(crate) fn measurement_bytes(&self) -> Option<&[u8]> {
-        self.0.law.as_ref().map(|law| law.canonical.as_ref())
+        self.0
+            .law
+            .as_ref()
+            .map(|law| law.canonical.as_ref())
+            .or_else(|| {
+                self.0
+                    .parameter
+                    .as_ref()
+                    .and_then(|context| context.law.as_ref())
+                    .map(|law| law.canonical.as_ref())
+            })
     }
 
     pub(crate) fn with_measurement(
@@ -278,6 +298,9 @@ impl Space {
         control: &dyn Control,
     ) -> Result<Self> {
         control.checkpoint()?;
+        if self.0.parameter.is_some() && law.is_some() {
+            return Err(Error::ParameterizedMeasurement);
+        }
         Ok(Self(Arc::new(Owner {
             token: token()?,
             identity: self.identity(),
@@ -286,6 +309,29 @@ impl Space {
             anchor: self.0.anchor,
             arena: self.0.arena.clone(),
             law,
+            parameter: self
+                .0
+                .parameter
+                .as_ref()
+                .map(|context| context.without_law()),
+        })))
+    }
+
+    pub(crate) fn with_parameter_context(
+        &self,
+        parameter: Arc<crate::parameter::source::Context>,
+        control: &dyn Control,
+    ) -> Result<Self> {
+        control.checkpoint()?;
+        Ok(Self(Arc::new(Owner {
+            token: token()?,
+            identity: self.identity(),
+            dimensions: self.dimensions(),
+            support: self.0.support,
+            law: None,
+            parameter: Some(parameter),
+            anchor: self.0.anchor,
+            arena: self.0.arena.clone(),
         })))
     }
 
@@ -315,7 +361,11 @@ impl Event {
             self.owner.identity,
             self.owner.support,
             self.root,
-            self.owner.law.as_ref().map(|law| law.canonical.clone()),
+            self.space().measurement_bytes().map(Arc::from),
+            self.owner
+                .parameter
+                .as_ref()
+                .map(|context| context.canonical.clone()),
             &mut arena,
             control,
         )
@@ -327,6 +377,9 @@ impl Event {
     /// # Errors
     /// Refuses cancellation, allocation or conversion-capacity exhaustion.
     pub fn to_bytes(&self, control: &dyn Control) -> Result<Vec<u8>> {
+        if self.owner.parameter.is_some() {
+            return crate::parameter::source::wire::encode(self, control);
+        }
         let structural = self.structural_bytes(control)?;
         if let Some(law) = &self.owner.law {
             crate::measure::wire::encode(&structural, &law.canonical, control)
@@ -389,6 +442,18 @@ impl Event {
         arithmetic: crate::ArithmeticLimits,
         control: &dyn Control,
     ) -> Result<Self> {
+        if bytes.get(..5) == Some(b"BEVT\x03") {
+            return crate::parameter::source::wire::decode(
+                bytes,
+                order,
+                limits,
+                crate::ParameterSourceLimits {
+                    laws: law,
+                    ..crate::ParameterSourceLimits::default()
+                },
+                &mut crate::ExactArithmetic::new(arithmetic, control),
+            );
+        }
         if bytes.get(..5) == Some(b"BEVT\x02") {
             return crate::measure::wire::decode(bytes, order, limits, law, arithmetic, control);
         }
@@ -403,6 +468,7 @@ impl Event {
             dimensions: decoded.dimensions,
             support: decoded.support,
             law: None,
+            parameter: None,
             anchor,
             arena: Arc::new(Mutex::new(decoded.arena)),
         });
@@ -426,6 +492,18 @@ impl Event {
         work: &mut crate::ExactArithmetic<'_>,
     ) -> Result<Self> {
         work.control().checkpoint()?;
+        if bytes.get(..5) == Some(b"BEVT\x03") {
+            return crate::parameter::source::wire::decode(
+                bytes,
+                order,
+                limits,
+                crate::ParameterSourceLimits {
+                    laws: law,
+                    ..crate::ParameterSourceLimits::default()
+                },
+                work,
+            );
+        }
         if bytes.get(..5) == Some(b"BEVT\x02") {
             crate::measure::wire::decode_with_work(bytes, order, limits, law, work)
         } else {
@@ -518,6 +596,16 @@ impl Event {
         if !Arc::ptr_eq(&self.owner.arena, &target.0.arena) {
             return Err(Error::SpaceMismatch);
         }
+        if let Some(source) = &self.owner.parameter {
+            let other = target
+                .0
+                .parameter
+                .as_ref()
+                .ok_or(Error::ParameterScopeMismatch)?;
+            if !Arc::ptr_eq(&source.guards, &other.guards) && source.canonical != other.canonical {
+                return Err(Error::ParameterScopeMismatch);
+            }
+        }
         control.checkpoint()?;
         let mut arena = self.owner.lock()?;
         let mut op = Operation::new(&mut arena, control)?;
@@ -538,6 +626,7 @@ impl Event {
         if self.owner.identity != target.0.identity
             || self.owner.dimensions != target.0.dimensions
             || self.space().measurement_bytes() != target.measurement_bytes()
+            || self.space().parameter_bytes() != target.parameter_bytes()
         {
             return Err(Error::SpaceMismatch);
         }
@@ -580,6 +669,9 @@ impl Event {
     /// Refuses unknown coordinates, cancellation and resource exhaustion.
     pub fn saturate(&self, hidden: u64, control: &dyn Control) -> Result<Self> {
         control.checkpoint()?;
+        if hidden & self.space().guard_coordinates() != 0 {
+            return Err(Error::ParameterGuardElimination);
+        }
         let mut arena = self.owner.lock()?;
         if hidden & !arena.mask() != 0 {
             return Err(Error::InvalidOrder);
@@ -595,8 +687,9 @@ impl Event {
         })
     }
 
-    /// Exact membership of a legal world; decoder aliases cannot be queried as
-    /// if they were additional outcomes.
+    /// Exact membership of a legal logical code; decoder aliases are refused.
+    /// For parameterized sources, use `contains_parameter` to supply an actual
+    /// real parameter and derive its guard bits.
     /// # Errors
     /// Refuses illegal worlds or a poisoned manager.
     pub fn contains(&self, world: u64) -> Result<bool> {
@@ -607,7 +700,8 @@ impl Event {
         Ok(arena.evaluate(self.root, world))
     }
 
-    /// A witness from original legal support, never a decoder alias.
+    /// A logical-code witness from original support, never a decoder alias.
+    /// `parameter_witness` additionally supplies an exact real parameter value.
     /// # Errors
     /// Refuses cancellation, exhausted capacity or a poisoned manager.
     pub fn witness(&self, control: &dyn Control) -> Result<Option<u64>> {
@@ -620,10 +714,23 @@ impl Event {
         Ok(out)
     }
 
-    /// Exact legal-world count. This is not a probability measurement.
+    /// Exact legal-world count; continuous parameter regions refuse. Use
+    /// `atom_count` to count finite logical cells, or `world_cardinality` for
+    /// the finite/continuum distinction. This is not a probability measurement.
     /// # Errors
     /// Refuses cancellation, exhausted capacity or a poisoned manager.
     pub fn count(&self, control: &dyn Control) -> Result<u64> {
+        match self.world_cardinality(control)? {
+            crate::WorldCardinality::Finite(n) => Ok(n),
+            crate::WorldCardinality::Continuum => Err(Error::InfiniteWorlds),
+        }
+    }
+
+    /// Count finite legal cells in the sealed presentation. A parameter cell
+    /// can represent infinitely many worlds and is never a probability weight.
+    /// # Errors
+    /// Graph capacity, cancellation or a poisoned owner.
+    pub fn atom_count(&self, control: &dyn Control) -> Result<u64> {
         control.checkpoint()?;
         let mut arena = self.owner.lock()?;
         let mut op = Operation::new(&mut arena, control)?;

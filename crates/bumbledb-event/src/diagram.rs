@@ -24,6 +24,7 @@ struct Record {
 struct Graph {
     identity: SpaceId,
     measurement: Option<Arc<[u8]>>,
+    parameter: Option<Arc<[u8]>>,
     dimensions: u8,
     order: Vec<u8>,
     support: Ref,
@@ -148,6 +149,7 @@ impl Diagram {
         if self.identity() != target.identity()
             || self.dimensions() != target.dimensions()
             || self.0.measurement.as_deref() != target.measurement_bytes()
+            || self.0.parameter.as_deref() != target.parameter_bytes()
         {
             return Err(Error::SpaceMismatch);
         }
@@ -385,6 +387,7 @@ pub(crate) fn capture(
     support: Ref,
     root: Ref,
     measurement: Option<Arc<[u8]>>,
+    parameter: Option<Arc<[u8]>>,
     arena: &mut Arena,
     control: &dyn Control,
 ) -> Result<Diagram> {
@@ -398,6 +401,7 @@ pub(crate) fn capture(
         graph: Graph {
             identity,
             measurement,
+            parameter,
             dimensions,
             order,
             support: 0,

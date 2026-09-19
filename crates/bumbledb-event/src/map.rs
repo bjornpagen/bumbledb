@@ -64,6 +64,7 @@ impl CoordinateMap {
         for event in readouts {
             owned.push(event.align_to(source, control)?);
         }
+        source.parameter_map(target, &owned, control)?;
         let replacements = roots(&owned);
         source.with_arena_pair(target, |arena, other| {
             let mut op = Operation::new(arena, control)?;
