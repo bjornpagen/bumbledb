@@ -1,0 +1,22 @@
+'FixedPoint.strict_rank' depends on axioms: [propext, Quot.sound]
+'FixedPoint.ascending' does not depend on any axioms
+'FixedPoint.below_prefixed' does not depend on any axioms
+'FixedPoint.stabilizes' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FixedPoint.least_fixed_point' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FixedPoint.dual_monotone' depends on axioms: [propext]
+'FixedPoint.greatest_fixed_point' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FixedPoint.shared_environment_stabilizes' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FixedPoint.environment_mixing_counterexample' depends on axioms: [propext]
+'FixedPoint.negation_is_not_a_fixed_point_program' does not depend on any axioms
+'FixedPoint.legal_roster_complete' depends on axioms: [propext, Quot.sound]
+'FixedPoint.legal_roster_counts_original_support' depends on axioms: [propext]
+'FixedPoint.legal_roster_bounded_by_codes' depends on axioms: [propext]
+'FixedPoint.detection_sound' depends on axioms: [propext, Quot.sound]
+'FixedPoint.detection_complete' depends on axioms: [propext]
+'FixedPoint.detected_least_is_extremal' depends on axioms: [propext, Quot.sound]
+'FixedPoint.detected_greatest_is_extremal' depends on axioms: [propext, Quot.sound]
+'FixedPoint.finite_detection_completes' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FixedPoint.greatest_iteration_descends' depends on axioms: [propext, Quot.sound]
+'FixedPoint.ascending_between' depends on axioms: [propext, Quot.sound]
+'FixedPoint.first_entry_unique' depends on axioms: [propext, Quot.sound]
+'FixedPoint.first_entries_cover_iterate' depends on axioms: [propext, Quot.sound]

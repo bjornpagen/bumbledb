@@ -71,6 +71,7 @@ pub enum Error {
     ProgramMismatch,
     NonMonotoneProgram,
     FixedPointInvariant,
+    PartialCarrier,
     PartitionOverlap,
     PartitionGap,
     PartitionArity,
@@ -153,6 +154,9 @@ impl fmt::Display for Error {
             }
             Self::ProgramMismatch => f.write_str("expression belongs to a different Event program"),
             Self::NonMonotoneProgram => f.write_str("Event program has unproved positive variance"),
+            Self::PartialCarrier => {
+                f.write_str("fixed-point scope must retain the full original support")
+            }
             Self::FixedPointInvariant => {
                 f.write_str("Event fixed-point execution violated its finite order contract")
             }

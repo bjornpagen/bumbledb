@@ -190,6 +190,16 @@ function eventExpr(
 	const raw = tagged(context, input)
 	const child = (key: string) => eventExpr(`${context}.${key}`, raw[key], depth + 1, budget)
 	switch (raw.kind) {
+		case "bound":
+			recordValue(context, raw, ["kind", "depth"])
+			return Object.freeze({ kind: raw.kind, depth: ordinal(context, raw.depth, 65535) })
+		case "fixed": {
+			recordValue(context, raw, ["kind", "op", "scope", "expr"])
+			const op = raw.op
+			if (op !== "least" && op !== "greatest") return fail(context, "unknown fixed-point operation")
+			const scope = eventImport(`${context}.scope`, raw.scope, budget)
+			return Object.freeze({ kind: raw.kind, op, scope, expr: child("expr") })
+		}
 		case "relation": {
 			recordValue(context, raw, ["kind", "op", "relation"])
 			const op = raw.op

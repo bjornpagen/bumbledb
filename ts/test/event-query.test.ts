@@ -499,3 +499,147 @@ test("Event errors retain complete logical fault sets across stages, prepared qu
 	assert.equal(retained.length, 8)
 	assert.deepEqual(Buffer.from(retained[0]?.expectedSpace ?? []), pairFull)
 })
+
+test("fixed-point authoring closes lexical handles without accidental capture", () => {
+	const scope = value(pairFull)
+	const row = v(Claim)
+	let escaped: EventExpr | undefined
+	let inner: EventExpr | undefined
+	const nested = EventExpr.least(scope, (x) => {
+		escaped = x
+		inner = EventExpr.greatest(scope, (y) => EventExpr.or(x, y))
+		return EventExpr.and(row.a, inner)
+	})
+	const q = query(Theory).rule((r) => r.match(Claim, row).find({ nested }))
+	const description = describeQuery(q)
+	const expr = description.ir.rules[0]?.finds[0]
+	assert.ok(expr?.kind === "event" && expr.expr.kind === "fixed" && expr.expr.expr.kind === "apply")
+	const closed = expr.expr.expr.right
+	assert.ok(closed.kind === "fixed" && closed.expr.kind === "apply")
+	assert.deepEqual(closed.expr.left, { kind: "bound", depth: 1 })
+	assert.deepEqual(closed.expr.right, { kind: "bound", depth: 0 })
+	const restored = queryFromDescription(Theory, description, { nested: event })
+	expr.expr.scope.fill(0)
+	assert.deepEqual(describeQuery(restored), describeQuery(q))
+	assert.equal(snapshotData(nested), nested)
+	assert.ok(escaped && inner)
+	for (const dangling of [escaped, inner]) {
+		assert.throws(() => query(Theory).rule((r) => r.match(Claim, row).find({ dangling })), /escaped/)
+		const recaptured = EventExpr.least(scope, () => dangling)
+		assert.throws(() => query(Theory).rule((r) => r.match(Claim, row).find({ recaptured })), /escaped/)
+	}
+	assert.throws(() => EventExpr.least({ ...scope }, (x) => x), /owned Event/)
+	assert.throws(() => EventExpr.least(scope, (() => Promise.resolve(row.a)) as never), /Event variable/)
+	let deep = EventExpr.variable(row.a)
+	for (let i = 1; i < 128; i++) {
+		const previous = deep
+		deep = EventExpr.least(scope, () => previous)
+	}
+	assert.throws(() => EventExpr.least(scope, () => deep), /shape/)
+})
+
+test("query binders compose with nested modalities, Star, stages, tests and Pack", async () => {
+	const row = v(Claim)
+	const scope = value(pairFull)
+	const faces = descriptor(facesBytes)
+	const plan = descriptor(planBytes)
+	const rel = RelationExpr.bind(row.a, faces)
+	const g = EventExpr.image(row.b, descriptor(mapBytes))
+	const q = query(Theory).rule((r) =>
+		r.match(Claim, row).find({
+			id: row.id,
+			// Both nesting orders require retaining the outer predicate by identity.
+			least: EventExpr.least(scope, (x) => EventExpr.greatest(scope, (y) => EventExpr.or(x, y))),
+			greatest: EventExpr.greatest(scope, (x) => EventExpr.least(scope, (y) => EventExpr.and(x, y))),
+			captured: EventExpr.least(scope, (x) => EventExpr.or(row.a, x)),
+			closure: EventExpr.least(scope, (x) => EventExpr.or(x, EventExpr.region(RelationExpr.star(rel, plan)))),
+			reach: EventExpr.least(value(states), (x) => EventExpr.or(g, EventExpr.may(rel, x))),
+			nested: EventExpr.greatest(value(states), (x) =>
+				EventExpr.least(value(states), (y) =>
+					EventExpr.or(EventExpr.and(g, EventExpr.may(rel, x)), EventExpr.may(rel, y))
+				)
+			),
+			test: EventTest.isFull(EventExpr.greatest(scope, (x) => x))
+		})
+	)
+	const restored = queryFromDescription(Theory, describeQuery(q), {
+		id: u64,
+		least: event,
+		greatest: event,
+		captured: event,
+		closure: event,
+		reach: event,
+		nested: event,
+		test: bool
+	})
+	const packed = query(Theory).rule((r) => {
+		const row = v(q)
+		return r.match(q, row).find({ union: r.pack(row.captured) })
+	})
+	const final = query(Theory).rule((r) => {
+		const row = v(packed)
+		return r.match(packed, row).find({ isFull: EventTest.isFull(row.union) })
+	})
+	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	let retained: Event | undefined
+	try {
+		await runtime.runPromise(
+			Effect.scoped(
+				Effect.gen(function* () {
+					const db = yield* Db.create(storeDir("event-query-binders"), Theory)
+					const draft = yield* ChangeSet.builder(Theory)
+					yield* draft.insert(Claim, [
+						{ id: 1n, a: value(a), b: value(b) },
+						{ id: 2n, a: value(region(204, 2, 5)), b: value(b) }
+					])
+					yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })
+					const snapshot = yield* db.snapshot()
+					for (const program of [q, restored]) {
+						const output = yield* (yield* snapshot.execute(program, {})).collect()
+						assert.equal(output.length, 2)
+						for (const result of output) {
+							const bits = result.id === 1n ? 10 : 5
+							for (const [name, answer] of Object.entries(result)) {
+								if (name === "id") continue
+								if (name === "test") {
+									assert.equal(answer, true)
+									continue
+								}
+								const expected: Record<string, number> = {
+									least: 15,
+									greatest: 0,
+									captured: bits,
+									closure: bits | 9,
+									reach: 3,
+									nested: result.id === 1n ? 2 : 1
+								}
+								const state = name === "reach" || name === "nested"
+								const expectedBits = expected[name]
+								assert.notEqual(expectedBits, undefined)
+								assert.deepEqual(
+									Buffer.from(Event.toBytes(answer as Event)),
+									region(state ? 205 : 204, state ? 1 : 2, expectedBits as number),
+									name
+								)
+							}
+							retained = result.captured
+						}
+					}
+					assert.deepEqual(yield* (yield* snapshot.execute(final, {})).collect(), [{ isFull: true }])
+					for (const bad of [
+						EventExpr.least(value(a), (x) => x),
+						EventExpr.least(scope, (x) => EventExpr.complement(x)),
+						EventExpr.least(scope, (x) => EventExpr.greatest(scope, () => EventExpr.complement(x)))
+					]) {
+						const absent = query(Theory).rule((r) => r.match(Claim, { id: 99n }).find({ bad }))
+						assert.ok(Result.isFailure(yield* Effect.result(snapshot.prepare(absent))))
+					}
+				})
+			)
+		)
+	} finally {
+		await Effect.runPromise(runtime.disposeEffect)
+	}
+	assert.ok(retained)
+	assert.ok(Event.toBytes(retained).length > 0)
+})

@@ -55,6 +55,12 @@ async function main() {
     const inverse = mapBytes(full, full, complement, secondCoordinate);
     const mapOps = ['pullback', 'image', 'universalImage', 'nonvacuousImage', 'possible', 'guaranteed'];
     expressions.push(...mapOps.map(op => ({ kind: 'map', op, descriptor: inverse, expr: a })));
+    const bound = { kind: 'bound', depth: 0 };
+    const fixed = (op, expr, scope = full) => ({ kind: 'fixed', op, scope, expr });
+    expressions.push(fixed('least', bound), fixed('greatest', bound),
+      fixed('least', { kind: 'apply', bits: 14, left: a, right: bound }),
+      fixed('greatest', fixed('least', { kind: 'apply', bits: 14,
+        left: bound, right: { kind: 'bound', depth: 1 } })));
     const valid = expressions.map(expr => ({ kind: 'event', expr }));
     valid.push(...['isEmpty', 'isFull'].map(kind => ({ kind: 'test', expr: { kind, expr: a } })),
       ...['subset', 'equal', 'disjoint', 'covers'].map(kind => ({ kind: 'test', expr: { kind, left: a, right: a } })));
@@ -66,6 +72,14 @@ async function main() {
       await close(native.runtimePreparedClose, prepared);
     }
     const malformed = [
+      bound, { kind: 'bound', depth: -1 }, { kind: 'bound', depth: 65536 },
+      { kind: 'bound', depth: 0, ignored: true }, fixed('wrong', bound),
+      fixed('least', { kind: 'bound', depth: 1 }),
+      fixed('least', { kind: 'not', expr: bound }),
+      fixed('least', fixed('greatest', { kind: 'not', expr: { kind: 'bound', depth: 1 } })),
+      fixed('least', bound, fixture), fixed('least', bound, Buffer.from('BEVT')),
+      { ...fixed('least', bound), ignored: true },
+      fixed('least', bound, new Uint8Array(16 * 1024 * 1024 + 1)),
       { kind: 'full', var: 0, ignored: true }, { kind: 'var', var: -1 },
       { kind: 'map', op: 'image', descriptor: new Uint8Array(), expr: a },
       { kind: 'map', op: 'unknown', descriptor: inverse, expr: a },

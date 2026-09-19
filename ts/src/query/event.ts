@@ -2,6 +2,7 @@
  * lower to native Event programs; they perform no Event mathematics in JS. */
 import { AuthoringError } from "#errors.ts"
 import { descriptorLength, EventDescriptor, encodedDescriptor } from "#event-descriptor.ts"
+import { type Event, encodedEvent, eventByteLength, eventBytes, eventValue } from "#event-value.ts"
 import type { EventField, I64Field, U64Field } from "#fields.ts"
 import type { EventExprIr, EventTestIr, FindTermIr, RelationExprIr } from "#native.ts"
 import { eventTree, testTree } from "#query/event-tree.ts"
@@ -37,9 +38,9 @@ interface RelationExpr {
 }
 type EventOperand = EventVar | EventExpr
 type EventFind = EventExpr | EventTest | ProbabilityExpr | ExpectationExpr
-type EventNode = EventExprIr<EventVar, EventDescriptor>
-type TestNode = EventTestIr<EventVar, EventDescriptor>
-type RelationNode = RelationExprIr<EventVar, EventDescriptor>
+type EventNode = EventExprIr<EventVar, EventDescriptor, Event>
+type TestNode = EventTestIr<EventVar, EventDescriptor, Event>
+type RelationNode = RelationExprIr<EventVar, EventDescriptor, Event>
 interface Extent {
 	readonly nodes: number
 	readonly depth: number
@@ -63,14 +64,20 @@ function eventVar(input: AnyVar): EventVar {
 		return refused("Event expression: expected an Event variable")
 	return input as EventVar
 }
-function extent(children: readonly Extent[], descriptors: readonly EventDescriptor[] = [], test = false): Extent {
+function extent(
+	children: readonly Extent[],
+	descriptors: readonly EventDescriptor[] = [],
+	test = false,
+	scopeBytes = 0
+): Extent {
 	const nodes = (test ? 0 : 1) + children.reduce((sum, child) => sum + child.nodes, 0)
 	const depth = (test ? 0 : 1) + children.reduce((maximum, child) => Math.max(maximum, child.depth), 0)
 	const bytes =
+		scopeBytes +
 		descriptors.reduce((sum, descriptor) => sum + descriptorLength(descriptor), 0) +
 		children.reduce((sum, child) => sum + child.bytes, 0)
 	if (nodes > 4096 || depth > 128 || bytes > 16 * 1024 * 1024)
-		return refused("Event expression exceeds shape or descriptor byte budget")
+		return refused("Event expression exceeds shape or imported byte budget")
 	return Object.freeze({ nodes, depth, bytes })
 }
 function ownEvent(node: EventNode, size: Extent): EventExpr {
@@ -179,6 +186,33 @@ function empty(input: EventVar): EventExpr {
 function full(input: EventVar): EventExpr {
 	return ownEvent({ kind: "full", var: eventVar(input) }, extent([]))
 }
+// Negative handles exist only during authoring. Closing a binder translates its
+// own handle at the current lexical depth; outer handles remain pending. An
+// escaped handle is rejected at lowering, so reuse cannot capture a new binder.
+let nextPredicate = -1
+function fixedPoint(op: "least" | "greatest", scope: Event, body: (predicate: EventExpr) => EventOperand): EventExpr {
+	const context = eventValue("Fixed-point scope", scope)
+	if (!Number.isSafeInteger(nextPredicate)) return refused("Predicate handle capacity exceeded")
+	if (typeof body !== "function") return refused("Fixed point requires an authoring callback")
+	const handle = nextPredicate--
+	const predicate = ownEvent({ kind: "bound", depth: handle }, extent([]))
+	const child = eventData(body(predicate))
+	const expr = eventTree(child.node, {
+		variable: (value: EventVar) => value,
+		descriptor: (value: EventDescriptor) => value,
+		scope: (value: Event) => value,
+		bound: (value: number, nesting: number) => (value === handle ? nesting : value)
+	})
+	return ownEvent(
+		{ kind: "fixed", op, scope: context, expr },
+		extent([child.extent], [], false, eventByteLength(context))
+	)
+}
+function closedPredicate(value: number, nesting: number): number {
+	if (!Number.isInteger(value) || value < 0 || value >= nesting)
+		return refused("Event predicate escaped its fixed-point binder")
+	return value
+}
 function complement(input: EventOperand): EventExpr {
 	const child = eventData(input)
 	return ownEvent({ kind: "not", expr: child.node }, extent([child.extent]))
@@ -277,6 +311,10 @@ function star(input: RelationExpr, descriptor: EventDescriptor): RelationExpr {
 }
 
 const EventExpr = Object.freeze({
+	/** Build a finite monotone least fixed point; the callback runs only during authoring. */
+	least: (scope: Event, body: (predicate: EventExpr) => EventOperand) => fixedPoint("least", scope, body),
+	/** Build a finite monotone greatest fixed point over the original full context. */
+	greatest: (scope: Event, body: (predicate: EventExpr) => EventOperand) => fixedPoint("greatest", scope, body),
 	variable,
 	empty,
 	full,
@@ -352,7 +390,7 @@ function eventFindIr(
 			given: variable(input.node.given)
 		}
 	}
-	const map = { variable, descriptor: EventDescriptor.toBytes }
+	const map = { variable, descriptor: EventDescriptor.toBytes, scope: eventBytes, bound: closedPredicate }
 	if (input.kind === "probability") {
 		const data = probabilities.get(input) ?? refused("Expected an owned probability expression")
 		return { kind: "probability", event: eventTree(data.node.event, map), given: eventTree(data.node.given, map) }
@@ -375,7 +413,9 @@ function eventFindVars(input: EventFind): readonly AnyVar[] {
 			variables.add(value)
 			return value
 		},
-		descriptor: (value: EventDescriptor) => value
+		descriptor: (value: EventDescriptor) => value,
+		scope: (value: Event) => value,
+		bound: closedPredicate
 	}
 	if (input.kind === "probability") {
 		const data = probabilities.get(input) ?? refused("Expected an owned probability expression")
@@ -408,6 +448,12 @@ function eventFindFromIr(
 			bytes += descriptorLength(descriptor)
 			return descriptor
 		},
+		scope: (value: Uint8Array) => {
+			const scope = encodedEvent(value)
+			bytes += eventByteLength(scope)
+			return scope
+		},
+		bound: closedPredicate,
 		enter: (level: number) => {
 			nodes++
 			depth = Math.max(depth, level)

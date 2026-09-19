@@ -3,16 +3,31 @@
  * This visits all written operands and never evaluates or simplifies them. */
 import type { EventExprIr, EventTestIr, RelationExprIr } from "#native.ts"
 
-interface Translation<V, D, W, E> {
+interface Translation<V, D, S, W, E, T> {
 	readonly variable: (value: V) => W
 	readonly descriptor: (value: D) => E
+	readonly scope: (value: S) => T
+	readonly bound?: (value: number, nesting: number) => number
 	readonly enter?: (depth: number) => void
 }
 
-function eventTree<V, D, W, E>(node: EventExprIr<V, D>, map: Translation<V, D, W, E>, depth = 1): EventExprIr<W, E> {
+function eventTree<V, D, S, W, E, T>(
+	node: EventExprIr<V, D, S>,
+	map: Translation<V, D, S, W, E, T>,
+	depth = 1,
+	nesting = 0
+): EventExprIr<W, E, T> {
 	map.enter?.(depth)
-	const event = (child: EventExprIr<V, D>) => eventTree(child, map, depth + 1)
+	const event = (child: EventExprIr<V, D, S>) => eventTree(child, map, depth + 1, nesting)
 	switch (node.kind) {
+		case "bound":
+			return Object.freeze({ ...node, depth: map.bound?.(node.depth, nesting) ?? node.depth })
+		case "fixed":
+			return Object.freeze({
+				...node,
+				scope: map.scope(node.scope),
+				expr: eventTree(node.expr, map, depth + 1, nesting + 1)
+			})
 		case "var":
 		case "empty":
 		case "full":
@@ -28,26 +43,31 @@ function eventTree<V, D, W, E>(node: EventExprIr<V, D>, map: Translation<V, D, W
 		case "map":
 			return Object.freeze({ ...node, descriptor: map.descriptor(node.descriptor), expr: event(node.expr) })
 		case "relation":
-			return Object.freeze({ ...node, relation: relationTree(node.relation, map, depth + 1) })
+			return Object.freeze({ ...node, relation: relationTree(node.relation, map, depth + 1, nesting) })
 		case "modal":
-			return Object.freeze({ ...node, relation: relationTree(node.relation, map, depth + 1), expr: event(node.expr) })
+			return Object.freeze({
+				...node,
+				relation: relationTree(node.relation, map, depth + 1, nesting),
+				expr: event(node.expr)
+			})
 	}
 }
 
-function relationTree<V, D, W, E>(
-	node: RelationExprIr<V, D>,
-	map: Translation<V, D, W, E>,
-	depth: number
-): RelationExprIr<W, E> {
+function relationTree<V, D, S, W, E, T>(
+	node: RelationExprIr<V, D, S>,
+	map: Translation<V, D, S, W, E, T>,
+	depth: number,
+	nesting: number
+): RelationExprIr<W, E, T> {
 	map.enter?.(depth)
-	const relation = (child: RelationExprIr<V, D>) => relationTree(child, map, depth + 1)
+	const relation = (child: RelationExprIr<V, D, S>) => relationTree(child, map, depth + 1, nesting)
 	switch (node.kind) {
 		case "bind":
 		case "test":
 			return Object.freeze({
 				...node,
 				descriptor: map.descriptor(node.descriptor),
-				expr: eventTree(node.expr, map, depth + 1)
+				expr: eventTree(node.expr, map, depth + 1, nesting)
 			})
 		case "identity":
 			return Object.freeze({ ...node, descriptor: map.descriptor(node.descriptor) })
@@ -68,7 +88,10 @@ function relationTree<V, D, W, E>(
 	}
 }
 
-function testTree<V, D, W, E>(node: EventTestIr<V, D>, map: Translation<V, D, W, E>): EventTestIr<W, E> {
+function testTree<V, D, S, W, E, T>(
+	node: EventTestIr<V, D, S>,
+	map: Translation<V, D, S, W, E, T>
+): EventTestIr<W, E, T> {
 	switch (node.kind) {
 		case "isEmpty":
 		case "isFull":

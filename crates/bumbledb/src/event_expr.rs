@@ -11,6 +11,8 @@ use import::Context;
 pub use import::EventImport;
 mod relations;
 pub use relations::{RelationExpr, RelationProductOp, RelationViewOp};
+mod fixed;
+pub use fixed::{EventScope, FixedPointKind, PredicateDepth};
 
 /// Stable logical identity of one participating context refusal. Canonical
 /// bytes contain source/support/value identity, never resident arena keys.
@@ -35,6 +37,12 @@ pub enum EventFaultCategory {
 /// One region of a shared, explicitly admitted world space.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventExpr {
+    Bound(PredicateDepth),
+    FixedPoint {
+        kind: FixedPointKind,
+        scope: EventScope,
+        body: Box<Self>,
+    },
     Var(VarId),
     Empty(VarId),
     Full(VarId),
@@ -95,6 +103,8 @@ pub enum EventExprError {
     ImportBudget,
     IncompatibleContexts,
     IncompatibleRoles,
+    UnboundPredicate(PredicateDepth),
+    NonMonotoneFixedPoint,
 }
 
 impl std::fmt::Display for EventExprError {
@@ -115,7 +125,7 @@ impl EventExpr {
     /// Excessive nesting/nodes or a roster without a scope anchor.
     pub fn validate_shape(&self) -> Result<(), EventExprError> {
         validate_shape(vec![self])?;
-        validate_contexts(self, self.output_marker())
+        validate_contexts(self, self.output_marker(), &[])
     }
 
     pub(crate) fn output_space(&self) -> Option<&Space> {
@@ -124,6 +134,7 @@ impl EventExpr {
 
     fn output_context(&self) -> Option<Context<'_>> {
         match self {
+            Self::FixedPoint { scope, .. } => Some(scope.context()),
             Self::Map { operation, map, .. } => {
                 let (_, space) = map.map_spaces(*operation)?;
                 let (_, marker) = map.map_markers(*operation)?;
@@ -188,18 +199,19 @@ pub(crate) fn validate_joint_shape(roots: Vec<&EventExpr>) -> Result<(), EventEx
     validate_shape(roots.clone())?;
     let expected = roots.iter().find_map(|expr| expr.output_marker());
     for root in roots {
-        validate_contexts(root, expected)?;
+        validate_contexts(root, expected, &[])?;
     }
     Ok(())
 }
 
 pub(crate) fn children(expr: &EventExpr) -> Vec<&EventExpr> {
     match expr {
-        EventExpr::Var(_)
+        EventExpr::Bound(_)
+        | EventExpr::Var(_)
         | EventExpr::Empty(_)
         | EventExpr::Full(_)
         | EventExpr::Relation { .. } => vec![],
-        EventExpr::Not(value) => vec![value],
+        EventExpr::Not(value) | EventExpr::FixedPoint { body: value, .. } => vec![value],
         EventExpr::Apply { left, right, .. } => vec![left, right],
         EventExpr::Ite {
             condition,
@@ -303,9 +315,12 @@ fn validate_shape(roots: Vec<&EventExpr>) -> Result<(), EventExprError> {
         }
         if let Some(import) = expr.import()? {
             import_bytes = import_bytes.saturating_add(import.bytes().len());
-            if import_bytes > 16 * 1024 * 1024 {
-                return Err(EventExprError::ImportBudget);
-            }
+        }
+        if let Node::Event(EventExpr::FixedPoint { scope, .. }) = expr {
+            import_bytes = import_bytes.saturating_add(scope.bytes().len());
+        }
+        if import_bytes > 16 * 1024 * 1024 {
+            return Err(EventExprError::ImportBudget);
         }
         pending.extend(expr.children().into_iter().map(|child| (child, depth + 1)));
     }
@@ -314,13 +329,38 @@ fn validate_shape(roots: Vec<&EventExpr>) -> Result<(), EventExprError> {
 
 // All ordinary Boolean nodes preserve one context. A readout supplies a typed
 // boundary; its input constraints cannot leak into its output component.
-fn validate_contexts(expr: &EventExpr, expected: Option<&[u8]>) -> Result<(), EventExprError> {
+fn validate_contexts(
+    expr: &EventExpr,
+    expected: Option<&[u8]>,
+    bounds: &[Context<'_>],
+) -> Result<(), EventExprError> {
+    if let EventExpr::Bound(depth) = expr {
+        let context = bounds
+            .iter()
+            .rev()
+            .nth(usize::from(depth.0))
+            .ok_or(EventExprError::UnboundPredicate(*depth))?;
+        if expected.is_some_and(|expected| expected != context.marker) {
+            return Err(EventExprError::IncompatibleContexts);
+        }
+        return Ok(());
+    }
+    if let EventExpr::FixedPoint { scope, body, .. } = expr {
+        let context = scope.context();
+        if expected.is_some_and(|expected| expected != context.marker) {
+            return Err(EventExprError::IncompatibleContexts);
+        }
+        let mut inner = bounds.to_vec();
+        inner.push(context);
+        validate_contexts(body, Some(context.marker), &inner)?;
+        return fixed::require_monotone(body);
+    }
     if let EventExpr::Relation { relation, .. } | EventExpr::Modal { relation, .. } = expr {
         let output = expr.output_marker().ok_or(EventExprError::ImportKind)?;
         if expected.is_some_and(|expected| expected != output) {
             return Err(EventExprError::IncompatibleContexts);
         }
-        relation.validate_contexts()?;
+        relation.validate_contexts(bounds)?;
         if let EventExpr::Modal {
             operation, input, ..
         } = expr
@@ -331,7 +371,7 @@ fn validate_contexts(expr: &EventExpr, expected: Option<&[u8]>) -> Result<(), Ev
             } else {
                 role.output()
             };
-            validate_contexts(input, Some(needed.marker))?;
+            validate_contexts(input, Some(needed.marker), bounds)?;
         }
         return Ok(());
     }
@@ -347,10 +387,10 @@ fn validate_contexts(expr: &EventExpr, expected: Option<&[u8]>) -> Result<(), Ev
         if expected.is_some_and(|expected| expected != target) {
             return Err(EventExprError::IncompatibleContexts);
         }
-        return validate_contexts(input, Some(source));
+        return validate_contexts(input, Some(source), bounds);
     }
     for child in children(expr) {
-        validate_contexts(child, expected)?;
+        validate_contexts(child, expected, bounds)?;
     }
     Ok(())
 }

@@ -1,0 +1,10 @@
+'LegalRelations.composition_associative' does not depend on any axioms
+'LegalRelations.identity_left' does not depend on any axioms
+'LegalRelations.identity_right' does not depend on any axioms
+'LegalRelations.residual_adjunction' does not depend on any axioms
+'LegalRelations.staged_is_lifted_composition' does not depend on any axioms
+'LegalRelations.exists_fixed_iff_cylindrical' does not depend on any axioms
+'LegalRelations.readout_fixed_iff_dependency' does not depend on any axioms
+'LegalRelations.full_fixed_does_not_test_support' does not depend on any axioms
+'LegalRelations.lifted_events_compose' does not depend on any axioms
+'LegalRelations.ambient_support_does_not_certify_role' depends on axioms: [propext, Quot.sound]

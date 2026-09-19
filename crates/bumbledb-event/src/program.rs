@@ -18,6 +18,25 @@ pub enum Variance {
 }
 
 impl Variance {
+    /// Direction after complementing this value.
+    #[must_use]
+    pub fn complement(self) -> Self {
+        Self::classify([self], |[a]| !a)
+    }
+
+    /// Conservative direction of an arbitrary Boolean combination. This keeps
+    /// the same truth-table analysis available to typed query binders.
+    #[must_use]
+    pub fn apply(self, op: BoolOp4, right: Self) -> Self {
+        Self::classify([self, right], |[a, b]| op.evaluate(a, b))
+    }
+
+    /// Conservative direction of a pointwise conditional.
+    #[must_use]
+    pub fn ite(self, high: Self, low: Self) -> Self {
+        Self::classify([self, high, low], |[c, h, l]| if c { h } else { l })
+    }
+
     pub(crate) fn allows(self, before: bool, after: bool) -> bool {
         before == after
             || match self {
@@ -314,7 +333,7 @@ impl EventProgramBuilder {
     ) -> Result<ProgramValue> {
         let instruction = self.get(value)?;
         let space = instruction.space.clone();
-        let variance = Variance::classify([instruction.variance], |[a]| !a);
+        let variance = instruction.variance.complement();
         self.push(&space, variance, ProgramOp::Not(value.index), control)
     }
 
@@ -336,9 +355,7 @@ impl EventProgramBuilder {
             .full()
             .align_to(&left_node.space, control)?;
         let space = left_node.space.clone();
-        let variance = Variance::classify([left_node.variance, right_node.variance], |[a, b]| {
-            operation.evaluate(a, b)
-        });
+        let variance = left_node.variance.apply(operation, right_node.variance);
         self.push(
             &space,
             variance,
@@ -368,11 +385,7 @@ impl EventProgramBuilder {
         h.space.full().align_to(&c.space, control)?;
         l.space.full().align_to(&c.space, control)?;
         let space = c.space.clone();
-        let variance =
-            Variance::classify(
-                [c.variance, h.variance, l.variance],
-                |[c, h, l]| if c { h } else { l },
-            );
+        let variance = c.variance.ite(h.variance, l.variance);
         self.push(
             &space,
             variance,

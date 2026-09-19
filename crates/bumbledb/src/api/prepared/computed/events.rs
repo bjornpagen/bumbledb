@@ -6,8 +6,8 @@ use super::{Bindings, OutputProgram};
 use crate::event::{BoolOp4, Control, FixedPointLimits, ModalOp, Space, WorldRelation};
 use crate::work::{GenerationHandle, WorkContext};
 use crate::{
-    Error, Event, EventExpr, EventFaultCategory, EventOperandFault, EventTest, FindTerm,
-    RelationExpr, RelationProductOp, RelationViewOp, VarId,
+    Error, Event, EventExpr, EventFaultCategory, EventOperandFault, EventScope, EventTest,
+    FindTerm, FixedPointKind, RelationExpr, RelationProductOp, RelationViewOp, VarId,
 };
 
 #[derive(Default)]
@@ -123,18 +123,21 @@ pub(super) fn evaluate(
         return Ok(None);
     }
     let mut inputs = admission.inputs.iter();
+    let mut evaluation = Evaluation::default();
     let mut words = [0; 4];
     match &program.expression {
         FindTerm::Event(expr) => words[..2].copy_from_slice(
             &interner
-                .intern_event(&region(expr, &mut inputs, work)?)?
+                .intern_event(&region(expr, &mut inputs, work, &mut evaluation)?)?
                 .key()
                 .words(),
         ),
-        FindTerm::Test(expr) => words[0] = u64::from(test(expr, &mut inputs, work)?),
+        FindTerm::Test(expr) => {
+            words[0] = u64::from(test(expr, &mut inputs, work, &mut evaluation)?);
+        }
         FindTerm::Probability { event, given } => {
-            let event = region(event, &mut inputs, work)?;
-            let given = region(given, &mut inputs, work)?;
+            let event = region(event, &mut inputs, work, &mut evaluation)?;
+            let given = region(given, &mut inputs, work, &mut evaluation)?;
             if !event.space().is_measured() {
                 return Err(crate::event::Error::MissingLaw.into());
             }
@@ -163,6 +166,8 @@ impl ScopeAdmission<'_> {
             .checkpoint()
             .map_err(super::super::source::work_error)?;
         match expr {
+            EventExpr::Bound(_) => Ok(()),
+            EventExpr::FixedPoint { scope, body, .. } => self.visit(body, scope.carrier().space()),
             EventExpr::Var(var) | EventExpr::Empty(var) | EventExpr::Full(var) => {
                 self.leaf(*var, expected)
             }
@@ -252,20 +257,109 @@ impl ScopeAdmission<'_> {
     }
 }
 
+#[derive(Default)]
+struct Evaluation {
+    bounds: Vec<Event>,
+    limits: FixedPointLimits,
+    iterations: u64,
+    steps: u64,
+}
+
+impl Evaluation {
+    fn step(&mut self, control: &dyn Control) -> crate::event::Result<()> {
+        control.checkpoint()?;
+        if self.steps == self.limits.program_steps {
+            return Err(crate::event::Error::Capacity(
+                crate::event::Capacity::ProgramSteps,
+            ));
+        }
+        self.steps += 1;
+        Ok(())
+    }
+    fn application(&mut self) -> crate::event::Result<()> {
+        if self.iterations == self.limits.iterations {
+            return Err(crate::event::Error::Capacity(
+                crate::event::Capacity::FixedPointIterations,
+            ));
+        }
+        self.iterations += 1;
+        Ok(())
+    }
+    fn remaining(&self) -> FixedPointLimits {
+        FixedPointLimits {
+            iterations: self.limits.iterations - self.iterations,
+            program_steps: self.limits.program_steps - self.steps,
+        }
+    }
+}
+
+fn fixed_point(
+    kind: FixedPointKind,
+    scope: &EventScope,
+    body: &EventExpr,
+    inputs: &mut std::slice::Iter<'_, Event>,
+    control: &dyn Control,
+    evaluation: &mut Evaluation,
+) -> crate::event::Result<Event> {
+    let carrier = scope.carrier();
+    let greatest = kind == FixedPointKind::Greatest;
+    let index = evaluation.bounds.len();
+    evaluation.bounds.try_reserve(1)?;
+    evaluation.bounds.push(if greatest {
+        carrier.space().full()
+    } else {
+        carrier.space().empty()
+    });
+    // External leaves stay fixed. Each application consumes the same written
+    // occurrence roster; the caller resumes just past it after stabilization.
+    let start = inputs.clone();
+    let result = (|| {
+        for _ in 0..=carrier.atoms() {
+            evaluation.application()?;
+            *inputs = start.clone();
+            let next =
+                region(body, inputs, control, evaluation)?.align_to(carrier.space(), control)?;
+            let previous = &evaluation.bounds[index];
+            if next == *previous {
+                return Ok(next);
+            }
+            let ordered = if greatest {
+                next.signature(previous, control)?
+            } else {
+                previous.signature(&next, control)?
+            };
+            if !ordered.included() {
+                return Err(crate::event::Error::FixedPointInvariant);
+            }
+            evaluation.bounds[index] = next;
+        }
+        Err(crate::event::Error::FixedPointInvariant)
+    })();
+    evaluation.bounds.truncate(index);
+    result
+}
+
 fn region(
     expr: &EventExpr,
     inputs: &mut std::slice::Iter<'_, Event>,
     control: &dyn Control,
+    evaluation: &mut Evaluation,
 ) -> crate::event::Result<Event> {
-    control.checkpoint()?;
+    evaluation.step(control)?;
     match expr {
+        EventExpr::Bound(depth) => {
+            Ok(evaluation.bounds[evaluation.bounds.len() - 1 - usize::from(depth.0)].clone())
+        }
+        EventExpr::FixedPoint { kind, scope, body } => {
+            fixed_point(*kind, scope, body, inputs, control, evaluation)
+        }
         EventExpr::Var(_) => Ok(inputs.next().expect("admitted leaf occurrence").clone()),
         EventExpr::Empty(_) => Ok(inputs.next().expect("admitted anchor").space().empty()),
         EventExpr::Full(_) => Ok(inputs.next().expect("admitted anchor").space().full()),
-        EventExpr::Not(a) => Ok(region(a, inputs, control)?.complement()),
+        EventExpr::Not(a) => Ok(region(a, inputs, control, evaluation)?.complement()),
         EventExpr::Apply { op, left, right } => {
-            let a = region(left, inputs, control)?;
-            let b = region(right, inputs, control)?.align_to(&a.space(), control)?;
+            let a = region(left, inputs, control, evaluation)?;
+            let b = region(right, inputs, control, evaluation)?.align_to(&a.space(), control)?;
             a.apply(*op, &b, control)
         }
         EventExpr::Ite {
@@ -273,9 +367,9 @@ fn region(
             high,
             low,
         } => {
-            let c = region(condition, inputs, control)?;
-            let h = region(high, inputs, control)?.align_to(&c.space(), control)?;
-            let l = region(low, inputs, control)?.align_to(&c.space(), control)?;
+            let c = region(condition, inputs, control, evaluation)?;
+            let h = region(high, inputs, control, evaluation)?.align_to(&c.space(), control)?;
+            let l = region(low, inputs, control, evaluation)?.align_to(&c.space(), control)?;
             c.ite(&h, &l, control)
         }
         EventExpr::Cardinality {
@@ -285,7 +379,7 @@ fn region(
         } => {
             let mut events = events
                 .iter()
-                .map(|expr| region(expr, inputs, control))
+                .map(|expr| region(expr, inputs, control, evaluation))
                 .collect::<crate::event::Result<Vec<_>>>()?;
             let space = events[0].space();
             for value in &mut events {
@@ -297,12 +391,16 @@ fn region(
             operation,
             map,
             input,
-        } => map.evaluate_map(*operation, &region(input, inputs, control)?, control),
+        } => map.evaluate_map(
+            *operation,
+            &region(input, inputs, control, evaluation)?,
+            control,
+        ),
         EventExpr::Relation {
             operation,
             relation: expr,
         } => {
-            let value = relation(expr, inputs, control)?;
+            let value = relation(expr, inputs, control, evaluation)?;
             match operation {
                 RelationViewOp::Region => Ok(value.region().clone()),
                 RelationViewOp::Domain => value.domain(control),
@@ -314,8 +412,8 @@ fn region(
             relation: expr,
             input,
         } => {
-            let value = relation(expr, inputs, control)?;
-            let predicate = region(input, inputs, control)?;
+            let value = relation(expr, inputs, control, evaluation)?;
+            let predicate = region(input, inputs, control, evaluation)?;
             match operation {
                 ModalOp::May => value.may(&predicate, control),
                 ModalOp::All => value.all(&predicate, control),
@@ -330,15 +428,16 @@ fn relation(
     expr: &RelationExpr,
     inputs: &mut std::slice::Iter<'_, Event>,
     control: &dyn Control,
+    evaluation: &mut Evaluation,
 ) -> crate::event::Result<WorldRelation> {
-    control.checkpoint()?;
+    evaluation.step(control)?;
     match expr {
         RelationExpr::Bind {
             faces,
             region: input,
         } => WorldRelation::new(
             &faces.faces().expect("validated pair").product(),
-            &region(input, inputs, control)?,
+            &region(input, inputs, control, evaluation)?,
             control,
         ),
         RelationExpr::Identity { faces } => {
@@ -346,14 +445,16 @@ fn relation(
         }
         RelationExpr::Test { faces, predicate } => WorldRelation::test(
             &faces.faces().expect("validated pair").product(),
-            &region(predicate, inputs, control)?,
+            &region(predicate, inputs, control, evaluation)?,
             control,
         ),
-        RelationExpr::Not(value) => Ok(relation(value, inputs, control)?.complement()),
-        RelationExpr::Converse(value) => Ok(relation(value, inputs, control)?.converse()),
+        RelationExpr::Not(value) => Ok(relation(value, inputs, control, evaluation)?.complement()),
+        RelationExpr::Converse(value) => {
+            Ok(relation(value, inputs, control, evaluation)?.converse())
+        }
         RelationExpr::Apply { op, left, right } => {
-            let left = relation(left, inputs, control)?;
-            let right = relation(right, inputs, control)?;
+            let left = relation(left, inputs, control, evaluation)?;
+            let right = relation(right, inputs, control, evaluation)?;
             left.apply(*op, &right, control)
         }
         RelationExpr::Product {
@@ -362,8 +463,8 @@ fn relation(
             left,
             right,
         } => {
-            let left = relation(left, inputs, control)?;
-            let right = relation(right, inputs, control)?;
+            let left = relation(left, inputs, control, evaluation)?;
+            let right = relation(right, inputs, control, evaluation)?;
             let (plan, _) = plan.product().expect("validated composition plan");
             match operation {
                 RelationProductOp::Compose => plan.compose(&left, &right, control),
@@ -375,12 +476,14 @@ fn relation(
             plan,
             relation: value,
         } => {
-            let value = relation(value, inputs, control)?;
-            plan.product().expect("validated closure plan").0.star(
-                &value,
-                FixedPointLimits::default(),
-                control,
-            )
+            let value = relation(value, inputs, control, evaluation)?;
+            let plan = plan.product().expect("validated closure plan").0;
+            let result = plan
+                .star_program(&value, control)?
+                .least(evaluation.remaining(), control)?;
+            evaluation.iterations += result.iterations();
+            evaluation.steps += result.program_steps();
+            WorldRelation::new(plan.products()[2], result.event(), control)
         }
     }
 }
@@ -389,16 +492,17 @@ fn test(
     expr: &EventTest,
     inputs: &mut std::slice::Iter<'_, Event>,
     control: &dyn Control,
+    evaluation: &mut Evaluation,
 ) -> crate::event::Result<bool> {
     match expr {
-        EventTest::IsEmpty(a) => Ok(region(a, inputs, control)?.is_empty()),
-        EventTest::IsFull(a) => Ok(region(a, inputs, control)?.is_full()),
+        EventTest::IsEmpty(a) => Ok(region(a, inputs, control, evaluation)?.is_empty()),
+        EventTest::IsFull(a) => Ok(region(a, inputs, control, evaluation)?.is_full()),
         EventTest::Subset(a, b)
         | EventTest::Equal(a, b)
         | EventTest::Disjoint(a, b)
         | EventTest::Covers(a, b) => {
-            let a = region(a, inputs, control)?;
-            let b = region(b, inputs, control)?.align_to(&a.space(), control)?;
+            let a = region(a, inputs, control, evaluation)?;
+            let b = region(b, inputs, control, evaluation)?.align_to(&a.space(), control)?;
             let signature = a.signature(&b, control)?;
             Ok(match expr {
                 EventTest::Subset(..) => signature.included(),
@@ -414,6 +518,137 @@ fn test(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_binders_share_iteration_and_instruction_budgets() {
+        use crate::{FixedPointKind as K, PredicateDepth};
+        let space = Space::new(crate::event::SpaceId([219; 32]), 1, &()).unwrap();
+        let scope = EventScope::capture(&space, &()).unwrap();
+        let expr = EventExpr::FixedPoint {
+            kind: K::Least,
+            scope: scope.clone(),
+            body: Box::new(EventExpr::FixedPoint {
+                kind: K::Greatest,
+                scope,
+                body: Box::new(EventExpr::Apply {
+                    op: BoolOp4::OR,
+                    left: Box::new(EventExpr::Bound(PredicateDepth(1))),
+                    right: Box::new(EventExpr::Bound(PredicateDepth(0))),
+                }),
+            }),
+        };
+        expr.validate_shape().unwrap();
+        for (iterations, steps, expected) in [
+            (3, 100, Some(crate::event::Capacity::FixedPointIterations)),
+            (4, 8, Some(crate::event::Capacity::ProgramSteps)),
+            (4, 9, None),
+        ] {
+            let mut evaluation = Evaluation {
+                limits: FixedPointLimits {
+                    iterations,
+                    program_steps: steps,
+                },
+                ..Evaluation::default()
+            };
+            let result = region(&expr, &mut [].iter(), &(), &mut evaluation);
+            if let Some(capacity) = expected {
+                assert_eq!(result.unwrap_err(), crate::event::Error::Capacity(capacity));
+            } else {
+                assert!(result.unwrap().is_full());
+                assert_eq!((evaluation.iterations, evaluation.steps), (4, 9));
+            }
+            assert!(evaluation.bounds.is_empty());
+        }
+    }
+
+    struct StopAfter(std::cell::Cell<usize>);
+    impl Control for StopAfter {
+        fn checkpoint(&self) -> crate::event::Result<()> {
+            let left = self.0.get();
+            if left == 0 {
+                return Err(crate::event::Error::Cancelled);
+            }
+            self.0.set(left - 1);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn star_inside_a_binder_shares_budgets_and_cancellation_never_returns_an_approximant() {
+        use crate::event::{
+            AdmittedDescriptor, CoordinateMap, DescriptorLimits, FibreProduct, RelationalProduct,
+            SpaceId,
+        };
+        let states = Space::new(SpaceId([220; 32]), 1, &()).unwrap();
+        let env = Space::new(SpaceId([221; 32]), 0, &()).unwrap();
+        let base = CoordinateMap::coordinates(&states, &env, &[], &())
+            .unwrap()
+            .certify_surjective(&())
+            .unwrap();
+        let pair = FibreProduct::new(SpaceId([222; 32]), &base, &base, &()).unwrap();
+        let plan = RelationalProduct::new(SpaceId([223; 32]), &pair, &pair, &pair, &()).unwrap();
+        let import =
+            |value| crate::EventImport::capture(&value, DescriptorLimits::default(), &()).unwrap();
+        let star = EventExpr::Relation {
+            operation: RelationViewOp::Region,
+            relation: Box::new(RelationExpr::Star {
+                plan: import(AdmittedDescriptor::Composition(plan)),
+                relation: Box::new(RelationExpr::Identity {
+                    faces: import(AdmittedDescriptor::Fibre(pair.clone())),
+                }),
+            }),
+        };
+        let expr = EventExpr::FixedPoint {
+            kind: FixedPointKind::Least,
+            scope: EventScope::capture(pair.space(), &()).unwrap(),
+            body: Box::new(star),
+        };
+        expr.validate_shape().unwrap();
+        let mut completed = Evaluation::default();
+        let expected = region(&expr, &mut [].iter(), &(), &mut completed).unwrap();
+        assert!(
+            completed.iterations > 2,
+            "nested Star applications count too"
+        );
+        for limits in [
+            FixedPointLimits {
+                iterations: completed.iterations - 1,
+                program_steps: completed.steps,
+            },
+            FixedPointLimits {
+                iterations: completed.iterations,
+                program_steps: completed.steps - 1,
+            },
+        ] {
+            let mut limited = Evaluation {
+                limits,
+                ..Evaluation::default()
+            };
+            assert!(matches!(
+                region(&expr, &mut [].iter(), &(), &mut limited),
+                Err(crate::event::Error::Capacity(_))
+            ));
+            assert!(limited.bounds.is_empty());
+        }
+        for checks in [0, 1, 2, 3, 10, 25] {
+            let mut cancelled = Evaluation::default();
+            assert_eq!(
+                region(
+                    &expr,
+                    &mut [].iter(),
+                    &StopAfter(std::cell::Cell::new(checks)),
+                    &mut cancelled
+                )
+                .unwrap_err(),
+                crate::event::Error::Cancelled
+            );
+            assert!(cancelled.bounds.is_empty());
+        }
+        assert_eq!(
+            region(&expr, &mut [].iter(), &(), &mut Evaluation::default()).unwrap(),
+            expected
+        );
+    }
 
     #[test]
     fn diagnostic_capacity_refuses_without_publishing_a_partial_set() {

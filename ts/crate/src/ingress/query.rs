@@ -150,6 +150,12 @@ pub(crate) enum ScalarExpr {
 
 #[derive(Debug)]
 pub(crate) enum EventExpr {
+    Bound(bumbledb::PredicateDepth),
+    FixedPoint {
+        kind: bumbledb::FixedPointKind,
+        scope: Vec<u8>,
+        body: Box<Self>,
+    },
     Var(VarId),
     Empty(VarId),
     Full(VarId),
@@ -413,6 +419,13 @@ impl Admit for EventExpr {
         use bumbledb::EventExpr as O;
         work.checkpoint()?;
         Ok(match self {
+            Self::Bound(depth) => O::Bound(depth),
+            Self::FixedPoint { kind, scope, body } => O::FixedPoint {
+                kind,
+                scope: bumbledb::EventScope::from_bytes(&scope, work)
+                    .map_err(super::event_error)?,
+                body: body.admit(work)?,
+            },
             Self::Var(id) => O::Var(id),
             Self::Empty(id) => O::Empty(id),
             Self::Full(id) => O::Full(id),

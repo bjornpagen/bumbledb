@@ -328,7 +328,9 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 			for (const expr of expressions) {
 				const parsed = parseQueryIr(output({ kind: "event", expr }))
 				assert.deepEqual(parsed.rules[0]?.finds[0], { kind: "event", expr })
-				assert.notEqual((parsed.rules[0]?.finds[0] as { expr: unknown }).expr, expr)
+				const find = parsed.rules[0]?.finds[0]
+				assert.ok(find?.kind === "event")
+				assert.notEqual(find.expr, expr)
 			}
 			for (const kind of ["isEmpty", "isFull"])
 				assert.doesNotThrow(() => parseQueryIr(output({ kind: "test", expr: { kind, expr: a } })))
@@ -354,7 +356,10 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 		test("owns bounded BEDC payloads while native import remains the semantic gate", () => {
 			const descriptor = new Uint8Array([66, 69, 68, 67, 1, 0])
 			const make = (bytes: Uint8Array, op = "image") => ({
-				kind: "map", op, descriptor: bytes, expr: { kind: "var", var: 0 }
+				kind: "map",
+				op,
+				descriptor: bytes,
+				expr: { kind: "var", var: 0 }
 			})
 			const parsed = parseQueryIr(output({ kind: "event", expr: make(descriptor) }))
 			const find = parsed.rules[0]?.finds[0]
@@ -365,30 +370,91 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 			assert.throws(() => parseQueryIr(output({ kind: "event", expr: make(descriptor, "unknown") })))
 			assert.throws(() => parseQueryIr(output({ kind: "event", expr: make(new Uint8Array(new SharedArrayBuffer(6))) })))
 			const large = new Uint8Array(8 * 1024 * 1024 + 1)
-			assert.throws(() => parseQueryIr(output({ kind: "test", expr: {
-				kind: "equal", left: make(large), right: make(large)
-			} })), /at most/)
+			assert.throws(
+				() =>
+					parseQueryIr(
+						output({
+							kind: "test",
+							expr: {
+								kind: "equal",
+								left: make(large),
+								right: make(large)
+							}
+						})
+					),
+				/at most/
+			)
 		})
 
 		test("parses owned relation programs under the shared Event tree budget", () => {
 			const descriptor = new Uint8Array([66, 69, 68, 67, 1, 3])
 			const bind = { kind: "bind", descriptor, expr: { kind: "var", var: 0 } }
 			const product = { kind: "product", op: "compose", descriptor, left: bind, right: bind }
-			const parsed = parseQueryIr(output({ kind: "event", expr: { kind: "relation", op: "region", relation: product } }))
+			const parsed = parseQueryIr(
+				output({ kind: "event", expr: { kind: "relation", op: "region", relation: product } })
+			)
 			const find = parsed.rules[0]?.finds[0]
-			if (find?.kind !== "event" || find.expr.kind !== "relation" || find.expr.relation.kind !== "product") throw new Error("relation product")
+			if (find?.kind !== "event" || find.expr.kind !== "relation" || find.expr.relation.kind !== "product")
+				throw new Error("relation product")
 			descriptor.fill(0)
 			assert.deepEqual(find.expr.relation.descriptor, new Uint8Array([66, 69, 68, 67, 1, 3]))
 			for (const relation of [
-				{ ...product, op: "unknown" }, { ...bind, ignored: true },
-				{ kind: "star", relation: bind }, { kind: "apply", bits: 16, left: bind, right: bind }
-			]) assert.throws(() => parseQueryIr(output({ kind: "event", expr: { kind: "relation", op: "region", relation } })))
-			const cycle: { kind: string; relation?: unknown } = { kind: "converse" }; cycle.relation = cycle
-			assert.throws(() => parseQueryIr(output({ kind: "event", expr: { kind: "relation", op: "region", relation: cycle } })))
+				{ ...product, op: "unknown" },
+				{ ...bind, ignored: true },
+				{ kind: "star", relation: bind },
+				{ kind: "apply", bits: 16, left: bind, right: bind }
+			])
+				assert.throws(() => parseQueryIr(output({ kind: "event", expr: { kind: "relation", op: "region", relation } })))
+			const cycle: { kind: string; relation?: unknown } = { kind: "converse" }
+			cycle.relation = cycle
+			assert.throws(() =>
+				parseQueryIr(output({ kind: "event", expr: { kind: "relation", op: "region", relation: cycle } }))
+			)
 			const huge = { ...bind, descriptor: new Uint8Array(8 * 1024 * 1024 + 1) }
-			assert.throws(() => parseQueryIr(output({ kind: "event", expr: {
-				kind: "relation", op: "region", relation: { kind: "apply", bits: 8, left: huge, right: huge }
-			} })), /at most/)
+			assert.throws(
+				() =>
+					parseQueryIr(
+						output({
+							kind: "event",
+							expr: {
+								kind: "relation",
+								op: "region",
+								relation: { kind: "apply", bits: 8, left: huge, right: huge }
+							}
+						})
+					),
+				/at most/
+			)
 		})
 	})
+})
+
+test("fixed-point wire parsing owns scopes and shares imported-byte limits", () => {
+	const query = (expr: unknown) => ({
+		...plainIr(),
+		head: [{ kind: "compute" }],
+		rules: [{ ...plainIr().rules[0], finds: [{ kind: "event", expr }] }]
+	})
+	const bound = { kind: "bound", depth: 0 }
+	const scope = new Uint8Array([66, 69, 86, 84, 1])
+	const fixed = { kind: "fixed", op: "least", scope, expr: bound }
+	const parsed = parseQueryIr(query(fixed))
+	scope.fill(0)
+	const find = parsed.rules[0]?.finds[0]
+	assert.ok(find?.kind === "event" && find.expr.kind === "fixed")
+	assert.deepEqual([...find.expr.scope], [66, 69, 86, 84, 1])
+	for (const invalid of [
+		{ ...fixed, op: "approximate" },
+		{ ...fixed, extra: 0 },
+		{ ...bound, depth: -1 },
+		{ ...bound, depth: 65536 },
+		{ ...bound, depth: 0.5 },
+		{ ...bound, var: 0 },
+		{ ...fixed, scope: new Uint8Array(new SharedArrayBuffer(8)) }
+	])
+		assert.throws(() => parseQueryIr(query(invalid)), { name: "AuthoringError" })
+	const large = { ...fixed, scope: new Uint8Array(9 * 1024 * 1024) }
+	assert.throws(() => parseQueryIr(query({ ...large, expr: large })), /byte/)
+	// Shape parsing deliberately leaves mathematical/lexical admission to the worker.
+	assert.doesNotThrow(() => parseQueryIr(query(bound)))
 })

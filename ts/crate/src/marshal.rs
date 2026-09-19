@@ -1049,6 +1049,16 @@ fn event_expr_in(
     remaining.node(depth)?;
     let kind = req_text(obj, "kind", "Event expression")?;
     match kind.as_str() {
+        "bound" => {
+            exact_fields(obj, &["kind", "depth"])?;
+            let depth = u16::try_from(ordinal(
+                req(obj, "depth", "predicate depth")?,
+                "predicate depth",
+            )?)
+            .map_err(|_| err("predicate depth exceeds u16".into()))?;
+            Ok(E::Bound(bumbledb::PredicateDepth(depth)))
+        }
+        "fixed" => event_fixed_in(obj, depth, remaining),
         "map" => event_map_in(obj, depth, remaining),
         "relation" | "modal" => event_relation_in(obj, &kind, depth, remaining),
         "var" | "empty" | "full" => {
@@ -1121,6 +1131,28 @@ fn event_expr_in(
         }
         _ => Err(err("unknown Event expression kind".into())),
     }
+}
+
+fn event_fixed_in(
+    obj: &Object,
+    depth: usize,
+    remaining: &mut EventBudget<'_, '_>,
+) -> napi::Result<crate::ingress::query::EventExpr> {
+    exact_fields(obj, &["kind", "op", "scope", "expr"])?;
+    let kind = match req_text(obj, "op", "fixed point")?.as_str() {
+        "least" => bumbledb::FixedPointKind::Least,
+        "greatest" => bumbledb::FixedPointKind::Greatest,
+        _ => return Err(err("unknown fixed point operation".into())),
+    };
+    let scope = remaining
+        .copy
+        .bytes(req(obj, "scope", "fixed point scope")?, remaining.bytes)?;
+    remaining.bytes -= scope.len();
+    Ok(crate::ingress::query::EventExpr::FixedPoint {
+        kind,
+        scope,
+        body: Box::new(event_child(obj, "expr", depth, remaining)?),
+    })
 }
 
 fn event_map_in(

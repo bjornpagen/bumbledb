@@ -121,67 +121,78 @@ type FoldOpIr =
 	| { readonly kind: "min" }
 	| { readonly kind: "max" }
 
-/** Raw structural Event IR; all operands are body-bound Event columns. */
-type EventExprIr<V = number, D = Uint8Array> =
+/** Structural Event IR; row inputs and lexical predicate depths are distinct. */
+type EventExprIr<V = number, D = Uint8Array, S = Uint8Array> =
+	| { readonly kind: "bound"; readonly depth: number }
+	| {
+			readonly kind: "fixed"
+			readonly op: "least" | "greatest"
+			readonly scope: S
+			readonly expr: EventExprIr<V, D, S>
+	  }
 	| { readonly kind: "var" | "empty" | "full"; readonly var: V }
-	| { readonly kind: "not"; readonly expr: EventExprIr<V, D> }
+	| { readonly kind: "not"; readonly expr: EventExprIr<V, D, S> }
 	| {
 			readonly kind: "apply"
 			readonly bits: number
-			readonly left: EventExprIr<V, D>
-			readonly right: EventExprIr<V, D>
+			readonly left: EventExprIr<V, D, S>
+			readonly right: EventExprIr<V, D, S>
 	  }
 	| {
 			readonly kind: "ite"
-			readonly condition: EventExprIr<V, D>
-			readonly high: EventExprIr<V, D>
-			readonly low: EventExprIr<V, D>
+			readonly condition: EventExprIr<V, D, S>
+			readonly high: EventExprIr<V, D, S>
+			readonly low: EventExprIr<V, D, S>
 	  }
-	| { readonly kind: "relation"; readonly op: "region" | "domain" | "range"; readonly relation: RelationExprIr<V, D> }
+	| {
+			readonly kind: "relation"
+			readonly op: "region" | "domain" | "range"
+			readonly relation: RelationExprIr<V, D, S>
+	  }
 	| {
 			readonly kind: "modal"
 			readonly op: "may" | "all" | "must" | "post"
-			readonly relation: RelationExprIr<V, D>
-			readonly expr: EventExprIr<V, D>
+			readonly relation: RelationExprIr<V, D, S>
+			readonly expr: EventExprIr<V, D, S>
 	  }
 	| {
 			readonly kind: "map"
 			readonly op: "pullback" | "image" | "universalImage" | "nonvacuousImage" | "possible" | "guaranteed"
 			readonly descriptor: D
-			readonly expr: EventExprIr<V, D>
+			readonly expr: EventExprIr<V, D, S>
 	  }
 	| {
 			readonly kind: "cardinality"
 			readonly minimum: bigint
 			readonly maximum: bigint
-			readonly events: readonly EventExprIr<V, D>[]
+			readonly events: readonly EventExprIr<V, D, S>[]
 	  }
 
-type RelationExprIr<V = number, D = Uint8Array> =
-	| { readonly kind: "bind" | "test"; readonly descriptor: D; readonly expr: EventExprIr<V, D> }
+type RelationExprIr<V = number, D = Uint8Array, S = Uint8Array> =
+	| { readonly kind: "bind" | "test"; readonly descriptor: D; readonly expr: EventExprIr<V, D, S> }
 	| { readonly kind: "identity"; readonly descriptor: D }
-	| { readonly kind: "not" | "converse"; readonly relation: RelationExprIr<V, D> }
+	| { readonly kind: "not" | "converse"; readonly relation: RelationExprIr<V, D, S> }
 	| {
 			readonly kind: "apply"
 			readonly bits: number
-			readonly left: RelationExprIr<V, D>
-			readonly right: RelationExprIr<V, D>
+			readonly left: RelationExprIr<V, D, S>
+			readonly right: RelationExprIr<V, D, S>
 	  }
 	| {
 			readonly kind: "product"
 			readonly op: "compose" | "leftResidual" | "rightResidual"
 			readonly descriptor: D
-			readonly left: RelationExprIr<V, D>
-			readonly right: RelationExprIr<V, D>
+			readonly left: RelationExprIr<V, D, S>
+			readonly right: RelationExprIr<V, D, S>
 	  }
-	| { readonly kind: "star"; readonly descriptor: D; readonly relation: RelationExprIr<V, D> }
+	| { readonly kind: "star"; readonly descriptor: D; readonly relation: RelationExprIr<V, D, S> }
 
-type EventTestIr<V = number, D = Uint8Array> =
-	| { readonly kind: "isEmpty" | "isFull"; readonly expr: EventExprIr<V, D> }
+type EventTestIr<V = number, D = Uint8Array, S = Uint8Array> =
+	| { readonly kind: "isEmpty" | "isFull"; readonly expr: EventExprIr<V, D, S> }
 	| {
 			readonly kind: "subset" | "equal" | "disjoint" | "covers"
-			readonly left: EventExprIr<V, D>
-			readonly right: EventExprIr<V, D>
+			readonly left: EventExprIr<V, D, S>
+			readonly right: EventExprIr<V, D, S>
 	  }
 
 type FindTermIr =

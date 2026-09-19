@@ -1,5 +1,9 @@
 //! Pure-data typed relation programs. Every product/workspace identity is authored.
-use super::{EventExpr, EventExprError, EventImport, import::Role, validate_contexts};
+use super::{
+    EventExpr, EventExprError, EventImport,
+    import::{Context, Role},
+    validate_contexts,
+};
 use crate::event::BoolOp4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,28 +83,30 @@ impl RelationExpr {
         }
     }
 
-    pub(crate) fn validate_contexts(&self) -> Result<(), EventExprError> {
+    pub(crate) fn validate_contexts(&self, bounds: &[Context<'_>]) -> Result<(), EventExprError> {
         let role = self.role().ok_or(EventExprError::ImportKind)?;
         match self {
-            Self::Bind { region, .. } => validate_contexts(region, Some(role.region().marker)),
+            Self::Bind { region, .. } => {
+                validate_contexts(region, Some(role.region().marker), bounds)
+            }
             Self::Identity { .. } => require_endo(role),
             Self::Test { predicate, .. } => {
                 require_endo(role)?;
-                validate_contexts(predicate, Some(role.input().marker))
+                validate_contexts(predicate, Some(role.input().marker), bounds)
             }
-            Self::Not(value) | Self::Converse(value) => value.validate_contexts(),
+            Self::Not(value) | Self::Converse(value) => value.validate_contexts(bounds),
             Self::Star { plan, relation } => {
                 require_endo(role)?;
                 let (_, roles) = plan.product().ok_or(EventExprError::ImportKind)?;
                 require_roles(role, Some(roles[0]))?;
                 require_roles(role, Some(roles[1]))?;
                 require_roles(role, relation.role())?;
-                relation.validate_contexts()
+                relation.validate_contexts(bounds)
             }
             Self::Apply { left, right, .. } => {
                 require_roles(role, right.role())?;
-                left.validate_contexts()?;
-                right.validate_contexts()
+                left.validate_contexts(bounds)?;
+                right.validate_contexts(bounds)
             }
             Self::Product {
                 operation,
@@ -112,8 +118,8 @@ impl RelationExpr {
                 let [l, r, _] = operation.positions();
                 require_roles(roles[l], left.role())?;
                 require_roles(roles[r], right.role())?;
-                left.validate_contexts()?;
-                right.validate_contexts()
+                left.validate_contexts(bounds)?;
+                right.validate_contexts(bounds)
             }
         }
     }
