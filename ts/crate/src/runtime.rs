@@ -250,6 +250,8 @@ pub enum Output {
     EventDescriptor(crate::event_descriptor_wire::DescriptorOutput),
     /// Fixed-law descriptions and observations, fully encoded on the worker.
     EventSource(crate::event_source_wire::SourceOutput),
+    /// Owned exact polynomial terms, encoded and bounded on the worker.
+    Polynomial(crate::polynomial_wire::Description),
     /// One compiled query with its own worker route and snapshot share.
     Prepared(session::SnapshotSession),
     /// One sealed completed query result, owned and independent.

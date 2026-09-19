@@ -4,6 +4,8 @@ export type { FiniteFunctionDescription, FunctionPiece } from "#finite-function.
 export { FiniteFunction } from "#finite-function.ts"
 export type { FiniteKernelDescription, SourceExtension } from "#finite-kernel.ts"
 export { FiniteKernel } from "#finite-kernel.ts"
+export type { ParameterBinding, PolynomialPower, PolynomialTerm } from "#polynomial.ts"
+export { ExactPolynomial } from "#polynomial.ts"
 export type { ExpectationObservation, ProbabilityObservation } from "#source-operation.ts"
 export type { JeffreyTarget } from "#source-revision.ts"
 export { SourceRevision } from "#source-revision.ts"

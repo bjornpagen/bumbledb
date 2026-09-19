@@ -94,6 +94,14 @@ export interface MutationReportWire {
 }
 
 interface DbBridge {
+	runtimeExactPolynomial(
+		runtime: RuntimeHandle,
+		operation: string,
+		inputs: readonly Uint8Array[],
+		argument: bigint,
+		callback: () => void
+	): OperationHandle
+	runtimeExactPolynomialTake(operation: OperationHandle): unknown
 	runtimeExactRational(
 		runtime: RuntimeHandle,
 		operation: string,

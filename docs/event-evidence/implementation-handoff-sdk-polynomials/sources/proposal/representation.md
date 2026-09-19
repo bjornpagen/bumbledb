@@ -1,0 +1,225 @@
+# Event representation for implementation
+
+**Revision 0.9.** The initial general backend is a canonical completed function
+with symbolic splits and essential-coordinate tables. This selects an
+implementation starting point from the [design review](design-review.md); it
+is not a universal performance claim. Dense and packed512 remain comparison
+controls. Earlier BDD-pair layouts are preserved in the
+[pre-cleanup snapshot](archive/implementation-prep-0.7/representation.md).
+
+## 1. Stable public identity, replaceable internal carrier
+
+```rust
+#[repr(C)]
+struct EventKey { space: u64, region: u64 }
+
+struct Event { key: EventKey, owner: Arc<EventSpace> }
+```
+
+Fields are private. A checked owner resolves each region before kernels run.
+The space token is generation checked; root indices are never recycled within
+a live arena. Empty and full validate and retain owners exactly like other
+values. A standalone owned Event is larger than the two-word resident key.
+
+Within the canonical resident owner, equal keys mean equal admissible regions.
+Across owners, equality requires checked alignment/rebasing. Hashes find possible
+matches; full canonical contents settle equality. Copying a key keeps the same
+source outcome; a fresh draw is a source extension.
+
+The backend boundary exposes checked constants, Boolean construction, equality,
+structural witnesses, face mapping, quantified construction, exact legal counts,
+read-only traversal and canonical publication. Public callers see the complete
+region algebra rather than raw node indices or tuning switches. Relation roles,
+map certificates and source laws are owned descriptors over this same carrier.
+
+The native [inspection API](../docs/event-inspection.md) now exposes safe borrowed
+node/table views over an immutable reachable-graph snapshot. It preserves the
+original-support and completed-membership roots, sharing and polarity. Snapshots
+use additional memory but hold no manager lock during traversal, so clients can
+construct same-space Events while retaining views. A checked rebuild validates
+named context and original support; snapshot node IDs never define persisted
+fact identity. Direct zero-copy arena slabs remain an optional optimization.
+
+## 2. Canonical completed function
+
+Fix a decoder `rho` from raw codes onto legal worlds that fixes legal worlds:
+
+```text
+stored_A(code) = A(rho(code))
+```
+
+The [retraction proofs](experiments/event-repr-lab/lean/Retraction.lean) establish
+support-relative identity, complement and Boolean preservation. Its defining
+membership FD is `decoded world -> Event membership`. A raw witness is decoded
+before publication. Original legal support and the designated law are retained;
+raw aliases never add legal states or probability mass.
+
+For a certified product, separate face decoders can reflect semantic face
+independence in the physical function. A whole face may contain a correlated
+Coup state. Product state copies do not assert independent players. Arbitrary
+coupled support uses a general decoder and support-aware fallback; it cannot
+borrow product laws without the product certificate.
+
+The raw essential-coordinate mask describes dependence of this completed
+Boolean function. It is not a uniquely least logical dependency set on arbitrary
+legal support: copied coordinates give counterexamples. Keep logical dependency
+certificates distinct from physical masks.
+
+The [native finite map layer](../docs/event-maps.md) uses those exact raw masks
+only for a physical last-use schedule: after splitting an image on a target
+readout, source coordinates unused by every remaining readout can be existentially
+abstracted. The input is first gated by original source support. The native
+CoordinateMaps reference proves this transformation; it does not infer a
+logical face FD or a complete product from a raw dependency mask.
+
+## 3. Initial memory and kernel choices
+
+Use constant references, canonical symbolic splits, and truth tables containing
+only exact essential coordinates. The initial cutoff is nine raw coordinates:
+a local table needs at most eight 64-bit words. Larger functions split in an
+immutable order; equal continuations share nodes. This cutoff is internal and
+must not affect source identity, public semantics or persistent fact bytes.
+
+The laboratory's compact record is two words: a dependence mask and a payload
+selecting children or an offset into a word slab. Treat its compact child-index
+and fewer-than-63-coordinate limits as checked prototype capacities. A production
+port must document and test its representable bounds before publication; wider
+coordinate sets require explicit storage, never bit truncation or a changed
+answer. Semantic coordinate identities are independent of record numbering.
+
+Intern every canonical constructor with full collision checks. Complement is
+one region-polarity bit. `BoolOp4` selects all sixteen binary truth functions.
+Use the validated direct ITE kernel and staged support-aware projection as the
+initial operation schedule. Constructor certificates and structural cardinality
+caches remain internal; no cached count may count decoder aliases as worlds.
+
+Prepare projection data from certificates: required support gates, hidden
+coordinates, and decoder coordinates requiring repair. Product coverage can
+remove gates; locality can remove unaffected repairs. When a certificate is
+missing, execute the full exact gated/repair program. Maximal fusion, borrowed
+views and prefix-specific decoders remain optional implementations with their
+own prerequisites and costs, not public flags.
+
+[Kernel notes](kernels.md) retain the ARM64 evidence. Word/NEON operations act on
+aligned local bitplanes. The fifteen pair-occupancy signatures support a separate
+predicate-as-data path. A sixteen-entry lookup table must initialize every valid
+Event signature; the Allen-specific 0–12 wrapper is insufficient.
+
+## 4. Query execution and temporary memory
+
+Free Join moves ordinary word bindings and retained owners. Event computation
+consumes checked operands. Pack keeps group presence separate from the region
+fold. A present empty Event remains a result and an absent group remains absent.
+
+Complete-binding and factored-branch schedules share one mathematical contract.
+The latter requires a scalar separator certificate, compatible typed operators,
+all participating validation and exact multiplicity/presence accounting.
+Composition preserves one middle state; residual aggregation uses its intersection
+law. Native stable diagnostic descriptors are required by [the proposal](proposal.md).
+
+Representation ranking must be measured after the relevant algebraic rewrites:
+[relational Pack](experiments/event-repr-lab/RELATIONAL-PACK.md) changed the preferred
+packed layout in a measured workload. Small warm groups can lose to factoring.
+The supplied checker certifies a partition, not an optimal-partition search.
+The participation-index draft is shelved and supplies no accepted memory result.
+
+## 5. Ownership, publication and memory pressure
+
+Use immutable append-only records with stable references. Transaction-private
+scratch can build speculative values. Publication rebases referenced values
+into the canonical owner and resolves concurrent interning by full equality.
+Only admitted facts and their transitive owner set become visible atomically.
+
+Images, derived stages, spill readers and result batches retain one owner per
+referenced space rather than one atomic refcount operation per binding. A result
+must survive releasing its input snapshot and executor. Empty/full, relation
+views, maps and exact observation outputs obey the same lifetime rule.
+
+The initial reclamation policy releases an arena with its last owner. Bound
+scratch and caches through WorkContext; cancellation/resource refusal aborts
+publication. Cache eviction cannot invalidate a live result. Long-lived arenas
+can retain dead intermediates, so report retained capacity separately from live
+answer graphs and process RSS. Compaction, when introduced, needs explicit
+translation and cannot recycle IDs visible to existing owners.
+
+## 6. Canonical persistence and the remaining qualification gate
+
+The existing transport lab verifies an ordered batch codec and checked rebasing.
+It does not define canonical native per-fact identity or serialize every source
+and law descriptor. Native [BEVT v1/v2](../docs/event-value-format.md) now
+combine fixed semantic-order structural graphs with optional canonical fixed
+rational density partitions inside ordinary Event rows. The full M2 gate must establish:
+
+- semantic space/source identities, named coordinates and admissibility;
+- exact region bytes independent of allocation, leaf cutoff, decoder and execution order;
+- identical fact identities across supported resident carriers;
+- complete owner/law references, corruption checks and bounded resource behavior;
+- explicit compatibility/version refusal for older readers.
+
+The chosen codec's potential reordering blowup is a cost that must be measured
+and may refuse under limits.
+An expression hash, arena ID, heuristic variable order or unverified batch packet
+cannot substitute for the required canonical encoding. The persisted format was
+selected during native implementation; the representation experiments do not
+formally verify its byte parser or encoder. Fixed rational sources now have
+[format and compatibility evidence](../docs/event-sources.md); conditional and
+continuous parameter descriptors retain their separate admission obligations.
+
+## 7. Acceptance boundaries
+
+The [implementation plan](implementation-plan.md) assigns the native work and
+gates. The [proof matrix](semantics/README.md) separates denotational guarantees
+from Rust correspondence, arena canonicality, solver correctness and wire identity.
+The laboratory remains the source of raw performance evidence. Changing the
+initial backend later requires the same complete operation, publication,
+observation and conversion comparisons; it never permits weaker semantics.
+
+
+## 7. Fixed finite arithmetic representation
+
+A designated native law stores nonzero per-world rational densities alongside
+raw region references in the same owned Boolean arena. Equal densities are
+merged by Event union. Canonical density order and canonical structural region
+bytes determine law identity; changing that law changes the designated context.
+This is a partition representation of an arithmetic-valued function, not a
+vector of independent marginal bit probabilities. It permits symbolic large
+uniform pieces while admitting that arbitrary joint laws may need many pieces.
+
+Contraction uses `sum(count(E & piece) * density)` over original support, without
+enumerating worlds. The [finite density proof](../crates/bumbledb-event/semantics/FiniteDensity.lean)
+connects that operation to per-world summation with a shared positive arithmetic
+denominator. A reduced arithmetic decision diagram or circuit can replace this
+backend later without changing source semantics. Guarded parameter functions
+need their own interpretation: counting logical guard assignments as stochastic
+outcomes is forbidden. See the [native source contract](../docs/event-sources.md)
+for ownership, canonical bytes and explicit resource bounds.
+
+
+The [finite function implementation](../docs/event-functions.md) generalizes
+those partitions to signed rational functions. Weighted image uses raw scalar
+cofactors and last-use summation; it cannot reuse Boolean image's idempotent
+existential abstraction. Support gates apply before contraction and at final
+publication, while intermediate arithmetic states remain uncompleted. A checked
+conditional channel is a nonnegative function with unit fibre sum everywhere;
+closing it multiplies by the pulled-back prior and preserves every old marginal.
+Scalar partitions/memo entries have explicit bounds, without a compactness or
+aggregate memory guarantee for arbitrary functions.
+
+
+[Finite revisions](../docs/event-revisions.md) reuse those exact functions to
+reweight the designated density and re-admit its normalization. The original
+support and Boolean arena remain shared; a new owner designates the posterior
+law. A checked identity map translates prior Events. The revision record owns
+its prior and mathematical input (Event, function, or partition/target roster),
+plus either the new source/map or an impossible-outcome explanation. These
+records are not part of canonical Event bytes: two identical final laws can
+share canonical identity while retaining distinct provenance records. Signed
+expectation likewise retains its function and evidence alongside exact masses;
+it does not occupy an EventKey or a floating-point query slot.
+
+The [native polynomial layer](../docs/event-polynomials.md) now supplies a sparse
+expanded rational normal form indexed by stable parameter names. It supports
+exact coefficient equality and BEPL v1 arithmetic transport, simultaneous
+substitution, and explicit Beta moments. It does not replace the Event arena or
+insert unknown parameters into its finite outcome roster. Domain-relative
+equality and parameterized law admission still require the source/guard layer.
