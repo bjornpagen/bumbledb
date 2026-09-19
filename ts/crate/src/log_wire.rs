@@ -2675,7 +2675,7 @@ fn decode_rejection_violations(
                 format!("rejection evidence does not belong to this schema: {other}"),
             ),
         })?;
-    let rows = crate::violations_wire(descriptor, &violations);
+    let rows = crate::violations_wire(descriptor, &violations, work).map_err(LogFail::Core)?;
     let truncated = (0..rows.len())
         .map(|index| violations.examples_truncated(index))
         .collect();

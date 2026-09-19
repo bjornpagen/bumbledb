@@ -5,13 +5,12 @@ use bumbledb::work::{WorkContext, WorkError};
 use napi::bindgen_prelude::{Array, BigInt, Env, External, Function, Unknown};
 use napi_derive::napi;
 
+use crate::ingress::{MAX_EVENT_BYTES, event_error};
 use crate::marshal::ValueOut;
 use crate::runtime::{Output, QueuedOutput, RuntimeError};
 use crate::runtime_wire::{
     OperationHandle, RuntimeHandle, notification, operation_handle, owner, thrown, unshared_input,
 };
-
-const MAX_EVENT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
 enum Op {
@@ -81,13 +80,6 @@ impl Op {
         } else {
             Err(RuntimeError::InvalidArgument)
         }
-    }
-}
-fn event_error(error: EventError) -> RuntimeError {
-    match error {
-        EventError::Cancelled => WorkError::Cancelled.into(),
-        EventError::Allocation => WorkError::Allocation.into(),
-        other => crate::db_wire::engine_error(&bumbledb::Error::Event(other)),
     }
 }
 fn output(value: &Event, control: &WorkContext) -> Result<ValueOut, RuntimeError> {

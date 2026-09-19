@@ -706,7 +706,7 @@ pub fn runtime_directory_db_open(
                         Ok(bumbledb::Admission::Accepted(db)) => Ok(db),
                         Ok(bumbledb::Admission::Rejected(violations)) => {
                             return Ok(Output::Db(ManagedDbOutcome::Rejected(
-                                crate::violations_wire(&descriptor, &violations),
+                                crate::violations_wire(&descriptor, &violations, context)?,
                             )));
                         }
                         Err(error) => Err(error),

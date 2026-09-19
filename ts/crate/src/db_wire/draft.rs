@@ -10,10 +10,35 @@ use crate::runtime::registry::registry_draft::{DraftPayload, PendingChange};
 use crate::runtime::{Output, RuntimeError};
 
 use super::change_error;
+use crate::ingress::{Admit, ValueInput};
 
 fn mark_terminal(entry: &mut DraftPayload) {
     entry.terminal = true;
     entry.pending = Vec::new();
+}
+
+/// Admit every copied input under this job before retaining rows. Failure
+/// spends the same draft as any other ingestion error, including its prefix.
+pub(crate) fn ingest_input_from_payload(
+    payload: &mut Payload,
+    context: &WorkContext,
+    relation: u32,
+    insert: bool,
+    rows: Vec<Vec<ValueInput>>,
+) -> Result<Output, RuntimeError> {
+    let Payload::Draft(entry) = payload else {
+        return Err(RuntimeError::Internal);
+    };
+    if entry.terminal {
+        return Err(RuntimeError::SpentHandle);
+    }
+    match rows.admit(context) {
+        Ok(rows) => ingest_from_payload(payload, context, relation, insert, rows),
+        Err(error) => {
+            mark_terminal(entry);
+            Err(error)
+        }
+    }
 }
 
 /// Transfer owned input rows into the draft. A failure spends the draft,

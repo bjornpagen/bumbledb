@@ -24,6 +24,7 @@ pub mod db_wire;
 pub mod event_wire;
 #[cfg(test)]
 mod fingerprint_lock;
+mod ingress;
 pub mod log;
 pub mod log_wire;
 mod marshal;
@@ -158,10 +159,12 @@ pub(crate) fn param_args(params: &[OwnedParam]) -> Vec<ParamArg<'_>> {
 pub(crate) fn violations_wire(
     descriptor: &SchemaDescriptor,
     violations: &Violations,
-) -> Vec<ViolationWire> {
+    work: &bumbledb::work::WorkContext,
+) -> Result<Vec<ViolationWire>, runtime::RuntimeError> {
+    work.checkpoint()?;
     render_rejection(descriptor, violations)
         .into_iter()
-        .map(ViolationWire::from_rendered)
+        .map(|violation| ViolationWire::from_rendered(violation, work))
         .collect()
 }
 

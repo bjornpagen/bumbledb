@@ -11,16 +11,20 @@ use bumbledb::schema::{
     StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{
-    AllenMask, AnswerValue, Atom, AtomSource, CmpOp, Comparison, ConditionTree, F64, FieldId,
-    FindTerm, FixedIntervalElement, FoldOp, HeadOp, HeadTerm, Interior, InteriorId, Interval,
-    Manifest, NonEmpty, ParamId, Query, Rec, RecRule, RecStep, RelationId, RenderedViolation, Rule,
-    ScalarExpr, SchemaDescriptor, SchemaSpec, StatementId, StatementKind, Term, Uuid, Value, VarId,
+    AllenMask, AnswerValue, AtomSource, CmpOp, F64, FieldId, FixedIntervalElement, FoldOp, HeadOp,
+    HeadTerm, InteriorId, Interval, Manifest, NonEmpty, ParamId, RelationId, RenderedViolation,
+    SchemaDescriptor, SchemaSpec, StatementId, StatementKind, Uuid, Value, VarId,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Either, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, Utf16String, i64n,
 };
 use napi::{Unknown, ValueType as JsType, sys};
 
+use crate::ingress::query::{
+    Atom, Comparison, ConditionTree, FindTerm, Interior, Query, Rec, RecRule, RecStep, Rule,
+    ScalarExpr, Term,
+};
+use crate::ingress::{CopyContext, ImportInput, ParamInput, ValueInput};
 use crate::tags;
 
 /// LMDB/file measurements, not process heap or mapped-page residency.
@@ -115,7 +119,11 @@ fn string_in(value: &Utf16String, ctx: impl std::fmt::Display) -> napi::Result<S
     })
 }
 
-fn req_text(obj: &Object, key: &str, ctx: impl std::fmt::Display + Copy) -> napi::Result<String> {
+pub(crate) fn req_text(
+    obj: &Object,
+    key: &str,
+    ctx: impl std::fmt::Display + Copy,
+) -> napi::Result<String> {
     string_in(&req::<Utf16String>(obj, key, ctx)?, ctx)
 }
 
@@ -333,8 +341,9 @@ pub(crate) fn schema_value_in(
             if got != JsType::Object {
                 return Err(mismatch("Uint8Array (canonical BEVT Event)"));
             }
-            let bytes = unsafe { value.cast::<Uint8Array>()? };
-            event_in(&bytes, ctx)
+            Err(err(format!(
+                "bumbledb marshal: {ctx}: Event requires worker admission"
+            )))
         }
         ValueType::Interval { element } => {
             if got != JsType::Object {
@@ -435,7 +444,8 @@ pub(crate) fn key_row(
     relation: u32,
     key_statement: u32,
     values: &Array,
-) -> napi::Result<(RelationId, StatementId, Vec<Value>)> {
+    copy: &CopyContext<'_>,
+) -> napi::Result<(RelationId, StatementId, Vec<ValueInput>)> {
     let rel = RelationId(relation);
     // The statement refusals below may name a relation the roster table
     // does not know — the id-speak fallback keeps their text unchanged;
@@ -481,12 +491,7 @@ pub(crate) fn key_row(
             ))
         })?;
         let value = req_at::<Unknown>(values, index, format_args!("key of `{name}`"))?;
-        row.push(schema_value_in(
-            &field.value_type,
-            &value,
-            &name,
-            &field.name,
-        )?);
+        row.push(copy.schema_value(&field.value_type, value, &name, &field.name)?);
     }
     Ok((rel, statement_id, row))
 }
@@ -523,22 +528,14 @@ pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
         tags::value::INTERVAL_U64 => interval_in(obj, IntervalElement::U64, "intervalU64 value"),
         tags::value::INTERVAL_I64 => interval_in(obj, IntervalElement::I64, "intervalI64 value"),
         tags::value::INTERVAL_F64 => interval_in(obj, IntervalElement::F64, "intervalF64 value"),
-        tags::value::EVENT => event_in(
-            &req::<Uint8Array>(obj, "value", "event value")?,
-            "event value",
-        ),
+        tags::value::EVENT => Err(err(
+            "Event schema literals are not yet supported; data values require worker admission"
+                .into(),
+        )),
         other => Err(err(format!(
             "bumbledb marshal: unknown value kind `{other}`"
         ))),
     }
-}
-
-/// The native wire transports canonical Event bytes, never resident keys.
-/// Owned decoding delegates all semantic validation to the shared Event crate.
-fn event_in(bytes: &[u8], ctx: impl std::fmt::Display) -> napi::Result<Value> {
-    bumbledb::Event::from_bytes(bytes, &())
-        .map(Value::Event)
-        .map_err(|error| err(format!("bumbledb marshal: {ctx}: {error}")))
 }
 
 pub(crate) enum OwnedParam {
@@ -546,7 +543,7 @@ pub(crate) enum OwnedParam {
     Set(Vec<Value>),
 }
 
-pub(crate) fn params_in(arr: &Array) -> napi::Result<Vec<OwnedParam>> {
+pub(crate) fn params_in(arr: &Array, copy: &CopyContext<'_>) -> napi::Result<Vec<ParamInput>> {
     let mut params = Vec::with_capacity(arr.len() as usize);
     for index in 0..arr.len() {
         let obj = req_at::<Object>(arr, index, "params")?;
@@ -556,11 +553,11 @@ pub(crate) fn params_in(arr: &Array) -> napi::Result<Vec<OwnedParam>> {
             let mut set = Vec::with_capacity(values.len() as usize);
             for value_index in 0..values.len() {
                 let element = req_at::<Object>(&values, value_index, "set param values")?;
-                set.push(tagged_value(&element)?);
+                set.push(copy.tagged_value(&element)?);
             }
-            params.push(OwnedParam::Set(set));
+            params.push(ParamInput::Set(set));
         } else {
-            params.push(OwnedParam::Scalar(tagged_value(&obj)?));
+            params.push(ParamInput::Scalar(copy.tagged_value(&obj)?));
         }
     }
     Ok(params)
@@ -869,7 +866,8 @@ fn param_in(obj: &Object, key: &str, ctx: &str) -> napi::Result<ParamId> {
     )?))
 }
 
-fn term_in(obj: &Object) -> napi::Result<Term> {
+fn term_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<Term> {
+    copy.checkpoint()?;
     let kind: String = req_text(obj, "kind", "term")?;
     match kind.as_str() {
         tags::term::VAR => Ok(Term::Var(var_in(obj, "var", "var term")?)),
@@ -877,7 +875,7 @@ fn term_in(obj: &Object) -> napi::Result<Term> {
         tags::term::PARAM_SET => Ok(Term::ParamSet(param_in(obj, "param", "paramSet term")?)),
         tags::term::LITERAL => {
             let value: Object = req(obj, "value", "literal term")?;
-            Ok(Term::Literal(tagged_value(&value)?))
+            Ok(Term::Literal(copy.tagged_value(&value)?))
         }
         other => Err(err(format!(
             "bumbledb marshal: unknown term kind `{other}`"
@@ -898,7 +896,8 @@ fn exact_fields(obj: &Object, fields: &[&str]) -> napi::Result<()> {
 }
 
 /// Parses the core scalar grammar with rule-local variable ordinals.
-fn scalar_expr_in(obj: &Object, depth: usize) -> napi::Result<ScalarExpr> {
+fn scalar_expr_in(obj: &Object, depth: usize, copy: &CopyContext<'_>) -> napi::Result<ScalarExpr> {
+    copy.checkpoint()?;
     if depth > MAX_SCALAR_DEPTH {
         return Err(err(format!(
             "bumbledb marshal: scalar expression deeper than {MAX_SCALAR_DEPTH}"
@@ -921,38 +920,38 @@ fn scalar_expr_in(obj: &Object, depth: usize) -> napi::Result<ScalarExpr> {
             let rounding = bumbledb::Rounding::from_name(&rounding)
                 .ok_or_else(|| err("unknown integer rounding mode".into()))?;
             Ok(ScalarExpr::MulDiv {
-                a: Box::new(scalar_child(obj, "a", depth)?),
-                b: Box::new(scalar_child(obj, "b", depth)?),
-                divisor: Box::new(scalar_child(obj, "divisor", depth)?),
+                a: Box::new(scalar_child(obj, "a", depth, copy)?),
+                b: Box::new(scalar_child(obj, "b", depth, copy)?),
+                divisor: Box::new(scalar_child(obj, "divisor", depth, copy)?),
                 rounding,
             })
         }
         tags::scalar_expr::MEASURE => Ok(ScalarExpr::Measure(Box::new(scalar_child(
-            obj, "expr", depth,
+            obj, "expr", depth, copy,
         )?))),
         tags::scalar_expr::VAR => Ok(ScalarExpr::Var(var_in(obj, "var", "scalar var")?)),
         tags::scalar_expr::LITERAL => {
             let value: Object = req(obj, "value", "scalar literal")?;
-            Ok(ScalarExpr::Literal(tagged_value(&value)?))
+            Ok(ScalarExpr::Literal(copy.tagged_value(&value)?))
         }
         tags::scalar_expr::NEGATE => Ok(ScalarExpr::Negate(Box::new(scalar_child(
-            obj, "expr", depth,
+            obj, "expr", depth, copy,
         )?))),
         tags::scalar_expr::ADD => Ok(ScalarExpr::Add(
-            Box::new(scalar_child(obj, "left", depth)?),
-            Box::new(scalar_child(obj, "right", depth)?),
+            Box::new(scalar_child(obj, "left", depth, copy)?),
+            Box::new(scalar_child(obj, "right", depth, copy)?),
         )),
         tags::scalar_expr::SUBTRACT => Ok(ScalarExpr::Subtract(
-            Box::new(scalar_child(obj, "left", depth)?),
-            Box::new(scalar_child(obj, "right", depth)?),
+            Box::new(scalar_child(obj, "left", depth, copy)?),
+            Box::new(scalar_child(obj, "right", depth, copy)?),
         )),
         tags::scalar_expr::MULTIPLY => Ok(ScalarExpr::Multiply(
-            Box::new(scalar_child(obj, "left", depth)?),
-            Box::new(scalar_child(obj, "right", depth)?),
+            Box::new(scalar_child(obj, "left", depth, copy)?),
+            Box::new(scalar_child(obj, "right", depth, copy)?),
         )),
         tags::scalar_expr::DIVIDE => Ok(ScalarExpr::Divide(
-            Box::new(scalar_child(obj, "left", depth)?),
-            Box::new(scalar_child(obj, "right", depth)?),
+            Box::new(scalar_child(obj, "left", depth, copy)?),
+            Box::new(scalar_child(obj, "right", depth, copy)?),
         )),
         tags::scalar_expr::CAST => {
             let cast: String = req_text(obj, "cast", "scalar cast")?;
@@ -960,14 +959,14 @@ fn scalar_expr_in(obj: &Object, depth: usize) -> napi::Result<ScalarExpr> {
                 .ok_or_else(|| err(format!("bumbledb marshal: unknown cast kind `{cast}`")))?;
             Ok(ScalarExpr::Cast {
                 kind,
-                expr: Box::new(scalar_child(obj, "expr", depth)?),
+                expr: Box::new(scalar_child(obj, "expr", depth, copy)?),
             })
         }
         tags::scalar_expr::IS_NAN => Ok(ScalarExpr::IsNaN(Box::new(scalar_child(
-            obj, "expr", depth,
+            obj, "expr", depth, copy,
         )?))),
         tags::scalar_expr::IS_FINITE => Ok(ScalarExpr::IsFinite(Box::new(scalar_child(
-            obj, "expr", depth,
+            obj, "expr", depth, copy,
         )?))),
         other => Err(err(format!(
             "bumbledb marshal: unknown scalar expression kind `{other}`"
@@ -975,25 +974,33 @@ fn scalar_expr_in(obj: &Object, depth: usize) -> napi::Result<ScalarExpr> {
     }
 }
 
-fn scalar_child(obj: &Object, key: &str, depth: usize) -> napi::Result<ScalarExpr> {
+fn scalar_child(
+    obj: &Object,
+    key: &str,
+    depth: usize,
+    copy: &CopyContext<'_>,
+) -> napi::Result<ScalarExpr> {
     let child: Object = req(obj, key, "scalar expression")?;
-    scalar_expr_in(&child, depth + 1)
+    scalar_expr_in(&child, depth + 1, copy)
 }
 
-struct EventBudget {
+struct EventBudget<'a, 'work> {
+    copy: &'a CopyContext<'work>,
     nodes: usize,
     bytes: usize,
 }
 
-impl EventBudget {
-    fn new() -> Self {
+impl<'a, 'work> EventBudget<'a, 'work> {
+    fn new(copy: &'a CopyContext<'work>) -> Self {
         Self {
+            copy,
             nodes: 4096,
             bytes: 16 * 1024 * 1024,
         }
     }
 
     fn node(&mut self, depth: usize) -> napi::Result<()> {
+        self.copy.checkpoint()?;
         if depth > 128 || self.nodes == 0 {
             return Err(err("Event expression exceeds shape budget".into()));
         }
@@ -1006,8 +1013,8 @@ fn event_child(
     obj: &Object,
     key: &str,
     depth: usize,
-    remaining: &mut EventBudget,
-) -> napi::Result<bumbledb::EventExpr> {
+    remaining: &mut EventBudget<'_, '_>,
+) -> napi::Result<crate::ingress::query::EventExpr> {
     let child: Object = req(obj, key, "Event expression")?;
     event_expr_in(&child, depth + 1, remaining)
 }
@@ -1015,9 +1022,9 @@ fn event_child(
 fn event_expr_in(
     obj: &Object,
     depth: usize,
-    remaining: &mut EventBudget,
-) -> napi::Result<bumbledb::EventExpr> {
-    use bumbledb::EventExpr as E;
+    remaining: &mut EventBudget<'_, '_>,
+) -> napi::Result<crate::ingress::query::EventExpr> {
+    use crate::ingress::query::EventExpr as E;
     remaining.node(depth)?;
     let kind = req_text(obj, "kind", "Event expression")?;
     match kind.as_str() {
@@ -1098,8 +1105,8 @@ fn event_expr_in(
 fn event_map_in(
     obj: &Object,
     depth: usize,
-    remaining: &mut EventBudget,
-) -> napi::Result<bumbledb::EventExpr> {
+    remaining: &mut EventBudget<'_, '_>,
+) -> napi::Result<crate::ingress::query::EventExpr> {
     exact_fields(obj, &["kind", "op", "descriptor", "expr"])?;
     let name = req_text(obj, "op", "Event readout")?;
     let operation = match name.as_str() {
@@ -1111,32 +1118,28 @@ fn event_map_in(
         "guaranteed" => bumbledb::event::MapOp::Guaranteed,
         _ => return Err(err("unknown Event readout operation".into())),
     };
-    Ok(bumbledb::EventExpr::Map {
+    Ok(crate::ingress::query::EventExpr::Map {
         operation,
         map: event_import_in(obj, remaining)?,
         input: Box::new(event_child(obj, "expr", depth, remaining)?),
     })
 }
 
-fn event_import_in(
-    obj: &Object,
-    remaining: &mut EventBudget,
-) -> napi::Result<bumbledb::EventImport> {
-    let bytes = req::<Uint8Array>(obj, "descriptor", "Event BEDC import")?;
-    remaining.bytes = remaining
-        .bytes
-        .checked_sub(bytes.len())
-        .ok_or_else(|| err("Event imports exceed 16 MiB per expression/test".into()))?;
-    bumbledb::EventImport::from_bytes(&bytes, bumbledb::event::DescriptorLimits::default(), &())
-        .map_err(|error| err(format!("Event import: {error}")))
+fn event_import_in(obj: &Object, remaining: &mut EventBudget<'_, '_>) -> napi::Result<ImportInput> {
+    let bytes = remaining.copy.bytes(
+        req(obj, "descriptor", "Event BEDC import")?,
+        remaining.bytes,
+    )?;
+    remaining.bytes -= bytes.len();
+    Ok(ImportInput(bytes))
 }
 
 fn relation_child(
     obj: &Object,
     key: &str,
     depth: usize,
-    remaining: &mut EventBudget,
-) -> napi::Result<Box<bumbledb::RelationExpr>> {
+    remaining: &mut EventBudget<'_, '_>,
+) -> napi::Result<Box<crate::ingress::query::RelationExpr>> {
     let child = req(obj, key, "relation expression")?;
     Ok(Box::new(relation_expr_in(&child, depth + 1, remaining)?))
 }
@@ -1145,8 +1148,8 @@ fn event_relation_in(
     obj: &Object,
     kind: &str,
     depth: usize,
-    remaining: &mut EventBudget,
-) -> napi::Result<bumbledb::EventExpr> {
+    remaining: &mut EventBudget<'_, '_>,
+) -> napi::Result<crate::ingress::query::EventExpr> {
     let name = req_text(obj, "op", "relation operation")?;
     if kind == "relation" {
         exact_fields(obj, &["kind", "op", "relation"])?;
@@ -1156,7 +1159,7 @@ fn event_relation_in(
             "range" => bumbledb::RelationViewOp::Range,
             _ => return Err(err("unknown relation view operation".into())),
         };
-        Ok(bumbledb::EventExpr::Relation {
+        Ok(crate::ingress::query::EventExpr::Relation {
             operation,
             relation: relation_child(obj, "relation", depth, remaining)?,
         })
@@ -1169,7 +1172,7 @@ fn event_relation_in(
             "post" => bumbledb::event::ModalOp::Post,
             _ => return Err(err("unknown relation modal operation".into())),
         };
-        Ok(bumbledb::EventExpr::Modal {
+        Ok(crate::ingress::query::EventExpr::Modal {
             operation,
             relation: relation_child(obj, "relation", depth, remaining)?,
             input: Box::new(event_child(obj, "expr", depth, remaining)?),
@@ -1180,9 +1183,9 @@ fn event_relation_in(
 fn relation_expr_in(
     obj: &Object,
     depth: usize,
-    remaining: &mut EventBudget,
-) -> napi::Result<bumbledb::RelationExpr> {
-    use bumbledb::RelationExpr as R;
+    remaining: &mut EventBudget<'_, '_>,
+) -> napi::Result<crate::ingress::query::RelationExpr> {
+    use crate::ingress::query::RelationExpr as R;
     remaining.node(depth)?;
     let kind = req_text(obj, "kind", "relation expression")?;
     match kind.as_str() {
@@ -1260,10 +1263,13 @@ fn relation_expr_in(
     }
 }
 
-fn event_test_in(obj: &Object) -> napi::Result<bumbledb::EventTest> {
-    use bumbledb::EventTest as T;
+fn event_test_in(
+    obj: &Object,
+    copy: &CopyContext<'_>,
+) -> napi::Result<crate::ingress::query::EventTest> {
+    use crate::ingress::query::EventTest as T;
     let kind = req_text(obj, "kind", "Event test")?;
-    let mut remaining = EventBudget::new();
+    let mut remaining = EventBudget::new(copy);
     match kind.as_str() {
         "isEmpty" | "isFull" => {
             exact_fields(obj, &["kind", "expr"])?;
@@ -1324,7 +1330,7 @@ fn fold_op_in(obj: &Object) -> napi::Result<FoldOp> {
     }
 }
 
-fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
+fn find_term_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<FindTerm> {
     let kind: String = req_text(obj, "kind", "find term")?;
     match kind.as_str() {
         tags::find_term::VAR => Ok(FindTerm::Var(var_in(obj, "var", "var find")?)),
@@ -1344,7 +1350,7 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
         }
         tags::find_term::COMPUTE => {
             let expr: Object = req(obj, "expr", "compute find")?;
-            Ok(FindTerm::Compute(scalar_expr_in(&expr, 1)?))
+            Ok(FindTerm::Compute(scalar_expr_in(&expr, 1, copy)?))
         }
         tags::find_term::EVENT => {
             exact_fields(obj, &["kind", "expr"])?;
@@ -1352,13 +1358,13 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
             Ok(FindTerm::Event(event_expr_in(
                 &expr,
                 1,
-                &mut EventBudget::new(),
+                &mut EventBudget::new(copy),
             )?))
         }
         tags::find_term::TEST => {
             exact_fields(obj, &["kind", "expr"])?;
             let expr: Object = req(obj, "expr", "Event test find")?;
-            Ok(FindTerm::Test(event_test_in(&expr)?))
+            Ok(FindTerm::Test(event_test_in(&expr, copy)?))
         }
         tags::find_term::COUNT => {
             if obj.get::<f64>("over")?.is_some() {
@@ -1382,7 +1388,7 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
     }
 }
 
-fn atom_in(obj: &Object) -> napi::Result<Atom> {
+fn atom_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<Atom> {
     let source: Object = req(obj, "source", "atom")?;
     let source_kind: String = req_text(&source, "kind", "atom source")?;
     let source = match source_kind.as_str() {
@@ -1412,7 +1418,7 @@ fn atom_in(obj: &Object) -> napi::Result<Atom> {
             "binding field",
         )?);
         let term: Object = req_at(&pair, 1, "atom binding")?;
-        bound.push((field, term_in(&term)?));
+        bound.push((field, term_in(&term, copy)?));
     }
     Ok(Atom {
         source,
@@ -1420,7 +1426,7 @@ fn atom_in(obj: &Object) -> napi::Result<Atom> {
     })
 }
 
-fn comparison_in(obj: &Object) -> napi::Result<Comparison> {
+fn comparison_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<Comparison> {
     let op: Object = req(obj, "op", "comparison")?;
     let op_kind: String = req_text(&op, "kind", "comparison op")?;
     let op = match op_kind.as_str() {
@@ -1449,12 +1455,13 @@ fn comparison_in(obj: &Object) -> napi::Result<Comparison> {
     let rhs: Object = req(obj, "rhs", "comparison")?;
     Ok(Comparison {
         op,
-        lhs: term_in(&lhs)?,
-        rhs: term_in(&rhs)?,
+        lhs: term_in(&lhs, copy)?,
+        rhs: term_in(&rhs, copy)?,
     })
 }
 
-fn condition_in(obj: &Object, depth: usize) -> napi::Result<ConditionTree> {
+fn condition_in(obj: &Object, depth: usize, copy: &CopyContext<'_>) -> napi::Result<ConditionTree> {
+    copy.checkpoint()?;
     if depth > bumbledb::MAX_CONDITION_DEPTH {
         return Err(err(format!(
             "bumbledb marshal: condition tree deeper than {} (the engine's MAX_CONDITION_DEPTH)",
@@ -1465,50 +1472,55 @@ fn condition_in(obj: &Object, depth: usize) -> napi::Result<ConditionTree> {
     match kind.as_str() {
         tags::condition::LEAF => {
             let cmp: Object = req(obj, "cmp", "leaf condition")?;
-            Ok(ConditionTree::Leaf(comparison_in(&cmp)?))
+            Ok(ConditionTree::Leaf(comparison_in(&cmp, copy)?))
         }
-        tags::condition::AND => Ok(ConditionTree::And(condition_children(obj, depth)?)),
-        tags::condition::OR => Ok(ConditionTree::Or(condition_children(obj, depth)?)),
+        tags::condition::AND => Ok(ConditionTree::And(condition_children(obj, depth, copy)?)),
+        tags::condition::OR => Ok(ConditionTree::Or(condition_children(obj, depth, copy)?)),
         other => Err(err(format!(
             "bumbledb marshal: unknown condition kind `{other}`"
         ))),
     }
 }
 
-fn condition_children(obj: &Object, depth: usize) -> napi::Result<Vec<ConditionTree>> {
+fn condition_children(
+    obj: &Object,
+    depth: usize,
+    copy: &CopyContext<'_>,
+) -> napi::Result<Vec<ConditionTree>> {
     let children: Array = req(obj, "children", "condition")?;
     let mut trees = Vec::with_capacity(children.len() as usize);
     for index in 0..children.len() {
         let child = req_at::<Object>(&children, index, "condition children")?;
-        trees.push(condition_in(&child, depth + 1)?);
+        trees.push(condition_in(&child, depth + 1, copy)?);
     }
     Ok(trees)
 }
 
-fn rule_in(obj: &Object) -> napi::Result<Rule> {
+fn rule_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<Rule> {
+    copy.checkpoint()?;
     let finds: Array = req(obj, "finds", "rule")?;
     let mut find_terms = Vec::with_capacity(finds.len() as usize);
     for index in 0..finds.len() {
         let find = req_at::<Object>(&finds, index, "rule finds")?;
-        find_terms.push(find_term_in(&find)?);
+        find_terms.push(find_term_in(&find, copy)?);
     }
     let atoms: Array = req(obj, "atoms", "rule")?;
     let mut atom_list = Vec::with_capacity(atoms.len() as usize);
     for index in 0..atoms.len() {
         let atom = req_at::<Object>(&atoms, index, "rule atoms")?;
-        atom_list.push(atom_in(&atom)?);
+        atom_list.push(atom_in(&atom, copy)?);
     }
     let negated: Array = req(obj, "negated", "rule")?;
     let mut negated_list = Vec::with_capacity(negated.len() as usize);
     for index in 0..negated.len() {
         let atom = req_at::<Object>(&negated, index, "rule negated atoms")?;
-        negated_list.push(atom_in(&atom)?);
+        negated_list.push(atom_in(&atom, copy)?);
     }
     let conditions: Array = req(obj, "conditions", "rule")?;
     let mut condition_list = Vec::with_capacity(conditions.len() as usize);
     for index in 0..conditions.len() {
         let condition = req_at::<Object>(&conditions, index, "rule conditions")?;
-        condition_list.push(condition_in(&condition, 1)?);
+        condition_list.push(condition_in(&condition, 1, copy)?);
     }
     Ok(Rule {
         finds: find_terms,
@@ -1528,12 +1540,12 @@ fn head_in(obj: &Object, ctx: &str) -> napi::Result<Vec<HeadTerm>> {
     Ok(head_terms)
 }
 
-fn rules_in(obj: &Object, key: &str, ctx: &str) -> napi::Result<Vec<Rule>> {
+fn rules_in(obj: &Object, key: &str, ctx: &str, copy: &CopyContext<'_>) -> napi::Result<Vec<Rule>> {
     let rules: Array = req(obj, key, ctx)?;
     let mut rule_list = Vec::with_capacity(rules.len() as usize);
     for rule_index in 0..rules.len() {
         let rule = req_at::<Object>(&rules, rule_index, ctx)?;
-        rule_list.push(rule_in(&rule)?);
+        rule_list.push(rule_in(&rule, copy)?);
     }
     Ok(rule_list)
 }
@@ -1550,8 +1562,8 @@ fn vars_only(finds: &[FindTerm]) -> napi::Result<Vec<VarId>> {
         .collect()
 }
 
-fn rec_rule_in(obj: &Object) -> napi::Result<RecRule> {
-    let rule = rule_in(obj)?;
+fn rec_rule_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<RecRule> {
+    let rule = rule_in(obj, copy)?;
     if !rule.negated.is_empty() {
         return Err(err(
             "bumbledb marshal: negation is unrepresentable in rec".to_string()
@@ -1564,8 +1576,8 @@ fn rec_rule_in(obj: &Object) -> napi::Result<RecRule> {
     })
 }
 
-fn rec_step_in(obj: &Object, rec_id: InteriorId) -> napi::Result<RecStep> {
-    let rule = rule_in(obj)?;
+fn rec_step_in(obj: &Object, rec_id: InteriorId, copy: &CopyContext<'_>) -> napi::Result<RecStep> {
+    let rule = rule_in(obj, copy)?;
     if !rule.negated.is_empty() {
         return Err(err(
             "bumbledb marshal: negation is unrepresentable in rec".to_string()
@@ -1601,18 +1613,18 @@ fn nonempty<T>(items: Vec<T>, what: &str) -> napi::Result<NonEmpty<T>> {
 // The wire's rec `head` is the TS builder's alignment datum; the core
 // `Rec` carries no head (the engine recomputes it from finds), so the
 // bridge reads the arms only.
-fn rec_in(obj: &Object, rec_id: InteriorId) -> napi::Result<Rec> {
+fn rec_in(obj: &Object, rec_id: InteriorId, copy: &CopyContext<'_>) -> napi::Result<Rec> {
     let base_arr: Array = req(obj, "base", "rec base")?;
     let mut base = Vec::with_capacity(base_arr.len() as usize);
     for index in 0..base_arr.len() {
         let rule = req_at::<Object>(&base_arr, index, "rec base")?;
-        base.push(rec_rule_in(&rule)?);
+        base.push(rec_rule_in(&rule, copy)?);
     }
     let rec_arr: Array = req(obj, "rec", "rec arms")?;
     let mut rec = Vec::with_capacity(rec_arr.len() as usize);
     for index in 0..rec_arr.len() {
         let rule = req_at::<Object>(&rec_arr, index, "rec arms")?;
-        rec.push(rec_step_in(&rule, rec_id)?);
+        rec.push(rec_step_in(&rule, rec_id, copy)?);
     }
     Ok(Rec {
         base: nonempty(base, "rec base")?,
@@ -1620,7 +1632,7 @@ fn rec_in(obj: &Object, rec_id: InteriorId) -> napi::Result<Rec> {
     })
 }
 
-fn interiors_in(obj: &Object) -> napi::Result<Vec<Interior>> {
+fn interiors_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<Vec<Interior>> {
     let interiors_arr: Array = req(obj, "interiors", "query")?;
     let mut interiors = Vec::with_capacity(interiors_arr.len() as usize);
     // The wire's interior `head` is the TS builder's alignment datum; the
@@ -1632,20 +1644,21 @@ fn interiors_in(obj: &Object) -> napi::Result<Vec<Interior>> {
     for index in 0..interiors_arr.len() {
         let interior = req_at::<Object>(&interiors_arr, index, "query interiors")?;
         interiors.push(Interior {
-            rules: rules_in(&interior, "rules", "interior rules")?,
+            rules: rules_in(&interior, "rules", "interior rules", copy)?,
         });
     }
     Ok(interiors)
 }
 
-pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
+pub(crate) fn query_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<Query> {
+    copy.checkpoint()?;
     let kind: String = req_text(obj, "kind", "query")?;
-    let interiors = interiors_in(obj)?;
+    let interiors = interiors_in(obj, copy)?;
     match kind.as_str() {
         tags::query::CQ => Ok(Query {
             interiors,
             head: head_in(obj, "query head")?,
-            rules: rules_in(obj, "rules", "query rules")?,
+            rules: rules_in(obj, "rules", "query rules", copy)?,
             rec: None,
         }),
         tags::query::REACH => {
@@ -1656,9 +1669,9 @@ pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
             );
             Ok(Query {
                 interiors,
-                rec: Some(rec_in(&rec_obj, rec_id)?),
+                rec: Some(rec_in(&rec_obj, rec_id, copy)?),
                 head: head_in(obj, "query head")?,
-                rules: rules_in(obj, "rules", "query rules")?,
+                rules: rules_in(obj, "rules", "query rules", copy)?,
             })
         }
         other => Err(err(format!(
@@ -2185,26 +2198,34 @@ pub struct ViolationWire {
     pub(crate) canonical: String,
     pub(crate) direction: Option<&'static str>,
     pub(crate) measure: Option<u128>,
-    pub(crate) facts: Vec<(String, Vec<(String, Value)>)>,
+    pub(crate) facts: Vec<(String, Vec<(String, ValueOut)>)>,
 }
 
 impl ViolationWire {
-    pub(crate) fn from_rendered(rendered: RenderedViolation) -> Self {
-        let facts = |facts: Vec<bumbledb::RenderedFact>| {
-            facts
-                .into_iter()
-                .map(|fact| {
-                    (
-                        fact.relation.into_string(),
-                        fact.fields
-                            .into_iter()
-                            .map(|(name, value)| (name.into_string(), value))
-                            .collect(),
-                    )
-                })
-                .collect()
-        };
-        match rendered {
+    pub(crate) fn from_rendered(
+        rendered: RenderedViolation,
+        work: &bumbledb::work::WorkContext,
+    ) -> Result<Self, crate::runtime::RuntimeError> {
+        work.checkpoint()?;
+        let facts =
+            |facts: Vec<bumbledb::RenderedFact>| -> Result<_, crate::runtime::RuntimeError> {
+                let mut output = output_vec(facts.len())?;
+                for fact in facts {
+                    work.checkpoint()?;
+                    let mut fields = output_vec(fact.fields.len())?;
+                    for (name, value) in fact.fields {
+                        work.checkpoint()?;
+                        fields.push((
+                            name.into_string(),
+                            ValueOut::from_value(value, work)
+                                .map_err(crate::ingress::event_error)?,
+                        ));
+                    }
+                    output.push((fact.relation.into_string(), fields));
+                }
+                Ok(output)
+            };
+        Ok(match rendered {
             RenderedViolation::Functionality {
                 statement,
                 spelling,
@@ -2215,7 +2236,7 @@ impl ViolationWire {
                 canonical: spelling,
                 direction: None,
                 measure: None,
-                facts: facts(rendered_facts),
+                facts: facts(rendered_facts)?,
             },
             RenderedViolation::Containment {
                 statement,
@@ -2228,7 +2249,7 @@ impl ViolationWire {
                 canonical: spelling,
                 direction: Some(tags::direction::tag(&direction)),
                 measure: None,
-                facts: facts(rendered_facts),
+                facts: facts(rendered_facts)?,
             },
             RenderedViolation::Capacity {
                 statement,
@@ -2241,9 +2262,9 @@ impl ViolationWire {
                 canonical: spelling,
                 direction: None,
                 measure: Some(measure),
-                facts: facts(rendered_facts),
+                facts: facts(rendered_facts)?,
             },
-        }
+        })
     }
 }
 
@@ -2274,12 +2295,7 @@ impl ToNapiValue for ViolationWire {
             for (name, value) in fields {
                 let mut field_obj = Object::new(&env_handle)?;
                 field_obj.set("name", name)?;
-                field_obj.set(
-                    "value",
-                    ValueOut::from_value(value, &()).map_err(|error| {
-                        throw_kind_message(env_handle, tags::error_family::EVENT, error.to_string())
-                    })?,
-                )?;
+                field_obj.set("value", value)?;
                 field_objs.push(field_obj);
             }
             fact_obj.set("fields", field_objs)?;
@@ -2295,10 +2311,12 @@ impl ToNapiValue for ViolationWire {
 #[cfg(test)]
 mod event_tests {
     use super::*;
+    use crate::ingress::Admit;
     use bumbledb::event::{BoolOp4, Space, SpaceId};
 
     #[test]
     fn event_wire_owns_canonical_bytes_and_refuses_invalid_input() {
+        let work = bumbledb::work::WorkContext::new();
         let space = Space::new(SpaceId([97; 32]), 2, &()).unwrap();
         let value = space.coordinate(0, &()).unwrap();
         let ValueOut::Event(mut wire) =
@@ -2306,7 +2324,7 @@ mod event_tests {
         else {
             panic!("Event wire")
         };
-        let decoded = event_in(&wire, "test").unwrap();
+        let decoded = ValueInput::Event(wire.clone()).admit(&work).unwrap();
         wire.fill(0);
         let Value::Event(decoded) = decoded else {
             panic!("Event value")
@@ -2319,12 +2337,16 @@ mod event_tests {
                 .unwrap(),
             space.full()
         );
-        assert!(event_in(&wire, "test").is_err());
+        assert!(ValueInput::Event(wire).admit(&work).is_err());
         let mut unknown = value.to_bytes(&()).unwrap();
         unknown[4] = 255;
-        assert!(event_in(&unknown, "test").is_err());
+        assert!(ValueInput::Event(unknown.clone()).admit(&work).is_err());
         for end in 0..unknown.len() {
-            assert!(event_in(&unknown[..end], "test").is_err());
+            assert!(
+                ValueInput::Event(unknown[..end].to_vec())
+                    .admit(&work)
+                    .is_err()
+            );
         }
     }
 
@@ -2340,6 +2362,33 @@ mod event_tests {
         assert!(matches!(
             ValueOut::from_value(Value::Event(value), &work),
             Err(bumbledb::event::Error::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn event_violation_encoding_is_owned_and_cancellable_before_delivery() {
+        let source = Space::new(SpaceId([199; 32]), 2, &()).unwrap();
+        let event = source.coordinate(0, &()).unwrap();
+        let rendered = || RenderedViolation::Functionality {
+            statement: StatementId(0),
+            spelling: "Region(value) -> Region".into(),
+            facts: vec![bumbledb::RenderedFact {
+                relation: "Region".into(),
+                fields: vec![("value".into(), Value::Event(event.clone()))],
+            }],
+        };
+        let work = bumbledb::work::WorkContext::new();
+        let wire = ViolationWire::from_rendered(rendered(), &work).unwrap();
+        let ValueOut::Event(bytes) = &wire.facts[0].1[0].1 else {
+            panic!("encoded Event")
+        };
+        assert_eq!(bytes, &event.to_bytes(&work).unwrap());
+        work.cancel();
+        assert!(matches!(
+            ViolationWire::from_rendered(rendered(), &work),
+            Err(crate::runtime::RuntimeError::Work(
+                bumbledb::work::WorkError::Cancelled
+            ))
         ));
     }
 }

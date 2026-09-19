@@ -677,6 +677,49 @@ fn draft_chunks_accumulate_without_quotas_and_cancellation_releases_the_prefix()
 }
 
 #[test]
+fn staged_event_failure_spends_draft_and_reclaims_previous_chunks() {
+    use crate::ingress::ValueInput;
+    for cancelled in [false, true] {
+        let control = work();
+        let mut payload = Payload::Draft(draft_payload());
+        ingest_from_payload(
+            &mut payload,
+            &control,
+            0,
+            true,
+            vec![vec![Value::U64(1), Value::U64(10)]],
+        )
+        .unwrap();
+        if cancelled {
+            control.cancel();
+        }
+        let error = super::draft::ingest_input_from_payload(
+            &mut payload,
+            &control,
+            0,
+            true,
+            vec![vec![ValueInput::Event(b"BEVT\x01".to_vec())]],
+        )
+        .err()
+        .expect("refused input");
+        if cancelled {
+            assert!(matches!(error, RuntimeError::Work(WorkError::Cancelled)));
+        } else {
+            assert!(matches!(error, RuntimeError::Engine { kind: "event", .. }));
+        }
+        let Payload::Draft(entry) = &payload else {
+            panic!("draft")
+        };
+        assert!(entry.terminal);
+        assert_eq!(entry.pending.capacity(), 0);
+        assert!(matches!(
+            finish_from_payload(&mut payload, &work()),
+            Err(RuntimeError::SpentHandle)
+        ));
+    }
+}
+
+#[test]
 fn d07_draft_finish_normalizes_add_wins_and_spends() {
     let ctx = work();
     let mut payload = Payload::Draft(draft_payload());
@@ -1335,7 +1378,7 @@ fn input_rows_use_checked_capacity_and_preserve_cancellation() {
     let context = work();
     // Deterministic Vec layout overflow, not an enormous OS allocation attempt.
     assert!(matches!(
-        super::codec::reserve_input_rows(u64::MAX, &context),
+        super::codec::reserve_input_rows::<Value>(u64::MAX, &context),
         Err(RuntimeError::Work(WorkError::Allocation) | RuntimeError::InvalidArgument)
     ));
     let mut rows = super::codec::reserve_input_rows(2, &context).unwrap();
@@ -1346,7 +1389,7 @@ fn input_rows_use_checked_capacity_and_preserve_cancellation() {
     assert_eq!(rows, vec![vec![Value::U64(7)], vec![Value::U64(9)]]);
     context.cancel();
     assert!(matches!(
-        super::codec::reserve_input_rows(0, &context),
+        super::codec::reserve_input_rows::<Value>(0, &context),
         Err(RuntimeError::Work(WorkError::Cancelled))
     ));
 }

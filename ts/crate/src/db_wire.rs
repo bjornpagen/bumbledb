@@ -40,6 +40,7 @@ mod codec;
 mod delivery;
 mod draft;
 mod snapshot;
+use crate::ingress::{Admit, CopyContext, snapshot_work};
 
 pub(crate) use apply::{
     WriteMode, apply_change_set, changes_from_payload, inspect_db, judge_change_set,
@@ -50,7 +51,9 @@ pub(crate) use codec::{decode_rows_values, encode_rows_bytes, parse_input_rows};
 pub(crate) use delivery::{
     collect_from_payload, is_terminal_backing, publish_from_payload, transfer_from_payload,
 };
-pub(crate) use draft::{finish_from_payload, ingest_from_payload};
+pub(crate) use draft::finish_from_payload;
+#[cfg(test)]
+pub(crate) use draft::ingest_from_payload;
 pub(crate) use snapshot::{
     execute_complete_work, execute_prepared_work, prepare_work, release_prepared_memory_work,
     snapshot_get_work,
@@ -401,10 +404,17 @@ pub fn runtime_snapshot_prepare(
     let runtime = Arc::clone(session.runtime());
     let target = Arc::clone(&runtime);
     let operation = session
-        .submit(WorkContext::new(), notification(callback)?, move |_| {
-            let query = marshal::query_in(&query).map_err(|_| RuntimeError::InvalidArgument)?;
-            Ok(prepare_work(target, query))
-        })
+        .submit(
+            WorkContext::new(),
+            notification(callback)?,
+            move |context| {
+                let copy = CopyContext::new(env, context);
+                let query = copy.finish(marshal::query_in(&query, &copy))?;
+                Ok(snapshot_work(query, move |query| {
+                    prepare_work(target, query)
+                }))
+            },
+        )
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(&runtime, operation))
 }
@@ -423,17 +433,24 @@ pub fn runtime_snapshot_get(
     let runtime = Arc::clone(session.runtime());
     let sealed = Arc::clone(&handle.sealed);
     let operation = session
-        .submit(WorkContext::new(), notification(callback)?, move |_| {
-            let (rel, key, row) = marshal::key_row(
-                &sealed.rosters,
-                &sealed.statements,
-                relation,
-                key_statement,
-                &key_values,
-            )
-            .map_err(|_| RuntimeError::InvalidArgument)?;
-            Ok(snapshot_get_work(rel, key, row))
-        })
+        .submit(
+            WorkContext::new(),
+            notification(callback)?,
+            move |context| {
+                let copy = CopyContext::new(env, context);
+                let (rel, key, row) = copy.finish(marshal::key_row(
+                    &sealed.rosters,
+                    &sealed.statements,
+                    relation,
+                    key_statement,
+                    &key_values,
+                    &copy,
+                ))?;
+                Ok(snapshot_work(row, move |row| {
+                    snapshot_get_work(rel, key, row)
+                }))
+            },
+        )
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(&runtime, operation))
 }
@@ -450,11 +467,18 @@ pub fn runtime_snapshot_execute(
     let session = snapshot(handle).map_err(|error| thrown(env, error))?;
     let runtime = Arc::clone(session.runtime());
     let operation = session
-        .submit(WorkContext::new(), notification(callback)?, move |_| {
-            let query = marshal::query_in(&query).map_err(|_| RuntimeError::InvalidArgument)?;
-            let params = marshal::params_in(&params).map_err(|_| RuntimeError::InvalidArgument)?;
-            Ok(execute_complete_work(query, params))
-        })
+        .submit(
+            WorkContext::new(),
+            notification(callback)?,
+            move |context| {
+                let copy = CopyContext::new(env, context);
+                let query = copy.finish(marshal::query_in(&query, &copy))?;
+                let params = copy.finish(marshal::params_in(&params, &copy))?;
+                Ok(snapshot_work((query, params), |(query, params)| {
+                    execute_complete_work(query, params)
+                }))
+            },
+        )
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(&runtime, operation))
 }
@@ -470,10 +494,15 @@ pub fn runtime_prepared_execute(
     let shared = prepared(handle).map_err(|error| thrown(env, error))?;
     let runtime = Arc::clone(shared.runtime());
     let operation = shared
-        .submit(WorkContext::new(), notification(callback)?, move |_| {
-            let params = marshal::params_in(&params).map_err(|_| RuntimeError::InvalidArgument)?;
-            Ok(execute_prepared_work(params))
-        })
+        .submit(
+            WorkContext::new(),
+            notification(callback)?,
+            move |context| {
+                let copy = CopyContext::new(env, context);
+                let params = copy.finish(marshal::params_in(&params, &copy))?;
+                Ok(snapshot_work(params, execute_prepared_work))
+            },
+        )
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(&runtime, operation))
 }
@@ -801,12 +830,11 @@ fn draft_mutation(
         WorkContext::new(),
         notification(callback)?,
         move |context| {
-            let parsed = parse_input_rows(&sealed, relation, stated, &cells, context);
+            let parsed = parse_input_rows(env, &sealed, relation, stated, &cells, context);
             match parsed {
                 Ok(rows) => Ok(Box::new(
                     move |context: &WorkContext, payload, _publication| {
-                        context.checkpoint()?;
-                        ingest_from_payload(payload, context, relation, insert, rows)
+                        draft::ingest_input_from_payload(payload, context, relation, insert, rows)
                     },
                 )),
                 Err(error) => Err(error),
@@ -1271,9 +1299,9 @@ pub fn runtime_encode_rows(
         })();
         match prepared {
             Ok((schema, sealed)) => {
-                let rows = parse_input_rows(&sealed, relation, stated, &cells, context)?;
+                let rows = parse_input_rows(env, &sealed, relation, stated, &cells, context)?;
                 Ok(Box::new(move |context: &WorkContext| {
-                    context.checkpoint()?;
+                    let rows = rows.admit(context)?;
                     let bytes = encode_rows_bytes(&schema, RelationId(relation), &rows, context)?;
                     Ok(Output::Bytes(bytes))
                 }) as crate::runtime::Work)

@@ -8,12 +8,13 @@ use crate::marshal::{output_vec, row_out};
 use crate::runtime::{QueuedBytes, QueuedOutput, RuntimeError};
 
 use super::change_error;
+use crate::ingress::{CopyContext, ValueInput};
 
 /// Reserve only after the stated row count matches the actual input shape.
-pub(super) fn reserve_input_rows(
+pub(super) fn reserve_input_rows<T>(
     stated: u64,
     context: &WorkContext,
-) -> Result<Vec<Vec<Value>>, RuntimeError> {
+) -> Result<Vec<Vec<T>>, RuntimeError> {
     let count = usize::try_from(stated).map_err(|_| RuntimeError::InvalidArgument)?;
     context.checkpoint()?;
     let mut rows = Vec::new();
@@ -24,12 +25,14 @@ pub(super) fn reserve_input_rows(
 
 /// Copy JS input into owned values before dispatch to the worker.
 pub(crate) fn parse_input_rows(
+    env: napi::Env,
     sealed: &crate::Sealed,
     relation: u32,
     stated: u64,
     cells: &napi::bindgen_prelude::Array,
     context: &WorkContext,
-) -> Result<Vec<Vec<Value>>, RuntimeError> {
+) -> Result<Vec<Vec<ValueInput>>, RuntimeError> {
+    let copy = CopyContext::new(env, context);
     let roster = sealed
         .rosters
         .get(relation as usize)
@@ -55,13 +58,12 @@ pub(crate) fn parse_input_rows(
             let index = start + u32::try_from(offset).expect("field count fits u32");
             let value = crate::marshal::req_at::<napi::Unknown>(cells, index, "row cells")
                 .map_err(|_| RuntimeError::InvalidArgument)?;
-            let value = crate::marshal::schema_value_in(
+            let value = copy.finish(copy.schema_value(
                 &field.value_type,
-                &value,
+                value,
                 &roster.name,
                 &field.name,
-            )
-            .map_err(|_| RuntimeError::InvalidArgument)?;
+            ))?;
             row.push(value);
         }
         context.checkpoint()?;

@@ -1,0 +1,173 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/build/bumbledb-query/3eeb9556b47132e9/out/bumbledb_query-3eeb9556b47132e9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/compile_fail.rs (target/debug/build/bumbledb-query/8d38486e7a166c52/out/compile_fail-8d38486e7a166c52)
+
+running 2 tests
+test explicit_target_search_includes_host_proc_macros_in_both_cargo_layouts ... ok
+test compile_fail_fixtures ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.09s
+
+     Running tests/composition.rs (target/debug/build/bumbledb-query/dd73b6874ef89f16/out/composition-dd73b6874ef89f16)
+
+running 7 tests
+test use_refuses_a_parameterized_template - should panic ... ok
+test use_refuses_a_recursive_template - should panic ... ok
+test float_interval_literals_lower_canonically ... ok
+test uuid_literals_lower_canonically ... ok
+test use_imports_shift_internal_interior_ids ... ok
+test use_imports_a_nonrecursive_aggregate_template ... ok
+test interior_heads_aggregate ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/cookbook.rs (target/debug/build/bumbledb-query/85a3d1272c52af23/out/cookbook-85a3d1272c52af23)
+
+running 35 tests
+test r05::__bumbledb_weld_region::host_enum_weld ... ok
+test r02::__bumbledb_weld_kind::host_enum_weld ... ok
+test r04::__bumbledb_weld_currency::host_enum_weld ... ok
+test r06::__bumbledb_weld_priority::host_enum_weld ... ok
+test r07::__bumbledb_weld_kind::host_enum_weld ... ok
+test r08::__bumbledb_weld_severity::host_enum_weld ... ok
+test r10::__bumbledb_weld_kind::host_enum_weld ... ok
+test r13::__bumbledb_weld_state::host_enum_weld ... ok
+test r14::__bumbledb_weld_arm::host_enum_weld ... ok
+test r14::__bumbledb_weld_rsvp::host_enum_weld ... ok
+test r17::__bumbledb_weld_status::host_enum_weld ... ok
+test r20::__bumbledb_weld_state::host_enum_weld ... ok
+test r21::__bumbledb_weld_arm::host_enum_weld ... ok
+test r22::__bumbledb_weld_kind::host_enum_weld ... ok
+test r27::__bumbledb_weld_arm::host_enum_weld ... ok
+test every_recipe_schema_validates ... ok
+test doc_blocks_match_the_compiled_copies ... ok
+test r29::__bumbledb_weld_kind::host_enum_weld ... ok
+test r03_a_second_optional_child_is_rejected ... ok
+test r08_sub_vocabulary_violating_insert_aborts ... ok
+test r24_closure_idiom_reaches_the_exact_set ... ok
+test r25_subtree_rollup_matches_the_hand_computed_sum ... ok
+test r22_a_double_arm_payment_is_rejected ... ok
+test r09_ordering_triple_commit_matrix ... ok
+test the_doc_roster_is_exactly_this_roster ... ok
+test r27_maintenance_rederives_after_generation_movement ... ok
+test r32_calendar_capacity_commit_matrix ... ok
+test r30_keyed_read_reads_through_the_law_on_both_scopes ... ok
+test r09_gap_and_overlap_deltas_abort ... ok
+test r31_power_budget_commit_matrix ... ok
+test r29_coalescing_insensitivity_and_width_by_type ... ok
+test r29_zone_ledger_commit_matrix ... ok
+test r28_migration_is_etl ... ok
+test r26_exact_partition_commit_matrix ... ok
+test every_doc_query_compiles_prepares_and_round_trips ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.22s
+
+     Running tests/event.rs (target/debug/build/bumbledb-query/bc668608c29498de/out/event-bc668608c29498de)
+
+running 1 test
+test named_event_arguments_retain_joint_world_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/notation.rs (target/debug/build/bumbledb-query/9d3baca5ed396ac1/out/notation-9d3baca5ed396ac1)
+
+running 31 tests
+test calendar::__bumbledb_weld_claim_kind::host_enum_weld ... ok
+test calendar::__bumbledb_weld_rsvp::host_enum_weld ... ok
+test calendar_union_lowers_to_the_exact_ir ... ok
+test condition_tree_lowers_to_the_exact_ir ... ok
+test ledger::__bumbledb_weld_currency::host_enum_weld ... ok
+test ledger::__bumbledb_weld_source::host_enum_weld ... ok
+test cycle_graph::__bumbledb_weld_state::host_enum_weld ... ok
+test ledger::__bumbledb_weld_tag::host_enum_weld ... ok
+test condition_tree_normalized_text_is_a_fixed_point ... ok
+test calendar_union_golden ... ok
+test condition_tree_golden ... ok
+test aggregate_heads_golden ... ok
+test recursive_lowers_to_the_exact_ir ... ok
+test rec_then_main_mint_param_ids_in_walk_order ... ok
+test conflicts_normalized_text_is_a_fixed_point ... ok
+test pack_round_trip ... ok
+test conflicts_golden ... ok
+test tax::__bumbledb_weld_status::host_enum_weld ... ok
+test interval_literals_compile_prepare_and_render ... ok
+test recursive_reach_golden ... ok
+test closed_reference_handles_are_a_fixed_point ... ok
+test condition_tree_comparison_leaves_round_trip ... ok
+test recursive_normalized_text_is_a_fixed_point ... ok
+test reach_diagonal_golden ... ok
+test negation_and_bare_handle_round_trip ... ok
+test tax_rate_golden ... ok
+test radix_literals_normalize_to_canonical_decimal ... ok
+test tax_rate_normalized_text_is_a_fixed_point ... ok
+test scalar_comparisons_round_trip ... ok
+test mask_union_and_set_param_round_trip ... ok
+test sparse_and_selection_positions_round_trip ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running tests/notation_corpus.rs (target/debug/build/bumbledb-query/1ce9e545fb1ffe8b/out/notation_corpus-1ce9e545fb1ffe8b)
+
+running 7 tests
+test regenerate_the_notation_corpus ... ignored, regenerates the checked-in corpus; run explicitly after editing the case table
+test ledger::__bumbledb_weld_source::host_enum_weld ... ok
+test ledger::__bumbledb_weld_currency::host_enum_weld ... ok
+test ledger::__bumbledb_weld_tag::host_enum_weld ... ok
+test the_corpus_schema_fingerprint_matches_the_pin ... ok
+test the_corpus_replays_byte_identical ... ok
+test every_production_is_covered ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running tests/readme.rs (target/debug/build/bumbledb-query/a205db39ee25aa2b/out/readme-a205db39ee25aa2b)
+
+running 8 tests
+test payload::__bumbledb_weld_kind::host_enum_weld ... ok
+test payload::__bumbledb_weld_status::host_enum_weld ... ok
+test quickstart::__bumbledb_weld_region::host_enum_weld ... ok
+test quickstart::__bumbledb_weld_status::host_enum_weld ... ok
+test the_front_page_cookbook_count_is_the_cookbook ... ok
+test the_front_page_fences_match_the_compiled_copies ... ok
+test the_front_page_schemas_validate ... ok
+test the_quickstart_runs_against_a_real_store ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/typed.rs (target/debug/build/bumbledb-query/728b2aa3bb02d2aa/out/typed-728b2aa3bb02d2aa)
+
+running 7 tests
+test into_query_is_the_plain_ir ... ok
+test columns_carry_head_names_and_labels ... ok
+test uuid_join_and_order_compare_the_complete_value_after_reopen ... ok
+test named_binds_match_positional_binds_order_free ... ok
+test wrong_value_kinds_stay_typed_bind_errors ... ok
+test zero_param_templates_bind_empty ... ok
+test set_params_bind_value_slices ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running unittests src/lib.rs (target/debug/build/bumbledb-query-macros/c4c61cce8f00ed56/out/bumbledb_query_macros-c4c61cce8f00ed56)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests bumbledb_query
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests bumbledb_query_macros
+
+running 1 test
+test crates/bumbledb-query-macros/src/lib.rs - query (line 3065) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.27s; merged doctests compilation took 0.13s

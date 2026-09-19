@@ -98,7 +98,8 @@ fn decide_change_set(
             violations,
             application,
         } => {
-            let violations = crate::violations_wire(&lease.sealed.descriptor, &violations);
+            let violations =
+                crate::violations_wire(&lease.sealed.descriptor, &violations, context)?;
             Ok(match mode {
                 WriteMode::Apply => Output::Apply(ApplyOutcomeOwned::Rejected(violations)),
                 WriteMode::Judge => Output::Judge(JudgeOutcomeOwned::Rejected {

@@ -327,10 +327,10 @@ test("Event dependencies enforce disjointness and joint coverage through ordinar
 					if (gap.kind === "invariant-rejected") assert.equal(gap.violations[0]?.kind, "containment")
 					const malformed = yield* ChangeSet.builder(Partitions)
 					const invalid = decoded(Uint8Array.from([66, 69, 86, 84, 1]))
-					// Existing row marshalling reports malformed native values as input errors.
+					// The worker's core decoder preserves the mathematical error family.
 					assert.equal(
 						(yield* Effect.flip(malformed.insert(Parent, [{ group: 2n, condition: invalid }]))).reason._tag,
-						"InvalidArgument"
+						"Engine"
 					)
 				})
 			)
