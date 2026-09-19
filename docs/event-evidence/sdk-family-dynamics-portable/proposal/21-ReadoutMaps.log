@@ -1,0 +1,5 @@
+'ReadoutMaps.possibility_iff_exact_support_image' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ReadoutMaps.occupancy_preserved' does not depend on any axioms
+'ReadoutMaps.equality_reflected' does not depend on any axioms
+'ReadoutMaps.relative_complement_preserved' depends on axioms: [propext, Quot.sound]
+'ReadoutMaps.fixing_coordinate_can_remove_possibility' depends on axioms: [propext]

@@ -257,3 +257,98 @@ fn family_observations_share_nested_admission_work_and_keep_owned_inputs() {
         Err(Error::Cancelled)
     ));
 }
+
+#[test]
+fn family_revision_inspection_replays_under_one_budget_and_retains_impossible_identity() {
+    use bumbledb::event::{FamilyFunction, GuardedRationalFunction, Space, SpaceId};
+    let control = WorkContext::new();
+    let mut work = ExactArithmetic::new(ArithmeticLimits::default(), &control);
+    let domain = ParameterDomain::new(ParameterRegion::full(ParameterId([43; 32]))).unwrap();
+    let source = Space::new(SpaceId([44; 32]), 1, &control)
+        .unwrap()
+        .with_parameters(domain.clone(), &[], limits().parameters, &mut work)
+        .unwrap();
+    let density = GuardedRationalFunction::new(
+        domain,
+        ExactPolynomial::constant(ExactRational::fraction("1", "2", &mut work).unwrap()),
+        ExactPolynomial::one(),
+        limits().parameters.parameters.region,
+        &mut work,
+    )
+    .unwrap();
+    let prior = FamilyFunction::constant(&source, density, limits().parameters, &mut work)
+        .unwrap()
+        .designate(limits().parameters, &mut work)
+        .unwrap();
+    let inputs = vec![
+        vec![45; 32],
+        prior.full().to_bytes(&control).unwrap(),
+        prior.empty().to_bytes(&control).unwrap(),
+    ];
+    let Output::Bytes(value) = run("revision.condition", &inputs, &control, &mut work).unwrap()
+    else {
+        panic!("revision");
+    };
+    let mut probe = ExactArithmetic::new(ArithmeticLimits::default(), &control);
+    bumbledb::event::SourceDescriptor::import(&value.bytes, limits(), &mut probe).unwrap();
+    let mut bounded = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: probe.operations(),
+            ..ArithmeticLimits::default()
+        },
+        &control,
+    );
+    assert!(matches!(
+        run(
+            "revision.inspect",
+            std::slice::from_ref(&value.bytes),
+            &control,
+            &mut bounded
+        ),
+        Err(Error::Capacity(Capacity::ArithmeticSteps))
+    ));
+    drop(prior);
+    let Output::Parameter(ParameterOutput::Dynamics(dynamics::Details::Revision {
+        identity,
+        prior,
+        defined,
+        outcome,
+        ..
+    })) = run(
+        "revision.inspect",
+        std::slice::from_ref(&value.bytes),
+        &control,
+        &mut work,
+    )
+    .unwrap()
+    else {
+        panic!("inspection");
+    };
+    assert_eq!(identity, [45; 32]);
+    assert_eq!(prior, inputs[1]);
+    assert!(outcome.is_none());
+    assert!(region(&defined, &mut work).unwrap().is_empty());
+    assert!(matches!(
+        run(
+            "kernel.validate",
+            std::slice::from_ref(&value.bytes),
+            &control,
+            &mut work
+        ),
+        Err(Error::RoleMismatch)
+    ));
+    assert!(matches!(
+        run(
+            "restriction.validate",
+            std::slice::from_ref(&value.bytes),
+            &control,
+            &mut work
+        ),
+        Err(Error::RoleMismatch)
+    ));
+    control.cancel();
+    assert!(matches!(
+        run("revision.inspect", &[value.bytes], &control, &mut work),
+        Err(Error::Cancelled)
+    ));
+}

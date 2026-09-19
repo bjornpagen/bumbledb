@@ -1,0 +1,11 @@
+'QueryRelations.compose_transport' does not depend on any axioms
+'QueryRelations.left_residual_transport' does not depend on any axioms
+'QueryRelations.right_residual_transport' does not depend on any axioms
+'QueryRelations.identity_transport' does not depend on any axioms
+'QueryRelations.path_encode' does not depend on any axioms
+'QueryRelations.star_transport' does not depend on any axioms
+'QueryRelations.whole_program_transport' depends on axioms: [propext, Quot.sound]
+'QueryRelations.may_transport' does not depend on any axioms
+'QueryRelations.all_transport' does not depend on any axioms
+'QueryRelations.must_transport' depends on axioms: [propext, Quot.sound]
+'QueryRelations.dead_end_is_not_must' depends on axioms: [propext, Quot.sound]

@@ -16,6 +16,7 @@ use bumbledb::work::WorkContext;
 use napi::bindgen_prelude::{Array, BigInt, Env, External, Function};
 use napi_derive::napi;
 
+mod dynamics;
 mod family;
 mod function;
 mod output;
@@ -34,6 +35,7 @@ enum Op {
     Family(family::Op),
     Source(source::Op),
     Refinement(refinement::Op),
+    Dynamics(dynamics::Op),
 }
 impl Op {
     fn parse(name: &str) -> Option<Self> {
@@ -55,7 +57,7 @@ impl Op {
         if let Some(name) = name.strip_prefix("refinement.") {
             return refinement::Op::parse(name).map(Self::Refinement);
         }
-        None
+        dynamics::Op::parse(name).map(Self::Dynamics)
     }
     fn valid(self, count: usize, argument: u8) -> bool {
         match self {
@@ -65,6 +67,7 @@ impl Op {
             Self::Family(op) => op.valid(count, argument),
             Self::Source(op) => op.valid(count, argument),
             Self::Refinement(op) => op.valid(count, argument),
+            Self::Dynamics(op) => argument == 0 && op.valid(count),
         }
     }
 }
@@ -138,6 +141,7 @@ fn execute(
         Op::Family(op) => family::execute(op, inputs, argument, control, work),
         Op::Source(op) => source::execute(op, inputs, control, work),
         Op::Refinement(op) => refinement::execute(op, inputs, control, work),
+        Op::Dynamics(op) => dynamics::execute(op, inputs, control, work),
     }
 }
 

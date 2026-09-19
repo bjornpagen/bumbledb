@@ -10,6 +10,9 @@ export type SourceKind =
 	| "parameterFunction"
 	| "familyFunction"
 	| "parameterRefinement"
+	| "familyKernel"
+	| "parameterRestriction"
+	| "familyRevision"
 export interface SourceValue<K extends SourceKind> {
 	readonly [sourceTag]: K
 }
@@ -20,7 +23,10 @@ const kinds = {
 	revision: [1, 2],
 	parameterFunction: [2, 0],
 	familyFunction: [2, 1],
-	parameterRefinement: [2, 3]
+	parameterRefinement: [2, 3],
+	familyKernel: [2, 2],
+	parameterRestriction: [2, 4],
+	familyRevision: [2, 5]
 } as const
 export function isSource<K extends SourceKind>(kind: K, input: unknown): input is SourceValue<K> {
 	if (typeof input !== "object" || input === null) return false

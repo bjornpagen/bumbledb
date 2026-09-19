@@ -92,7 +92,7 @@ pub(super) fn family(bytes: &[u8], work: &mut ExactArithmetic<'_>) -> Result<Fam
     }
     Err(Error::RoleMismatch)
 }
-fn encoded(
+pub(super) fn encoded(
     value: FamilyFunction,
     control: &WorkContext,
     work: &mut ExactArithmetic<'_>,
@@ -104,7 +104,7 @@ fn encoded(
     )?
     .to_bytes(limits(), control)
 }
-fn map(
+pub(super) fn map(
     bytes: &[u8],
     control: &WorkContext,
     work: &mut ExactArithmetic<'_>,

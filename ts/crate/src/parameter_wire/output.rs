@@ -29,6 +29,7 @@ pub struct FunctionPiece {
     pub defined: Vec<u8>,
 }
 pub enum ParameterOutput {
+    Dynamics(super::dynamics::Details),
     Region {
         parameter: [u8; 32],
         boundaries: Vec<Vec<u8>>,
@@ -162,6 +163,7 @@ impl napi::bindgen_prelude::ToNapiValue for ParameterOutput {
                 }
                 object.set("pieces", values)?;
             }
+            Self::Dynamics(details) => object = details.object(&handle)?,
             other => object = other.source_object(&handle)?,
         }
         // SAFETY: the owned object belongs to the active N-API environment.

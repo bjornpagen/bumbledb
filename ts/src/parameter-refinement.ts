@@ -1,5 +1,5 @@
 import { Result } from "effect"
-import { type Event, encodedEvent, eventBytes } from "#event-value.ts"
+import { type Event, encodedEvent, eventBytes, eventValue } from "#event-value.ts"
 import { parameterData, parameterName, parameterResult } from "#parameter-operation.ts"
 import { ParameterRegion } from "#parameter-region.ts"
 import { operands, roster } from "#parameter-source.ts"
@@ -7,6 +7,10 @@ import { argumentError, type DbError } from "#runtime-errors.ts"
 import { encodedSource, isSource, type SourceValue, sourceBytes } from "#source-value.ts"
 import { arrayValue, recordValue } from "#values.ts"
 
+export interface CommonParameterSource {
+	readonly identity: Uint8Array
+	readonly source: Event
+}
 type ParameterRefinement = SourceValue<"parameterRefinement">
 export interface ParameterRefinementDescription {
 	readonly source: Event
@@ -39,6 +43,33 @@ function create(identity: Uint8Array, source: Event, predicates: readonly Parame
 		encode
 	)
 }
+/** Refine each equal named domain to the union of the roster's predicates.
+ * Roster order and each source's original worlds/law are preserved. */
+function common(sources: readonly CommonParameterSource[]) {
+	return parameterData(
+		"refinement.common",
+		() => {
+			roster(sources, 4094)
+			const out = operands()
+			arrayValue("Common refinement", sources, (_, input) => {
+				const data = recordValue("CommonParameterSource", input, ["identity", "source"])
+				out.add(parameterName(data.identity))
+				out.add(eventBytes(eventValue("CommonParameterSource.source", data.source)))
+			})
+			return out.values
+		},
+		(input) => {
+			const data = recordValue("Common refinements", input, ["refinements"])
+			roster(data.refinements, 4094)
+			const out = operands()
+			return arrayValue("Common refinements", data.refinements, (_, value) => {
+				const result = encode(value)
+				out.add(toBytes(result))
+				return result
+			})
+		}
+	)
+}
 function validate(value: ParameterRefinement) {
 	return parameterResult("refinement.validate", () => [toBytes(value)], encode)
 }
@@ -64,6 +95,7 @@ const ParameterRefinement = Object.freeze({
 	toBytes,
 	isParameterRefinement,
 	new: create,
+	common,
 	validate,
 	describe,
 	lift,
