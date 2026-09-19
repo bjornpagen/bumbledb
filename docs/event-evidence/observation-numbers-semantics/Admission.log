@@ -1,0 +1,17 @@
+'Admission.coverage_exact' depends on axioms: [propext, Quot.sound]
+'Admission.conflict_exact' depends on axioms: [propext, Quot.sound]
+'Admission.key_iff_no_conflicts' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Admission.containment_iff_union' depends on axioms: [propext, Quot.sound]
+'Admission.order_independent' depends on axioms: [propext, Quot.sound]
+'Admission.citation_exact' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Admission.empty_contribution' depends on axioms: [propext, Quot.sound]
+'Admission.empty_requires_no_target' depends on axioms: [propext]
+'Admission.subtracting_coverage_is_not_deletion' does not depend on any axioms
+'Admission.duplicate_fact_creates_false_conflict' does not depend on any axioms
+'Admission.full_key_iff_scalar_unique' does not depend on any axioms
+'Admission.full_coverage_iff' depends on axioms: [propext, Quot.sound]
+'Admission.full_partition_iff' depends on axioms: [propext, Quot.sound]
+'Admission.full_cannot_be_covered_by_absence' does not depend on any axioms
+'Admission.full_full_iff_presence' depends on axioms: [propext, Quot.sound]
+'Admission.empty_world_breaks_full_key' depends on axioms: [propext]
+'Admission.empty_world_breaks_full_presence' does not depend on any axioms

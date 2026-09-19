@@ -1,0 +1,16 @@
+'ParameterDomains.cell_witness' depends on axioms: [propext]
+'ParameterDomains.exact_emptiness' depends on axioms: [propext]
+'ParameterDomains.complement' depends on axioms: [propext]
+'ParameterDomains.pointwise_binary' does not depend on any axioms
+'ParameterDomains.exact_membership_equality' does not depend on any axioms
+'ParameterDomains.common_refinement' does not depend on any axioms
+'ParameterDomains.redundant_boundary' depends on axioms: [propext]
+'ParameterDomains.point_membership_is_independent' depends on axioms: [propext]
+'ParameterDomains.defined_exactly' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterDomains.zero_denominator_undefined' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterDomains.inherited_hole_preserved' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterDomains.zero_numerator_does_not_erase_hole' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterDomains.quotient_add' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterDomains.quotient_multiply' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterDomains.same_value_and_domain' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterDomains.inhabited_source_can_be_nowhere_defined' depends on axioms: [propext, Classical.choice, Quot.sound]

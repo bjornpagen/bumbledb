@@ -24,6 +24,7 @@ mod information;
 mod kernel;
 mod map;
 mod measure;
+mod number;
 mod parameter;
 mod partition;
 mod polynomial;
@@ -62,6 +63,7 @@ pub use information::InformationCases;
 pub use kernel::{FamilyKernel, FiniteKernel, SourceExtension};
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use measure::{DensityPiece, LawLimits, ProbabilityObservation};
+pub use number::{NumberLimits, NumberOp, NumberPredicate, NumberPredicateView, PartialNumber};
 pub use parameter::{
     FamilyFunction, FamilyFunctionPiece, GuardedRationalFunction, ParameterCell,
     ParameterCodecLimits, ParameterConditioning, ParameterDensityPiece, ParameterDomain,
@@ -90,6 +92,9 @@ pub use space::{Event, EventKey, Space, SpaceId, Statistics};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod number_tests;
 
 #[cfg(test)]
 mod map_tests;

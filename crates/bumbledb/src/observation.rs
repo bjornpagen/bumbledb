@@ -82,6 +82,12 @@ pub enum ExpectationValue {
     Family(crate::event::ParameterExpectationObservation<crate::event::FamilyFunction>),
 }
 
+mod number;
+pub use number::{
+    ObservationComponent, ObservationNumber, ObservationNumberExpr, ObservationNumberLimits,
+    ObservationPredicate,
+};
+
 mod payoff;
 pub use payoff::ExpectationPayoff;
 pub(crate) use payoff::{ExpectationInput, PayoffInput};

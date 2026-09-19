@@ -1,0 +1,20 @@
+'FamilyTransport.value_reconstruction' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.active_totality_gives_total_value' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.zero_default' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.active_hole_is_not_zero' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.inactive_hole_has_zero_default' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.parameter_hole_is_not_zero' depends on axioms: [propext, Quot.sound]
+'FamilyTransport.sum_congr' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.map_keeps_actual_parameter' does not depend on any axioms
+'FamilyTransport.row_reconstruction' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.normalization_reconstructed' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.indexed_unsupported_reconstructed' depends on axioms: [propext, Quot.sound]
+'FamilyTransport.valid_domain_reconstructed' depends on axioms: [propext, Quot.sound]
+'FamilyTransport.zero_target_never_unsupported' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.matches_preserves_holes' does not depend on any axioms
+'FamilyTransport.impossible_keeps_requested_identity' does not depend on any axioms
+'FamilyTransport.admission_returns_replayed_object' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.replay_error_preserved' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.false_receipt_rejected' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FamilyTransport.matching_interior_can_hide_endpoint_hole' depends on axioms: [propext, Quot.sound]
+'FamilyTransport.guard_code_is_not_parameter_identity' depends on axioms: [propext, Classical.choice, Quot.sound]
