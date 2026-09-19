@@ -24,6 +24,7 @@ use crate::{Error, F64, FindIndex, FindTerm, ScalarError, Value, VarId};
 
 mod events;
 mod expectation;
+mod observations;
 mod pack;
 #[cfg(test)]
 mod tests;
@@ -46,7 +47,10 @@ impl OutputProgram {
     fn width(&self) -> usize {
         match self.expression {
             FindTerm::Probability { .. } => 4,
-            FindTerm::Segments { .. } | FindTerm::Event(_) | FindTerm::Pack { .. } => 2,
+            FindTerm::Segments { .. }
+            | FindTerm::Event(_)
+            | FindTerm::Guard(_)
+            | FindTerm::Pack { .. } => 2,
             _ => 1,
         }
     }
@@ -278,7 +282,7 @@ impl ComputedSink {
         if self.error.is_some() {
             return;
         }
-        let admitted = match self.event_outputs() {
+        let mut admitted = match self.event_outputs() {
             Ok(admitted) => admitted,
             Err(error) => {
                 self.error = Some(error);
@@ -320,9 +324,12 @@ impl ComputedSink {
             }
             self.pieces.push((*slot, values, len, 0));
         }
-        if let Err(error) = self.observation_outputs() {
-            self.error = Some(error);
-            return;
+        match self.observation_outputs() {
+            Ok(guards_admitted) => admitted &= guards_admitted,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
         }
         if let Err(error) = self.scalar_outputs() {
             self.error = Some(error);
@@ -391,84 +398,6 @@ impl ComputedSink {
             return Some(Err(error));
         }
         self.pack_row()
-    }
-
-    fn observation_outputs(&mut self) -> crate::Result<()> {
-        use crate::ir::validate::QueryType;
-        use crate::number_expr::ObservationOperand;
-        if self.programs.iter().all(|(_, program)| {
-            !matches!(
-                program.expression,
-                FindTerm::Number(_) | FindTerm::Predicate(_) | FindTerm::PredicateTest { .. }
-            )
-        }) {
-            return Ok(());
-        }
-        let control = self.work.as_ref().ok_or(crate::event::Error::UnknownKey)?;
-        let mut arithmetic = crate::event::ExactArithmetic::borrow(&mut self.arithmetic, control);
-        let limits = crate::ObservationNumberCodecLimits::default();
-        for (slot, program) in &self.programs {
-            if !matches!(
-                program.expression,
-                FindTerm::Number(_) | FindTerm::Predicate(_) | FindTerm::PredicateTest { .. }
-            ) {
-                continue;
-            }
-            let operand = |var| {
-                let (_, slot, ty) = program
-                    .inputs
-                    .iter()
-                    .find(|(id, _, _)| *id == var)
-                    .expect("validated numerical input");
-                let word = self.bindings.get(*slot);
-                Ok(match ty {
-                    QueryType::Stored(ValueType::U64) => ObservationOperand::Integer(word.into()),
-                    QueryType::Stored(ValueType::I64) => {
-                        ObservationOperand::Integer((word ^ (1 << 63)).cast_signed().into())
-                    }
-                    QueryType::Observation(kind) => match self.observations.get(*kind, word)? {
-                        crate::AnswerValue::Predicate(value) => {
-                            ObservationOperand::Predicate(value.value().clone())
-                        }
-                        crate::AnswerValue::Number(value) => {
-                            ObservationOperand::Number(value.value().clone())
-                        }
-                        crate::AnswerValue::Probability(value) => {
-                            ObservationOperand::Probability(value.clone())
-                        }
-                        crate::AnswerValue::Expectation(value) => {
-                            ObservationOperand::Expectation(value.clone())
-                        }
-                        _ => unreachable!("owned observation"),
-                    },
-                    QueryType::Stored(_) => unreachable!("validated numerical input type"),
-                })
-            };
-            let word = match &program.expression {
-                FindTerm::Number(expression) => {
-                    let value = expression.evaluate(operand, &limits, &mut arithmetic)?;
-                    let value =
-                        crate::ObservationNumberImport::checked(value, limits, &mut arithmetic)?;
-                    self.observations.insert_number(value)?
-                }
-                FindTerm::Predicate(expression) => {
-                    let value = expression.evaluate(operand, &limits, &mut arithmetic)?;
-                    let value =
-                        crate::ObservationPredicateImport::checked(value, limits, &mut arithmetic)?;
-                    self.observations.insert_predicate(value)?
-                }
-                FindTerm::PredicateTest {
-                    predicate,
-                    quantifier,
-                } => {
-                    let value = predicate.evaluate(operand, &limits, &mut arithmetic)?;
-                    u64::from(quantifier.evaluate(&value))
-                }
-                _ => unreachable!("only numerical/predicate programs"),
-            };
-            self.bindings.set(*slot, word);
-        }
-        Ok(())
     }
 
     fn expectation_row(&mut self) -> crate::Result<()> {

@@ -71,6 +71,7 @@ import {
 import { expectationResult } from "#query/expectation.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
 import { count, max, mean, min, pack, sum } from "#query/find.ts"
+import { guardIr, guardVars, isGuardExpr, snapshotGuardExpression } from "#query/guard.ts"
 import { isNumberExpr, numberIr, numberVars, snapshotNumberExpression } from "#query/number.ts"
 import { numberResult } from "#query/number-result.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
@@ -913,7 +914,13 @@ function aggDataOf(name: string, entry: { readonly agg: string; readonly over?: 
 }
 
 function findColumnOf(name: string, entry: unknown): FindColumn {
-	if (isEventFind(entry) || isNumberExpr(entry) || isPredicateExpr(entry) || isPredicateTest(entry))
+	if (
+		isGuardExpr(entry) ||
+		isEventFind(entry) ||
+		isNumberExpr(entry) ||
+		isPredicateExpr(entry) ||
+		isPredicateTest(entry)
+	)
 		return Object.freeze({ name, entry, closed: undefined, slot: undefined })
 	if (isTerm(entry)) {
 		if (entry[term] === "var") {
@@ -1010,7 +1017,7 @@ function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedFie
 	if (entry.kind === "number") return { field: numberResult, class: undefined }
 	if (entry.kind === "probability") return { field: probabilityResult, class: undefined }
 	if (entry.kind === "expectation") return { field: expectationResult, class: undefined }
-	if (entry.kind === "event") return { field: eventField, class: undefined }
+	if (entry.kind === "guard" || entry.kind === "event") return { field: eventField, class: undefined }
 	if (entry.kind === "test") return { field: boolField, class: undefined }
 	if (entry.kind === "segments") return { field: segmentField(entry), class: undefined }
 	if (entry.kind === "var") {
@@ -1043,6 +1050,12 @@ function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedFie
 function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, column: FindColumn): void {
 	const where = `${contextLabel(context)} find ${column.name}`
 	const entry = column.entry
+	if (entry.kind === "guard") {
+		if (context.kind === "rec-base" || context.kind === "rec-arm")
+			throw new AuthoringError({ message: `${where}: produce guards in a nonrecursive query stage` })
+		for (const ref of guardVars(entry)) assertBound(where, bound, ref)
+		return
+	}
 	if (entry.kind === "predicate" || entry.kind === "predicateTest") {
 		if (context.kind === "rec-base" || context.kind === "rec-arm")
 			throw new AuthoringError({ message: `${where}: produce predicates in a nonrecursive query stage` })
@@ -1350,6 +1363,7 @@ function snapshotQueryData<A>(input: A): A {
 		snapshotEventExpression(source, snapshot)
 		snapshotNumberExpression(source, snapshot)
 		snapshotPredicateExpression(source, snapshot)
+		snapshotGuardExpression(source, snapshot)
 		// Detached imports retain their authoring identity for deduplication.
 		if (importTables.has(source as InteriorData)) {
 			const table = snapshot as InteriorData
@@ -2347,6 +2361,7 @@ function lowerComputeGrammar(node: QueryNode, ids: VarIds): ScalarExprIr {
 }
 
 function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
+	if (entry.kind === "guard") return { kind: "guard", expr: guardIr(entry, (ref) => ids.of(ref)) }
 	if (entry.kind === "predicate") return { kind: "predicate", expr: predicateIr(entry, (ref) => ids.of(ref)) }
 	if (entry.kind === "predicateTest")
 		return {
@@ -2391,6 +2406,7 @@ function headTermOf(column: FindColumn): HeadTermIr {
 	const entry = column.entry
 	if (entry.kind === "expectation") return { kind: "aggregate", op: "expectation" }
 	if (
+		entry.kind === "guard" ||
 		entry.kind === "predicate" ||
 		entry.kind === "predicateTest" ||
 		entry.kind === "number" ||

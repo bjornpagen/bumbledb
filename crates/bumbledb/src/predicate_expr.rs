@@ -69,21 +69,30 @@ impl PredicateExpr {
     pub(crate) fn inputs(
         &self,
     ) -> std::result::Result<Vec<(VarId, ObservationInputKind)>, NumberExprError> {
-        let mut pending = vec![(self, 1usize)];
-        let mut nodes = 0;
         let mut inputs = Vec::new();
+        self.collect_inputs(1, &mut 0, &mut inputs)?;
+        Ok(inputs)
+    }
+
+    pub(crate) fn collect_inputs(
+        &self,
+        depth: usize,
+        nodes: &mut usize,
+        inputs: &mut Vec<(VarId, ObservationInputKind)>,
+    ) -> std::result::Result<(), NumberExprError> {
+        let mut pending = vec![(self, depth)];
         while let Some((node, depth)) = pending.pop() {
             if depth > 256 {
                 return Err(NumberExprError::TooDeep);
             }
-            nodes += 1;
-            if nodes > 65_536 {
+            *nodes += 1;
+            if *nodes > 65_536 {
                 return Err(NumberExprError::TooLarge);
             }
             match node {
                 Self::Var(var) => inputs.push((*var, ObservationInputKind::Predicate)),
                 Self::Sign { number, .. } => {
-                    number.collect_inputs(depth + 1, &mut nodes, &mut inputs)?;
+                    number.collect_inputs(depth + 1, nodes, inputs)?;
                 }
                 Self::Imported(_) => {}
                 Self::Negate(value) | Self::OnDomain { value, .. } => {
@@ -95,7 +104,7 @@ impl PredicateExpr {
                 }
             }
         }
-        Ok(inputs)
+        Ok(())
     }
 
     pub(crate) fn evaluate(

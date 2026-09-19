@@ -4,6 +4,32 @@ use crate::ir::{CmpOp, Comparison, Value};
 use bumbledb_theory::schema::FixedIntervalElement;
 
 #[test]
+fn predicate_heads_keep_the_complete_binding_for_computed_sinks() {
+    let predicate = crate::PredicateExpr::Sign {
+        number: crate::NumberExpr::Integer(VarId(1)),
+        signs: crate::event::PolynomialSigns::POSITIVE,
+    };
+    for find in [
+        FindTerm::Predicate(predicate.clone()),
+        FindTerm::PredicateTest {
+            predicate,
+            quantifier: crate::PredicateQuantifier::Possibly,
+        },
+    ] {
+        let query = simple(
+            vec![find],
+            vec![atom(POSTING, vec![(1, var(0)), (2, var(1))])],
+        );
+        let witness = validate(&schema(), &query).unwrap();
+        assert!(witness.rule(0).group_key().is_empty());
+        assert_eq!(
+            witness.rule(0).sink_vars(),
+            BTreeSet::from([VarId(0), VarId(1)])
+        );
+    }
+}
+
+#[test]
 fn accepts_the_containment_walk_join_with_conditions() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],

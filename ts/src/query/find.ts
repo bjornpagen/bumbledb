@@ -5,6 +5,7 @@ import type { IntervalVarOk, NumericVarOk } from "#query/atom.ts"
 import type { AnyComputeExpr, ComputeExpr, ComputeValue } from "#query/compute.ts"
 import type { EventExpr, EventFind, EventTest, ExpectationExpr, ProbabilityExpr } from "#query/event.ts"
 import type { ExpectationAnswer, ExpectationResult } from "#query/expectation.ts"
+import type { GuardExpr } from "#query/guard.ts"
 import type { NumberExpr } from "#query/number.ts"
 import type { NumberAnswer, NumberResult } from "#query/number-result.ts"
 import type { PredicateExpr, PredicateTest } from "#query/predicate.ts"
@@ -28,7 +29,16 @@ interface Agg<Op extends FoldOpName, Over extends AnyVar> {
 
 type AnyAgg = CountAgg | Agg<FoldOpName, AnyVar>
 
-type FindEntry = AnyVar | AnyAgg | AnyComputeExpr | Segments | EventFind | NumberExpr | PredicateExpr | PredicateTest
+type FindEntry =
+	| AnyVar
+	| AnyAgg
+	| AnyComputeExpr
+	| Segments
+	| EventFind
+	| NumberExpr
+	| PredicateExpr
+	| PredicateTest
+	| GuardExpr
 
 type FindShape = Readonly<Record<string, FindEntry>>
 
@@ -81,7 +91,7 @@ type FindEntryOk<E> = E extends AnyVar
 					? V["field"]["kind"] extends "event"
 						? true
 						: IntervalVarOk<V>
-					: E extends AnyComputeExpr | Segments | EventFind | NumberExpr | PredicateExpr | PredicateTest
+					: E extends AnyComputeExpr | Segments | EventFind | NumberExpr | PredicateExpr | PredicateTest | GuardExpr
 						? true
 						: false
 
@@ -103,7 +113,7 @@ type FindValue<E> = E extends PredicateExpr
 				? ExpectationAnswer
 				: E extends ProbabilityExpr
 					? ProbabilityAnswer
-					: E extends EventExpr
+					: E extends EventExpr | GuardExpr
 						? Event
 						: E extends EventTest
 							? boolean
@@ -146,7 +156,7 @@ type HeadRecordOf<Classes extends SchemaClasses, F extends FindShape> = {
 					? { readonly field: ProbabilityResult; readonly class: undefined }
 					: F[K] extends ExpectationExpr
 						? { readonly field: ExpectationResult; readonly class: undefined }
-						: F[K] extends EventExpr
+						: F[K] extends EventExpr | GuardExpr
 							? { readonly field: EventField; readonly class: undefined }
 							: F[K] extends EventTest
 								? { readonly field: BoolField; readonly class: undefined }

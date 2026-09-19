@@ -1,0 +1,26 @@
+'PartialNumbers.binary_none_left' does not depend on any axioms
+'PartialNumbers.binary_none_right' does not depend on any axioms
+'PartialNumbers.binary_some' does not depend on any axioms
+'PartialNumbers.binary_domain_intersection' depends on axioms: [propext, Quot.sound]
+'PartialNumbers.constant_operation_keeps_holes' depends on axioms: [propext, Quot.sound]
+'PartialNumbers.division_none_left' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PartialNumbers.division_none_right' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PartialNumbers.division_by_zero' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PartialNumbers.division_defined_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PartialNumbers.zero_power_keeps_holes' depends on axioms: [propext, Quot.sound]
+'PartialNumbers.identical_partial_values_need_not_be_totally_equal' depends on axioms: [propext]
+'PartialNumbers.truth_cases_exhaustive' depends on axioms: [propext]
+'PartialNumbers.true_false_disjoint' depends on axioms: [propext]
+'PartialNumbers.true_undefined_disjoint' depends on axioms: [propext]
+'PartialNumbers.false_undefined_disjoint' depends on axioms: [propext]
+'PartialNumbers.negate_retains_undefined' depends on axioms: [propext]
+'PartialNumbers.negate_exchanges_truth' depends on axioms: [propext]
+'PartialNumbers.negation_involution' does not depend on any axioms
+'PartialNumbers.all_boolean_lifts_are_strict' depends on axioms: [propext, Quot.sound]
+'PartialNumbers.always_requires_total' does not depend on any axioms
+'PartialNumbers.undefined_is_not_a_witness' depends on axioms: [propext]
+'PartialNumbers.restriction_never_creates_a_value' depends on axioms: [propext, Quot.sound]
+'PartialNumbers.restriction_composition' depends on axioms: [propext, Quot.sound]
+'PartialNumbers.binary_retains_origins' depends on axioms: [propext]
+'PartialNumbers.unary_retains_origins' does not depend on any axioms
+'PartialNumbers.arithmetic_never_invents_an_origin' depends on axioms: [propext]

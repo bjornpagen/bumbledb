@@ -299,11 +299,16 @@ impl AggOp {
 }
 
 mod events;
+mod guards;
 mod numbers;
 mod payoffs;
 mod predicates;
 
 enum HeadTerm {
+    Guard {
+        label: Name,
+        expression: guards::Expression,
+    },
     Predicate {
         label: Name,
         expression: predicates::Expression,
@@ -770,79 +775,7 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
 
     if peek_punct(tokens, ':') {
         expect_colon(tokens, "the head column's `:`")?;
-        let agg_name = expect_ident(tokens, "an aggregate")?;
-        if agg_name.text == "Predicate" {
-            return Ok(HeadTerm::Predicate {
-                label: name,
-                expression: predicates::parse(tokens)?,
-            });
-        }
-        if agg_name.text == "PredicateTest" {
-            let (expression, quantifier) = predicates::parse_test(tokens)?;
-            return Ok(HeadTerm::PredicateTest {
-                label: name,
-                expression,
-                quantifier,
-            });
-        }
-        if agg_name.text == "Number" {
-            return Ok(HeadTerm::Number {
-                label: name,
-                expression: numbers::parse(tokens)?,
-            });
-        }
-        if agg_name.text == "Expectation" {
-            let (mut args, _) =
-                take_paren_group(tokens, "Expectation's value, region, and evidence")?;
-            let value = payoffs::parse(&mut args)?;
-            expect_punct(&mut args, ',', "a comma")?;
-            let when = expect_ident(&mut args, "an Event variable")?;
-            expect_punct(&mut args, ',', "a comma")?;
-            let given = expect_ident(&mut args, "an evidence variable")?;
-            if let Some(extra) = args.next() {
-                return fail(
-                    extra.span(),
-                    "query!: Expectation takes a payoff, an Event variable, and an evidence variable",
-                );
-            }
-            return Ok(HeadTerm::Expectation {
-                label: name,
-                value,
-                when,
-                given,
-            });
-        }
-        if agg_name.text == "Probability" {
-            let (event, given) = events::probability(tokens)?;
-            return Ok(HeadTerm::Probability {
-                label: name,
-                event,
-                given,
-            });
-        }
-        if agg_name.text == "Event" {
-            return Ok(HeadTerm::Event {
-                label: name,
-                expression: events::region(tokens)?,
-            });
-        }
-        if agg_name.text == "Test" {
-            return Ok(HeadTerm::Test {
-                label: name,
-                expression: events::test(tokens)?,
-            });
-        }
-        let Some(op) = agg_op(&agg_name.text) else {
-            return fail(
-                agg_name.span,
-                format!(
-                    "query!: `{}` is not an aggregate — a named head position \
-                     takes Sum/Min/Max/Count/Pack/Event/Test/Probability/Expectation",
-                    agg_name.text
-                ),
-            );
-        };
-        return parse_agg(tokens, op, Some(name));
+        return parse_named_head(tokens, name);
     }
     if let Some(op) = agg_op(&name.text) {
         return parse_agg(tokens, op, None);
@@ -854,6 +787,87 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
         );
     }
     Ok(HeadTerm::Var(name))
+}
+
+fn parse_named_head(tokens: &mut Tokens, name: Name) -> Parse<HeadTerm> {
+    let agg_name = expect_ident(tokens, "an aggregate")?;
+    if agg_name.text == "Guard" {
+        return Ok(HeadTerm::Guard {
+            label: name,
+            expression: guards::parse(tokens)?,
+        });
+    }
+    if agg_name.text == "Predicate" {
+        return Ok(HeadTerm::Predicate {
+            label: name,
+            expression: predicates::parse(tokens)?,
+        });
+    }
+    if agg_name.text == "PredicateTest" {
+        let (expression, quantifier) = predicates::parse_test(tokens)?;
+        return Ok(HeadTerm::PredicateTest {
+            label: name,
+            expression,
+            quantifier,
+        });
+    }
+    if agg_name.text == "Number" {
+        return Ok(HeadTerm::Number {
+            label: name,
+            expression: numbers::parse(tokens)?,
+        });
+    }
+    if agg_name.text == "Expectation" {
+        let (mut args, _) = take_paren_group(tokens, "Expectation's value, region, and evidence")?;
+        let value = payoffs::parse(&mut args)?;
+        expect_punct(&mut args, ',', "a comma")?;
+        let when = expect_ident(&mut args, "an Event variable")?;
+        expect_punct(&mut args, ',', "a comma")?;
+        let given = expect_ident(&mut args, "an evidence variable")?;
+        if let Some(extra) = args.next() {
+            return fail(
+                extra.span(),
+                "query!: Expectation takes a payoff, an Event variable, and an evidence variable",
+            );
+        }
+        return Ok(HeadTerm::Expectation {
+            label: name,
+            value,
+            when,
+            given,
+        });
+    }
+    if agg_name.text == "Probability" {
+        let (event, given) = events::probability(tokens)?;
+        return Ok(HeadTerm::Probability {
+            label: name,
+            event,
+            given,
+        });
+    }
+    if agg_name.text == "Event" {
+        return Ok(HeadTerm::Event {
+            label: name,
+            expression: events::region(tokens)?,
+        });
+    }
+    if agg_name.text == "Test" {
+        return Ok(HeadTerm::Test {
+            label: name,
+            expression: events::test(tokens)?,
+        });
+    }
+    let Some(op) = agg_op(&agg_name.text) else {
+        return fail(
+            agg_name.span,
+            format!(
+                "query!: `{}` is not an aggregate — a named head position \
+                 takes Sum/Min/Max/Count/Pack/Event/Test/Probability/Expectation/Number/Predicate/PredicateTest/Guard",
+                agg_name.text
+            ),
+        );
+    };
+    parse_agg(tokens, op, Some(name))
 }
 
 fn parse_separated<T>(
@@ -1971,6 +1985,10 @@ impl Emitter<'_> {
 
     fn find(&self, scope: &Scope, term: &HeadTerm) -> Parse<String> {
         Ok(match term {
+            HeadTerm::Guard { expression, .. } => format!(
+                "::bumbledb::FindTerm::Guard({})",
+                expression.emit(scope, self.imports)?
+            ),
             HeadTerm::Predicate { expression, .. } => format!(
                 "::bumbledb::FindTerm::Predicate({})",
                 expression.emit(scope, self.imports, 0)?
@@ -2052,6 +2070,7 @@ impl Emitter<'_> {
                 }
                 HeadTerm::Agg { over, .. }
                 | HeadTerm::Number { label: over, .. }
+                | HeadTerm::Guard { label: over, .. }
                 | HeadTerm::Predicate { label: over, .. }
                 | HeadTerm::PredicateTest { label: over, .. }
                 | HeadTerm::Event { label: over, .. }
@@ -2464,6 +2483,7 @@ enum ImportKind {
     Payoff,
     Number,
     NumberDomain,
+    Guard,
     Predicate,
 }
 
@@ -2478,7 +2498,14 @@ fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
         let first = expect_ident(tokens, "the imported template's local name or `map`")?;
         let (kind, name) = if matches!(
             first.text.as_str(),
-            "map" | "faces" | "product" | "payoff" | "number" | "number_domain" | "predicate"
+            "map"
+                | "faces"
+                | "product"
+                | "payoff"
+                | "number"
+                | "number_domain"
+                | "predicate"
+                | "guard"
         ) && !peek_punct(tokens, '=')
         {
             (
@@ -2489,6 +2516,7 @@ fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
                     "number" => ImportKind::Number,
                     "predicate" => ImportKind::Predicate,
                     "number_domain" => ImportKind::NumberDomain,
+                    "guard" => ImportKind::Guard,
                     _ => ImportKind::Product,
                 },
                 expect_ident(tokens, "the imported Event descriptor's local name")?,
@@ -2711,6 +2739,7 @@ fn emit_import_prelude(imports: &[Import]) -> String {
                 ImportKind::Payoff => "PayoffImport",
                 ImportKind::Number => "ObservationNumberImport",
                 ImportKind::Predicate => "ObservationPredicateImport",
+                ImportKind::Guard => "PredicateGuardPlan",
                 ImportKind::NumberDomain => "NumberDomain",
                 _ => "EventImport",
             };
@@ -2804,6 +2833,7 @@ fn column_name(term: &HeadTerm) -> String {
     match term {
         HeadTerm::Event { label, .. }
         | HeadTerm::Number { label, .. }
+        | HeadTerm::Guard { label, .. }
         | HeadTerm::Predicate { label, .. }
         | HeadTerm::PredicateTest { label, .. }
         | HeadTerm::Test { label, .. }

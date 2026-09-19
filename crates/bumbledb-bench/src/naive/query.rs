@@ -395,6 +395,7 @@ impl NaiveDb {
                     FindTerm::Event(_)
                         | FindTerm::Test(_)
                         | FindTerm::Probability { .. }
+                        | FindTerm::Guard(_)
                         | FindTerm::Number(_)
                         | FindTerm::Predicate(_)
                         | FindTerm::PredicateTest { .. }
@@ -513,6 +514,7 @@ impl NaiveDb {
                 | FindTerm::Event(_)
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
+                | FindTerm::Guard(_)
                 | FindTerm::Number(_)
                 | FindTerm::Predicate(_)
                 | FindTerm::PredicateTest { .. }
@@ -616,6 +618,7 @@ impl NaiveDb {
                         FindTerm::Event(_)
                         | FindTerm::Test(_)
                         | FindTerm::Probability { .. }
+                        | FindTerm::Guard(_)
                         | FindTerm::Number(_)
                         | FindTerm::Predicate(_)
                         | FindTerm::PredicateTest { .. }
@@ -655,6 +658,7 @@ impl NaiveDb {
                             | FindTerm::Event(_)
                             | FindTerm::Test(_)
                             | FindTerm::Probability { .. }
+                            | FindTerm::Guard(_)
                             | FindTerm::Number(_)
                             | FindTerm::Predicate(_)
                             | FindTerm::PredicateTest { .. }
@@ -681,6 +685,7 @@ impl NaiveDb {
                     | FindTerm::Event(_)
                     | FindTerm::Test(_)
                     | FindTerm::Probability { .. }
+                    | FindTerm::Guard(_)
                     | FindTerm::Number(_)
                     | FindTerm::Predicate(_)
                     | FindTerm::PredicateTest { .. }
@@ -805,6 +810,11 @@ fn count_vars(rule: &Rule) -> usize {
                 predicate: expression,
                 ..
             } => {
+                for var in expression.variables() {
+                    see(&mut count, var);
+                }
+            }
+            FindTerm::Guard(expression) => {
                 for var in expression.variables() {
                     see(&mut count, var);
                 }
@@ -1155,6 +1165,7 @@ fn pack_group_rows(
                 FindTerm::Event(_)
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
+                | FindTerm::Guard(_)
                 | FindTerm::Number(_)
                 | FindTerm::Predicate(_)
                 | FindTerm::PredicateTest { .. }
@@ -1187,6 +1198,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 FindTerm::Event(_)
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
+                | FindTerm::Guard(_)
                 | FindTerm::Number(_)
                 | FindTerm::Predicate(_)
                 | FindTerm::PredicateTest { .. }
@@ -1214,6 +1226,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                     FindTerm::Event(_)
                     | FindTerm::Test(_)
                     | FindTerm::Probability { .. }
+                    | FindTerm::Guard(_)
                     | FindTerm::Number(_)
                     | FindTerm::Predicate(_)
                     | FindTerm::PredicateTest { .. }

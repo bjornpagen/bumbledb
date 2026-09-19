@@ -9,6 +9,7 @@ import type { AnyTreeChild, DerivedTable, FindColumn, InteriorData, RecData, Rul
 import type { QueryNode } from "#query/compute.ts"
 import { eventFindFromIr } from "#query/event.ts"
 import { type ExpectationAnswer, type ExpectationResult, expectationResult } from "#query/expectation.ts"
+import { guardFromIr } from "#query/guard.ts"
 import type { AnyQuery, ChainContext, Query } from "#query/lower.ts"
 import { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, taggedCmpLiteral } from "#query/lower.ts"
 import { numberFromIr } from "#query/number.ts"
@@ -332,6 +333,7 @@ function replayRule(
 			let value: unknown
 			if (find.kind === "var") value = variableAt(find.var)
 			else if (find.kind === "compute") value = scalar(find.expr)
+			else if (find.kind === "guard") value = guardFromIr(find.expr, variableAt)
 			else if (find.kind === "predicate") value = predicateFromIr(find.expr, variableAt)
 			else if (find.kind === "predicateTest")
 				value = PredicateTest[find.quantifier](predicateFromIr(find.expr, variableAt))

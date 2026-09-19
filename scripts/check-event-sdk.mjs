@@ -41,7 +41,7 @@ try {
   run(process.execPath, ['--input-type=module', '-e',
     'import { rewriteDeclarationImports, assertDeclarationsAreIsolated } from "./scripts/declarations.ts"; rewriteDeclarationImports("./dist"); assertDeclarationsAreIsolated("./dist");']);
   const requested = process.argv.slice(3);
-  const tests = requested.length ? requested : ['event', 'event-query', 'event-probability', 'event-expectation', 'event-observation-stages', 'event-query-numbers', 'event-query-predicates', 'event-descriptor', 'event-source', 'event-polynomial', 'event-parameter', 'event-family', 'event-function-cover', 'event-family-dynamics', 'event-prior', 'event-dynamics', 'event-projections', 'event-selections', 'event-closed', 'statements', 'declared-key', 'law-typing', 'law-scale', 'schema-bindings', 'pure-import',
+  const tests = requested.length ? requested : ['event', 'event-query', 'event-probability', 'event-expectation', 'event-observation-stages', 'event-query-numbers', 'event-query-predicates', 'event-query-guards', 'event-descriptor', 'event-source', 'event-polynomial', 'event-parameter', 'event-family', 'event-function-cover', 'event-family-dynamics', 'event-prior', 'event-dynamics', 'event-projections', 'event-selections', 'event-closed', 'statements', 'declared-key', 'law-typing', 'law-scale', 'schema-bindings', 'pure-import',
     'field-codec', 'query-description', 'comparison-pairing', 'alternatives', 'rows',
     'boundary-codec', 'value-conformance', 'interval-outputs', 'effect-core', 'ownership-interrupt'];
   const names = tests.map(name => {

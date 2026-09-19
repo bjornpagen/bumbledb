@@ -14,6 +14,7 @@ import type {
 	ScalarExprIr,
 	TermIr
 } from "#native.ts"
+import { parseGuardIr } from "#query/guard-ir.ts"
 import { parseNumberIr } from "#query/number-ir.ts"
 import { payoffFromBytes } from "#query/payoff.ts"
 import { parsePredicateIr } from "#query/predicate-ir.ts"
@@ -314,6 +315,10 @@ function payoffRatioIr(context: string, input: unknown) {
 
 function find(context: string, input: unknown): FindTermIr {
 	const raw = tagged(context, input)
+	if (raw.kind === "guard") {
+		recordValue(context, raw, ["kind", "expr"])
+		return Object.freeze({ kind: raw.kind, expr: parseGuardIr(`${context}.expr`, raw.expr) })
+	}
 	if (raw.kind === "predicate" || raw.kind === "predicateTest") {
 		recordValue(context, raw, raw.kind === "predicate" ? ["kind", "expr"] : ["kind", "expr", "quantifier"])
 		const expr = parsePredicateIr(`${context}.expr`, raw.expr)
@@ -475,6 +480,7 @@ function align(context: string, head: readonly HeadTermIr[], rules: readonly Rul
 				find.kind === "test" ||
 				find.kind === "probability" ||
 				find.kind === "number" ||
+				find.kind === "guard" ||
 				find.kind === "predicate" ||
 				find.kind === "predicateTest"
 			if (term === undefined || (term.kind === "aggregate") === projects)

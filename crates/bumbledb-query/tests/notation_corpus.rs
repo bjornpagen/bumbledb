@@ -296,6 +296,7 @@ fn find_json(find: &FindTerm) -> String {
         FindTerm::Event(_)
         | FindTerm::Test(_)
         | FindTerm::Probability { .. }
+        | FindTerm::Guard(_)
         | FindTerm::Number(_)
         | FindTerm::Predicate(_)
         | FindTerm::PredicateTest { .. }

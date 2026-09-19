@@ -49,6 +49,7 @@
 		"expectation",
 		"number",
 		"predicate",
+		"guard",
 		"predicateTest",
 		"count",
 		"aggregate",

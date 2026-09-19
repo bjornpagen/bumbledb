@@ -88,6 +88,7 @@ const ROSTERS = {
 		"expectation",
 		"number",
 		"predicate",
+		"guard",
 		"predicateTest",
 		"count",
 		"aggregate",

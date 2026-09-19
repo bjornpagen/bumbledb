@@ -445,7 +445,8 @@ impl Coverage {
                 FindTerm::Probability { .. } => {
                     projected_words += 4;
                 }
-                FindTerm::Number(_)
+                FindTerm::Guard(_)
+                | FindTerm::Number(_)
                 | FindTerm::Predicate(_)
                 | FindTerm::PredicateTest { .. }
                 | FindTerm::Test(_)

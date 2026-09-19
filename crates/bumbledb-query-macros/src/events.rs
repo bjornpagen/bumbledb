@@ -307,6 +307,7 @@ pub(super) fn imported(name: &Name, imports: &[Import], kind: ImportKind) -> Par
                     "query!: composition/residual/closure requires a declared `use product` import"
                 }
                 ImportKind::Payoff => "query!: Payoff requires a declared `use payoff` import",
+                ImportKind::Guard => "query!: Guard requires a declared `use guard` import",
                 ImportKind::Predicate => {
                     "query!: Imported requires a declared `use predicate` import"
                 }

@@ -200,3 +200,10 @@ export function predicateFromIr(input: PredicateExprIr, variableAt: (v: number) 
 	}
 	return walk(input)
 }
+
+export function asPredicateExpr(value: PredicateOperand): PredicateExpr {
+	return expression(value)
+}
+export function predicateShape(value: PredicateExpr): Shape {
+	return data(value)
+}

@@ -88,9 +88,11 @@ pub(crate) struct Query {
     pub rec: Option<Rec>,
 }
 
+mod guards;
 mod numbers;
 mod payoffs;
 mod predicates;
+pub(crate) use guards::GuardExpr;
 pub(crate) use numbers::NumberExpr;
 use payoffs::PayoffAdmission;
 pub(crate) use predicates::PredicateExpr;
@@ -107,6 +109,7 @@ pub(crate) enum Payoff {
 
 #[derive(Debug)]
 pub(crate) enum FindTerm {
+    Guard(GuardExpr),
     Number(NumberExpr),
     Predicate(PredicateExpr),
     PredicateTest {
@@ -371,6 +374,7 @@ impl Admit for FindTerm {
         use bumbledb::FindTerm as O;
         work.checkpoint()?;
         Ok(match self {
+            Self::Guard(v) => O::Guard(PayoffAdmission::new(work).guard(v)?),
             Self::Predicate(v) => O::Predicate(PayoffAdmission::new(work).predicate(v, 1)?),
             Self::PredicateTest {
                 predicate,

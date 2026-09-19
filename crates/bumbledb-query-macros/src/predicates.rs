@@ -40,7 +40,7 @@ fn end(tokens: &mut Tokens) -> Parse<()> {
         Ok(())
     }
 }
-fn expression(tokens: &mut Tokens, precedence: u8, depth: usize) -> Parse<Expression> {
+pub(super) fn expression(tokens: &mut Tokens, precedence: u8, depth: usize) -> Parse<Expression> {
     if precedence == 3 {
         return unary(tokens, depth);
     }
@@ -182,18 +182,21 @@ fn unary(tokens: &mut Tokens, depth: usize) -> Parse<Expression> {
     bounded(value)
 }
 fn bounded(value: Expression) -> Parse<Expression> {
-    let mut pending = vec![(&value, 1usize)];
-    let mut nodes = 0usize;
+    check_shape(&value, 1, &mut 0)?;
+    Ok(value)
+}
+pub(super) fn check_shape(value: &Expression, depth: usize, nodes: &mut usize) -> Parse<()> {
+    let mut pending = vec![(value, depth)];
     while let Some((node, depth)) = pending.pop() {
-        nodes += 1;
-        if depth > 128 || nodes > 4096 {
+        *nodes += 1;
+        if depth > 128 || *nodes > 4096 {
             return fail(
                 proc_macro::Span::call_site(),
                 "query!: predicate expression exceeds shape budget",
             );
         }
         match node {
-            Expression::Sign(number, _) => numbers::check_shape(number, depth + 1, &mut nodes)?,
+            Expression::Sign(number, _) => numbers::check_shape(number, depth + 1, nodes)?,
             Expression::Negate(value) | Expression::OnDomain(value, _) => {
                 pending.push((value, depth + 1));
             }
@@ -204,7 +207,7 @@ fn bounded(value: Expression) -> Parse<Expression> {
             _ => {}
         }
     }
-    Ok(value)
+    Ok(())
 }
 impl Expression {
     pub(super) fn emit(&self, scope: &Scope, imports: &[Import], depth: usize) -> Parse<String> {

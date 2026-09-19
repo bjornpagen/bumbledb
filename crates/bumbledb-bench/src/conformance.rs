@@ -449,6 +449,7 @@ fn push_find(out: &mut String, find: &FindTerm) -> Result<(), Exclusion> {
         | FindTerm::Event(_)
         | FindTerm::Test(_)
         | FindTerm::Probability { .. }
+        | FindTerm::Guard(_)
         | FindTerm::Number(_)
         | FindTerm::Predicate(_)
         | FindTerm::PredicateTest { .. }
@@ -534,6 +535,11 @@ fn count_vars(rule: &Rule) -> u16 {
             | FindTerm::PredicateTest {
                 predicate: expr, ..
             } => {
+                for var in expr.variables() {
+                    see(&mut count, var);
+                }
+            }
+            FindTerm::Guard(expr) => {
                 for var in expr.variables() {
                     see(&mut count, var);
                 }

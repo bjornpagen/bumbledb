@@ -110,6 +110,7 @@ impl std::error::Error for NumberExprError {}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ObservationInputKind {
+    Event,
     Predicate,
     Number,
     Integer,

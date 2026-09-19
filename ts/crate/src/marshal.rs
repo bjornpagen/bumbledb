@@ -28,6 +28,7 @@ use crate::ingress::query::{
 };
 use crate::ingress::{CopyContext, ImportInput, ParamInput, ValueInput};
 use crate::tags;
+mod guards;
 mod numbers;
 mod predicates;
 
@@ -1394,6 +1395,13 @@ fn find_term_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<FindTerm> 
     let kind: String = req_text(obj, "kind", "find term")?;
     match kind.as_str() {
         tags::find_term::VAR => Ok(FindTerm::Var(var_in(obj, "var", "var find")?)),
+        tags::find_term::GUARD => {
+            exact_fields(obj, &["kind", "expr"])?;
+            Ok(FindTerm::Guard(guards::parse(
+                &req::<Object>(obj, "expr", "guard find")?,
+                &mut EventBudget::new(copy),
+            )?))
+        }
         tags::find_term::PREDICATE | tags::find_term::PREDICATE_TEST => {
             if kind == tags::find_term::PREDICATE {
                 exact_fields(obj, &["kind", "expr"])?;

@@ -107,6 +107,7 @@ fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedP
                 sink_vars.extend([*left, *right]);
             }
             FindTerm::Compute(expr) => sink_vars.extend(expr.variables()),
+            FindTerm::Guard(expr) => sink_vars.extend(expr.variables()),
             FindTerm::Number(expr) => sink_vars.extend(expr.variables()),
             FindTerm::Predicate(expr)
             | FindTerm::PredicateTest {

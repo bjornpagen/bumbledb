@@ -49,6 +49,7 @@ impl<'a> PayoffAdmission<'a> {
         for find in input.finds {
             work.checkpoint()?;
             finds.push(match find {
+                FindTerm::Guard(value) => bumbledb::FindTerm::Guard(self.guard(value)?),
                 FindTerm::Predicate(value) => {
                     bumbledb::FindTerm::Predicate(self.predicate(value, 1)?)
                 }

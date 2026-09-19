@@ -151,6 +151,7 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }
+            | FindTerm::Guard(_)
             | FindTerm::Number(_)
             | FindTerm::Predicate(_)
             | FindTerm::PredicateTest { .. }
@@ -189,6 +190,7 @@ fn head_projection_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }
+            | FindTerm::Guard(_)
             | FindTerm::Number(_)
             | FindTerm::Predicate(_)
             | FindTerm::PredicateTest { .. }
@@ -230,6 +232,7 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }
+            | FindTerm::Guard(_)
             | FindTerm::Number(_)
             | FindTerm::Predicate(_)
             | FindTerm::PredicateTest { .. }
@@ -322,6 +325,7 @@ fn fold_sql(
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }
+            | FindTerm::Guard(_)
             | FindTerm::Number(_)
             | FindTerm::Predicate(_)
             | FindTerm::PredicateTest { .. }

@@ -1,0 +1,21 @@
+'QueryBinders.least_below_prefixed' does not depend on any axioms
+'QueryBinders.least_prefixed' does not depend on any axioms
+'QueryBinders.least_postfixed' does not depend on any axioms
+'QueryBinders.least_fixed' depends on axioms: [propext, Quot.sound]
+'QueryBinders.postfixed_below_greatest' does not depend on any axioms
+'QueryBinders.greatest_postfixed' does not depend on any axioms
+'QueryBinders.greatest_prefixed' does not depend on any axioms
+'QueryBinders.greatest_fixed' depends on axioms: [propext, Quot.sound]
+'QueryBinders.least_operator_covariant' does not depend on any axioms
+'QueryBinders.greatest_operator_covariant' does not depend on any axioms
+'QueryBinders.nested_least_monotone' does not depend on any axioms
+'QueryBinders.nested_greatest_monotone' does not depend on any axioms
+'QueryBinders.nearest_predicate' does not depend on any axioms
+'QueryBinders.outer_predicate' does not depend on any axioms
+'QueryBinders.older_predicate' does not depend on any axioms
+'QueryBinders.may_covariant' does not depend on any axioms
+'QueryBinders.all_contravariant_relation_covariant_predicate' does not depend on any axioms
+'QueryBinders.must_covariant_fixed_relation' does not depend on any axioms
+'QueryBinders.must_not_monotone_relation' does not depend on any axioms
+'QueryBinders.must_not_antitone_relation' does not depend on any axioms
+'QueryBinders.residual_variance' does not depend on any axioms

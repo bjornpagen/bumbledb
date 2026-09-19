@@ -506,6 +506,7 @@ fn prepare_reach(
 fn has_event_diagnostics(rule: crate::ir::validate::RuleWitness<'_>) -> bool {
     rule.rule().finds.iter().any(|term| match term {
         FindTerm::Event(_)
+        | FindTerm::Guard(_)
         | FindTerm::Number(_)
         | FindTerm::Predicate(_)
         | FindTerm::PredicateTest { .. }
@@ -766,6 +767,7 @@ fn prepare_rule(
                 // the computed sink declines every scan-fold pushdown.
                 FindTerm::Segments { .. }
                 | FindTerm::Compute(_)
+                | FindTerm::Guard(_)
                 | FindTerm::Number(_)
                 | FindTerm::Predicate(_)
                 | FindTerm::PredicateTest { .. }
@@ -964,6 +966,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                 slot: layout.slot_of(*var),
                 width: layout.width_of(*var),
             },
+            FindTerm::Guard(expr) => compute(find_idx, term, expr.variables().collect()),
             FindTerm::Number(expr) => compute(find_idx, term, expr.variables().collect()),
             FindTerm::Predicate(expr)
             | FindTerm::PredicateTest {
@@ -1069,6 +1072,7 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
             // slot the radix table cannot cover: stay hashed.
             FindTerm::Segments { .. }
             | FindTerm::Compute(_)
+            | FindTerm::Guard(_)
             | FindTerm::Number(_)
             | FindTerm::Predicate(_)
             | FindTerm::PredicateTest { .. }

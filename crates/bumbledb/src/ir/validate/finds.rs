@@ -93,7 +93,7 @@ impl Signature {
                         })
                         .expect("validated output expression"),
                 },
-                FindTerm::Event(_) => SignatureColumn::Project {
+                FindTerm::Event(_) | FindTerm::Guard(_) => SignatureColumn::Project {
                     ty: ValueType::Event,
                 },
                 FindTerm::Probability { .. } => SignatureColumn::Probability,
@@ -152,6 +152,7 @@ impl Context {
                 FindTerm::Var(_)
                 | FindTerm::Count
                 | FindTerm::Number(_)
+                | FindTerm::Guard(_)
                 | FindTerm::Predicate(_)
                 | FindTerm::PredicateTest { .. } => Vec::new(),
                 FindTerm::Compute(expr) => expr.variables().collect(),
@@ -174,6 +175,9 @@ impl Context {
             match term {
                 FindTerm::Number(expression) => {
                     self.check_observation_inputs(expression.inputs(), find, false)?;
+                }
+                FindTerm::Guard(expression) => {
+                    self.check_observation_inputs(expression.inputs(), find, true)?;
                 }
                 FindTerm::Predicate(expression)
                 | FindTerm::PredicateTest {
@@ -351,6 +355,10 @@ impl Context {
                 return Err(error(crate::NumberExprError::UnboundVariable(var)));
             }
             let valid = match expected {
+                ObservationInputKind::Event => matches!(
+                    self.var_types.get(&var),
+                    Some(QueryType::Stored(ValueType::Event))
+                ),
                 ObservationInputKind::Integer => matches!(
                     self.var_types.get(&var),
                     Some(QueryType::Stored(ValueType::I64 | ValueType::U64))

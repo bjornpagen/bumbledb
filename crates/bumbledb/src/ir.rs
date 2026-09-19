@@ -179,6 +179,8 @@ pub enum FindTerm {
     Number(crate::NumberExpr),
     /// An owned exact true/false/undefined partition, preserving its derivation.
     Predicate(crate::PredicateExpr),
+    /// Explicit source-bound guard construction or law-preserving transport.
+    Guard(crate::GuardExpr),
     /// Explicit reduction of a truth partition to a database Boolean.
     PredicateTest {
         predicate: crate::PredicateExpr,
@@ -239,6 +241,7 @@ impl FindTerm {
         match self {
             Self::Var(_) => HeadTerm::Var,
             Self::Compute(_)
+            | Self::Guard(_)
             | Self::Number(_)
             | Self::Predicate(_)
             | Self::PredicateTest { .. }

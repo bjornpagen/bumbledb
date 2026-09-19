@@ -220,6 +220,7 @@ fn rule_arms(
                 | FindTerm::Event(_)
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
+                | FindTerm::Guard(_)
                 | FindTerm::Number(_)
                 | FindTerm::Predicate(_)
                 | FindTerm::PredicateTest { .. }
