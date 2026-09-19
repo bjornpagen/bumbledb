@@ -99,6 +99,8 @@ pub enum Error {
     MissingParameter,
     IllegalParameter,
     ParameterRefinementRequired,
+    ParameterGuardEssential,
+    NoParameterSources,
     ParameterGuardMismatch,
     ParameterGuardElimination,
     InfiniteWorlds,
@@ -202,7 +204,13 @@ impl fmt::Display for Error {
             Self::MissingParameter => f.write_str("the Event space has no parameter domain"),
             Self::IllegalParameter => f.write_str("parameter value is outside the admitted domain"),
             Self::ParameterRefinementRequired => {
-                f.write_str("the map requires an explicit common guard refinement")
+                f.write_str("the Event operation requires an explicit guard refinement")
+            }
+            Self::ParameterGuardEssential => {
+                f.write_str("an essential parameter guard cannot be removed from this Event")
+            }
+            Self::NoParameterSources => {
+                f.write_str("common guard refinement requires at least one source")
             }
             Self::ParameterGuardMismatch => {
                 f.write_str("map readouts change a parameter guard's meaning")

@@ -35289,8 +35289,8 @@
       "sha256": "10ce0cb12eb4ec2812e5bf5e52a8b971f0291e42db1494233af017332345f96d"
     },
     "proposal/implementation-plan.md": {
-      "bytes": 27776,
-      "sha256": "bd6342669a8b17517b0946411bf93252233315c636be0e9f3b43b4040caafce4"
+      "bytes": 28283,
+      "sha256": "beb976322fffee5b0157397793b2b772d0f5822ebbe15d27810f390fa89e840b"
     },
     "proposal/kernels/arm64-probe.c": {
       "bytes": 2880,
@@ -36617,8 +36617,8 @@
       "sha256": "d1020bfa7943432784d43604f416892b489191b5c5c0f3dcdb68607caf3c3abe"
     },
     "proposal/source-law.md": {
-      "bytes": 17129,
-      "sha256": "18eb88422f891ed6593b8746cccbf7c58173ef29619225f074abe53cefc71f64"
+      "bytes": 18307,
+      "sha256": "3b4182278bb543347b0466091c3a75e1fc96ece5defbf459ee9c556ba5c985e9"
     },
     "proposal/sources.md": {
       "bytes": 25408,

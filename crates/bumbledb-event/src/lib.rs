@@ -57,8 +57,8 @@ pub use measure::{DensityPiece, LawLimits, ProbabilityObservation};
 pub use parameter::{
     GuardedRationalFunction, ParameterCell, ParameterCodecLimits, ParameterDensityPiece,
     ParameterDomain, ParameterFunction, ParameterGuard, ParameterLimits,
-    ParameterProbabilityObservation, ParameterRegion, ParameterSourceLimits, ParameterWorld,
-    PolynomialSigns, RealWitness, WorldCardinality,
+    ParameterProbabilityObservation, ParameterRefinement, ParameterRegion, ParameterSourceLimits,
+    ParameterWorld, PolynomialSigns, RealWitness, WorldCardinality,
 };
 pub use partition::{EventPartition, PartitionLimits};
 pub use polynomial::{ExactPolynomial, ParameterId, PolynomialLimits, PolynomialTerm};
@@ -130,3 +130,6 @@ mod algebraic_identity_tests;
 
 #[cfg(test)]
 mod parameter_source_tests;
+
+#[cfg(test)]
+mod parameter_refinement_tests;

@@ -983,3 +983,170 @@ fn parameter_guarded_zero_mass_worlds_still_participate_in_fd_and_ind_admission(
     assert!(observation.is_impossible());
     assert_eq!(retained.count(&()).unwrap(), 2);
 }
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn guard_refinement_splits_a_stored_partition_and_preserves_its_family_through_free_join() {
+    use bumbledb::{
+        event::{BoolOp4, ParameterRefinement, ParameterSourceLimits},
+        query,
+    };
+    let dir = common::TempDir::new("event-parameter-refinement");
+    let db = Db::create(dir.path(), PartitionSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let source = parameterized_draws();
+    let heads = source.coordinate(0, &()).unwrap();
+    let parent = Parent {
+        group: 1,
+        condition: source.full(),
+    };
+    let yes = Child {
+        group: 1,
+        branch: 1,
+        condition: heads.clone(),
+    };
+    let no = Child {
+        group: 1,
+        branch: 2,
+        condition: heads.complement(),
+    };
+    db.write(common::work(), |tx| {
+        tx.insert([&parent])?;
+        tx.insert([&yes, &no])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    let limits = ParameterSourceLimits::default();
+    let above_half = parameter_above_half(&source);
+    let refinement = ParameterRefinement::new(
+        SpaceId([98; 32]),
+        &source,
+        std::slice::from_ref(&above_half),
+        limits,
+        &mut arithmetic(),
+    )
+    .unwrap();
+    let refined = refinement.refined();
+    let guard = refined
+        .parameter_event(&above_half, limits, &mut arithmetic())
+        .unwrap();
+    let lifted = refinement.lift(&heads, &()).unwrap();
+    let high = Child {
+        group: 1,
+        branch: 1,
+        condition: lifted.apply(BoolOp4::AND, &guard, &()).unwrap(),
+    };
+    let low = Child {
+        group: 1,
+        branch: 2,
+        condition: lifted
+            .apply(BoolOp4::AND, &guard.complement(), &())
+            .unwrap(),
+    };
+    let tails = Child {
+        group: 1,
+        branch: 3,
+        condition: lifted.complement(),
+    };
+    db.write(common::work(), |tx| {
+        tx.delete([&parent])?;
+        tx.delete([&yes, &no])?;
+        tx.insert([&Parent {
+            group: 1,
+            condition: refined.full(),
+        }])?;
+        tx.insert([&high, &low, &tails])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        db.write(common::work(), |tx| tx.delete([&low])).unwrap(),
+        Admission::Rejected(_)
+    ));
+    drop((
+        source, heads, parent, yes, no, refinement, guard, lifted, high, low, tails, db,
+    ));
+    let db = Db::open(dir.path(), PartitionSchema, common::work()).unwrap();
+    let query = query!(PartitionSchema {
+        (branch, region: Event(all & part)) | Parent(group: group, condition: all), Child(group: group, branch: branch, condition: part);
+    });
+    let mut results = Vec::new();
+    for cursor in [false, true] {
+        let mut prepared = db.prepare(&query, common::work()).unwrap();
+        prepared.force_cursor_fallback(cursor);
+        results.push(
+            db.read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((db, query));
+    for answers in results {
+        check_refined_partition(&answers);
+    }
+}
+
+fn parameter_above_half(source: &Space) -> bumbledb::event::ParameterRegion {
+    use bumbledb::event::{
+        ExactPolynomial, ParameterRegion, ParameterSourceLimits, PolynomialSigns,
+    };
+    let limits = ParameterSourceLimits::default();
+    let name = source.parameter_domain().unwrap().parameter();
+    let p = ExactPolynomial::parameter(name);
+    let polynomial = p
+        .mul(
+            &ExactPolynomial::constant(2u64.into()),
+            limits.parameters.region.polynomial,
+            &mut arithmetic(),
+        )
+        .unwrap()
+        .sub(
+            &ExactPolynomial::one(),
+            limits.parameters.region.polynomial,
+            &mut arithmetic(),
+        )
+        .unwrap();
+    ParameterRegion::from_polynomial(
+        name,
+        &polynomial,
+        PolynomialSigns::POSITIVE,
+        limits.parameters.region,
+        &mut arithmetic(),
+    )
+    .unwrap()
+}
+
+fn check_refined_partition(answers: &bumbledb::Answers) {
+    let limits = bumbledb::event::ParameterSourceLimits::default();
+    assert_eq!(answers.len(), 3);
+    for row in 0..answers.len() {
+        let (AnswerValue::U64(branch), AnswerValue::Event(event)) =
+            (answers.get(row, 0), answers.get(row, 1))
+        else {
+            panic!("refined branch")
+        };
+        let mass = event.parameter_mass(limits, &mut arithmetic()).unwrap();
+        for numerator in 0..=8 {
+            let expected = match branch {
+                1 if numerator > 4 => ratio(numerator, 8),
+                2 if numerator <= 4 => ratio(numerator, 8),
+                3 => ratio(8 - numerator, 8),
+                _ => ratio(0, 1),
+            };
+            assert_eq!(
+                mass.value_at(
+                    &ratio(numerator, 8),
+                    limits.parameters.region,
+                    limits.functions,
+                    &mut arithmetic()
+                )
+                .unwrap(),
+                Some(expected)
+            );
+        }
+    }
+}

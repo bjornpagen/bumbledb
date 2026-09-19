@@ -3,27 +3,27 @@ use crate::*;
 use std::cmp::Ordering;
 
 const P: ParameterId = ParameterId([44; 32]);
-fn work() -> ExactArithmetic<'static> {
+pub(super) fn work() -> ExactArithmetic<'static> {
     ExactArithmetic::new(ArithmeticLimits::default(), &())
 }
-fn limits() -> ParameterSourceLimits {
+pub(super) fn limits() -> ParameterSourceLimits {
     ParameterSourceLimits::default()
 }
-fn p() -> ExactPolynomial {
+pub(super) fn p() -> ExactPolynomial {
     ExactPolynomial::parameter(P)
 }
-fn c(n: u64) -> ExactPolynomial {
+pub(super) fn c(n: u64) -> ExactPolynomial {
     ExactPolynomial::constant(ExactRational::from(n))
 }
-fn sub(a: &ExactPolynomial, b: &ExactPolynomial) -> ExactPolynomial {
+pub(super) fn sub(a: &ExactPolynomial, b: &ExactPolynomial) -> ExactPolynomial {
     a.sub(b, limits().parameters.region.polynomial, &mut work())
         .unwrap()
 }
-fn mul(a: &ExactPolynomial, b: &ExactPolynomial) -> ExactPolynomial {
+pub(super) fn mul(a: &ExactPolynomial, b: &ExactPolynomial) -> ExactPolynomial {
     a.mul(b, limits().parameters.region.polynomial, &mut work())
         .unwrap()
 }
-fn sign(polynomial: &ExactPolynomial, signs: PolynomialSigns) -> ParameterRegion {
+pub(super) fn sign(polynomial: &ExactPolynomial, signs: PolynomialSigns) -> ParameterRegion {
     ParameterRegion::from_polynomial(
         P,
         polynomial,
@@ -33,7 +33,7 @@ fn sign(polynomial: &ExactPolynomial, signs: PolynomialSigns) -> ParameterRegion
     )
     .unwrap()
 }
-fn domain() -> ParameterDomain {
+pub(super) fn domain() -> ParameterDomain {
     ParameterDomain::new(
         sign(&p(), PolynomialSigns::NON_NEGATIVE)
             .apply(
@@ -60,7 +60,7 @@ fn function(
     )
     .unwrap()
 }
-fn space(id: u8, bits: u8, guards: &[ParameterGuard]) -> Space {
+pub(super) fn space(id: u8, bits: u8, guards: &[ParameterGuard]) -> Space {
     Space::new(SpaceId([id; 32]), bits, &())
         .unwrap()
         .with_parameters(domain(), guards, limits(), &mut work())
@@ -78,10 +78,10 @@ fn endpoint_guards() -> Vec<ParameterGuard> {
         },
     ]
 }
-fn and(a: &Event, b: &Event) -> Event {
+pub(super) fn and(a: &Event, b: &Event) -> Event {
     a.apply(BoolOp4::AND, b, &()).unwrap()
 }
-fn ratio(n: &str, d: &str) -> ExactRational {
+pub(super) fn ratio(n: &str, d: &str) -> ExactRational {
     ExactRational::fraction(n, d, &mut work()).unwrap()
 }
 fn value(f: &ParameterFunction, p: ExactRational) -> Option<ExactRational> {
@@ -93,7 +93,7 @@ fn value(f: &ParameterFunction, p: ExactRational) -> Option<ExactRational> {
     )
     .unwrap()
 }
-fn shared_bias() -> Space {
+pub(super) fn shared_bias() -> Space {
     let raw = space(201, 4, &endpoint_guards());
     let a = raw.coordinate(0, &()).unwrap();
     let b = raw.coordinate(1, &()).unwrap();

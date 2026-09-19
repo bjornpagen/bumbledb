@@ -48,17 +48,30 @@ impl Runtime {
         lane: LaneId,
         command: WorkerCommand,
     ) -> Result<(), RuntimeError> {
-        self.lane_senders
+        let sender = self
+            .lane_senders
             .get(lane.0)
-            .ok_or(RuntimeError::Internal)?
-            .send(command)
-            .map_err(|_| RuntimeError::ClosedHandle)?;
-        // Hold the bookkeeping lock across notify so a worker that has
-        // decided to sleep cannot miss this inbox item (lost-wakeup).
-        // Caller must not already hold `runtime.state`.
-        let _state = super::lock(&self.state);
+            .ok_or(RuntimeError::Internal)?;
+        // Serialize enqueue with the worker's last inbox check/exit decision.
+        // A channel send can otherwise succeed after that decision but before
+        // its receiver drops, leaving an owned operation with no consumer.
+        // Caller must not already hold runtime.state.
+        let state = super::lock(&self.state);
+        if state.phase != super::Phase::Open
+            && matches!(
+                &command,
+                WorkerCommand::Resource { .. } | WorkerCommand::InstallSend { .. }
+            )
+        {
+            // Work can own reservations whose Drop re-enters this runtime.
+            drop(state);
+            return Err(RuntimeError::ClosedHandle);
+        }
+        let result = sender.send(command);
         self.changed.notify_all();
-        Ok(())
+        drop(state);
+        // A failed send still owns its command; drop that outside bookkeeping.
+        result.map_err(|_| RuntimeError::ClosedHandle)
     }
 
     /// Inbox Wake + lock-held notify. Caller must not hold `runtime.state`.
@@ -81,5 +94,100 @@ impl Runtime {
 
     pub(crate) fn send_close(&self, cap: Capability) -> Result<(), RuntimeError> {
         self.lane_send(LaneId(cap.worker as usize), WorkerCommand::Close(cap))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::registry::{NativeKind, Payload, RegistryAdmission, ResultState};
+    use crate::runtime::{CloseReport, Options, Output};
+    use bumbledb::WorkContext;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct InspectOnDrop(Arc<Runtime>);
+    impl Drop for InspectOnDrop {
+        fn drop(&mut self) {
+            // Rejected work may own a reservation or close guard whose drop
+            // re-enters runtime bookkeeping. Never drop it under that lock.
+            self.0.inspect();
+        }
+    }
+
+    #[test]
+    fn closing_refuses_new_owned_inbox_work_even_while_the_receiver_is_alive() {
+        let runtime = Runtime::start(Options {
+            workers: 1,
+            queue_capacity: 4,
+            cleanup_capacity: 4,
+            owner_capacity: 4,
+            native_handle_capacity: 4,
+            cleanup_timeout: Duration::from_secs(2),
+        })
+        .unwrap();
+        let native = RegistryAdmission::admit(
+            Arc::clone(&runtime),
+            NativeKind::Result,
+            Payload::Result {
+                result: None,
+                state: ResultState::Live,
+            },
+        )
+        .unwrap();
+        let (entered, running) = channel();
+        let (release, blocked) = channel();
+        let (notify, done) = channel();
+        let operation = runtime
+            .submit_payload(
+                native.cap(),
+                WorkContext::new(),
+                Box::new(move || {
+                    let _ = notify.send(());
+                }),
+                |_| {
+                    Ok(Box::new(move |_, _, _| {
+                        entered.send(()).unwrap();
+                        blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+                        Ok(Output::Ready)
+                    }))
+                },
+            )
+            .unwrap();
+        running.recv_timeout(Duration::from_secs(5)).unwrap();
+        runtime.begin_close();
+        let reentrant = InspectOnDrop(Arc::clone(&runtime));
+        let routed = runtime.send_resource(
+            native.cap(),
+            Message::Payload {
+                operation: Arc::clone(&operation),
+                work: Box::new(move |_, _, _| {
+                    drop(reentrant);
+                    panic!("closing work cannot execute")
+                }),
+            },
+        );
+        let installed = runtime.install_send_payload(
+            native.cap(),
+            Payload::Result {
+                result: None,
+                state: ResultState::Live,
+            },
+        );
+        release.send(()).unwrap();
+        done.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (notify, done) = channel();
+        runtime.drain(
+            None,
+            Box::new(move |report| {
+                notify.send(report).unwrap();
+            }),
+        );
+        let closed = done.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(routed, Err(RuntimeError::ClosedHandle));
+        assert_eq!(installed, Err(RuntimeError::ClosedHandle));
+        assert_eq!(closed, CloseReport::Closed);
+        assert_eq!(runtime.inspect().retained, 0);
+        assert_eq!(runtime.inspect().natives, 0);
     }
 }

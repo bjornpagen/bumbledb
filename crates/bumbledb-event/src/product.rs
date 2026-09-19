@@ -1,4 +1,4 @@
-//! Full products over a common, explicitly finite environment. A product has
+//! Full products over a common, sealed environment presentation. A product has
 //! every compatible legal pair; behavioral restrictions are separate Events.
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ struct Faces {
     projections: Vec<SurjectiveMap>,
 }
 
-/// A full product of any nonempty roster of finite faces over one environment.
+/// A full product of any nonempty roster of faces over one sealed environment.
 /// Face indices select owned descriptors; they are not unchecked bit offsets.
 /// Every face has nonempty fibres throughout the shared admitted environment.
 #[derive(Debug, Clone)]
@@ -174,13 +174,14 @@ struct Product {
     right: SurjectiveMap,
 }
 
-/// All legal endpoint pairs with the same finite environment value. Both
+/// All legal endpoint pairs with the same environment value. Both
 /// endpoints have a nonempty fibre at every environment because their maps
 /// are certified onto. There is no probability law or independence assertion.
 ///
 /// Original semantic coordinates concatenate left and right codes. Converse
 /// exchanges endpoint roles without moving the underlying Event coordinates.
-/// This finite constructor cannot identify continuous parameters by guard bits.
+/// Parameterized endpoints capture the same actual parameter assignment;
+/// equality of guard codes alone is not equality of real parameters.
 #[derive(Debug, Clone)]
 pub struct FibreProduct {
     inner: Arc<Product>,

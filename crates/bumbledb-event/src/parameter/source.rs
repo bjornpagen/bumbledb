@@ -10,8 +10,10 @@ use crate::{
 };
 
 mod measure;
+mod refinement;
 pub(crate) mod wire;
 pub use measure::{ParameterDensityPiece, ParameterProbabilityObservation};
+pub use refinement::ParameterRefinement;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ParameterSourceLimits {
@@ -222,7 +224,7 @@ impl Space {
 
     /// Verify that a finite readout map also preserves the same real parameter.
     /// Both sealed guard presentations must resolve the same exact partition.
-    /// Refinement across different partitions needs an explicit new descriptor.
+    /// Different partitions require explicit `ParameterRefinement` first.
     pub(crate) fn parameter_map(
         &self,
         target: &Self,
