@@ -276,13 +276,30 @@ impl CoordinateMap {
     /// # Errors
     /// Refuses incompatible middle spaces, cancellation or exhausted resources.
     pub fn then(&self, next: &Self, control: &dyn Control) -> Result<Self> {
+        self.then_with_parameters(
+            next,
+            crate::ParameterSourceLimits::default(),
+            &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Compose while charging parameter admission to the caller's shared work.
+    /// # Errors
+    /// Has `then`'s contract, plus parameter-domain and arithmetic refusal.
+    pub fn then_with_parameters(
+        &self,
+        next: &Self,
+        limits: crate::ParameterSourceLimits,
+        work: &mut crate::ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let control = work.control();
         next.source().full().align_to(self.target(), control)?;
         let mut readouts = Vec::new();
         readouts.try_reserve_exact(next.readouts().len())?;
         for event in next.readouts() {
             readouts.push(self.pullback(event, control)?);
         }
-        Self::new(self.source(), next.target(), &readouts, control)
+        Self::new_with_parameters(self.source(), next.target(), &readouts, limits, work)
     }
 
     /// Extensional equality of maps between checked equal source/target spaces.

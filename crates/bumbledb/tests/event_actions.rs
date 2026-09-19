@@ -1,8 +1,9 @@
 use bumbledb::{
     AnswerValue, BindValue, Db, Fact, WorkContext,
     event::{
-        ActionArena, CoordinateMap, Error, FibreProduct, FixedPointLimits, PartitionLimits, Space,
-        SpaceId, WorldRelation,
+        ActionArena, ActionDescriptor, ActionDescriptorLimits, AdmittedActionDescriptor,
+        ArithmeticLimits, CoordinateMap, Error, ExactArithmetic, FibreProduct, FixedPointLimits,
+        PartitionLimits, Space, SpaceId, WorldRelation,
     },
     ir::{Atom, AtomSource, FindTerm, Query, Rule, Term, VarId},
     schema::FieldId,
@@ -86,6 +87,23 @@ fn strategy_regions_ranks_and_policy_persist_as_ordinary_event_facts() {
             &common::work(),
         )
         .unwrap();
+    let limits = ActionDescriptorLimits::default();
+    let recipe = ActionDescriptor::capture(
+        &AdmittedActionDescriptor::Reach(strategy),
+        limits.descriptors,
+        &(),
+    )
+    .unwrap();
+    let bytes = recipe.to_bytes(limits.descriptors, &()).unwrap();
+    drop(recipe);
+    let AdmittedActionDescriptor::Reach(strategy) = ActionDescriptor::import(
+        &bytes,
+        limits,
+        &mut ExactArithmetic::new(ArithmeticLimits::default(), &()),
+    )
+    .unwrap() else {
+        panic!("checked reach strategy")
+    };
     db.write(common::work(), |tx| {
         tx.insert([&Winning {
             id: 1,

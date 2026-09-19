@@ -5,6 +5,27 @@ use crate::{
     PartitionLimits, RelationalProduct, Result, Space, SpaceId, SurjectiveMap, WorldRelation,
 };
 
+#[path = "action_transport_tests.rs"]
+mod transport;
+
+fn replay(value: crate::AdmittedActionDescriptor) -> crate::AdmittedActionDescriptor {
+    let limits = crate::ActionDescriptorLimits::default();
+    let data = crate::ActionDescriptor::capture(&value, limits.descriptors, &()).unwrap();
+    let bytes = data.to_bytes(limits.descriptors, &()).unwrap();
+    drop(value);
+    let imported = crate::ActionDescriptor::import(
+        &bytes,
+        limits,
+        &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), &()),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::ActionDescriptor::capture(&imported, limits.descriptors, &()).unwrap(),
+        data
+    );
+    imported
+}
+
 fn space(id: u8, bits: u8) -> Space {
     Space::new(SpaceId([id; 32]), bits, &()).unwrap()
 }
@@ -97,6 +118,11 @@ fn every_two_state_action_arena_matches_enumerated_policy_oracles() {
     for edges in 0..256 {
         let transition = WorldRelation::new(&steps, &table(steps.space(), edges), &()).unwrap();
         let arena = ActionArena::new(&actions, &transition, &()).unwrap();
+        let crate::AdmittedActionDescriptor::Arena(arena) =
+            replay(crate::AdmittedActionDescriptor::Arena(arena))
+        else {
+            panic!()
+        };
         assert_eq!(
             mask(arena.enabled(&()).unwrap().region(), 4),
             good(edges, 3)
@@ -119,6 +145,11 @@ fn every_two_state_action_arena_matches_enumerated_policy_oracles() {
             let reach = arena
                 .winning_reach(&event, limits, PartitionLimits::default(), &())
                 .unwrap();
+            let crate::AdmittedActionDescriptor::Reach(reach) =
+                replay(crate::AdmittedActionDescriptor::Reach(reach))
+            else {
+                panic!()
+            };
             assert_eq!(mask(reach.winning(), 2), policy_oracle(edges, goal, false));
             let mut earlier = 0;
             let mut allowed = 0;
@@ -136,6 +167,11 @@ fn every_two_state_action_arena_matches_enumerated_policy_oracles() {
             assert_eq!(earlier, mask(reach.winning(), 2));
             assert_eq!(mask(reach.policy().region(), 4), allowed);
             let safe = arena.winning_safe(&event, limits, &()).unwrap();
+            let crate::AdmittedActionDescriptor::Safe(safe) =
+                replay(crate::AdmittedActionDescriptor::Safe(safe))
+            else {
+                panic!()
+            };
             let winning = policy_oracle(edges, goal, true);
             assert_eq!(mask(safe.winning(), 2), winning);
             assert_eq!(

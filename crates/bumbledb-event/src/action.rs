@@ -3,9 +3,10 @@
 //! visibility, probability policy or belief-memory update is inferred here.
 use crate::product::require_same_map;
 use crate::{
-    BoolOp4, Control, Error, Event, EventProgram, EventProgramBuilder, FibreProduct,
-    FixedPointLimits, FixedPointProgram, FixedPointResult, LayeredFixedPointResult, MapOp, ModalOp,
-    PartitionLimits, RelationalProduct, Result, Space, WorldRelation,
+    ArithmeticLimits, BoolOp4, Control, Error, Event, EventProgram, EventProgramBuilder,
+    ExactArithmetic, FibreProduct, FixedPointLimits, FixedPointProgram, FixedPointResult,
+    LayeredFixedPointResult, MapOp, ModalOp, ParameterSourceLimits, PartitionLimits,
+    RelationalProduct, Result, Space, WorldRelation,
 };
 
 /// A checked Step(state, action, outcome) view. Its source is the full legal
@@ -35,6 +36,16 @@ use crate::{
 /// assert!(strategy.policy().region().contains(2)?); // a1 reaches goal
 /// assert_eq!(strategy.ranked().layers().locate(0, &())?, Some(1));
 /// assert_eq!(strategy.ranked().layers().locate(1, &())?, Some(0));
+/// // Retain the arena, objective and policy; replay recomputes the guarantees.
+/// use bumbledb_event::{ActionDescriptor, ActionDescriptorLimits, AdmittedActionDescriptor,
+///     ArithmeticLimits, ExactArithmetic};
+/// let limits = ActionDescriptorLimits::default();
+/// let recipe = ActionDescriptor::capture(&AdmittedActionDescriptor::Reach(strategy), limits.descriptors, &())?;
+/// let bytes = recipe.to_bytes(limits.descriptors, &())?;
+/// let AdmittedActionDescriptor::Reach(restored) = ActionDescriptor::import(
+///     &bytes, limits, &mut ExactArithmetic::new(ArithmeticLimits::default(), &()),
+/// )? else { unreachable!() };
+/// assert!(restored.winning().is_full());
 /// # Ok(())
 /// # }
 /// ```
@@ -76,14 +87,33 @@ impl ActionArena {
         transition: &WorldRelation,
         control: &dyn Control,
     ) -> Result<Self> {
+        Self::new_with_parameters(
+            actions,
+            transition,
+            ParameterSourceLimits::default(),
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Admit an arena using the caller's shared parameter arithmetic allowance.
+    /// # Errors
+    /// Has `new`'s contract, plus domain/guard and arithmetic refusal.
+    pub fn new_with_parameters(
+        actions: &FibreProduct,
+        transition: &WorldRelation,
+        parameters: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let control = work.control();
         transition
             .input()
             .full()
             .align_to(actions.space(), control)?;
-        let environment = actions
-            .left()
-            .map()
-            .then(actions.left_environment().map(), control)?;
+        let environment = actions.left().map().then_with_parameters(
+            actions.left_environment().map(),
+            parameters,
+            work,
+        )?;
         require_same_map(
             &environment,
             transition.product().left_environment().map(),
@@ -198,9 +228,11 @@ impl ActionArena {
         &self,
         choices: &WorldRelation,
         states: &Event,
-        control: &dyn Control,
+        parameters: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
     ) -> Result<WorldRelation> {
-        let choices = choices.in_product(&self.actions, control)?;
+        let control = work.control();
+        let choices = choices.in_product_with_parameters(&self.actions, parameters, work)?;
         let selected = self.actions.left().map().pullback(states, control)?;
         WorldRelation::new(
             &self.actions,
@@ -221,6 +253,27 @@ impl ActionArena {
         layer_limits: PartitionLimits,
         control: &dyn Control,
     ) -> Result<ReachStrategy> {
+        self.winning_reach_with_parameters(
+            goal,
+            limits,
+            layer_limits,
+            ParameterSourceLimits::default(),
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Solve reachability with one shared arithmetic counter for policy reindexing.
+    /// # Errors
+    /// Has `winning_reach`'s contract, plus parameter arithmetic refusal.
+    pub fn winning_reach_with_parameters(
+        &self,
+        goal: &Event,
+        limits: FixedPointLimits,
+        layer_limits: PartitionLimits,
+        parameters: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<ReachStrategy> {
+        let control = work.control();
         let fixed = self.reach_program(goal, control)?;
         let goal = goal.align_to(self.states(), control)?;
         let ranked = fixed.least_with_layers(limits, layer_limits, control)?;
@@ -233,7 +286,8 @@ impl ActionArena {
         let mut earlier = goal.clone();
         let mut policy = self.actions.space().empty();
         for layer in layers.iter().skip(1) {
-            let choices = self.at_states(&self.good(&earlier, control)?, layer, control)?;
+            let choices =
+                self.at_states(&self.good(&earlier, control)?, layer, parameters, work)?;
             policy = policy.apply(BoolOp4::OR, choices.region(), control)?;
             earlier = earlier.apply(BoolOp4::OR, layer, control)?;
         }
@@ -264,11 +318,35 @@ impl ActionArena {
         limits: FixedPointLimits,
         control: &dyn Control,
     ) -> Result<SafetyStrategy> {
+        self.winning_safe_with_parameters(
+            invariant,
+            limits,
+            ParameterSourceLimits::default(),
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Solve continuing safety with shared arithmetic for policy reindexing.
+    /// # Errors
+    /// Has `winning_safe`'s contract, plus parameter arithmetic refusal.
+    pub fn winning_safe_with_parameters(
+        &self,
+        invariant: &Event,
+        limits: FixedPointLimits,
+        parameters: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<SafetyStrategy> {
+        let control = work.control();
         let fixed = self
             .safe_program(invariant, control)?
             .greatest(limits, control)?;
         let invariant = invariant.align_to(self.states(), control)?;
-        let policy = self.at_states(&self.good(fixed.event(), control)?, fixed.event(), control)?;
+        let policy = self.at_states(
+            &self.good(fixed.event(), control)?,
+            fixed.event(),
+            parameters,
+            work,
+        )?;
         if policy.domain(control)?.align_to(self.states(), control)? != *fixed.event() {
             return Err(Error::FixedPointInvariant);
         }
@@ -284,10 +362,16 @@ impl ActionArena {
 fn checked_policy(
     candidate: &WorldRelation,
     permitted: &WorldRelation,
-    control: &dyn Control,
+    parameters: ParameterSourceLimits,
+    work: &mut ExactArithmetic<'_>,
 ) -> Result<WorldRelation> {
-    let candidate = candidate.in_product(permitted.product(), control)?;
-    if !candidate.included_in(permitted, control)? {
+    let control = work.control();
+    let candidate = candidate.in_product_with_parameters(permitted.product(), parameters, work)?;
+    if !candidate
+        .region()
+        .signature(permitted.region(), control)?
+        .included()
+    {
         return Err(Error::UnsafePolicy);
     }
     let source = permitted.input();
@@ -327,7 +411,23 @@ impl ReachStrategy {
     /// # Errors
     /// Refuses wrong roles, unsafe/partial choices, resources or cancellation.
     pub fn with_policy(&self, policy: &WorldRelation, control: &dyn Control) -> Result<Self> {
-        let policy = checked_policy(policy, &self.policy, control)?;
+        self.with_policy_and_parameters(
+            policy,
+            ParameterSourceLimits::default(),
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Restrict this policy while sharing the caller's parameter arithmetic.
+    /// # Errors
+    /// Has `with_policy`'s contract, plus domain/guard and arithmetic refusal.
+    pub fn with_policy_and_parameters(
+        &self,
+        policy: &WorldRelation,
+        parameters: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let policy = checked_policy(policy, &self.policy, parameters, work)?;
         Ok(Self {
             policy,
             ..self.clone()
@@ -362,7 +462,23 @@ impl SafetyStrategy {
     /// # Errors
     /// Refuses wrong roles, unsafe/partial choices, resources or cancellation.
     pub fn with_policy(&self, policy: &WorldRelation, control: &dyn Control) -> Result<Self> {
-        let policy = checked_policy(policy, &self.policy, control)?;
+        self.with_policy_and_parameters(
+            policy,
+            ParameterSourceLimits::default(),
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Restrict this policy while sharing the caller's parameter arithmetic.
+    /// # Errors
+    /// Has `with_policy`'s contract, plus domain/guard and arithmetic refusal.
+    pub fn with_policy_and_parameters(
+        &self,
+        policy: &WorldRelation,
+        parameters: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let policy = checked_policy(policy, &self.policy, parameters, work)?;
         Ok(Self {
             policy,
             ..self.clone()

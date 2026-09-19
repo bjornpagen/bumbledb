@@ -5,13 +5,19 @@ use crate::{
     Limits, RelationalProduct, Result, Space, SpaceId, WorldRelation,
 };
 
+mod action;
 mod memory;
 mod memory_arena;
 mod source;
+mod structural;
 mod wire;
 
+pub use action::{
+    ActionArenaDescriptor, ActionDescriptor, ActionDescriptorLimits, AdmittedActionDescriptor,
+};
 pub use memory::{BeliefActionDescriptor, BeliefDescriptor, BeliefDescriptorLimits};
 pub use memory_arena::BeliefArenaDescriptor;
+pub use structural::RelationDescriptor;
 
 pub use source::{
     AdmittedFamilyDescriptor, AdmittedSourceDescriptor, BetaSourceDescriptor, FamilyDescriptor,

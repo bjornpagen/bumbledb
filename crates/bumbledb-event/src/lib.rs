@@ -43,13 +43,14 @@ pub use belief::{
 };
 pub use boolean::{BoolOp4, Signature};
 pub use descriptor::{
+    ActionArenaDescriptor, ActionDescriptor, ActionDescriptorLimits, AdmittedActionDescriptor,
     AdmittedDescriptor, AdmittedFamilyDescriptor, AdmittedSourceDescriptor, BeliefActionDescriptor,
     BeliefArenaDescriptor, BeliefDescriptor, BeliefDescriptorLimits, BetaSourceDescriptor,
     Descriptor, DescriptorLimits, FamilyDescriptor, FamilyFunctionDescriptor,
     FamilyKernelDescriptor, FamilyPosteriorDescriptor, FamilyReceiptDescriptor,
     FamilyRevisionDescriptor, FibreDescriptor, FunctionDescriptor, FunctionPieceDescriptor,
     KernelDescriptor, MapDescriptor, ParameterFunctionDescriptor, RefinementDescriptor,
-    RestrictionDescriptor, RevisionDescriptor, RevisionOutcomeDescriptor,
+    RelationDescriptor, RestrictionDescriptor, RevisionDescriptor, RevisionOutcomeDescriptor,
     RevisionReceiptDescriptor, SourceDescriptor, SourceDescriptorLimits,
 };
 pub use diagram::{Diagram, DiagramNode, DiagramView};

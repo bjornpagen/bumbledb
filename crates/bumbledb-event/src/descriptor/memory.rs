@@ -3,20 +3,14 @@
 #![allow(clippy::large_types_passed_by_value)]
 
 use super::wire::{Reader, Writer};
-use super::{Budget, DescriptorLimits, FibreDescriptor, MapDescriptor};
+use super::{Budget, DescriptorLimits, RelationDescriptor, structural};
 use crate::{
-    BeliefLimits, BeliefMemory, Capacity, Control, CoordinateMap, Error, Event, EventPartition,
-    ExactArithmetic, FibreProduct, ParameterSourceLimits, PartitionLimits, Result, Space,
-    WorldRelation,
+    BeliefLimits, BeliefMemory, Capacity, Control, Error, EventPartition, ExactArithmetic,
+    ParameterSourceLimits, PartitionLimits, Result,
 };
 
-/// An action's original product coordinates and declared direction. Empty
-/// regions still carry checked endpoint/environment meanings.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BeliefActionDescriptor {
-    pub product: FibreDescriptor,
-    pub region: Vec<u8>,
-}
+/// Compatibility name for a relation in an indexed memory action roster.
+pub type BeliefActionDescriptor = RelationDescriptor;
 
 /// Untrusted recipe with full source, initial evidence and authored indexed
 /// observation/action rosters. Empty observations retain their positions.
@@ -69,11 +63,9 @@ impl BeliefDescriptor {
         }
         let mut actions = Vec::new();
         for action in memory.actions() {
-            budget.item(0)?;
-            let product = FibreDescriptor::capture(action.product(), budget, control)?;
-            let region = budget.event(action.region(), control)?;
+            let data = RelationDescriptor::capture(action, budget, control)?;
             actions.try_reserve(1)?;
-            actions.push(BeliefActionDescriptor { product, region });
+            actions.push(data);
         }
         control.checkpoint()?;
         Ok(Self {
@@ -99,10 +91,7 @@ impl BeliefDescriptor {
             budget.item(bytes.len())?;
         }
         for action in &self.actions {
-            control.checkpoint()?;
-            budget.item(0)?;
-            action.product.preflight(budget, control)?;
-            budget.item(action.region.len())?;
+            action.preflight(budget, control)?;
         }
         Ok(())
     }
@@ -122,39 +111,27 @@ impl BeliefDescriptor {
         if self.observations.len() > limits.partitions.cells {
             return Err(Error::Capacity(Capacity::PartitionCells));
         }
-        let source = full(&self.source, limits, work)?;
-        let given = event(&self.given, limits, work)?;
+        let source = structural::full(&self.source, limits.descriptors, limits.parameters, work)?;
+        let given = structural::event(&self.given, limits.descriptors, limits.parameters, work)?;
         let mut cells = Vec::new();
         cells.try_reserve_exact(self.observations.len())?;
         for cell in &self.observations {
-            cells.push(event(cell, limits, work)?);
+            cells.push(structural::event(
+                cell,
+                limits.descriptors,
+                limits.parameters,
+                work,
+            )?);
         }
         let observations = EventPartition::on(&source.full(), &cells, limits.partitions, control)?;
         let mut actions = Vec::new();
         actions.try_reserve_exact(self.actions.len())?;
         for action in &self.actions {
-            let left = map(&action.product.left, limits, work)?.certify_surjective(control)?;
-            let right = map(&action.product.right, limits, work)?.certify_surjective(control)?;
-            let width = left.map().source().dimensions() + right.map().source().dimensions();
-            let order: Vec<_> = (0..width).collect();
-            let product = FibreProduct::with_order_and_parameters(
-                action.product.identity,
-                &left,
-                &right,
-                &order,
-                limits.descriptors.events,
+            actions.push(structural::relation(
+                action,
+                limits.descriptors,
                 limits.parameters,
                 work,
-            )?;
-            let product = if action.product.reversed {
-                product.converse()
-            } else {
-                product
-            };
-            actions.push(WorldRelation::new(
-                &product,
-                &event(&action.region, limits, work)?,
-                control,
             )?);
         }
         BeliefMemory::new_with_parameters(
@@ -267,46 +244,4 @@ impl BeliefDescriptor {
     ) -> Result<BeliefMemory> {
         Self::from_bytes(bytes, limits.descriptors, work.control())?.admit(limits, work)
     }
-}
-
-fn event(
-    bytes: &[u8],
-    limits: BeliefDescriptorLimits,
-    work: &mut ExactArithmetic<'_>,
-) -> Result<Event> {
-    Event::from_bytes_with_parameter_limits(
-        bytes,
-        None,
-        limits.descriptors.events,
-        limits.parameters,
-        work,
-    )
-}
-fn full(
-    bytes: &[u8],
-    limits: BeliefDescriptorLimits,
-    work: &mut ExactArithmetic<'_>,
-) -> Result<Space> {
-    let value = event(bytes, limits, work)?;
-    if !value.is_full() {
-        return Err(Error::InvalidEncoding);
-    }
-    Ok(value.space())
-}
-fn map(
-    data: &MapDescriptor,
-    limits: BeliefDescriptorLimits,
-    work: &mut ExactArithmetic<'_>,
-) -> Result<CoordinateMap> {
-    let source = full(&data.source, limits, work)?;
-    let target = full(&data.target, limits, work)?;
-    if data.readouts.len() != usize::from(target.dimensions()) {
-        return Err(Error::MapArity);
-    }
-    let mut readouts = Vec::new();
-    readouts.try_reserve_exact(data.readouts.len())?;
-    for readout in &data.readouts {
-        readouts.push(event(readout, limits, work)?);
-    }
-    CoordinateMap::new_with_parameters(&source, &target, &readouts, limits.parameters, work)
 }

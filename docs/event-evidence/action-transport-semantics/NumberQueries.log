@@ -1,0 +1,10 @@
+'NumberQueries.canonical_group_preserves_members' depends on axioms: [propext, Quot.sound]
+'NumberQueries.canonical_group_preserves_count' depends on axioms: [propext, Quot.sound]
+'NumberQueries.stage_roundtrip_preserves_group' depends on axioms: [propext, Quot.sound]
+'NumberQueries.fresh_tokens_change_counts' does not depend on any axioms
+'NumberQueries.value_group_can_merge_distinct_derivations' does not depend on any axioms
+'NumberQueries.successful_spend_retains_cost' depends on axioms: [propext]
+'NumberQueries.successful_stages_accumulate' depends on axioms: [propext, Quot.sound]
+'NumberQueries.failure_keeps_spent_prefix' depends on axioms: [propext]
+'NumberQueries.failure_does_not_refund_next' depends on axioms: [propext]
+'NumberQueries.resetting_stage_budget_admits_forbidden_work' does not depend on any axioms
