@@ -6,6 +6,7 @@
 //! [`value_matches`]. The admission boundary stays engine-side: the only
 mod projection;
 pub mod spec;
+mod spec_values;
 pub use projection::Projection;
 
 use crate::value::Value;

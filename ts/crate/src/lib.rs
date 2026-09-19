@@ -90,12 +90,14 @@ pub fn descriptor(env: Env, spec: Object) -> napi::Result<DescriptorWire> {
         marshal::throw_kind_message(env, tags::error_family::SCHEMA, error.to_string())
     })?;
     let fingerprint = bumbledb::schema::fingerprint::fingerprint(&schema);
-    Ok(DescriptorWire {
-        manifest: sealed.descriptor.manifest(),
-        statements: sealed.statements,
-        fingerprint: hex_fingerprint(&fingerprint.0),
-        attrs: sealed.attrs,
-    })
+    DescriptorWire::capture(
+        sealed.descriptor.manifest(),
+        sealed.statements,
+        hex_fingerprint(&fingerprint.0),
+        sealed.attrs,
+        &(),
+    )
+    .map_err(|error| marshal::throw_kind_message(env, tags::error_family::EVENT, error.to_string()))
 }
 
 pub struct Sealed {
@@ -225,19 +227,26 @@ pub(crate) fn descriptor_of(
     spec: &Object,
 ) -> napi::Result<std::result::Result<(SchemaDescriptor, FieldAttrsTable), OpenOutcome>> {
     let spec = marshal::schema_spec(spec)?;
-    let attrs = marshal::field_attrs(&spec);
+    Ok(resolve_spec(&spec))
+}
+
+pub(crate) type SchemaResolution =
+    std::result::Result<(SchemaDescriptor, FieldAttrsTable), OpenOutcome>;
+
+pub(crate) fn resolve_spec(spec: &bumbledb::schema::SchemaSpec) -> SchemaResolution {
+    let attrs = marshal::field_attrs(spec);
     match spec.descriptor() {
-        Ok(descriptor) => Ok(Ok((descriptor, attrs))),
+        Ok(descriptor) => Ok((descriptor, attrs)),
         Err(error) => {
             let mismatched = error
                 .issues()
                 .iter()
                 .any(|issue| matches!(issue, SpecIssue::StatementNewtypeMismatch { .. }));
-            Ok(Err(if mismatched {
+            Err(if mismatched {
                 OpenOutcome::NewtypeMismatch(error.to_string())
             } else {
                 OpenOutcome::SchemaError(error.to_string())
-            }))
+            })
         }
     }
 }

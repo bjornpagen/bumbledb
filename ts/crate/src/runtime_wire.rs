@@ -715,24 +715,17 @@ pub fn runtime_directory_db_open(
     use crate::runtime::owners::ManagedDbOutcome;
     let owner = directory(handle).map_err(|error| thrown(env, error))?;
     let reference = owner.reference();
-    // The legacy schema converter remains on the JS thread. The operation is
-    // registered before conversion; only owned Rust descriptors reach workers.
-    let mut marshal_error = None;
+    // Register before copying schema envelopes; graph admission and name
+    // resolution run under the worker context.
     let operation = owner.runtime().submit_owned(
         owner,
         WorkContext::new(),
         notification(callback)?,
         |context| {
             context.checkpoint()?;
-            let parsed = match crate::descriptor_of(&spec) {
-                Ok(parsed) => parsed,
-                Err(error) => {
-                    marshal_error = Some(error);
-                    return Err(RuntimeError::InvalidArgument);
-                }
-            };
+            let parsed = crate::ingress::schema::SchemaInput::copy(env, &spec, context)?;
             Ok(Box::new(move |context| {
-                let (descriptor, attrs) = match parsed {
+                let (descriptor, attrs) = match parsed.admit(context)? {
                     Ok(parsed) => parsed,
                     Err(crate::OpenOutcome::SchemaError(message)) => {
                         return Ok(Output::Db(ManagedDbOutcome::Refused {
@@ -771,14 +764,15 @@ pub fn runtime_directory_db_open(
                         Ok(Output::Db(ManagedDbOutcome::Opened(managed)))
                     }
                     Err(bumbledb::Error::Schema(error)) => {
-                        let RuntimeError::Engine {
-                            message,
-                            diagnostic,
-                            ..
-                        } = crate::db_wire::schema_error(&error, &descriptor)
-                        else {
-                            unreachable!("schema errors use the engine reason")
-                        };
+                        let (message, diagnostic) =
+                            match crate::db_wire::schema_error(&error, &descriptor) {
+                                RuntimeError::Engine {
+                                    message,
+                                    diagnostic,
+                                    ..
+                                } => (message, diagnostic),
+                                failure => return Err(failure),
+                            };
                         Ok(Output::Db(ManagedDbOutcome::Refused {
                             kind: crate::tags::open_kind::SCHEMA_ERROR,
                             message,
@@ -807,9 +801,6 @@ pub fn runtime_directory_db_open(
             }))
         },
     );
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
     let operation = operation.map_err(|error| thrown(env, error))?;
     Ok(operation_handle(owner.runtime(), operation))
 }

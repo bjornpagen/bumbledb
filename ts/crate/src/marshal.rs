@@ -3,8 +3,10 @@
 //! shape mismatches beyond marshaling, and every dependency judgment belong
 //! to the engine's own typed boundaries.
 use bumbledb::schema::spec::{
-    BoundSpec, CapacityWindowSpec, ClosedSpec, FieldSpec, LiteralSetSpec, LiteralSpec,
-    RelationSpec, RowSpec, SideSpec, StatementSpec, WeightSpec,
+    BoundSpec, CapacityWindowSpec, ClosedSpecData as ClosedSpec, FieldSpec,
+    LiteralSetSpecData as LiteralSetSpec, LiteralSpecData as LiteralSpec,
+    RelationSpecData as RelationSpec, RowSpecData as RowSpec, SchemaSpecData as SchemaSpec,
+    SideSpecData as SideSpec, StatementSpecData as StatementSpec, WeightSpec,
 };
 use bumbledb::schema::{
     Bound, FieldDescriptor, IntervalElement, Projection, RelationManifest, SealedField, Side,
@@ -13,7 +15,7 @@ use bumbledb::schema::{
 use bumbledb::{
     AllenMask, AnswerValue, AtomSource, CmpOp, F64, FieldId, FixedIntervalElement, FoldOp, HeadOp,
     HeadTerm, InteriorId, Interval, Manifest, NonEmpty, ParamId, RelationId, RenderedViolation,
-    SchemaDescriptor, SchemaSpec, StatementId, StatementKind, Uuid, Value, VarId,
+    SchemaDescriptor, StatementId, StatementKind, Uuid, Value, VarId,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Either, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, Utf16String, i64n,
@@ -382,7 +384,7 @@ pub struct FieldAttrs {
 /// relation's synthetic `id` slot leads (never fresh, carrying the handle
 /// newtype), then the declared fields in declaration order — the same
 /// order `sealed_fields()` walks, restated from the same spec datum.
-pub(crate) fn field_attrs(spec: &SchemaSpec) -> Vec<Vec<FieldAttrs>> {
+pub(crate) fn field_attrs<V>(spec: &SchemaSpec<V>) -> Vec<Vec<FieldAttrs>> {
     spec.relations
         .iter()
         .map(|relation| {
@@ -617,7 +619,10 @@ pub(crate) fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
     }
 }
 
-fn literal_in(obj: &Object) -> napi::Result<LiteralSpec> {
+fn literal_in<V>(
+    obj: &Object,
+    value_in: &impl Fn(&Object) -> napi::Result<V>,
+) -> napi::Result<LiteralSpec<V>> {
     let kind: String = req_text(obj, "kind", "literal")?;
     match kind.as_str() {
         tags::literal::HANDLE => Ok(LiteralSpec::Handle(
@@ -625,7 +630,7 @@ fn literal_in(obj: &Object) -> napi::Result<LiteralSpec> {
         )),
         tags::literal::VALUE => {
             let value: Object = req(obj, "value", "value literal")?;
-            Ok(LiteralSpec::Value(tagged_value(&value)?))
+            Ok(LiteralSpec::Value(value_in(&value)?))
         }
         other => Err(err(format!(
             "bumbledb marshal: unknown literal kind `{other}`"
@@ -633,19 +638,22 @@ fn literal_in(obj: &Object) -> napi::Result<LiteralSpec> {
     }
 }
 
-fn literal_set_in(obj: &Object) -> napi::Result<LiteralSetSpec> {
+fn literal_set_in<V>(
+    obj: &Object,
+    value_in: &impl Fn(&Object) -> napi::Result<V>,
+) -> napi::Result<LiteralSetSpec<V>> {
     let kind: String = req_text(obj, "kind", "literal set")?;
     match kind.as_str() {
         tags::literal_set::ONE => {
             let literal: Object = req(obj, "literal", "one-literal binding")?;
-            Ok(LiteralSetSpec::One(literal_in(&literal)?))
+            Ok(LiteralSetSpec::One(literal_in(&literal, value_in)?))
         }
         tags::literal_set::MANY => {
             let literals: Array = req(obj, "literals", "literal set")?;
             let mut many = Vec::with_capacity(literals.len() as usize);
             for index in 0..literals.len() {
                 let literal = req_at::<Object>(&literals, index, "literal set")?;
-                many.push(literal_in(&literal)?);
+                many.push(literal_in(&literal, value_in)?);
             }
             Ok(LiteralSetSpec::Many(many))
         }
@@ -682,7 +690,10 @@ fn projection_in(terms: &Array) -> napi::Result<bumbledb::schema::spec::Projecti
     Ok(fields.into())
 }
 
-fn side_in(obj: &Object) -> napi::Result<SideSpec> {
+fn side_in<V>(
+    obj: &Object,
+    value_in: &impl Fn(&Object) -> napi::Result<V>,
+) -> napi::Result<SideSpec<V>> {
     exact_fields(obj, &["relation", "projection", "selection"])?;
     let projection: Array = req(obj, "projection", "side")?;
     let projection = projection_in(&projection)?;
@@ -692,7 +703,7 @@ fn side_in(obj: &Object) -> napi::Result<SideSpec> {
         let pair = req_at::<Array>(&selection, index, "side selection")?;
         let field: String = text_at(&pair, 0, "selection binding")?;
         let set: Object = req_at(&pair, 1, "selection binding")?;
-        bindings.push((field.into(), literal_set_in(&set)?));
+        bindings.push((field.into(), literal_set_in(&set, value_in)?));
     }
     Ok(SideSpec {
         relation: req_text(obj, "relation", "side")?.into(),
@@ -759,7 +770,10 @@ fn weight_in(obj: &Object) -> napi::Result<WeightSpec> {
     }
 }
 
-fn statement_in(obj: &Object) -> napi::Result<StatementSpec> {
+fn statement_in<V>(
+    obj: &Object,
+    value_in: &impl Fn(&Object) -> napi::Result<V>,
+) -> napi::Result<StatementSpec<V>> {
     let kind: String = req_text(obj, "kind", "statement")?;
     match kind.as_str() {
         tags::statement::FD => {
@@ -770,15 +784,15 @@ fn statement_in(obj: &Object) -> napi::Result<StatementSpec> {
             })
         }
         tags::statement::CONTAINMENT => Ok(StatementSpec::Containment {
-            source: side_in(&req::<Object>(obj, "source", "containment")?)?,
-            target: side_in(&req::<Object>(obj, "target", "containment")?)?,
+            source: side_in(&req::<Object>(obj, "source", "containment")?, value_in)?,
+            target: side_in(&req::<Object>(obj, "target", "containment")?, value_in)?,
             bidirectional: req::<bool>(obj, "bidirectional", "containment")?,
         }),
         tags::statement::CAPACITY => Ok(StatementSpec::Capacity {
-            target: side_in(&req::<Object>(obj, "target", "capacity")?)?,
+            target: side_in(&req::<Object>(obj, "target", "capacity")?, value_in)?,
             weight: weight_in(&req::<Object>(obj, "weight", "capacity")?)?,
             window: capacity_window_in(&req::<Object>(obj, "window", "capacity")?)?,
-            source: side_in(&req::<Object>(obj, "source", "capacity")?)?,
+            source: side_in(&req::<Object>(obj, "source", "capacity")?, value_in)?,
         }),
         other => Err(err(format!(
             "bumbledb marshal: unknown statement kind `{other}`"
@@ -787,6 +801,13 @@ fn statement_in(obj: &Object) -> napi::Result<StatementSpec> {
 }
 
 pub(crate) fn schema_spec(obj: &Object) -> napi::Result<SchemaSpec> {
+    schema_spec_with(obj, &tagged_value)
+}
+
+pub(crate) fn schema_spec_with<V>(
+    obj: &Object,
+    value_in: &impl Fn(&Object) -> napi::Result<V>,
+) -> napi::Result<SchemaSpec<V>> {
     let relations: Array = req(obj, "relations", "schema spec")?;
     let mut relation_specs = Vec::with_capacity(relations.len() as usize);
     for index in 0..relations.len() {
@@ -821,7 +842,7 @@ pub(crate) fn schema_spec(obj: &Object) -> napi::Result<SchemaSpec> {
                     let mut literals = Vec::with_capacity(values.len() as usize);
                     for value_index in 0..values.len() {
                         let literal = req_at::<Object>(&values, value_index, "closed row")?;
-                        literals.push(literal_in(&literal)?);
+                        literals.push(literal_in(&literal, value_in)?);
                     }
                     row_specs.push(RowSpec {
                         handle: req_text(&row, "handle", "closed row")?.into(),
@@ -844,7 +865,7 @@ pub(crate) fn schema_spec(obj: &Object) -> napi::Result<SchemaSpec> {
     let mut statement_specs = Vec::with_capacity(statements.len() as usize);
     for index in 0..statements.len() {
         let statement = req_at::<Object>(&statements, index, "spec statements")?;
-        statement_specs.push(statement_in(&statement)?);
+        statement_specs.push(statement_in(&statement, value_in)?);
     }
     Ok(SchemaSpec {
         relations: relation_specs,
@@ -1968,6 +1989,7 @@ fn relation_objects<'env>(
     env_handle: &'env Env,
     relations: Vec<RelationManifest>,
     attrs: &[Vec<FieldAttrs>],
+    events: &SchemaEvents,
 ) -> napi::Result<Vec<Object<'env>>> {
     let mut out = Vec::with_capacity(relations.len());
     for (rel_index, relation) in relations.into_iter().enumerate() {
@@ -2014,7 +2036,7 @@ fn relation_objects<'env>(
                     value_obj.set("name", name.as_ref())?;
                     value_obj.set(
                         "value",
-                        ValueOut::from_value(value, &()).map_err(|error| {
+                        schema_value_out(value, events).map_err(|error| {
                             throw_kind_message(
                                 *env_handle,
                                 tags::error_family::EVENT,
@@ -2051,7 +2073,11 @@ fn projection_out<'env>(
     Ok(terms)
 }
 
-fn side_object<'env>(env_handle: &'env Env, side: &Side) -> napi::Result<Object<'env>> {
+fn side_object<'env>(
+    env_handle: &'env Env,
+    side: &Side,
+    events: &SchemaEvents,
+) -> napi::Result<Object<'env>> {
     let mut obj = Object::new(env_handle)?;
     obj.set("relation", side.relation.0)?;
     obj.set("projection", projection_out(env_handle, &side.projection)?)?;
@@ -2063,7 +2089,7 @@ fn side_object<'env>(env_handle: &'env Env, side: &Side) -> napi::Result<Object<
             .literals()
             .iter()
             .cloned()
-            .map(|value| ValueOut::from_value(value, &()))
+            .map(|value| schema_value_out(value, events))
             .collect::<Result<_, _>>()
             .map_err(|error| {
                 throw_kind_message(*env_handle, tags::error_family::EVENT, error.to_string())
@@ -2115,11 +2141,12 @@ fn hi_object(env_handle: &Env, hi: Option<Bound>) -> napi::Result<Object<'_>> {
     Ok(obj)
 }
 
-fn statement_object(
-    env_handle: &Env,
+fn statement_object<'env>(
+    env_handle: &'env Env,
     id: u32,
     statement: StatementDescriptor,
-) -> napi::Result<Object<'_>> {
+    events: &SchemaEvents,
+) -> napi::Result<Object<'env>> {
     let mut obj = Object::new(env_handle)?;
     obj.set("id", id)?;
     match statement {
@@ -2133,8 +2160,8 @@ fn statement_object(
         }
         StatementDescriptor::Containment { source, target } => {
             obj.set("kind", statement_kind_out(StatementKind::Containment))?;
-            obj.set("source", side_object(env_handle, &source)?)?;
-            obj.set("target", side_object(env_handle, &target)?)?;
+            obj.set("source", side_object(env_handle, &source, events)?)?;
+            obj.set("target", side_object(env_handle, &target, events)?)?;
         }
         StatementDescriptor::Capacity {
             target,
@@ -2144,21 +2171,98 @@ fn statement_object(
             source,
         } => {
             obj.set("kind", statement_kind_out(StatementKind::Capacity))?;
-            obj.set("target", side_object(env_handle, &target)?)?;
+            obj.set("target", side_object(env_handle, &target, events)?)?;
             obj.set("weight", weight_object(env_handle, weight)?)?;
             obj.set("lo", lo)?;
             obj.set("hi", hi_object(env_handle, hi)?)?;
-            obj.set("source", side_object(env_handle, &source)?)?;
+            obj.set("source", side_object(env_handle, &source, events)?)?;
         }
     }
     Ok(obj)
 }
 
+type SchemaEvents = std::collections::BTreeMap<[u64; 2], Vec<u8>>;
+
 pub struct DescriptorWire {
+    events: SchemaEvents,
     pub(crate) manifest: Manifest,
     pub(crate) statements: Vec<StatementDescriptor>,
     pub(crate) fingerprint: String,
     pub(crate) attrs: Vec<Vec<FieldAttrs>>,
+}
+
+// Capture on the worker. Delivery only copies owned bytes and scalars.
+impl DescriptorWire {
+    pub(crate) fn capture(
+        manifest: Manifest,
+        statements: Vec<StatementDescriptor>,
+        fingerprint: String,
+        attrs: Vec<Vec<FieldAttrs>>,
+        work: &dyn bumbledb::event::Control,
+    ) -> Result<Self, bumbledb::event::Error> {
+        work.checkpoint()?;
+        let mut events = SchemaEvents::new();
+        let mut capture = |value: &Value| -> Result<(), bumbledb::event::Error> {
+            work.checkpoint()?;
+            if let Value::Event(event) = value
+                && let std::collections::btree_map::Entry::Vacant(entry) =
+                    events.entry(event.key().words())
+            {
+                let bytes = event.to_bytes(work)?;
+                if bytes.len() > crate::ingress::MAX_EVENT_BYTES {
+                    return Err(bumbledb::event::Error::Capacity(
+                        bumbledb::event::Capacity::DescriptorBytes,
+                    ));
+                }
+                entry.insert(bytes);
+            }
+            Ok(())
+        };
+        for relation in &manifest.relations {
+            if let Some(rows) = &relation.extension {
+                for row in rows {
+                    for (_, value) in &row.values {
+                        capture(value)?;
+                    }
+                }
+            }
+        }
+        for statement in &statements {
+            let sides = match statement {
+                StatementDescriptor::Functionality { .. } => continue,
+                StatementDescriptor::Containment { source, target }
+                | StatementDescriptor::Capacity { source, target, .. } => [source, target],
+            };
+            for side in sides {
+                for (_, set) in &side.selection {
+                    for value in set.literals() {
+                        capture(value)?;
+                    }
+                }
+            }
+        }
+        Ok(Self {
+            events,
+            manifest,
+            statements,
+            fingerprint,
+            attrs,
+        })
+    }
+}
+
+fn schema_value_out(
+    value: Value,
+    events: &SchemaEvents,
+) -> Result<ValueOut, bumbledb::event::Error> {
+    match value {
+        Value::Event(event) => events
+            .get(&event.key().words())
+            .cloned()
+            .map(ValueOut::Event)
+            .ok_or(bumbledb::event::Error::UnknownKey),
+        scalar => ValueOut::from_value(scalar, &()),
+    }
 }
 
 impl ToNapiValue for DescriptorWire {
@@ -2173,7 +2277,13 @@ impl ToNapiValue for DescriptorWire {
         let mut root = Object::new(&env_handle)?;
         root.set(
             "relations",
-            relation_objects(env, &env_handle, val.manifest.relations, &val.attrs)?,
+            relation_objects(
+                env,
+                &env_handle,
+                val.manifest.relations,
+                &val.attrs,
+                &val.events,
+            )?,
         )?;
         let mut statements = Vec::with_capacity(val.statements.len());
         for (idx, statement) in val.statements.into_iter().enumerate() {
@@ -2182,7 +2292,7 @@ impl ToNapiValue for DescriptorWire {
                     "bumbledb marshal: statement ordinal {idx} exceeds u32"
                 ))
             })?;
-            statements.push(statement_object(&env_handle, id, statement)?);
+            statements.push(statement_object(&env_handle, id, statement, &val.events)?);
         }
         root.set("statements", statements)?;
         root.set("fingerprint", val.fingerprint)?;

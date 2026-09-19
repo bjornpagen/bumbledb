@@ -5,6 +5,8 @@
 
 use std::collections::BTreeMap;
 
+use super::literals::{EventLiterals, LiteralIdentity};
+
 use super::{
     AxiomIndex, Bound, CapacityEnforcement, CapacityId, CapacityStatement, ContainmentId,
     ContainmentStatement, DisjointDeterminantProof, EncodableCheck, Enforcement, FactLayout,
@@ -29,7 +31,17 @@ pub(crate) const DETERMINANT_KEY_OVERHEAD: usize = 1 + 2 + 8;
 /// pass hangs off it here rather than as an inherent method.
 pub trait ValidateDescriptor: Sized {
     /// # Errors
-    fn validate(self) -> Result<Schema, SchemaError>;
+    fn validate(self) -> Result<Schema, SchemaError> {
+        self.validate_with_control(&())
+    }
+
+    /// Seal with cooperative control over canonical Event literal admission.
+    /// # Errors
+    /// Declaration errors or a stopped/failed Event operation.
+    fn validate_with_control(
+        self,
+        control: &dyn crate::event::Control,
+    ) -> Result<Schema, SchemaError>;
 }
 
 impl ValidateDescriptor for SchemaDescriptor {
@@ -41,7 +53,11 @@ impl ValidateDescriptor for SchemaDescriptor {
         reason = "the one materialized-order sealing pass — one arm per \
                   statement form, clearer kept together"
     )]
-    fn validate(self) -> Result<Schema, SchemaError> {
+    fn validate_with_control(
+        self,
+        control: &dyn crate::event::Control,
+    ) -> Result<Schema, SchemaError> {
+        control.checkpoint().map_err(SchemaError::EventLiteral)?;
         for (rel_idx, decl) in self.relations.iter().enumerate() {
             let columns = derived_columns(decl);
             if columns > usize::from(u16::MAX) {
@@ -53,8 +69,7 @@ impl ValidateDescriptor for SchemaDescriptor {
         }
 
         let descriptors = self.materialized_statements();
-        // Pointwise Event fields are admitted below. Selections, capacity
-        // positions and closed Event rosters still need their own contracts.
+        // Event capacity projections and closed rosters have separate contract gates.
         let check_event = |relation: RelationId, field: FieldId| -> Result<(), SchemaError> {
             let Some(decl) = self.relations.get(relation.0 as usize) else {
                 return Ok(());
@@ -77,19 +92,6 @@ impl ValidateDescriptor for SchemaDescriptor {
                         if matches!(descriptor, StatementDescriptor::Capacity { .. }) {
                             for &field in side.projection.fields() {
                                 check_event(side.relation, field)?;
-                            }
-                        }
-                        for (field, literals) in &side.selection {
-                            check_event(side.relation, *field)?;
-                            if literals
-                                .literals()
-                                .iter()
-                                .any(|value| matches!(value, Value::Event(_)))
-                            {
-                                return Err(SchemaError::EventContractPending {
-                                    relation: side.relation,
-                                    field: *field,
-                                });
                             }
                         }
                     }
@@ -118,9 +120,14 @@ impl ValidateDescriptor for SchemaDescriptor {
             }
         }
 
+        let event_literals =
+            EventLiterals::prepare(&descriptors, control).map_err(SchemaError::EventLiteral)?;
+
         // Key resolution sees the full descriptor list, including later keys.
-        let normalized: Vec<StatementIdentity> =
-            descriptors.iter().map(StatementIdentity::of).collect();
+        let normalized: Vec<StatementIdentity> = descriptors
+            .iter()
+            .map(|descriptor| StatementIdentity::of(descriptor, &event_literals))
+            .collect();
         let key_count = descriptors
             .iter()
             .filter(|descriptor| matches!(descriptor, StatementDescriptor::Functionality { .. }))
@@ -167,8 +174,14 @@ impl ValidateDescriptor for SchemaDescriptor {
                     StatementRef::Key(key_id)
                 }
                 StatementDescriptor::Containment { source, target } => {
-                    let enforcement =
-                        validate_containment(id, source, target, &relations, &descriptors)?;
+                    let enforcement = validate_containment(
+                        id,
+                        source,
+                        target,
+                        &relations,
+                        &descriptors,
+                        &event_literals,
+                    )?;
                     let containment_id = ContainmentId(
                         u16::try_from(containments.len()).expect("statement count fits u16"),
                     );
@@ -178,8 +191,8 @@ impl ValidateDescriptor for SchemaDescriptor {
                     relation_outgoing[source.relation.0 as usize].push(containment_id);
                     containments.push(ContainmentStatement {
                         id,
-                        source: canonical_side(source),
-                        target: canonical_side(target),
+                        source: canonical_side(source, &event_literals),
+                        target: canonical_side(target, &event_literals),
                         enforcement,
                         pairing: Pairing::OneWay,
                     });
@@ -201,6 +214,7 @@ impl ValidateDescriptor for SchemaDescriptor {
                         source,
                         &relations,
                         &descriptors,
+                        &event_literals,
                     )?;
                     let capacity_id = CapacityId(
                         u16::try_from(capacities.len()).expect("statement count fits u16"),
@@ -209,11 +223,11 @@ impl ValidateDescriptor for SchemaDescriptor {
                     relation_capacity_targets[target.relation.0 as usize].push(capacity_id);
                     capacities.push(CapacityStatement {
                         id,
-                        target: canonical_side(target),
+                        target: canonical_side(target, &event_literals),
                         weight: sealed.weight,
                         lo: *lo,
                         hi: sealed.hi,
-                        source: canonical_side(source),
+                        source: canonical_side(source, &event_literals),
                         enforcement: sealed.enforcement,
                     });
                     StatementRef::Capacity(capacity_id)
@@ -247,6 +261,7 @@ impl ValidateDescriptor for SchemaDescriptor {
         }
 
         let schema = Schema {
+            event_literals,
             identity: std::sync::OnceLock::new(),
             compiled: std::sync::OnceLock::new(),
             relations: relations.into_boxed_slice(),
@@ -287,8 +302,15 @@ fn mirror_of(normalized: &[StatementIdentity], index: usize) -> Option<Statement
 pub(super) fn mirror_links(
     descriptors: &[StatementDescriptor],
 ) -> BTreeMap<StatementId, StatementId> {
-    let normalized: Vec<StatementIdentity> =
-        descriptors.iter().map(StatementIdentity::of).collect();
+    // Diagnostic-only pairing: if a literal cannot be encoded, render each
+    // authored direction separately rather than claim an unverified mirror.
+    let Ok(event_literals) = EventLiterals::prepare(descriptors, &()) else {
+        return BTreeMap::new();
+    };
+    let normalized: Vec<StatementIdentity> = descriptors
+        .iter()
+        .map(|descriptor| StatementIdentity::of(descriptor, &event_literals))
+        .collect();
     (0..normalized.len())
         .filter_map(|index| {
             let StatementIdentity::Containment { .. } = &normalized[index] else {
@@ -385,7 +407,7 @@ fn region_positions(fields: &[FieldDescriptor], projection: &[FieldId]) -> Vec<u
         .collect()
 }
 
-fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
+fn literal_cmp(a: &Value, b: &Value, events: &EventLiterals) -> std::cmp::Ordering {
     fn rank(value: &Value) -> u8 {
         match value {
             Value::Event(_) => 10,
@@ -402,6 +424,7 @@ fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
         }
     }
     match (a, b) {
+        (Value::Event(x), Value::Event(y)) => events.bytes(x).cmp(events.bytes(y)),
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
         (Value::U64(x), Value::U64(y)) => x.cmp(y),
         (Value::I64(x), Value::I64(y)) => x.cmp(y),
@@ -424,25 +447,25 @@ fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
 
 /// Duplicates were rejected by [`validate_side_shape`] before any side seals,
 /// so sorting is the whole canonicalization.
-fn canonical_literals(literals: &LiteralSet) -> LiteralSet {
+fn canonical_literals(literals: &LiteralSet, events: &EventLiterals) -> LiteralSet {
     match literals {
         LiteralSet::One(_) => literals.clone(),
         LiteralSet::Many(values) => {
             let mut sorted = values.to_vec();
-            sorted.sort_by(literal_cmp);
+            sorted.sort_by(|a, b| literal_cmp(a, b, events));
             LiteralSet::Many(sorted.into_boxed_slice())
         }
     }
 }
 
-fn canonical_side(side: &Side) -> Side {
+fn canonical_side(side: &Side, events: &EventLiterals) -> Side {
     Side {
         relation: side.relation,
         projection: side.projection.clone(),
         selection: side
             .selection
             .iter()
-            .map(|(field, literals)| (*field, canonical_literals(literals)))
+            .map(|(field, literals)| (*field, canonical_literals(literals, events)))
             .collect(),
     }
 }
@@ -451,15 +474,24 @@ fn canonical_side(side: &Side) -> Side {
 struct NormalizedSide {
     relation: RelationId,
     projection: TypedProjection,
-    selection: Box<[(FieldId, LiteralSet)]>,
+    selection: Box<[(FieldId, Box<[LiteralIdentity]>)]>,
 }
 
 impl NormalizedSide {
-    fn new(side: &Side) -> Self {
+    fn new(side: &Side, events: &EventLiterals) -> Self {
         let mut selection: Vec<_> = side
             .selection
             .iter()
-            .map(|(field, literals)| (*field, canonical_literals(literals)))
+            .map(|(field, literals)| {
+                (
+                    *field,
+                    canonical_literals(literals, events)
+                        .literals()
+                        .iter()
+                        .map(|value| events.identity(value))
+                        .collect(),
+                )
+            })
             .collect();
         selection.sort_by_key(|(field, _)| *field);
         Self {
@@ -490,7 +522,7 @@ enum StatementIdentity {
 }
 
 impl StatementIdentity {
-    fn of(descriptor: &StatementDescriptor) -> Self {
+    fn of(descriptor: &StatementDescriptor, events: &EventLiterals) -> Self {
         match descriptor {
             StatementDescriptor::Functionality {
                 relation,
@@ -500,8 +532,8 @@ impl StatementIdentity {
                 projection: projection.clone(),
             },
             StatementDescriptor::Containment { source, target } => Self::Containment {
-                source: NormalizedSide::new(source),
-                target: NormalizedSide::new(target),
+                source: NormalizedSide::new(source, events),
+                target: NormalizedSide::new(target, events),
             },
             StatementDescriptor::Capacity {
                 target,
@@ -510,11 +542,11 @@ impl StatementIdentity {
                 hi,
                 source,
             } => Self::Capacity {
-                target: NormalizedSide::new(target),
+                target: NormalizedSide::new(target, events),
                 weight: *weight,
                 lo: *lo,
                 hi: *hi,
-                source: NormalizedSide::new(source),
+                source: NormalizedSide::new(source, events),
             },
         }
     }
@@ -666,8 +698,9 @@ fn validate_containment(
     target: &Side,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
+    events: &EventLiterals,
 ) -> Result<Enforcement, SchemaError> {
-    let target_projection = validate_side_pair(id, source, target, relations)?;
+    let target_projection = validate_side_pair(id, source, target, relations, events)?;
 
     if source.projection.is_event_full() || target.projection.is_event_full() {
         let resolved = resolve_event_target(
@@ -770,6 +803,7 @@ fn validate_capacity(
     source: &Side,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
+    events: &EventLiterals,
 ) -> Result<SealedCapacity, SchemaError> {
     // Only genuinely different semantics refuse: an inverted literal window
     // admits nothing. Vacuous `{0..*}` and unit-floor windows are accepted
@@ -786,7 +820,7 @@ fn validate_capacity(
     if source.projection.is_event_full() || target.projection.is_event_full() {
         return Err(StatementErrorKind::EventFullCapacity.at(id));
     }
-    let target_projection = validate_side_pair(id, source, target, relations)?;
+    let target_projection = validate_side_pair(id, source, target, relations, events)?;
 
     // The v0 interval refusal, narrowed to projections: capacity
 
@@ -972,7 +1006,7 @@ fn encodable_checks(
         .iter()
         .map(|(field, literals)| {
             let desc = fields[usize::from(field.0)].value_type;
-            match canonical_literals(literals) {
+            match canonical_literals(literals, &EventLiterals::default()) {
                 LiteralSet::One(Value::String(_)) => {
                     unreachable!("closed relations refuse str columns")
                 }
@@ -1122,9 +1156,10 @@ fn validate_side_pair<'t>(
     source: &Side,
     target: &'t Side,
     relations: &[Relation],
+    events: &EventLiterals,
 ) -> Result<CheckedProjection<'t>, SchemaError> {
-    validate_side_shape(id, source, relations)?;
-    let target_projection = validate_side_shape(id, target, relations)?;
+    validate_side_shape(id, source, relations, events)?;
+    let target_projection = validate_side_shape(id, target, relations, events)?;
 
     if source.projection.arity() != target.projection.arity() {
         return Err(StatementErrorKind::ContainmentArityMismatch {
@@ -1161,6 +1196,7 @@ fn validate_side_shape<'s>(
     id: StatementId,
     side: &'s Side,
     relations: &[Relation],
+    events: &EventLiterals,
 ) -> Result<CheckedProjection<'s>, SchemaError> {
     let relation = known_relation(id, side.relation, relations)?;
     let projection = validate_projection(id, side.relation, &side.projection, relation)?;
@@ -1191,7 +1227,7 @@ fn validate_side_shape<'s>(
             for (value_idx, value) in values.iter().enumerate() {
                 if values[..value_idx]
                     .iter()
-                    .any(|earlier| literal_cmp(earlier, value) == std::cmp::Ordering::Equal)
+                    .any(|earlier| literal_cmp(earlier, value, events) == std::cmp::Ordering::Equal)
                 {
                     return Err(StatementErrorKind::DuplicateSelectionLiteral {
                         relation: side.relation,

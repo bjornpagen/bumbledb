@@ -5,7 +5,7 @@
 //! in the independent scalar statements.
 
 use super::grouped::{GroupedMap, encode_value};
-use super::{CandidateFacts, Judge, JudgeError, PendingViolation, encode_projection, satisfies};
+use super::{CandidateFacts, Judge, JudgeError, PendingViolation, encode_projection};
 use crate::event::{BoolOp4, Event};
 use crate::schema::{ContainmentStatement, RelationId};
 use crate::{Value, WorkContext};
@@ -141,7 +141,7 @@ impl<E> Judge<'_, '_, E> {
         let mut determinant = Vec::new();
         let mut bytes = Vec::new();
         self.for_each_row(state, statement.target.relation, |judge, _, row| {
-            if satisfies(&statement.target, row) {
+            if judge.satisfies(&statement.target, row)? {
                 determinant.clear();
                 encode_projection(&statement.target, row, Some(position), &mut determinant);
                 if statement.target.projection.is_event_full() {
@@ -160,7 +160,7 @@ impl<E> Judge<'_, '_, E> {
             Ok(true)
         })?;
         self.for_each_row(state, statement.source.relation, |judge, _, row| {
-            if !satisfies(&statement.source, row) {
+            if !judge.satisfies(&statement.source, row)? {
                 return Ok(true);
             }
             determinant.clear();

@@ -265,3 +265,30 @@ test("mutually referring closed payloads use the existing field descriptors with
 		})
 	)
 })
+
+test("snapshot bindings preserve canonical Event selection literals and schema identity", async () => {
+	const runtime = ManagedRuntime.make(db.NativeRuntime.layer(runtimeOptions))
+	try {
+		const [a, b] = await runtime.runPromise(
+			Effect.gen(function* () {
+				const full = yield* db.Event.space(new Uint8Array(32).fill(117), 2n)
+				return [yield* db.Event.coordinate(full, 0n), yield* db.Event.coordinate(full, 1n)] as const
+			})
+		)
+		const Child = db.relation("Child", { group: db.u64, filter: db.event })
+		const Parent = db.relation("Parent", { group: db.u64, filter: db.event })
+		await runtime.dispose()
+		const source = await roundtrip(
+			db.schema("Selection", { Child, Parent }, [
+				db.key(Parent, ["group"]),
+				db.contained(
+					db.on(db.select(Child, { filter: [a, b] }), "group"),
+					db.on(db.select(Parent, { filter: a }), "group")
+				)
+			])
+		)
+		assert.match(source, /Result.getOrThrow\(db.Event.fromBytes/)
+	} finally {
+		await runtime.dispose()
+	}
+})

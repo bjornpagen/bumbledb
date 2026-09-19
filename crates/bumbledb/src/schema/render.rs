@@ -300,6 +300,10 @@ pub(super) fn render_materialized(
 }
 
 trait Names {
+    fn event_bytes(&self, _event: &crate::Event) -> Option<&[u8]> {
+        None
+    }
+
     fn relation_name(&self, relation: RelationId) -> Option<&str>;
     fn field(&self, relation: RelationId, field: FieldId) -> Option<&FieldDescriptor>;
 
@@ -331,6 +335,10 @@ fn closed_target_of<'a>(
 struct SealedNames<'a>(&'a Schema);
 
 impl Names for SealedNames<'_> {
+    fn event_bytes(&self, event: &crate::Event) -> Option<&[u8]> {
+        Some(self.0.event_literals.bytes(event))
+    }
+
     fn relation_name(&self, relation: RelationId) -> Option<&str> {
         self.0.relation_checked(relation).map(super::Relation::name)
     }
@@ -632,6 +640,11 @@ fn selection_literal<N: Names + ?Sized>(
     field: FieldId,
     value: &Value,
 ) -> fmt::Result {
+    if let Value::Event(event) = value
+        && let Some(bytes) = names.event_bytes(event)
+    {
+        return event_hex(f, bytes);
+    }
     match (value, names.closed_target(relation, field)) {
         (Value::U64(word), Some(closed)) => {
             if let Some(handle) = names.handle(closed, *word) {
@@ -647,7 +660,10 @@ fn selection_literal<N: Names + ?Sized>(
 
 fn literal(f: &mut fmt::Formatter<'_>, value: &Value) -> fmt::Result {
     match value {
-        Value::Event(event) => write!(f, "event:{:?}", event.space().identity()),
+        Value::Event(event) => match event.to_bytes(&()) {
+            Ok(bytes) => event_hex(f, &bytes),
+            Err(error) => write!(f, "event:<unavailable: {error}>"),
+        },
         Value::Bool(v) => write!(f, "{v}"),
         Value::U64(v) => write!(f, "{v}"),
         Value::I64(v) => write!(f, "{v}"),
@@ -680,3 +696,11 @@ fn literal(f: &mut fmt::Formatter<'_>, value: &Value) -> fmt::Result {
 
 #[cfg(test)]
 mod tests;
+
+fn event_hex(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
+    f.write_str("event:0x")?;
+    for byte in bytes {
+        write!(f, "{byte:02x}")?;
+    }
+    Ok(())
+}

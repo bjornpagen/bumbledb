@@ -12,13 +12,27 @@ use super::{
 };
 use crate::value::Value;
 
+// Preserve the concrete admitted authoring API, including inference for empty
+// declarations and literal-free statements. The Data forms share its grammar
+// with transport stages; only Value payloads can lower to a descriptor.
+pub type SchemaSpec = SchemaSpecData<Value>;
+pub type RelationSpec = RelationSpecData<Value>;
+pub type ClosedSpec = ClosedSpecData<Value>;
+pub type RowSpec = RowSpecData<Value>;
+pub type LiteralSpec = LiteralSpecData<Value>;
+pub type LiteralSetSpec = LiteralSetSpecData<Value>;
+pub type SideSpec = SideSpecData<Value>;
+pub type StatementSpec = StatementSpecData<Value>;
+
 /// The whole theory as named plain data: relations (ordinary and closed)
 /// and dependency statements, each list in declaration order — the same
-/// declaration-order law that mints every id.
+/// declaration-order law that mints every id. The payload parameter permits
+/// owned transport inputs to share this grammar; only admitted [`Value`]s have
+/// a descriptor interpretation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SchemaSpec {
-    pub relations: Vec<RelationSpec>,
-    pub statements: Vec<StatementSpec>,
+pub struct SchemaSpecData<V = Value> {
+    pub relations: Vec<RelationSpecData<V>>,
+    pub statements: Vec<StatementSpecData<V>>,
 }
 
 /// One relation. `closed: Some(spec)` declares it **closed** (the option
@@ -29,12 +43,12 @@ pub struct SchemaSpec {
 /// resolves to [`FieldId`] 0, declared columns shift by one), exactly as
 /// the macro resolves them.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RelationSpec {
+pub struct RelationSpecData<V = Value> {
     pub name: Box<str>,
     pub fields: Vec<FieldSpec>,
 
     /// (ruled 2026-07-23, R7).
-    pub closed: Option<ClosedSpec>,
+    pub closed: Option<ClosedSpecData<V>>,
 }
 
 /// A closed relation's closed half, fused: the handle newtype and the
@@ -43,10 +57,10 @@ pub struct RelationSpec {
 /// without one — are unrepresentable, exactly
 /// as the macro's mandatory `as NewType` makes them unspellable.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClosedSpec {
+pub struct ClosedSpecData<V = Value> {
     pub newtype: Box<str>,
 
-    pub rows: Vec<RowSpec>,
+    pub rows: Vec<RowSpecData<V>>,
 }
 
 /// One field: name, structural type, and host newtype name. [`ValueType`]
@@ -69,9 +83,9 @@ pub struct FieldSpec {
 /// ride the same [`LiteralSpec`] machine as statement selections (one
 /// machine, same errors — the macro's own rule).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RowSpec {
+pub struct RowSpecData<V = Value> {
     pub handle: Box<str>,
-    pub values: Vec<LiteralSpec>,
+    pub values: Vec<LiteralSpecData<V>>,
 }
 
 /// One literal as spelled: a plain [`Value`], or a closed relation's
@@ -79,8 +93,8 @@ pub struct RowSpec {
 /// the selected field's newtype to the handle's declaration-order row id
 /// (a `u64` word), exactly as the macro resolves it at expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LiteralSpec {
-    Value(Value),
+pub enum LiteralSpecData<V = Value> {
+    Value(V),
     Handle(Box<str>),
 }
 
@@ -89,9 +103,9 @@ pub enum LiteralSpec {
 /// bans them (the canonical-utterance law): a one-element set is the bare
 /// literal, and an empty set selects nothing — write no binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LiteralSetSpec {
-    One(LiteralSpec),
-    Many(Vec<LiteralSpec>),
+pub enum LiteralSetSpecData<V = Value> {
+    One(LiteralSpecData<V>),
+    Many(Vec<LiteralSpecData<V>>),
 }
 
 /// The name-bearing form of a typed dependency projection.
@@ -100,12 +114,12 @@ pub type ProjectionSpec = super::Projection<Box<str>>;
 /// One side of a containment or capacity statement:
 /// `R(fields… | field == literal…)`, all names.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SideSpec {
+pub struct SideSpecData<V = Value> {
     pub relation: Box<str>,
 
     pub projection: ProjectionSpec,
 
-    pub selection: Vec<(Box<str>, LiteralSetSpec)>,
+    pub selection: Vec<(Box<str>, LiteralSetSpecData<V>)>,
 }
 
 /// A capacity statement's weight as spelled: the measure of one source
@@ -162,24 +176,24 @@ pub enum CapacityWindowSpec {
 /// `Containment { bidirectional: true }` spelling, lowered to the two
 /// adjacent containment descriptors (`source <= target` first).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StatementSpec {
+pub enum StatementSpecData<V = Value> {
     Fd {
         relation: Box<str>,
         projection: ProjectionSpec,
     },
 
     Containment {
-        source: SideSpec,
-        target: SideSpec,
+        source: SideSpecData<V>,
+        target: SideSpecData<V>,
         bidirectional: bool,
     },
 
     /// weight, window, source (ruled 2026-07-24, C2).
     Capacity {
-        target: SideSpec,
+        target: SideSpecData<V>,
         weight: WeightSpec,
         window: CapacityWindowSpec,
-        source: SideSpec,
+        source: SideSpecData<V>,
     },
 }
 

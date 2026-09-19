@@ -32,12 +32,23 @@ pub(crate) fn parse_input_rows(
     cells: &napi::bindgen_prelude::Array,
     context: &WorkContext,
 ) -> Result<Vec<Vec<ValueInput>>, RuntimeError> {
-    let copy = CopyContext::new(env, context);
     let roster = sealed
         .rosters
         .get(relation as usize)
         .ok_or(RuntimeError::InvalidArgument)?;
-    let arity = roster.fields.len();
+    parse_input_cells(env, &roster.name, &roster.fields, stated, cells, context)
+}
+
+pub(crate) fn parse_input_cells(
+    env: napi::Env,
+    name: &str,
+    fields: &[bumbledb::schema::FieldDescriptor],
+    stated: u64,
+    cells: &napi::bindgen_prelude::Array,
+    context: &WorkContext,
+) -> Result<Vec<Vec<ValueInput>>, RuntimeError> {
+    let copy = CopyContext::new(env, context);
+    let arity = fields.len();
     if u128::from(stated) * (arity as u128) != u128::from(cells.len()) {
         return Err(RuntimeError::InvalidArgument);
     }
@@ -54,16 +65,12 @@ pub(crate) fn parse_input_rows(
     let mut rows = reserve_input_rows(stated, context)?;
     for start in (0..cells.len()).step_by(arity) {
         let mut row = output_vec(arity)?;
-        for (offset, field) in roster.fields.iter().enumerate() {
+        for (offset, field) in fields.iter().enumerate() {
             let index = start + u32::try_from(offset).expect("field count fits u32");
             let value = crate::marshal::req_at::<napi::Unknown>(cells, index, "row cells")
                 .map_err(|_| RuntimeError::InvalidArgument)?;
-            let value = copy.finish(copy.schema_value(
-                &field.value_type,
-                value,
-                &roster.name,
-                &field.name,
-            ))?;
+            let value =
+                copy.finish(copy.schema_value(&field.value_type, value, name, &field.name))?;
             row.push(value);
         }
         context.checkpoint()?;

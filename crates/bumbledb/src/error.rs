@@ -219,7 +219,9 @@ pub enum CorruptionError {
 /// [`crate::schema::StatementDescriptor::Functionality`] carries neither a
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaError {
-    /// This Event position (selection, capacity or closed roster) has not
+    /// Canonical schema literal admission failed; never a false match.
+    EventLiteral(crate::event::Error),
+    /// This Event position (capacity or closed roster) has not
     /// passed its native contract gate. Pointwise field dependencies are supported.
     EventContractPending {
         relation: RelationId,

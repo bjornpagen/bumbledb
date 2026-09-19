@@ -461,9 +461,10 @@ impl fmt::Display for SchemaError {
                 "relation {}, row {row}: ray axiom at field {} — a still-running span is policy, not an intrinsic property",
                 r.0, fd.0
             ),
+            Self::EventLiteral(error) => write!(f, "Event schema literal: {error}"),
             Self::EventContractPending { relation, field } => write!(
                 f,
-                "Event schema position at {relation:?}.{field:?} is not implemented for selections, capacity or closed rosters"
+                "Event schema position at {relation:?}.{field:?} is not implemented for capacity projections or closed rosters"
             ),
             Self::StrOnClosedRelation {
                 relation: r,

@@ -172,12 +172,12 @@ fn put_side(out: &mut Vec<u8>, schema: &Schema, side: &Side) {
         match literals {
             LiteralSet::One(literal) => {
                 put_len(out, 1);
-                put_literal(out, desc, literal);
+                put_literal(out, schema, desc, literal);
             }
             LiteralSet::Many(values) => {
                 put_len(out, values.len());
                 for literal in values {
-                    put_literal(out, desc, literal);
+                    put_literal(out, schema, desc, literal);
                 }
             }
         }
@@ -220,8 +220,14 @@ fn element_tag(element: IntervalElement) -> u8 {
 /// No variant tag: the selected field's type is already in the stream
 /// (relations encode before statements), so the literal's shape is a function
 /// of bytes already hashed and no two schemas can alias here.
-fn put_literal(out: &mut Vec<u8>, desc: bumbledb_theory::schema::ValueType, literal: &Value) {
+fn put_literal(
+    out: &mut Vec<u8>,
+    schema: &Schema,
+    desc: bumbledb_theory::schema::ValueType,
+    literal: &Value,
+) {
     match literal {
+        Value::Event(event) => put_bytes(out, schema.event_literals.bytes(event)),
         Value::String(text) => put_bytes(out, text.as_bytes()),
         encoded => encode_literal(encoded, desc, out),
     }

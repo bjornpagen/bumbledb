@@ -613,6 +613,13 @@ struct Judge<'s, 'w, E> {
 }
 
 impl<E> Judge<'_, '_, E> {
+    fn satisfies(&self, side: &Side, row: &[Value]) -> Result<bool, JudgeError<E>> {
+        self.schema
+            .event_literals
+            .matches(side, row, self.work)
+            .map_err(Into::into)
+    }
+
     fn grouped(&self) -> GroupedMap<E> {
         GroupedMap::new(self.work, self.channel)
     }
@@ -1240,7 +1247,7 @@ impl<E> Judge<'_, '_, E> {
         row: &[Value],
         pending: &mut PendingViolation,
     ) -> Result<(), JudgeError<E>> {
-        if !satisfies(&statement.source, row) {
+        if !self.satisfies(&statement.source, row)? {
             return Ok(());
         }
         let handle = &row[usize::from(statement.source.projection.fields()[0].0)];
@@ -1301,8 +1308,8 @@ impl<E> Judge<'_, '_, E> {
     ) -> Result<(), JudgeError<E>> {
         let mut witnesses = self.grouped();
         let mut key = Vec::new();
-        self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
-            if satisfies(&statement.target, row) {
+        self.for_each_row(state, statement.target.relation, |judge, _seq, row| {
+            if judge.satisfies(&statement.target, row)? {
                 key.clear();
                 encode_projection(&statement.target, row, None, &mut key);
                 witnesses.put(&key, &[])?;
@@ -1310,7 +1317,7 @@ impl<E> Judge<'_, '_, E> {
             Ok(true)
         })?;
         self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-            if !satisfies(&statement.source, row) {
+            if !judge.satisfies(&statement.source, row)? {
                 return Ok(true);
             }
             key.clear();
@@ -1338,8 +1345,8 @@ impl<E> Judge<'_, '_, E> {
         let mut tokens = self.grouped();
         let mut spans = self.grouped();
         let mut prefix = Vec::new();
-        self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
-            if !satisfies(&statement.target, row) {
+        self.for_each_row(state, statement.target.relation, |judge, _seq, row| {
+            if !judge.satisfies(&statement.target, row)? {
                 return Ok(true);
             }
             prefix.clear();
@@ -1378,7 +1385,7 @@ impl<E> Judge<'_, '_, E> {
         let mut found_key = Vec::new();
         let mut found_value = Vec::new();
         self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-            if !satisfies(&statement.source, row) {
+            if !judge.satisfies(&statement.source, row)? {
                 return Ok(true);
             }
             prefix.clear();
@@ -1426,13 +1433,13 @@ impl<E> Judge<'_, '_, E> {
         // Every finite weight is at most u64::MAX. Keep the accumulator
         // widened and checked, independent of traversal order or any work
         // policy; an undefined duration or overflow remains a typed error.
-        self.for_each_row(state, statement.source.relation, |_judge, _seq, row| {
+        self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
             source_rows = source_rows
                 .checked_add(1)
                 .ok_or(JudgeError::MeasureOverflow {
                     statement: statement.id,
                 })?;
-            if !satisfies(&statement.source, row) {
+            if !judge.satisfies(&statement.source, row)? {
                 return Ok(true);
             }
             group.clear();
@@ -1466,7 +1473,7 @@ impl<E> Judge<'_, '_, E> {
         // selected by canonical bytes after both sides are offered.
         let mut violating = self.grouped();
         self.for_each_row(state, statement.target.relation, |judge, rank, row| {
-            if !satisfies(&statement.target, row) {
+            if !judge.satisfies(&statement.target, row)? {
                 return Ok(true);
             }
             group.clear();
@@ -1509,7 +1516,7 @@ impl<E> Judge<'_, '_, E> {
         })?;
         if pending.violated {
             self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-                if !satisfies(&statement.source, row) {
+                if !judge.satisfies(&statement.source, row)? {
                     return Ok(true);
                 }
                 group.clear();
@@ -1689,19 +1696,13 @@ impl<E> Judge<'_, '_, E> {
                 let mut witnessed = false;
                 if let Some(compiled) = target_compiled {
                     if self
-                        .visit_indexed_group(
-                            state,
-                            compiled,
-                            target_binding,
-                            det,
-                            |_judge, row| {
-                                if satisfies(&statement.target, row) {
-                                    witnessed = true;
-                                    return Ok(false);
-                                }
-                                Ok(true)
-                            },
-                        )?
+                        .visit_indexed_group(state, compiled, target_binding, det, |judge, row| {
+                            if judge.satisfies(&statement.target, row)? {
+                                witnessed = true;
+                                return Ok(false);
+                            }
+                            Ok(true)
+                        })?
                         .is_none()
                     {
                         available = false;
@@ -1725,7 +1726,7 @@ impl<E> Judge<'_, '_, E> {
                 if let Some(compiled) = source_compiled {
                     if self
                         .visit_indexed_group(state, compiled, source_binding, det, |judge, row| {
-                            if satisfies(&statement.source, row) {
+                            if judge.satisfies(&statement.source, row)? {
                                 pending.violated = true;
                                 judge.offer(pending, statement.source.relation, row)?;
                             }
@@ -1807,7 +1808,7 @@ impl<E> Judge<'_, '_, E> {
                 if let Some(compiled) = source_compiled {
                     if self
                         .visit_indexed_group(state, compiled, source_binding, det, |judge, row| {
-                            if !satisfies(&statement.source, row) {
+                            if !judge.satisfies(&statement.source, row)? {
                                 return Ok(true);
                             }
                             if !run_covers(
@@ -1829,7 +1830,7 @@ impl<E> Judge<'_, '_, E> {
                     }
                 } else {
                     self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-                        if !satisfies(&statement.source, row)
+                        if !judge.satisfies(&statement.source, row)?
                             || CompiledTheory::group_key(source_binding, row).as_slice() != det
                         {
                             return Ok(true);
@@ -1865,8 +1866,10 @@ impl<E> Judge<'_, '_, E> {
         determinant: &[Value],
     ) -> Result<Option<GroupedMap<E>>, JudgeError<E>> {
         let mut spans = self.grouped();
+        let literals = &self.schema.event_literals;
+        let work = self.work;
         let mut add_span = |row: &[Value]| {
-            if satisfies(&statement.target, row) {
+            if literals.matches(&statement.target, row, work)? {
                 let span = &row[usize::from(statement.target.projection.fields()[position].0)];
                 let (start, end) =
                     interval_order_words(span).expect("positional typing pairs interval positions");
@@ -1884,8 +1887,8 @@ impl<E> Judge<'_, '_, E> {
                 return Ok(None);
             }
         } else {
-            self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
-                if satisfies(&statement.target, row)
+            self.for_each_row(state, statement.target.relation, |judge, _seq, row| {
+                if judge.satisfies(&statement.target, row)?
                     && CompiledTheory::group_key(binding, row).as_slice() == determinant
                 {
                     add_span(row)?;
@@ -1909,8 +1912,8 @@ impl<E> Judge<'_, '_, E> {
     ) -> Result<(), JudgeError<E>> {
         let mut witnesses = self.grouped();
         let mut key = Vec::new();
-        self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
-            if satisfies(&statement.target, row) {
+        self.for_each_row(state, statement.target.relation, |judge, _seq, row| {
+            if judge.satisfies(&statement.target, row)? {
                 key.clear();
                 encode_values(&CompiledTheory::group_key(target_binding, row), &mut key);
                 if affected.contains(&key)? {
@@ -1920,7 +1923,7 @@ impl<E> Judge<'_, '_, E> {
             Ok(true)
         })?;
         self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-            if !satisfies(&statement.source, row) {
+            if !judge.satisfies(&statement.source, row)? {
                 return Ok(true);
             }
             key.clear();
@@ -1950,8 +1953,8 @@ impl<E> Judge<'_, '_, E> {
         let mut tokens = self.grouped();
         let mut spans = self.grouped();
         let mut prefix = Vec::new();
-        self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
-            if !satisfies(&statement.target, row) {
+        self.for_each_row(state, statement.target.relation, |judge, _seq, row| {
+            if !judge.satisfies(&statement.target, row)? {
                 return Ok(true);
             }
             prefix.clear();
@@ -1971,7 +1974,7 @@ impl<E> Judge<'_, '_, E> {
         let mut found_key = Vec::new();
         let mut found_value = Vec::new();
         self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-            if !satisfies(&statement.source, row) {
+            if !judge.satisfies(&statement.source, row)? {
                 return Ok(true);
             }
             prefix.clear();
@@ -2107,26 +2110,20 @@ impl<E> Judge<'_, '_, E> {
                 }
                 if let Some(compiled) = source_compiled {
                     if self
-                        .visit_indexed_group(
-                            state,
-                            compiled,
-                            source_binding,
-                            det,
-                            |_judge, row| {
-                                if satisfies(&statement.source, row) {
-                                    accumulate_capacity(&mut totals, statement, row, group)?;
-                                }
-                                Ok(true)
-                            },
-                        )?
+                        .visit_indexed_group(state, compiled, source_binding, det, |judge, row| {
+                            if judge.satisfies(&statement.source, row)? {
+                                accumulate_capacity(&mut totals, statement, row, group)?;
+                            }
+                            Ok(true)
+                        })?
                         .is_none()
                     {
                         available = false;
                         return Ok(false);
                     }
                 } else {
-                    self.for_each_row(state, statement.source.relation, |_judge, _seq, row| {
-                        if satisfies(&statement.source, row)
+                    self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
+                        if judge.satisfies(&statement.source, row)?
                             && CompiledTheory::group_key(source_binding, row).as_slice() == det
                         {
                             accumulate_capacity(&mut totals, statement, row, group)?;
@@ -2154,7 +2151,7 @@ impl<E> Judge<'_, '_, E> {
                             target_binding,
                             det,
                             |judge, rank, row| {
-                                if satisfies(&statement.target, row) {
+                                if judge.satisfies(&statement.target, row)? {
                                     judge.note_capacity_target(
                                         statement,
                                         (rank, row),
@@ -2174,7 +2171,7 @@ impl<E> Judge<'_, '_, E> {
                     }
                 } else {
                     self.for_each_row(state, statement.target.relation, |judge, rank, row| {
-                        if satisfies(&statement.target, row)
+                        if judge.satisfies(&statement.target, row)?
                             && CompiledTheory::group_key(target_binding, row).as_slice() == det
                         {
                             judge.note_capacity_target(
@@ -2211,7 +2208,7 @@ impl<E> Judge<'_, '_, E> {
                                 source_binding,
                                 det,
                                 |judge, row| {
-                                    if satisfies(&statement.source, row) {
+                                    if judge.satisfies(&statement.source, row)? {
                                         judge.offer(pending, statement.source.relation, row)?;
                                     }
                                     Ok(true)
@@ -2224,7 +2221,7 @@ impl<E> Judge<'_, '_, E> {
                         }
                     } else {
                         self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-                            if satisfies(&statement.source, row)
+                            if judge.satisfies(&statement.source, row)?
                                 && CompiledTheory::group_key(source_binding, row).as_slice() == det
                             {
                                 judge.offer(pending, statement.source.relation, row)?;
@@ -2250,8 +2247,8 @@ impl<E> Judge<'_, '_, E> {
     ) -> Result<(), JudgeError<E>> {
         let mut totals = self.grouped();
         let mut group = Vec::new();
-        self.for_each_row(state, statement.source.relation, |_judge, _seq, row| {
-            if !satisfies(&statement.source, row) {
+        self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
+            if !judge.satisfies(&statement.source, row)? {
                 return Ok(true);
             }
             group.clear();
@@ -2264,7 +2261,7 @@ impl<E> Judge<'_, '_, E> {
         })?;
         let mut violating = self.grouped();
         self.for_each_row(state, statement.target.relation, |judge, rank, row| {
-            if !satisfies(&statement.target, row) {
+            if !judge.satisfies(&statement.target, row)? {
                 return Ok(true);
             }
             group.clear();
@@ -2284,7 +2281,7 @@ impl<E> Judge<'_, '_, E> {
         })?;
         if pending.violated {
             self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-                if !satisfies(&statement.source, row) {
+                if !judge.satisfies(&statement.source, row)? {
                     return Ok(true);
                 }
                 group.clear();
@@ -2376,8 +2373,10 @@ impl<E> Judge<'_, '_, E> {
         det: &[Value],
     ) -> Result<bool, JudgeError<E>> {
         let mut found = false;
-        self.for_each_row(state, relation, |_judge, _seq, row| {
-            if satisfies(side, row) && CompiledTheory::group_key(binding, row).as_slice() == det {
+        self.for_each_row(state, relation, |judge, _seq, row| {
+            if judge.satisfies(side, row)?
+                && CompiledTheory::group_key(binding, row).as_slice() == det
+            {
                 found = true;
             }
             Ok(!found)
@@ -2395,7 +2394,9 @@ impl<E> Judge<'_, '_, E> {
         pending: &mut PendingViolation,
     ) -> Result<(), JudgeError<E>> {
         self.for_each_row(state, relation, |judge, _seq, row| {
-            if satisfies(side, row) && CompiledTheory::group_key(binding, row).as_slice() == det {
+            if judge.satisfies(side, row)?
+                && CompiledTheory::group_key(binding, row).as_slice() == det
+            {
                 pending.violated = true;
                 judge.offer(pending, relation, row)?;
             }
@@ -2423,7 +2424,14 @@ impl<E> Judge<'_, '_, E> {
             if walk_error.is_some() {
                 return Ok(false);
             }
-            if satisfies(side, row) {
+            let selected = match self.satisfies(side, row) {
+                Ok(selected) => selected,
+                Err(error) => {
+                    walk_error = Some(error);
+                    return Ok(false);
+                }
+            };
+            if selected {
                 // Exact keys are the only retained group representation.
                 // The same borrowed encoding buffer is reused for the next row.
                 let marked = key
@@ -2498,15 +2506,6 @@ impl PendingViolation {
             self.measure = Some(measure);
         }
     }
-}
-
-/// Does the row satisfy the side's selection (each bound field's value is
-/// a member of its literal set)? Exact canonical value equality, only.
-fn satisfies(side: &Side, row: &[Value]) -> bool {
-    side.selection.iter().all(|(field, literals)| {
-        let actual = &row[usize::from(field.0)];
-        literals.literals().iter().any(|literal| literal == actual)
-    })
 }
 
 /// Append the side's projected values as exact injective bytes, optionally

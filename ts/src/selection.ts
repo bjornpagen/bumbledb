@@ -1,5 +1,6 @@
 import { type AnyClosed, memberDescriptor, sealedFieldOf, sealedFieldsOf } from "#closed.ts"
 import { AuthoringError } from "#errors.ts"
+import { encodedEvent } from "#event-value.ts"
 import { type AnyField, assertDeclarationRecord, type ClosedIdField, type Infer, literalOf } from "#fields.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import { type LiteralSetSpec, type LiteralSpec, renderLiteral } from "#spec.ts"
@@ -42,7 +43,10 @@ function selectionLiteral(field: AnyField, input: unknown): LiteralSpec {
 	if (field.kind === "bytes") kind = "fixedBytes"
 	if (field.kind === "interval") kind = { u64: "intervalU64", i64: "intervalI64", f64: "intervalF64" }[field.element]
 	if (value.kind !== kind) throw new AuthoringError({ message: `selection requires the ${kind} value tag` })
-	const literal = literalOf(field, field.kind === "interval" ? { start: value.start, end: value.end } : value.value)
+	let inputValue = value.value
+	if (field.kind === "event") inputValue = encodedEvent(value.value)
+	else if (field.kind === "interval") inputValue = { start: value.start, end: value.end }
+	const literal = literalOf(field, inputValue)
 	if (literal.kind === "value") Object.freeze(literal.value)
 	return Object.freeze(literal)
 }

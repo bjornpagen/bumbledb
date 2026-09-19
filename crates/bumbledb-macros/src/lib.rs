@@ -1158,6 +1158,13 @@ fn typed_or_placeholder(
 fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -> LiteralSpec {
     let value = match (ty, literal) {
         (_, Literal::Handle(name, _)) => return LiteralSpec::Handle(name.as_str().into()),
+        (FieldTy::Event, Literal::Bytes(text)) => {
+            let bytes = unescape_bytes(text);
+            Value::Event(
+                bumbledb_theory::event::Event::from_bytes(&bytes, &())
+                    .unwrap_or_else(|_| literal_mismatch(relation, field)),
+            )
+        }
         (FieldTy::Bool, Literal::Bool(v)) => Value::Bool(*v),
         (
             FieldTy::U64,
@@ -2026,15 +2033,21 @@ fn value_type_tokens(value_type: &ValueType) -> String {
     }
 }
 
-/// Renders one lowered literal as its `Value` expression. String and
-/// byte content re-escapes through std's escapers, so the emitted
-/// literal round-trips the seam's decoded bytes exactly.
+/// Reconstruct the exact Event value checked during macro expansion.
+fn event_tokens(event: &bumbledb_theory::event::Event) -> String {
+    let bytes = event
+        .to_bytes(&())
+        .expect("macro-admitted Event literal has a canonical encoding");
+    format!(
+        "::bumbledb::Event::from_bytes(b\"{}\", &()).expect(\"schema! Event literal was checked during expansion\")",
+        bytes.escape_ascii()
+    )
+}
+
 fn value_tokens(value: &Value) -> String {
     let path = "::bumbledb::Value";
     match value {
-        Value::Event(_) => {
-            unreachable!("the schema parser does not construct owned Event literals")
-        }
+        Value::Event(event) => format!("{path}::Event({})", event_tokens(event)),
         Value::Bool(v) => format!("{path}::Bool({v})"),
         Value::U64(v) => format!("{path}::U64({v})"),
         Value::I64(v) => format!("{path}::I64({v})"),
@@ -2498,9 +2511,7 @@ fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDesc
 
 fn const_value_tokens(value: &Value, field: &Field) -> String {
     let raw = match value {
-        Value::Event(_) => {
-            unreachable!("the schema parser does not construct owned Event literals")
-        }
+        Value::Event(event) => event_tokens(event),
         Value::Bool(v) => format!("{v}"),
         Value::U64(v) => format!("{v}u64"),
         Value::I64(v) => format!("{v}i64"),

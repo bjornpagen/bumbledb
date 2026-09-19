@@ -24,7 +24,7 @@ impl<S: Theory> Db<S> {
     /// # Errors
     /// Schema validation, destination refusals, storage failure, stopped work.
     pub fn create(path: &Path, schema: S, work: WorkContext) -> Result<Admission<Self>> {
-        let schema = schema.descriptor().validate()?;
+        let schema = schema.descriptor().validate_with_control(&work)?;
         match judge_final_state(&schema, &MapState::new(), &work, JudgeBudget::default())
             .map_err(super::violations::judge_refusal)?
         {
@@ -46,7 +46,7 @@ impl<S: Theory> Db<S> {
     /// # Errors
     /// Schema validation, recognition/lock refusals, storage failure, stopped work.
     pub fn open(path: &Path, schema: S, work: WorkContext) -> Result<Self> {
-        let schema = schema.descriptor().validate()?;
+        let schema = schema.descriptor().validate_with_control(&work)?;
         work.checkpoint()
             .map_err(|error| Error::from_store(crate::storage::store::StoreError::Work(error)))?;
         let store = Store::open(path, &schema, MapPolicy::default()).map_err(Error::from_store)?;
@@ -63,7 +63,7 @@ impl<S: Theory> Db<S> {
         schema: S,
         work: WorkContext,
     ) -> Result<Self> {
-        let schema = schema.descriptor().validate()?;
+        let schema = schema.descriptor().validate_with_control(&work)?;
         let (store, _fresh) =
             Store::create(path, &schema, MapPolicy::default()).map_err(Error::from_store)?;
         Self::assemble(store, schema, work)

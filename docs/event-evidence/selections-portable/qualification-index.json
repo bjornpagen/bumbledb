@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "scope": "Final qualification source SHA256 values equal staged Git blobs",
+  "source_count": 1123,
+  "source_tree": "4492a6a019724aae05a7c2f325ec1e4848bfaf5f",
+  "qualification": "docs/event-evidence/native-selection-final-qualification/check.json",
+  "qualification_sha256": "c5d0f09d4205ebaf3c416e86bf453dbcf5c761def5943a8c8b8e0c1bb87dea24"
+}

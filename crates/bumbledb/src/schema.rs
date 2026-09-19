@@ -17,6 +17,7 @@ pub mod judge;
 pub mod manifest;
 pub mod render;
 
+mod literals;
 mod relation;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -444,6 +445,7 @@ pub struct Relation {
 /// [`SchemaDescriptor::validate`]; downstream code trusts its invariants.
 #[derive(Debug, Clone)]
 pub struct Schema {
+    event_literals: literals::EventLiterals,
     identity: std::sync::OnceLock<fingerprint::SchemaFingerprint>,
     compiled: std::sync::OnceLock<Result<compiled::SharedCompiledTheory, compiled::CompileError>>,
     relations: Box<[Relation]>,

@@ -221,11 +221,18 @@ fn value(
         ));
     }
     Ok(match value {
-        Value::Event(_) => {
-            return Err(refuse(
-                coordinate(schema, at),
-                "owned Event schema literals require a declared source",
-            ));
+        Value::Event(event) => {
+            let bytes = event.to_bytes(&()).map_err(|error| {
+                BindingError::Schema(bumbledb::error::SchemaError::EventLiteral(error).into())
+            })?;
+            format!(
+                "Result.getOrThrow(db.Event.fromBytes(Uint8Array.of({})))",
+                bytes
+                    .iter()
+                    .map(u8::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
         }
         Value::Bool(v) => v.to_string(),
         Value::U64(v) => format!("{v}n"),
@@ -318,6 +325,21 @@ pub fn emit(schema: &SchemaDescriptor) -> Result<String, BindingError> {
     let mut out = String::from(
         "// Generated from a native-verified schema snapshot.\nimport * as db from \"@bjornpagen/bumbledb\"\n\n",
     );
+    if schema.statements.iter().any(|statement| match statement {
+        StatementDescriptor::Functionality { .. } => false,
+        StatementDescriptor::Containment { source, target }
+        | StatementDescriptor::Capacity { source, target, .. } => {
+            [source, target].iter().any(|side| {
+                side.selection.iter().any(|(_, set)| {
+                    set.literals()
+                        .iter()
+                        .any(|value| matches!(value, Value::Event(_)))
+                })
+            })
+        }
+    }) {
+        out.push_str("import { Result } from \"effect\"\n\n");
+    }
     declarations(schema, &rosters, &mut out)?;
     // The runtime retains every law. An array avoids recursive type-level
     // evaluation of thousands of laws; it invents no static class proofs.

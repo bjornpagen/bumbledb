@@ -234,6 +234,9 @@ pub(crate) fn schema_error(
 ) -> RuntimeError {
     use crate::runtime::{SchemaDiagnostic, StatementDiagnostic};
     use bumbledb::error::{SchemaError, StatementErrorKind};
+    if let SchemaError::EventLiteral(error) = error {
+        return crate::ingress::event_error(*error);
+    }
     let diagnostic = if let SchemaError::Statement { statement, kind } = error {
         let render = |id: bumbledb::schema::StatementId| StatementDiagnostic {
             id: id.0,
@@ -279,18 +282,11 @@ pub fn runtime_schema_compile(
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let mut marshal_error = None;
-    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |_| {
-        let parsed = match crate::descriptor_of(&spec) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                marshal_error = Some(error);
-                return Err(RuntimeError::InvalidArgument);
-            }
-        };
+    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |context| {
+        let parsed = crate::ingress::schema::SchemaInput::copy(env, &spec, context)?;
         Ok(Box::new(move |context| {
             context.checkpoint()?;
-            let (descriptor, attrs) = match parsed {
+            let (descriptor, attrs) = match parsed.admit(context)? {
                 Ok(parsed) => parsed,
                 Err(
                     crate::OpenOutcome::SchemaError(message)
@@ -308,20 +304,21 @@ pub fn runtime_schema_compile(
             let schema = sealed
                 .descriptor
                 .clone()
-                .validate()
+                .validate_with_control(context)
                 .map_err(|error| schema_error(&error, &sealed.descriptor))?;
             let fingerprint = bumbledb::schema::fingerprint::fingerprint(&schema);
-            Ok(Output::Descriptor(marshal::DescriptorWire {
-                manifest: sealed.descriptor.manifest(),
-                statements: sealed.statements,
-                fingerprint: crate::hex_fingerprint(&fingerprint.0),
-                attrs: sealed.attrs,
-            }))
+            Ok(Output::Descriptor(
+                marshal::DescriptorWire::capture(
+                    sealed.descriptor.manifest(),
+                    sealed.statements,
+                    crate::hex_fingerprint(&fingerprint.0),
+                    sealed.attrs,
+                    context,
+                )
+                .map_err(crate::ingress::event_error)?,
+            ))
         }))
     });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
     let operation = operation.map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
@@ -726,18 +723,11 @@ pub fn runtime_draft_open(
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let mut marshal_error = None;
-    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |_| {
-        let parsed = match crate::descriptor_of(&spec) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                marshal_error = Some(error);
-                return Err(RuntimeError::InvalidArgument);
-            }
-        };
+    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |context| {
+        let parsed = crate::ingress::schema::SchemaInput::copy(env, &spec, context)?;
         Ok(Box::new(move |context| {
             context.checkpoint()?;
-            let (descriptor, attrs) = match parsed {
+            let (descriptor, attrs) = match parsed.admit(context)? {
                 Ok(parsed) => parsed,
                 Err(
                     crate::OpenOutcome::SchemaError(message)
@@ -754,7 +744,7 @@ pub fn runtime_draft_open(
             let schema = sealed
                 .descriptor
                 .clone()
-                .validate()
+                .validate_with_control(context)
                 .map_err(|error| schema_error(&error, &sealed.descriptor))?;
             Ok(Output::Draft(DraftOpened {
                 schema: Arc::new(schema),
@@ -762,9 +752,6 @@ pub fn runtime_draft_open(
             }))
         }))
     });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
     let operation = operation.map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
@@ -1270,52 +1257,27 @@ pub fn runtime_encode_rows(
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
     let stated = marshal::u64_in(&rows, "encode rows")?;
-    let mut marshal_error = None;
-    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |context| {
-        let prepared = (|| -> napi::Result<(bumbledb::schema::Schema, crate::Sealed)> {
-            let (descriptor, attrs) = match crate::descriptor_of(&spec)? {
-                Ok(parsed) => parsed,
-                Err(
-                    crate::OpenOutcome::SchemaError(message)
-                    | crate::OpenOutcome::NewtypeMismatch(message),
-                ) => {
-                    return Err(thrown(
-                        env,
-                        RuntimeError::Engine {
-                            diagnostic: None,
-                            kind: crate::tags::error_family::SCHEMA,
-                            message,
-                        },
-                    ));
-                }
-            };
-            let sealed = crate::seal(descriptor, attrs);
-            let schema = sealed
-                .descriptor
-                .clone()
-                .validate()
-                .map_err(|error| thrown(env, schema_error(&error, &sealed.descriptor)))?;
-            Ok((schema, sealed))
-        })();
-        match prepared {
-            Ok((schema, sealed)) => {
-                let rows = parse_input_rows(env, &sealed, relation, stated, &cells, context)?;
-                Ok(Box::new(move |context: &WorkContext| {
-                    let rows = rows.admit(context)?;
-                    let bytes = encode_rows_bytes(&schema, RelationId(relation), &rows, context)?;
-                    Ok(Output::Bytes(bytes))
-                }) as crate::runtime::Work)
-            }
-            Err(error) => {
-                marshal_error = Some(error);
-                Err(RuntimeError::InvalidArgument)
-            }
-        }
-    });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
-    let operation = operation.map_err(|error| thrown(env, error))?;
+    let operation = runtime
+        .submit(WorkContext::new(), notification(callback)?, |context| {
+            let input = crate::ingress::schema::SchemaInput::copy(env, &spec, context)?;
+            let (name, fields) = input.row_shape(relation)?;
+            let rows = codec::parse_input_cells(env, name, &fields, stated, &cells, context)?;
+            Ok(Box::new(move |context| {
+                let (descriptor, _) = input.resolve(context)?;
+                let schema = descriptor
+                    .clone()
+                    .validate_with_control(context)
+                    .map_err(|error| schema_error(&error, &descriptor))?;
+                let rows = rows.admit(context)?;
+                Ok(Output::Bytes(encode_rows_bytes(
+                    &schema,
+                    RelationId(relation),
+                    &rows,
+                    context,
+                )?))
+            }))
+        })
+        .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
 
@@ -1342,54 +1304,25 @@ pub fn runtime_decode_rows(
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
     let bytes = unshared_input(env, bytes)?;
-    let mut marshal_error = None;
-    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |context| {
-        let staged = (|| -> napi::Result<bumbledb::schema::Schema> {
-            let (descriptor, _attrs) = match crate::descriptor_of(&spec)? {
-                Ok(parsed) => parsed,
-                Err(
-                    crate::OpenOutcome::SchemaError(message)
-                    | crate::OpenOutcome::NewtypeMismatch(message),
-                ) => {
-                    return Err(thrown(
-                        env,
-                        RuntimeError::Engine {
-                            diagnostic: None,
-                            kind: crate::tags::error_family::SCHEMA,
-                            message,
-                        },
-                    ));
-                }
-            };
-            descriptor
-                .clone()
-                .validate()
-                .map_err(|error| thrown(env, schema_error(&error, &descriptor)))
-        })();
-        match staged {
-            Ok(schema) => {
-                context.checkpoint()?;
-                let owned = bytes.to_vec();
-                Ok(Box::new(move |context: &WorkContext| {
-                    context.checkpoint()?;
-                    Ok(Output::Rows(decode_rows_values(
-                        &schema,
-                        RelationId(relation),
-                        &owned,
-                        context,
-                    )?))
-                }) as crate::runtime::Work)
-            }
-            Err(error) => {
-                marshal_error = Some(error);
-                Err(RuntimeError::InvalidArgument)
-            }
-        }
-    });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
-    let operation = operation.map_err(|error| thrown(env, error))?;
+    let operation = runtime
+        .submit(WorkContext::new(), notification(callback)?, |context| {
+            let input = crate::ingress::schema::SchemaInput::copy(env, &spec, context)?;
+            let owned = QueuedBytes::copy_from(context, &bytes)?;
+            Ok(Box::new(move |context| {
+                let (descriptor, _) = input.resolve(context)?;
+                let schema = descriptor
+                    .clone()
+                    .validate_with_control(context)
+                    .map_err(|error| schema_error(&error, &descriptor))?;
+                Ok(Output::Rows(decode_rows_values(
+                    &schema,
+                    RelationId(relation),
+                    &owned.bytes,
+                    context,
+                )?))
+            }))
+        })
+        .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
 
@@ -1406,18 +1339,11 @@ pub fn runtime_schema_snapshot(
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let mut marshal_error = None;
-    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |_| {
-        let parsed = match crate::descriptor_of(&spec) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                marshal_error = Some(error);
-                return Err(RuntimeError::InvalidArgument);
-            }
-        };
+    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |context| {
+        let parsed = crate::ingress::schema::SchemaInput::copy(env, &spec, context)?;
         Ok(Box::new(move |context| {
             context.checkpoint()?;
-            let (descriptor, _) = parsed.map_err(|error| match error {
+            let (descriptor, _) = parsed.admit(context)?.map_err(|error| match error {
                 crate::OpenOutcome::SchemaError(message)
                 | crate::OpenOutcome::NewtypeMismatch(message) => RuntimeError::Engine {
                     kind: crate::tags::error_family::SCHEMA,
@@ -1427,7 +1353,7 @@ pub fn runtime_schema_snapshot(
             })?;
             descriptor
                 .clone()
-                .validate()
+                .validate_with_control(context)
                 .map_err(|error| schema_error(&error, &descriptor))?;
             let bytes = bumbledb_log::schema_file::render(&descriptor)
                 .map_err(|error| engine_error(&error.into()))?
@@ -1436,9 +1362,6 @@ pub fn runtime_schema_snapshot(
             Ok(Output::Bytes(QueuedBytes::admit(context, bytes)?))
         }))
     });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
     let operation = operation.map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
@@ -1469,7 +1392,7 @@ pub fn runtime_schema_bindings(
                 })?;
                 descriptor
                     .clone()
-                    .validate()
+                    .validate_with_control(context)
                     .map_err(|error| schema_error(&error, &descriptor))?;
                 context.checkpoint()?;
                 let source = bumbledb_log::bindings::emit(&descriptor).map_err(|error| {

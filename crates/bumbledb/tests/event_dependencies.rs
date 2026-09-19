@@ -745,3 +745,45 @@ fn event_keys_keep_exact_target_and_region_shape_requirements() {
         })
     ));
 }
+
+mod selected_macro {
+    use super::*;
+    bumbledb::schema! {
+        pub Selection;
+        relation Message { id: u64, event: event }
+        relation Registered { id: u64 }
+        Registered(id) -> Registered;
+        Message(id | event == b"\x42\x45\x56\x54\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00") <= Registered(id);
+    }
+
+    #[test]
+    fn canonical_event_bytes_are_typed_schema_literals() {
+        let directory = common::TempDir::new("event-macro-selection");
+        let db = Db::create(directory.path(), Selection, common::work())
+            .unwrap()
+            .unwrap();
+        let source = Space::new(SpaceId([0; 32]), 0, &()).unwrap();
+        let row = Message {
+            id: 7,
+            event: source.empty(),
+        };
+        assert!(matches!(
+            db.write(common::work(), |tx| tx.insert([&row])).unwrap(),
+            Admission::Rejected(_)
+        ));
+        db.write(common::work(), |tx| {
+            tx.insert([&row])?;
+            tx.insert([&Registered { id: 7 }])?;
+            Ok(())
+        })
+        .unwrap()
+        .unwrap();
+        drop(db);
+        let db = Db::open(directory.path(), Selection, common::work()).unwrap();
+        assert!(matches!(
+            db.write(common::work(), |tx| tx.delete([&Registered { id: 7 }]))
+                .unwrap(),
+            Admission::Rejected(_)
+        ));
+    }
+}

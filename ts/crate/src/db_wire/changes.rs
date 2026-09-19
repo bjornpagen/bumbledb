@@ -215,20 +215,13 @@ pub fn runtime_changes_parse(
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
     let bytes = unshared_input(env, bytes)?;
-    let mut marshal_error = None;
     let operation = runtime.submit(WorkContext::new(), notification(callback)?, |work| {
-        let parsed = match crate::descriptor_of(&spec) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                marshal_error = Some(error);
-                return Err(RuntimeError::InvalidArgument);
-            }
-        };
+        let parsed = crate::ingress::schema::SchemaInput::copy(env, &spec, work)?;
         let owned = QueuedBytes::copy_from(work, &bytes)?.bytes;
         Ok(Box::new(move |work| {
             use bumbledb::schema::ValidateDescriptor as _;
             work.checkpoint()?;
-            let (descriptor, _) = parsed.map_err(|error| RuntimeError::Engine {
+            let (descriptor, _) = parsed.admit(work)?.map_err(|error| RuntimeError::Engine {
                 diagnostic: None,
                 kind: crate::tags::error_family::SCHEMA,
                 message: match error {
@@ -239,7 +232,7 @@ pub fn runtime_changes_parse(
             let schema = Arc::new(
                 descriptor
                     .clone()
-                    .validate()
+                    .validate_with_control(work)
                     .map_err(|error| super::schema_error(&error, &descriptor))?,
             );
             let changes = ChangeSet::from_bytes(&schema, owned, work)
@@ -252,9 +245,6 @@ pub fn runtime_changes_parse(
             }))
         }))
     });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
     let operation = operation.map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }

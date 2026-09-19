@@ -63,7 +63,7 @@ impl<S: Theory> InstanceBuilder<S> {
     /// # Errors
     /// Schema validation or stopped work.
     pub fn new(theory: S, work: WorkContext) -> Result<Self> {
-        let schema = Arc::new(theory.descriptor().validate()?);
+        let schema = Arc::new(theory.descriptor().validate_with_control(&work)?);
         work.checkpoint()
             .map_err(|e| Error::from_store(crate::storage::store::StoreError::Work(e)))?;
         let closed = Arc::new(ClosedRows::build(schema.as_ref(), &work)?);

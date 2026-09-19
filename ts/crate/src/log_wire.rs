@@ -3100,7 +3100,7 @@ pub fn log_command_decode(
                 Ok(Box::new(move |context| {
                     use bumbledb::schema::ValidateDescriptor as _;
                     context.checkpoint()?;
-                    let schema = match descriptor.clone().validate() {
+                    let schema = match descriptor.clone().validate_with_control(context) {
                         Ok(schema) => schema,
                         Err(error) => {
                             return Err(RuntimeError::Engine {

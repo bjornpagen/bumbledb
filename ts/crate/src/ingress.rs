@@ -11,6 +11,7 @@ use crate::marshal::{self, output_vec};
 use crate::runtime::{QueuedBytes, RuntimeError};
 
 pub(crate) mod query;
+pub(crate) mod schema;
 #[cfg(test)]
 mod tests;
 
