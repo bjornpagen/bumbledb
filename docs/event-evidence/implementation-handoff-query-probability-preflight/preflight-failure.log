@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/Users/bjorn/Documents/bumbledb/scripts/check-event-readiness.py", line 159, in <module>
+    main()
+  File "/Users/bjorn/Documents/bumbledb/scripts/check-event-readiness.py", line 135, in main
+    assert target.exists() or target.resolve() == (args.output / "check.json").resolve(), target
+AssertionError: /Users/bjorn/Documents/bumbledb/docs/event-evidence/native-query-probability-qualification-final/check.json

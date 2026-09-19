@@ -3,8 +3,8 @@ import { drainClose, releaseOwner } from "#close.ts"
 import type { CursorHandle, ResultHandle } from "#db-native.ts"
 import { dbNative } from "#db-native.ts"
 import type { FindColumn } from "#query/atom.ts"
+import type { AnswerCell } from "#query/probability.ts"
 import { decodeAnswers } from "#query/run.ts"
-import type { CellValue } from "#rows.ts"
 import { nativeOperationWith } from "#runtime.ts"
 import type { CloseReport, DbError } from "#runtime-errors.ts"
 
@@ -35,7 +35,7 @@ function internalResult(value: object): ResultInternal | undefined {
 	return resultInternals.get(value)
 }
 
-function decodePage<A>(finds: readonly FindColumn[], rows: readonly (readonly CellValue[])[]): ReadonlyArray<A> {
+function decodePage<A>(finds: readonly FindColumn[], rows: readonly (readonly AnswerCell[])[]): ReadonlyArray<A> {
 	// Owned ordinary records in declared column order — the same fields and
 	// shapes on every page (stable row shape; no Proxy, no per-row fiber).
 	return Object.freeze(decodeAnswers<A>(finds, rows))

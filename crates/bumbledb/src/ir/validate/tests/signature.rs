@@ -207,7 +207,7 @@ fn signature_of(schema: &Schema, query: &Query) -> Vec<ValueType> {
         .signature()
         .columns
         .iter()
-        .map(|column| *column.ty())
+        .map(|column| *column.ty().unwrap())
         .collect()
 }
 

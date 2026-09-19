@@ -546,6 +546,11 @@ impl From<DynIdError> for FactShapeError {
 /// same per-atom rules and share the same diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationError {
+    /// Observation result slots are not yet relational interior fields.
+    ObservationInterior {
+        interior: crate::InteriorId,
+        find: FindIndex,
+    },
     EmptyRuleSet,
     ScalarExpression {
         find: FindIndex,

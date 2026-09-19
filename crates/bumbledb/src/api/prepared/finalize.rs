@@ -9,10 +9,39 @@ use crate::image::intern::InternerHandle;
 use crate::ir::validate::SignatureColumn;
 use crate::work::WorkContext;
 
+pub(super) fn finalize(
+    sink: &mut EitherSink,
+    answer_scratch: &mut Vec<u64>,
+    memo: &mut ResolveMemo,
+    interner: &InternerHandle<'_>,
+    columns: &[SignatureColumn],
+    out: &mut Answers,
+    work: &WorkContext,
+) -> Result<()> {
+    let base = out.cells.len();
+    let probabilities = out.probabilities.len();
+    let result = finalize_rows(sink, answer_scratch, memo, interner, columns, out, work)
+        .and_then(|()| out.finish_probabilities(work));
+    if result.is_err() {
+        if base == 0 {
+            out.clear();
+        } else {
+            // Internal append callers may already own an initialized prefix.
+            // Public execution starts empty; neither path exposes this append.
+            out.cells.truncate(base);
+            out.probabilities.truncate(probabilities);
+            out.probability_pairs.clear();
+            out.probability_indices
+                .retain(|_, index| *index < probabilities);
+        }
+    }
+    result
+}
+
 /// Finalize through the existing representation-specific kernels. Fixed
 /// columns fill in bounded polling batches; no per-row quota accounting
 /// forces an otherwise columnar result onto a row-major path.
-pub(super) fn finalize(
+fn finalize_rows(
     sink: &mut EitherSink,
     answer_scratch: &mut Vec<u64>,
     memo: &mut ResolveMemo,
@@ -26,7 +55,7 @@ pub(super) fn finalize(
     match sink {
         EitherSink::Computed(sink) => {
             sink.finish_events()?;
-            finalize(
+            finalize_rows(
                 &mut sink.inner,
                 answer_scratch,
                 memo,
@@ -127,7 +156,18 @@ fn fill_resident_rows<'a>(
     let mut offset = 0;
     for (col, column) in columns.iter().enumerate() {
         work.checkpoint().map_err(work_error)?;
-        offset += match column.ty() {
+        let Some(ty) = column.ty() else {
+            let mut answers = answers.clone();
+            for row in 0..rows {
+                work.checkpoint().map_err(work_error)?;
+                let answer = answers.next().expect("resident sink length");
+                let cell = out.probability_cell(&answer[offset..offset + 4], interner)?;
+                out.cells.spare_capacity_mut()[row * arity + col].write(cell);
+            }
+            offset += 4;
+            continue;
+        };
+        offset += match ty {
             ValueType::String => {
                 let mut answers = answers.clone();
                 for row in 0..rows {
@@ -290,7 +330,13 @@ fn push_resolved_answer(
 ) -> Result<()> {
     let mut word = 0;
     for column in columns {
-        let (cell, width) = match column.ty() {
+        let Some(ty) = column.ty() else {
+            let cell = out.probability_cell(&answer[word..word + 4], interner)?;
+            out.cells.push(cell);
+            word += 4;
+            continue;
+        };
+        let (cell, width) = match ty {
             ValueType::Bool => (Cell::Bool(answer[word] != 0), 1),
             ValueType::U64 => (Cell::U64(answer[word]), 1),
             ValueType::I64 => (Cell::I64((answer[word] ^ (1 << 63)).cast_signed()), 1),

@@ -163,7 +163,7 @@ fn interval_find_round_trips_through_answers() {
         .signature()
         .columns
         .iter()
-        .map(|column| *column.ty())
+        .map(|column| *column.ty().unwrap())
         .collect();
     assert_eq!(
         types,

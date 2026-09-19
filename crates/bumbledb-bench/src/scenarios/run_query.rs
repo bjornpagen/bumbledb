@@ -125,7 +125,11 @@ pub(super) fn gate(
                 .signature()
                 .columns
                 .iter()
-                .map(|column| *column.ty())
+                .map(|column| {
+                    *column
+                        .ty()
+                        .expect("benchmark uses stored-field result types")
+                })
                 .collect();
             let canonical = || {
                 translate(&query, schema, &[])

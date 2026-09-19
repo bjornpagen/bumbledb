@@ -331,6 +331,10 @@ fn static_shape_and_type_refusals_precede_query_normalization() {
     for term in [
         FindTerm::Event(EventExpr::Var(VarId(0))),
         FindTerm::Test(EventTest::IsEmpty(EventExpr::Var(VarId(0)))),
+        FindTerm::Probability {
+            event: EventExpr::Var(VarId(0)),
+            given: EventExpr::Var(VarId(0)),
+        },
         FindTerm::Event(EventExpr::Cardinality {
             minimum: 0,
             maximum: 0,
@@ -353,6 +357,44 @@ fn static_shape_and_type_refusals_precede_query_normalization() {
                 source: bumbledb::EventExprError::TooDeep,
                 ..
             }
+        ))
+    ));
+}
+
+#[test]
+fn probability_refuses_interior_results_and_combined_oversized_operands() {
+    let directory = common::TempDir::new("probability-validation");
+    let db = Db::create(directory.path(), EventQueries, common::work())
+        .unwrap()
+        .unwrap();
+    let interior = query!(EventQueries {
+        interior observed(chance: Probability(a, Full(a))) | Region(region: a);
+        (id) | Region(id);
+    });
+    assert!(matches!(
+        db.prepare(&interior, common::work()),
+        Err(Error::Validation(
+            bumbledb::ValidationError::ObservationInterior { .. }
+        ))
+    ));
+    let template = query!(EventQueries { (chance: Probability(a, Full(a))) | Region(region: a); });
+    let mut ir = (*template).clone();
+    let mut wide = EventExpr::Var(VarId(0));
+    for _ in 0..11 {
+        wide = EventExpr::Apply {
+            op: BoolOp4::AND,
+            left: Box::new(wide.clone()),
+            right: Box::new(wide),
+        };
+    }
+    ir.rules[0].finds = vec![FindTerm::Probability {
+        event: wide.clone(),
+        given: wide,
+    }];
+    assert!(matches!(
+        db.prepare(&ir, common::work()),
+        Err(Error::Validation(
+            bumbledb::ValidationError::EventExpression { .. }
         ))
     ));
 }

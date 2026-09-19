@@ -69,7 +69,11 @@ impl BenchRun<'_> {
             .signature()
             .columns
             .iter()
-            .map(|column| *column.ty())
+            .map(|column| {
+                *column
+                    .ty()
+                    .expect("benchmark uses stored-field result types")
+            })
             .collect();
 
         let mut rotation = Rotation::new(sets.clone());

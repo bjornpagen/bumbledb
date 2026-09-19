@@ -726,6 +726,10 @@ impl fmt::Display for ValidationError {
         match self {
             Self::EmptyRuleSet => write!(f, "the rule set is empty — the empty union is no query"),
             Self::ScalarExpression { find, source } => write!(f, "find {find}: {source}"),
+            Self::ObservationInterior { interior, find } => write!(
+                f,
+                "interior {interior:?} find {find}: observation results require a final query head"
+            ),
             Self::EventExpression { find, source } => write!(f, "find {find}: {source}"),
             Self::TooManyRules { count } => {
                 write!(f, "{count} rules exceed the rule cap")

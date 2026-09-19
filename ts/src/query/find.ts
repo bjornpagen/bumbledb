@@ -3,7 +3,8 @@ import type { BoolField, EventField, F64Field, I64Field, Infer, IntervalField, U
 import type { SchemaClasses } from "#law.ts"
 import type { IntervalVarOk, NumericVarOk } from "#query/atom.ts"
 import type { AnyComputeExpr, ComputeExpr, ComputeValue } from "#query/compute.ts"
-import type { EventExpr, EventFind, EventTest } from "#query/event.ts"
+import type { EventExpr, EventFind, EventTest, ProbabilityExpr } from "#query/event.ts"
+import type { ProbabilityAnswer } from "#query/probability.ts"
 import type { AnyVar, MintSlotOf } from "#query/scope.ts"
 import type { Segments } from "#query/segments.ts"
 import type { ScalarKind } from "#scalar.ts"
@@ -86,23 +87,25 @@ type CheckRecFind<F extends FindShape> = {
 	readonly [K in keyof F]: F[K] extends AnyVar ? F[K] : never
 }
 
-type FindValue<E> = E extends EventExpr
-	? Event
-	: E extends EventTest
-		? boolean
-		: E extends Segments<infer Element>
-			? Infer<IntervalField<Element, undefined>>
-			: E extends AnyVar
-				? Infer<E["field"]>
-				: E extends CountAgg
-					? bigint
-					: E extends Agg<"sum" | "mean" | "min" | "max", infer O extends AnyVar>
-						? Infer<O["field"]>
-						: E extends Agg<"pack", infer V extends AnyVar>
-							? Infer<V["field"]>
-							: E extends ComputeExpr<infer K extends ScalarKind>
-								? ComputeValue<K>
-								: never
+type FindValue<E> = E extends ProbabilityExpr
+	? ProbabilityAnswer
+	: E extends EventExpr
+		? Event
+		: E extends EventTest
+			? boolean
+			: E extends Segments<infer Element>
+				? Infer<IntervalField<Element, undefined>>
+				: E extends AnyVar
+					? Infer<E["field"]>
+					: E extends CountAgg
+						? bigint
+						: E extends Agg<"sum" | "mean" | "min" | "max", infer O extends AnyVar>
+							? Infer<O["field"]>
+							: E extends Agg<"pack", infer V extends AnyVar>
+								? Infer<V["field"]>
+								: E extends ComputeExpr<infer K extends ScalarKind>
+									? ComputeValue<K>
+									: never
 
 type RowOfFind<F extends FindShape> = { readonly [K in keyof F]: FindValue<F[K]> }
 

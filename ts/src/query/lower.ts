@@ -972,6 +972,7 @@ function assertNumeric(where: string, position: string, ref: AnyVar): void {
  */
 function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedField | undefined {
 	const entry = column.entry
+	if (entry.kind === "probability") return undefined
 	if (entry.kind === "event") return { field: eventField, class: undefined }
 	if (entry.kind === "test") return { field: boolField, class: undefined }
 	if (entry.kind === "segments") return { field: segmentField(entry), class: undefined }
@@ -1005,7 +1006,9 @@ function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedFie
 function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, column: FindColumn): void {
 	const where = `${contextLabel(context)} find ${column.name}`
 	const entry = column.entry
-	if (entry.kind === "event" || entry.kind === "test") {
+	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability") {
+		if (entry.kind === "probability" && context.kind !== "query")
+			throw new AuthoringError({ message: `${where}: probability observations currently require a final query head` })
 		for (const ref of eventFindVars(entry)) assertBound(where, bound, ref)
 		return
 	}
@@ -1729,7 +1732,12 @@ function alignedHeadOf(label: string, rules: readonly RuleData[]): readonly Find
 			rule.finds.length !== first.finds.length ||
 			rule.finds.some((column, position) => {
 				const lead = first.finds[position]
-				return lead === undefined || lead.name !== column.name || headOperation(lead) !== headOperation(column)
+				return (
+					lead === undefined ||
+					lead.name !== column.name ||
+					headOperation(lead) !== headOperation(column) ||
+					(lead.entry.kind === "probability") !== (column.entry.kind === "probability")
+				)
 			})
 		) {
 			const render = (columns: readonly FindColumn[]) =>
@@ -2269,7 +2277,8 @@ function lowerComputeGrammar(node: QueryNode, ids: VarIds): ScalarExprIr {
 }
 
 function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
-	if (entry.kind === "event" || entry.kind === "test") return eventFindIr(entry, (ref) => ids.of(ref))
+	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability")
+		return eventFindIr(entry, (ref) => ids.of(ref))
 	if (entry.kind === "segments")
 		return { kind: entry.kind, op: entry.op, left: ids.of(entry.left), right: ids.of(entry.right) }
 	if (entry.kind === "var") {
@@ -2302,7 +2311,7 @@ function headOpOf(agg: AggData): HeadOpIr {
 
 function headTermOf(column: FindColumn): HeadTermIr {
 	const entry = column.entry
-	if (entry.kind === "event" || entry.kind === "test") return { kind: "compute" }
+	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability") return { kind: "compute" }
 	if (entry.kind === "segments") return { kind: "compute" }
 	if (entry.kind === "var") {
 		return { kind: "var" }

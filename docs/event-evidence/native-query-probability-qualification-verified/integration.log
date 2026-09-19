@@ -1,0 +1,183 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running tests/event_actions.rs (target/debug/build/bumbledb/d724216cea4ab1bb/out/event_actions-d724216cea4ab1bb)
+
+running 1 test
+test strategy_regions_ranks_and_policy_persist_as_ordinary_event_facts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/event_closed.rs (target/debug/build/bumbledb/16f46a3dc73089b5/out/event_closed-16f46a3dc73089b5)
+
+running 7 tests
+test macro_ground::__bumbledb_weld_catalog::host_enum_weld ... ok
+test macro_ground::event_accessors_are_owned_and_the_schema_macro_reads_ground_rows ... ok
+test closed_literals_parameters_and_same_row_equality_survive_ground_folding ... ok
+test closed_point_reads_use_portable_equality_and_preserve_empty_key_refusal ... ok
+test open_to_closed_event_coverage_checks_context_and_scalar_groups ... ok
+test closed_events_join_across_owners_caches_cursors_and_reopen ... ok
+test closed_to_open_coverage_supports_admitted_instances_and_atomic_repair ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/event_core.rs (target/debug/build/bumbledb/92ea297ea3ce07d2/out/event_core-92ea297ea3ce07d2)
+
+running 1 test
+test native_work_context_cancels_event_computation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/event_dependencies.rs (target/debug/build/bumbledb/7d722fb86fe0042a/out/event_dependencies-7d722fb86fe0042a)
+
+running 14 tests
+test event_keys_keep_exact_target_and_region_shape_requirements ... ok
+test reference_state_deduplicates_event_meaning_and_refuses_cancelled_insertion ... ok
+test canonical_duplicates_collapse_but_distinct_whole_facts_conflict ... ok
+test cancellation_before_admission_preserves_the_lawful_parent ... ok
+test keyed_reads_require_nonempty_event_or_an_independent_scalar_key ... ok
+test empty_facts_coexist_but_scalar_roster_law_still_applies ... ok
+test free_join_deduplicates_empty_key_projections ... ok
+test final_state_repair_and_contributor_deletion_preserve_exact_coverage ... ok
+test groups_route_independently_and_same_name_does_not_erase_support ... ok
+test empty_uncovered_source_groups_still_require_a_common_context ... ok
+test rejection_citations_are_stable_and_exclude_empty_or_disjoint_facts ... ok
+test selected_macro::canonical_event_bytes_are_typed_schema_literals ... ok
+test incompatible_context_refuses_even_for_empty_values ... ok
+test native_partitions_match_four_world_bitset_oracle ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.86s
+
+     Running tests/event_fixed_points.rs (target/debug/build/bumbledb/8575254585cabfe4/out/event_fixed_points-8575254585cabfe4)
+
+running 1 test
+test fixed_point_results_persist_join_and_retain_exact_owned_values ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/event_full.rs (target/debug/build/bumbledb/b74ea222a3399d71/out/event_full-b74ea222a3399d71)
+
+running 14 tests
+test closed_fixtures::__bumbledb_weld_a::host_enum_weld ... ok
+test closed_fixtures::__bumbledb_weld_allowed::host_enum_weld ... ok
+test closed_fixtures::__bumbledb_weld_b::host_enum_weld ... ok
+test exact_full_keys_and_typed_prefixes_are_required ... ok
+test a_full_key_gives_scalar_uniqueness_without_a_stored_event_column ... ok
+test two_full_sides_preserve_actual_roster_presence ... ok
+test ordinary_event_containments_keep_permuted_region_positions ... ok
+test full_only_projection_is_a_global_singleton_key ... ok
+test full_coverage_observes_atomic_repairs_and_contributor_deletion ... ok
+test contextual_full_checks_all_event_owners_even_behind_empty_operands ... ok
+test roster_constants_require_full_coverage_and_survive_reopen ... ok
+test full_constants_preserve_scalar_permutations_and_empty_lookup_uniqueness ... ok
+test closed_scalar_full_targets_and_ground_full_laws_work ... ok
+test full_partitions_match_bitsets_on_arbitrary_nonempty_supports ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.91s
+
+     Running tests/event_maps.rs (target/debug/build/bumbledb/beecbc55a0c4758e/out/event_maps-beecbc55a0c4758e)
+
+running 2 tests
+test native_cancellation_applies_to_map_admission_and_every_image_mode ... ok
+test map_results_persist_join_and_outlive_maps_and_database ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/event_pack.rs (target/debug/build/bumbledb/4a39230df373bb65/out/event_pack-4a39230df373bb65)
+
+running 4 tests
+test bad_computed_keys_do_not_hide_later_pack_faults_or_invent_groups ... ok
+test absent_groups_stay_absent_and_scoped_empty_seeds_stay_values ... ok
+test pack_faults_use_canonical_group_context_and_retain_written_provenance ... ok
+test grouped_unions_match_world_sets_through_interiors_and_independent_owners ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running tests/event_partitions.rs (target/debug/build/bumbledb/ba88ce277bfe8fac/out/event_partitions-ba88ce277bfe8fac)
+
+running 1 test
+test finite_observables_use_ordinary_scalar_values_and_pointwise_dependencies ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/event_queries.rs (target/debug/build/bumbledb/44a99092f8442c80/out/event_queries-44a99092f8442c80)
+
+running 7 tests
+test static_shape_and_type_refusals_precede_query_normalization ... ok
+test probability_refuses_interior_results_and_combined_oversized_operands ... ok
+test a_consumer_filter_cannot_hide_a_fault_in_its_producer ... ok
+test empty_values_survive_interiors_and_can_be_complemented_and_joined ... ok
+test every_truth_function_checks_context_even_when_constant_or_one_sided ... ok
+test complete_fault_sets_ignore_physical_order_and_unmatched_operands ... ok
+test macro_event_heads_match_explicit_worlds_on_complete_and_coupled_supports ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests/event_query_maps.rs (target/debug/build/bumbledb/91f0ded8d052af77/out/event_query_maps-91f0ded8d052af77)
+
+running 5 tests
+test map_heads_accept_onto_maps_and_refuse_other_checked_descriptor_kinds ... ok
+test incompatible_static_outputs_refuse_before_empty_body_execution ... ok
+test map_imports_compose_with_template_imports_interiors_and_event_pack ... ok
+test typed_boundaries_validate_each_occurrence_even_when_one_variable_changes_role ... ok
+test imported_readouts_match_each_legal_fibre_and_keep_independent_owners ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running tests/event_query_relations.rs (target/debug/build/bumbledb/0e3ac6b2bb8f43c4/out/event_query_relations-0e3ac6b2bb8f43c4)
+
+running 7 tests
+test roles_compare_actual_environment_readouts_not_just_their_ranges ... ok
+test role_errors_refuse_even_with_empty_bodies ... ok
+test modal_faults_retain_occurrences_and_cannot_hide_behind_dead_ends ... ok
+test independently_named_products_reindex_converse_without_changing_role_meaning ... ok
+test modal_queries_closure_and_constant_identity_match_finite_paths ... ok
+test asymmetric_legal_supports_and_shared_environments_survive_query_products ... ok
+test authored_products_preserve_one_middle_witness_for_composition_and_both_residuals ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.65s
+
+     Running tests/event_relations.rs (target/debug/build/bumbledb/4bb31a4b6d276b03/out/event_relations-4bb31a4b6d276b03)
+
+running 1 test
+test computed_permissions_reopen_join_and_recover_their_relation_view ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/event_sources.rs (target/debug/build/bumbledb/d77b3d613a5ed07c/out/event_sources-d77b3d613a5ed07c)
+
+running 17 tests
+test probability_groups_by_source_pairs_before_counting_bindings ... ok
+test free_join_distinguishes_laws_with_equal_marginals_on_both_execution_paths ... ok
+test explicit_shared_prior_survives_stored_free_join_and_owner_release ... ok
+test probability_admits_participating_operands_and_reuses_after_atomic_failure ... ok
+test conditional_source_maps_flow_through_persisted_coup_queries ... ok
+test conditioned_sources_reopen_translate_queries_and_retain_signed_expectations ... ok
+test measured_rows_reopen_deduplicate_and_keep_their_law_after_owner_drop ... ok
+test probability_pair_identity_survives_duplicate_arms_and_numerical_equality ... ok
+test zero_mass_branches_still_obey_pointwise_keys_coverage_and_rollback ... ok
+test probability_heads_match_all_finite_region_pairs_including_nonempty_zero_evidence ... ok
+test probability_heads_retain_exact_family_functions_across_reopen_and_both_join_paths ... ok
+test shared_unknown_parameter_survives_reopen_both_free_join_paths_and_owner_release ... ok
+test family_posterior_translation_persists_and_runs_on_both_free_join_paths ... ok
+test family_posterior_zero_mass_outcomes_still_require_relational_coverage ... ok
+test family_channel_and_jeffrey_maps_keep_owned_probabilities_through_free_join ... ok
+test parameter_guarded_zero_mass_worlds_still_participate_in_fd_and_ind_admission ... ok
+test guard_refinement_splits_a_stored_partition_and_preserves_its_family_through_free_join ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.72s
+
+     Running tests/event_storage.rs (target/debug/build/bumbledb/b84698a6755363bb/out/event_storage-b84698a6755363bb)
+
+running 10 tests
+test canonical_event_corruption_and_cancellation_are_not_nonmatches ... ok
+test version_one_row_fixture_pins_the_graph_and_field_envelope ... ok
+test one_decoded_row_aligns_its_event_fields_and_keeps_foreign_sources_separate ... ok
+test free_join_uses_shared_semantic_identity_on_resident_and_cursor_paths ... ok
+test event_runtime_keys_never_supply_a_public_order ... ok
+test event_pages_own_values_and_cancelled_delivery_does_not_advance ... ok
+test event_sets_collapse_semantic_duplicates_and_keep_equal_mass_regions_distinct ... ok
+test canonical_facts_deduplicate_reopen_and_retain_owned_results ... ok
+test rollback_and_concurrent_publication_preserve_whole_fact_identity ... ok
+test independently_owned_literals_and_parameters_match_canonical_values ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+

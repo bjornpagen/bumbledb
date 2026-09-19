@@ -15,6 +15,7 @@ pub enum Owned {
     Str(String),
     Bytes(Vec<u8>),
     Event(Vec<u8>),
+    Probability(Vec<u8>, Vec<u8>),
     IntervalU64(u64, u64),
     IntervalI64(i64, i64),
     /// Canonical binary64 endpoint payloads — bit-exact, like [`Owned::F64`].
@@ -22,6 +23,22 @@ pub enum Owned {
 }
 
 pub type Answer = Vec<Owned>;
+
+/// Scalar SQL workloads cannot silently treat query observations as fields.
+pub(crate) fn stored_types(
+    signature: &bumbledb::ir::validate::Signature,
+) -> Result<Vec<ValueType>, String> {
+    signature
+        .columns
+        .iter()
+        .map(|column| {
+            column
+                .ty()
+                .copied()
+                .ok_or_else(|| "SQL benchmark does not support observation results".to_owned())
+        })
+        .collect()
+}
 
 /// Persistence identity adapter only; not an independent Event algebra oracle.
 pub(crate) fn event_bytes(value: &bumbledb::Event) -> Vec<u8> {
@@ -37,6 +54,9 @@ pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
         .map(|answer| {
             (0..types.len())
                 .map(|column| match answer.get(column) {
+                    AnswerValue::Probability(v) => {
+                        Owned::Probability(event_bytes(v.event()), event_bytes(v.given()))
+                    }
                     AnswerValue::Event(v) => Owned::Event(event_bytes(v)),
                     AnswerValue::Bool(v) => Owned::Bool(v),
                     AnswerValue::U64(v) => Owned::U64(v),

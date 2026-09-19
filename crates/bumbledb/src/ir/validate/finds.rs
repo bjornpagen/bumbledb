@@ -16,11 +16,20 @@ impl Signature {
             if left.op() != right.op() {
                 return Err(position);
             }
-            let ty = if left.ty() == right.ty() {
-                *left.ty()
+            if matches!(
+                (&*left, right),
+                (SignatureColumn::Probability, SignatureColumn::Probability)
+            ) {
+                continue;
+            }
+            let (Some(left_ty), Some(right_ty)) = (left.ty(), right.ty()) else {
+                return Err(position);
+            };
+            let ty = if left_ty == right_ty {
+                *left_ty
             } else if widen
-                && let Some(element) = left.ty().interval_element()
-                && right.ty().interval_element() == Some(element)
+                && let Some(element) = left_ty.interval_element()
+                && right_ty.interval_element() == Some(element)
             {
                 ValueType::Interval { element }
             } else {
@@ -29,6 +38,7 @@ impl Signature {
             match left {
                 SignatureColumn::Project { ty: current }
                 | SignatureColumn::Fold { ty: current, .. } => *current = ty,
+                SignatureColumn::Probability => unreachable!("matched above"),
             }
         }
         Ok(())
@@ -56,6 +66,7 @@ impl Signature {
                 FindTerm::Event(_) => SignatureColumn::Project {
                     ty: ValueType::Event,
                 },
+                FindTerm::Probability { .. } => SignatureColumn::Probability,
                 FindTerm::Test(_) => SignatureColumn::Project {
                     ty: ValueType::Bool,
                 },
@@ -105,7 +116,7 @@ impl Context {
         for (find_idx, term) in rule.finds.iter().enumerate() {
             let find = FindIndex(find_idx);
             match term {
-                FindTerm::Event(_) | FindTerm::Test(_) => {
+                FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
                     for var in term.event_variables().expect("Event expression") {
                         if !self.atom_vars.contains(&var) {
                             return Err(ValidationError::UnboundFindVariable { var });

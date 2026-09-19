@@ -180,14 +180,17 @@ impl EventTest {
     /// # Errors
     /// As [`EventExpr::validate_shape`], bounding the whole test.
     pub fn validate_shape(&self) -> Result<(), EventExprError> {
-        let roots = self.roots();
-        validate_shape(roots.clone())?;
-        let expected = roots.iter().find_map(|expr| expr.output_marker());
-        for root in roots {
-            validate_contexts(root, expected)?;
-        }
-        Ok(())
+        validate_joint_shape(self.roots())
     }
+}
+
+pub(crate) fn validate_joint_shape(roots: Vec<&EventExpr>) -> Result<(), EventExprError> {
+    validate_shape(roots.clone())?;
+    let expected = roots.iter().find_map(|expr| expr.output_marker());
+    for root in roots {
+        validate_contexts(root, expected)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn children(expr: &EventExpr) -> Vec<&EventExpr> {

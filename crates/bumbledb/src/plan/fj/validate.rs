@@ -73,7 +73,7 @@ fn build_occurrences(
                 crate::ir::AtomSource::Interior(id) => signatures[id.index()]
                     .columns
                     .iter()
-                    .map(|column| *column.ty())
+                    .map(|column| *column.ty().expect("validated relational interior"))
                     .collect(),
             };
 

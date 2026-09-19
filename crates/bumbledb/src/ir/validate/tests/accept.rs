@@ -266,7 +266,7 @@ fn accepts_pack_and_pins_the_interval_result_type() {
         .signature()
         .columns
         .iter()
-        .map(|column| *column.ty())
+        .map(|column| *column.ty().unwrap())
         .collect();
     assert_eq!(
         types,
@@ -346,7 +346,7 @@ fn pack_forgets_input_width_and_combines_fixed_and_general_arms() {
     let schema = mixed_width_schema();
     let witness = validate(&schema, &fixed).expect("pack fixed intervals");
     assert_eq!(
-        *witness.signature().columns[0].ty(),
+        *witness.signature().columns[0].ty().unwrap(),
         ValueType::Interval {
             element: IntervalElement::U64
         }

@@ -1,15 +1,15 @@
 import { AuthoringError } from "#errors.ts"
 import type {
-	RelationExprIr,
 	AtomIr,
 	CmpOpIr,
 	ConditionTreeIr,
-	FindTermIr,
 	EventExprIr,
 	EventTestIr,
+	FindTermIr,
 	HeadTermIr,
 	ParsedQuery,
 	QueryIr,
+	RelationExprIr,
 	RuleIr,
 	ScalarExprIr,
 	TermIr
@@ -137,7 +137,11 @@ function relationExpr(context: string, input: unknown, depth: number, budget: Ev
 		case "bind":
 		case "test":
 			recordValue(context, raw, ["kind", "descriptor", "expr"])
-			return Object.freeze({ kind: raw.kind, descriptor: descriptor(), expr: eventExpr(`${context}.expr`, raw.expr, depth + 1, budget) })
+			return Object.freeze({
+				kind: raw.kind,
+				descriptor: descriptor(),
+				expr: eventExpr(`${context}.expr`, raw.expr, depth + 1, budget)
+			})
 		case "identity":
 			recordValue(context, raw, ["kind", "descriptor"])
 			return Object.freeze({ kind: raw.kind, descriptor: descriptor() })
@@ -147,21 +151,33 @@ function relationExpr(context: string, input: unknown, depth: number, budget: Ev
 			return Object.freeze({ kind: raw.kind, relation: child("relation") })
 		case "apply":
 			recordValue(context, raw, ["kind", "bits", "left", "right"])
-			return Object.freeze({ kind: raw.kind, bits: ordinal(context, raw.bits, 15), left: child("left"), right: child("right") })
+			return Object.freeze({
+				kind: raw.kind,
+				bits: ordinal(context, raw.bits, 15),
+				left: child("left"),
+				right: child("right")
+			})
 		case "product": {
 			recordValue(context, raw, ["kind", "op", "descriptor", "left", "right"])
 			const op = raw.op
-			if (op !== "compose" && op !== "leftResidual" && op !== "rightResidual") return fail(context, "unknown relation product operation")
+			if (op !== "compose" && op !== "leftResidual" && op !== "rightResidual")
+				return fail(context, "unknown relation product operation")
 			return Object.freeze({ kind: raw.kind, op, descriptor: descriptor(), left: child("left"), right: child("right") })
 		}
 		case "star":
 			recordValue(context, raw, ["kind", "descriptor", "relation"])
 			return Object.freeze({ kind: raw.kind, descriptor: descriptor(), relation: child("relation") })
-		default: return fail(context, "unknown relation expression kind")
+		default:
+			return fail(context, "unknown relation expression kind")
 	}
 }
 
-function eventExpr(context: string, input: unknown, depth = 1, budget = { remaining: 4096, bytes: 16 * 1024 * 1024 }): EventExprIr {
+function eventExpr(
+	context: string,
+	input: unknown,
+	depth = 1,
+	budget = { remaining: 4096, bytes: 16 * 1024 * 1024 }
+): EventExprIr {
 	if (depth > 128 || budget.remaining-- <= 0) return fail(context, "Event expression exceeds shape budget")
 	const raw = tagged(context, input)
 	const child = (key: string) => eventExpr(`${context}.${key}`, raw[key], depth + 1, budget)
@@ -170,18 +186,35 @@ function eventExpr(context: string, input: unknown, depth = 1, budget = { remain
 			recordValue(context, raw, ["kind", "op", "relation"])
 			const op = raw.op
 			if (op !== "region" && op !== "domain" && op !== "range") return fail(context, "unknown relation view operation")
-			return Object.freeze({ kind: raw.kind, op, relation: relationExpr(`${context}.relation`, raw.relation, depth + 1, budget) })
+			return Object.freeze({
+				kind: raw.kind,
+				op,
+				relation: relationExpr(`${context}.relation`, raw.relation, depth + 1, budget)
+			})
 		}
 		case "modal": {
 			recordValue(context, raw, ["kind", "op", "relation", "expr"])
 			const op = raw.op
-			if (op !== "may" && op !== "all" && op !== "must" && op !== "post") return fail(context, "unknown modal operation")
-			return Object.freeze({ kind: raw.kind, op, relation: relationExpr(`${context}.relation`, raw.relation, depth + 1, budget), expr: child("expr") })
+			if (op !== "may" && op !== "all" && op !== "must" && op !== "post")
+				return fail(context, "unknown modal operation")
+			return Object.freeze({
+				kind: raw.kind,
+				op,
+				relation: relationExpr(`${context}.relation`, raw.relation, depth + 1, budget),
+				expr: child("expr")
+			})
 		}
 		case "map": {
 			recordValue(context, raw, ["kind", "op", "descriptor", "expr"])
 			const op = raw.op
-			if (op !== "pullback" && op !== "image" && op !== "universalImage" && op !== "nonvacuousImage" && op !== "possible" && op !== "guaranteed")
+			if (
+				op !== "pullback" &&
+				op !== "image" &&
+				op !== "universalImage" &&
+				op !== "nonvacuousImage" &&
+				op !== "possible" &&
+				op !== "guaranteed"
+			)
 				return fail(context, "unknown Event readout operation")
 			const descriptor = eventImport(`${context}.descriptor`, raw.descriptor, budget)
 			return Object.freeze({ kind: raw.kind, op, descriptor, expr: child("expr") })
@@ -264,6 +297,15 @@ function find(context: string, input: unknown): FindTermIr {
 		case "event":
 			recordValue(context, raw, ["kind", "expr"])
 			return Object.freeze({ kind: raw.kind, expr: eventExpr(`${context}.expr`, raw.expr) })
+		case "probability": {
+			recordValue(context, raw, ["kind", "event", "given"])
+			const budget = { remaining: 4096, bytes: 16 * 1024 * 1024 }
+			return Object.freeze({
+				kind: raw.kind,
+				event: eventExpr(`${context}.event`, raw.event, 1, budget),
+				given: eventExpr(`${context}.given`, raw.given, 1, budget)
+			})
+		}
 		case "test":
 			recordValue(context, raw, ["kind", "expr"])
 			return Object.freeze({ kind: raw.kind, expr: eventTest(`${context}.expr`, raw.expr) })
@@ -372,7 +414,8 @@ function align(context: string, head: readonly HeadTermIr[], rules: readonly Rul
 				find.kind === "compute" ||
 				find.kind === "segments" ||
 				find.kind === "event" ||
-				find.kind === "test"
+				find.kind === "test" ||
+				find.kind === "probability"
 			if (term === undefined || (term.kind === "aggregate") === projects)
 				fail(`${context}.rules[${index}].finds[${position}]`, "find family does not match head")
 			if (term.kind === "aggregate") {

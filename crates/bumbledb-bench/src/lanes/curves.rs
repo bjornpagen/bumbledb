@@ -442,12 +442,7 @@ fn curve_point<S>(
     let mut prepared = db
         .prepare(&bundle.query, crate::harness::bench_work())
         .map_err(|e| format!("{name}: prepare: {e:?}"))?;
-    let types: Vec<ValueType> = prepared
-        .signature()
-        .columns
-        .iter()
-        .map(|column| *column.ty())
-        .collect();
+    let types: Vec<ValueType> = crate::compare::stored_types(prepared.signature())?;
 
     let mut buffer = Answers::new();
     let mut ours_answers = Vec::with_capacity(bundle.draws.len());
@@ -599,12 +594,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
         let prepared = db
             .prepare(&bundle.query, crate::harness::bench_work())
             .map_err(|e| format!("warmth prepare: {e:?}"))?;
-        prepared
-            .signature()
-            .columns
-            .iter()
-            .map(|column| *column.ty())
-            .collect()
+        crate::compare::stored_types(prepared.signature())?
     };
 
     // Ours, reopen-cold rounds: exec1 = cold, exec2 = warm.
@@ -1372,12 +1362,7 @@ mod tests {
         let mut prepared = db
             .prepare(&bundle.query, crate::harness::bench_work())
             .expect("prepare");
-        let types: Vec<ValueType> = prepared
-            .signature()
-            .columns
-            .iter()
-            .map(|column| *column.ty())
-            .collect();
+        let types: Vec<ValueType> = crate::compare::stored_types(prepared.signature()).unwrap();
         let mut buffer = Answers::new();
         let mut ours = Vec::new();
         for draw in &bundle.draws {

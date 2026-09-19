@@ -246,7 +246,11 @@ fn the_hand_coalesce_matches_pack() {
         .signature()
         .columns
         .iter()
-        .map(|column| *column.ty())
+        .map(|column| {
+            *column
+                .ty()
+                .expect("benchmark uses stored-field result types")
+        })
         .collect();
     let draw = families::unit_draw("free_busy", CFG.seed, &sizes);
     let args = param_args(&draw);

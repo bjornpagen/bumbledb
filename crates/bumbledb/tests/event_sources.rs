@@ -1623,3 +1623,356 @@ fn check_family_dynamics_map(
         }
     }
 }
+
+#[test]
+fn probability_heads_retain_exact_family_functions_across_reopen_and_both_join_paths() {
+    use bumbledb::{ProbabilityValue, query};
+    let dir = common::TempDir::new("probability-family-query");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let source = parameterized_draws();
+    db.write(common::work(), |tx| {
+        tx.insert([&Region {
+            id: 1,
+            condition: source.coordinate(0, &())?,
+        }])?;
+        tx.insert([&Observation {
+            id: 1,
+            condition: source.coordinate(1, &())?,
+        }])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    drop((source, db));
+    let db = Db::open(dir.path(), SourceSchema, common::work()).unwrap();
+    let template = query!(SourceSchema {
+        interior regions(source_id, joint: Event(a & b), evidence: Event(a)) |
+            Region(id: source_id, condition: a), Observation(id: source_id, condition: b);
+        (chance: Probability(joint, evidence), self_chance: Probability(evidence, evidence)) |
+            regions(source_id, joint, evidence);
+    });
+    let mut retained = Vec::new();
+    for fallback in [false, true] {
+        let mut prepared = db.prepare(&template, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        retained.push(
+            db.read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((template, db));
+    for answers in retained {
+        assert_eq!(answers.len(), 1);
+        for column in 0..2 {
+            let AnswerValue::Probability(answer) = answers.get(0, column) else {
+                panic!("owned probability")
+            };
+            let ProbabilityValue::Parameter(observation) = answer.value() else {
+                panic!("exact function")
+            };
+            assert!(!answer.is_impossible());
+            let limits = bumbledb::event::ParameterSourceLimits::default();
+            assert!(
+                observation
+                    .value_at(&ratio(0, 1), limits, &mut arithmetic())
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(
+                observation
+                    .value_at(&ratio(1, 3), limits, &mut arithmetic())
+                    .unwrap()
+                    .unwrap(),
+                if column == 0 {
+                    ratio(1, 3)
+                } else {
+                    ratio(1, 1)
+                }
+            );
+            assert_eq!(
+                observation
+                    .evidence_mass()
+                    .value_at(
+                        &ratio(1, 3),
+                        limits.parameters.region,
+                        limits.functions,
+                        &mut arithmetic()
+                    )
+                    .unwrap()
+                    .unwrap(),
+                ratio(1, 3)
+            );
+            assert_eq!(
+                answer.event().to_bytes(&()).unwrap(),
+                observation.event().to_bytes(&()).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn probability_heads_match_all_finite_region_pairs_including_nonempty_zero_evidence() {
+    use bumbledb::{ProbabilityValue, query};
+    let dir = common::TempDir::new("probability-finite-query");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let base = Space::new(SpaceId([183; 32]), 2, &()).unwrap();
+    let pieces = (0..4)
+        .map(|world| DensityPiece {
+            region: base.table(3, &[1 << world], &()).unwrap(),
+            density: ratio(world, 6),
+        })
+        .collect::<Vec<_>>();
+    let source = base
+        .with_density(&pieces, LawLimits::default(), &mut arithmetic())
+        .unwrap();
+    db.write(common::work(), |tx| {
+        for mask in 0..16 {
+            tx.insert([&Region {
+                id: mask,
+                condition: source.table(3, &[mask], &())?,
+            }])?;
+            tx.insert([&Observation {
+                id: mask,
+                condition: source.table(3, &[mask], &())?,
+            }])?;
+        }
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    let query = query!(SourceSchema {
+        (left, right, chance: Probability(a, b), opposite: Probability(!a, b)) |
+            Region(id: left, condition: a), Observation(id: right, condition: b);
+    });
+    for fallback in [false, true] {
+        let mut prepared = db.prepare(&query, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        let answers = db
+            .read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap();
+        assert_eq!(answers.len(), 256);
+        let mass = |mask: u64| (0..4).filter(|bit| mask & (1 << bit) != 0).sum::<u64>();
+        for row in 0..answers.len() {
+            let (AnswerValue::U64(a), AnswerValue::U64(b)) =
+                (answers.get(row, 0), answers.get(row, 1))
+            else {
+                panic!("ids")
+            };
+            for column in 2..4 {
+                let AnswerValue::Probability(answer) = answers.get(row, column) else {
+                    panic!("probability")
+                };
+                let ProbabilityValue::Fixed { observation, value } = answer.value() else {
+                    panic!("fixed law")
+                };
+                let numerator = mass(if column == 2 { a & b } else { !a & b });
+                assert_eq!(observation.numerator(), &ratio(numerator, 6));
+                assert_eq!(observation.evidence_mass(), &ratio(mass(b), 6));
+                assert_eq!(
+                    value.as_ref(),
+                    (mass(b) != 0).then(|| ratio(numerator, mass(b))).as_ref()
+                );
+                assert_eq!(answer.is_impossible(), mass(b) == 0);
+                assert_eq!(answer.given().is_empty(), b == 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn probability_admits_participating_operands_and_reuses_after_atomic_failure() {
+    use bumbledb::{Answers, Error, query};
+    let dir = common::TempDir::new("probability-participation");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let measured = integrated_two_draws(true);
+    let foreign = Space::new(SpaceId([184; 32]), 1, &()).unwrap();
+    let left = Region {
+        id: 1,
+        condition: measured.full(),
+    };
+    let wrong = Observation {
+        id: 1,
+        condition: foreign.empty(),
+    };
+    db.write(common::work(), |tx| {
+        tx.insert([&left])?;
+        tx.insert([&wrong])?;
+        // No matching Region: this unrelated source never participates.
+        tx.insert([&Observation {
+            id: 9,
+            condition: foreign.full(),
+        }])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    let template = query!(SourceSchema {
+        (chance: Probability(Empty(a), b)) |
+            Region(id: id, condition: a), Observation(id: id, condition: b);
+    });
+    let mut prepared = db.prepare(&template, common::work()).unwrap();
+    let mut answers = Answers::new();
+    for fallback in [false, true] {
+        prepared.force_cursor_fallback(fallback);
+        let failure = db
+            .read(common::work(), |snapshot| {
+                snapshot.execute(&mut prepared, &[] as &[BindValue], &mut answers)
+            })
+            .unwrap_err();
+        let Error::EventFaults(faults) = failure else {
+            panic!("context fault: {failure:?}")
+        };
+        assert_eq!(faults.len(), 1);
+        assert_eq!(faults[0].operand, 1);
+        assert!(answers.is_empty());
+    }
+    db.write(common::work(), |tx| {
+        tx.delete([&wrong])?;
+        tx.insert([&Observation {
+            id: 1,
+            condition: measured.full(),
+        }])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    db.read(common::work(), |snapshot| {
+        snapshot.execute(&mut prepared, &[] as &[BindValue], &mut answers)
+    })
+    .unwrap();
+    assert_eq!(answers.len(), 1);
+    let AnswerValue::Probability(value) = answers.get(0, 0) else {
+        panic!("observation")
+    };
+    assert!(!value.is_impossible());
+    assert!(value.event().is_empty());
+    // An unused lawless field is fine; writing it as evidence is not.
+    let unused = query!(SourceSchema {
+        (chance: Probability(a, a)) | Region(condition: a), Observation(condition: _);
+    });
+    let mut prepared = db.prepare(&unused, common::work()).unwrap();
+    assert_eq!(
+        db.read(common::work(), |snapshot| snapshot
+            .execute_collect(&mut prepared, &[] as &[BindValue]))
+            .unwrap()
+            .len(),
+        1
+    );
+    let missing = query!(SourceSchema {
+        (chance: Probability(Empty(a), Full(a))) | Observation(id == 9, condition: a);
+    });
+    let mut prepared = db.prepare(&missing, common::work()).unwrap();
+    assert!(matches!(
+        db.read(common::work(), |snapshot| snapshot.execute(
+            &mut prepared,
+            &[] as &[BindValue],
+            &mut answers
+        )),
+        Err(Error::Event(EventError::MissingLaw))
+    ));
+    assert!(answers.is_empty());
+}
+
+#[test]
+fn probability_pair_identity_survives_duplicate_arms_and_numerical_equality() {
+    use bumbledb::query;
+    let dir = common::TempDir::new("probability-pair-identity");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let source = integrated_two_draws(true);
+    db.write(common::work(), |tx| {
+        for id in 0..3 {
+            tx.insert([&Region {
+                id,
+                condition: source.coordinate((id % 2) as u8, &())?,
+            }])?;
+        }
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    let template = query!(SourceSchema {
+        (chance: Probability(a, Full(a))) | Region(condition: a);
+        (chance: Probability(a, Full(a))) | Region(condition: a);
+    });
+    for fallback in [false, true] {
+        let mut prepared = db.prepare(&template, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        let answers = db
+            .read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap();
+        assert_eq!(
+            answers.len(),
+            2,
+            "same pair deduplicates, different events do not"
+        );
+        assert_ne!(answers.get(0, 0), answers.get(1, 0));
+        for row in 0..2 {
+            let AnswerValue::Probability(value) = answers.get(row, 0) else {
+                panic!("probability")
+            };
+            let bumbledb::ProbabilityValue::Fixed { value, .. } = value.value() else {
+                panic!("fixed")
+            };
+            assert_eq!(value, &Some(ratio(1, 2)));
+        }
+    }
+}
+
+#[test]
+fn probability_groups_by_source_pairs_before_counting_bindings() {
+    use bumbledb::query;
+    let dir = common::TempDir::new("probability-group-key");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let source = integrated_two_draws(true);
+    db.write(common::work(), |tx| {
+        for id in 0..3 {
+            tx.insert([&Region {
+                id,
+                condition: source.coordinate((id % 2) as u8, &())?,
+            }])?;
+        }
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    let template = query!(SourceSchema {
+        (chance: Probability(a, Full(a)), paths: Count) | Region(id: path, condition: a);
+    });
+    let mut prepared = db.prepare(&template, common::work()).unwrap();
+    for fallback in [false, true] {
+        prepared.force_cursor_fallback(fallback);
+        let answers = db
+            .read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap();
+        assert_eq!(answers.len(), 2);
+        let mut counts = (0..answers.len())
+            .map(|row| {
+                assert!(matches!(answers.get(row, 0), AnswerValue::Probability(_)));
+                let AnswerValue::U64(count) = answers.get(row, 1) else {
+                    panic!("count")
+                };
+                count
+            })
+            .collect::<Vec<_>>();
+        counts.sort_unstable();
+        assert_eq!(counts, [1, 2]);
+    }
+}

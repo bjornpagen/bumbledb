@@ -3,7 +3,7 @@
 import { AuthoringError } from "#errors.ts"
 import { descriptorLength, EventDescriptor, encodedDescriptor } from "#event-descriptor.ts"
 import type { EventField } from "#fields.ts"
-import type { EventExprIr, EventTestIr, RelationExprIr } from "#native.ts"
+import type { EventExprIr, EventTestIr, FindTermIr, RelationExprIr } from "#native.ts"
 import { eventTree, testTree } from "#query/event-tree.ts"
 import { type AnyVar, isTerm, term } from "#query/scope.ts"
 
@@ -19,13 +19,18 @@ interface EventTest {
 	readonly [expressionTag]: "test"
 	readonly node: TestNode
 }
+interface ProbabilityExpr {
+	readonly kind: "probability"
+	readonly [expressionTag]: "probability"
+	readonly node: { readonly event: EventNode; readonly given: EventNode }
+}
 interface RelationExpr {
 	readonly kind: "relation"
 	readonly [expressionTag]: "relation"
 	readonly node: RelationNode
 }
 type EventOperand = EventVar | EventExpr
-type EventFind = EventExpr | EventTest
+type EventFind = EventExpr | EventTest | ProbabilityExpr
 type EventNode = EventExprIr<EventVar, EventDescriptor>
 type TestNode = EventTestIr<EventVar, EventDescriptor>
 type RelationNode = RelationExprIr<EventVar, EventDescriptor>
@@ -40,6 +45,7 @@ interface Owned<N> {
 }
 const events = new WeakMap<EventExpr, Owned<EventNode>>()
 const tests = new WeakMap<EventTest, Owned<TestNode>>()
+const probabilities = new WeakMap<ProbabilityExpr, Owned<ProbabilityExpr["node"]>>()
 const relations = new WeakMap<RelationExpr, Owned<RelationNode>>()
 
 function refused(message: string): never {
@@ -85,12 +91,34 @@ function ownRelation(node: RelationNode, size: Extent): RelationExpr {
 }
 function isEventFind(input: unknown): input is EventFind {
 	return (
-		typeof input === "object" && input !== null && (events.has(input as EventExpr) || tests.has(input as EventTest))
+		typeof input === "object" &&
+		input !== null &&
+		(events.has(input as EventExpr) || tests.has(input as EventTest) || probabilities.has(input as ProbabilityExpr))
 	)
+}
+function ownProbability(node: ProbabilityExpr["node"], size: Extent): ProbabilityExpr {
+	const value: ProbabilityExpr = Object.freeze({
+		kind: "probability",
+		[expressionTag]: "probability" as const,
+		node: Object.freeze(node)
+	})
+	probabilities.set(value, { node: value.node, extent: size })
+	return value
+}
+/** Observe two Event programs on the same source, retaining the exact law and evidence. */
+function probability(event: EventOperand, given: EventOperand): ProbabilityExpr {
+	const a = eventData(event)
+	const b = eventData(given)
+	return ownProbability({ event: a.node, given: b.node }, extent([a.extent, b.extent], [], true))
 }
 /** The query snapshot copies variable references and their uses in one graph.
  * Re-enroll only copies made from a checked expression, retaining its extent. */
 function snapshotEventExpression(source: object, snapshot: object): void {
+	const probability = probabilities.get(source as ProbabilityExpr)
+	if (probability !== undefined) {
+		const value = snapshot as ProbabilityExpr
+		probabilities.set(value, { node: value.node, extent: probability.extent })
+	}
 	const event = events.get(source as EventExpr)
 	if (event !== undefined) {
 		const value = snapshot as EventExpr
@@ -291,8 +319,12 @@ const RelationExpr = Object.freeze({
 function eventFindIr(
 	input: EventFind,
 	variable: (ref: AnyVar) => number
-): { kind: "event"; expr: EventExprIr } | { kind: "test"; expr: EventTestIr } {
+): Extract<FindTermIr, { kind: "event" | "test" | "probability" }> {
 	const map = { variable, descriptor: EventDescriptor.toBytes }
+	if (input.kind === "probability") {
+		const data = probabilities.get(input) ?? refused("Expected an owned probability expression")
+		return { kind: "probability", event: eventTree(data.node.event, map), given: eventTree(data.node.given, map) }
+	}
 	if (input.kind === "event") {
 		const data = events.get(input) ?? refused("Expected an owned Event expression")
 		return { kind: "event", expr: eventTree(data.node, map) }
@@ -309,14 +341,19 @@ function eventFindVars(input: EventFind): readonly EventVar[] {
 		},
 		descriptor: (value: EventDescriptor) => value
 	}
-	if (input.kind === "event") eventTree((events.get(input) ?? refused("Expected an owned Event expression")).node, map)
+	if (input.kind === "probability") {
+		const data = probabilities.get(input) ?? refused("Expected an owned probability expression")
+		eventTree(data.node.event, map)
+		eventTree(data.node.given, map)
+	} else if (input.kind === "event")
+		eventTree((events.get(input) ?? refused("Expected an owned Event expression")).node, map)
 	else testTree((tests.get(input) ?? refused("Expected an owned Event test")).node, map)
 	return [...variables]
 }
 /** Called only after the shared wire parser has admitted shape. Mathematical
  * descriptor admission remains on the worker when this query is prepared. */
 function eventFindFromIr(
-	input: { kind: "event"; expr: EventExprIr } | { kind: "test"; expr: EventTestIr },
+	input: Extract<FindTermIr, { kind: "event" | "test" | "probability" }>,
 	variable: (ordinal: number) => AnyVar
 ): EventFind {
 	let nodes = 0
@@ -334,6 +371,10 @@ function eventFindFromIr(
 			depth = Math.max(depth, level)
 		}
 	}
+	if (input.kind === "probability") {
+		const node = { event: eventTree(input.event, map), given: eventTree(input.given, map) }
+		return ownProbability(node, extent([{ nodes, depth, bytes }], [], true))
+	}
 	if (input.kind === "event") {
 		const node = eventTree(input.expr, map)
 		return ownEvent(node, extent([{ nodes, depth, bytes }], [], true))
@@ -342,7 +383,7 @@ function eventFindFromIr(
 	return ownTest(node, extent([{ nodes, depth, bytes }], [], true))
 }
 
-export type { EventFind, EventOperand, EventVar }
+export type { EventFind, EventOperand, EventVar, ProbabilityExpr }
 export {
 	EventExpr,
 	EventTest,
@@ -350,6 +391,7 @@ export {
 	eventFindIr,
 	eventFindVars,
 	isEventFind,
+	probability,
 	RelationExpr,
 	snapshotEventExpression
 }

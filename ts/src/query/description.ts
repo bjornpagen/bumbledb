@@ -11,9 +11,9 @@ import { eventFindFromIr } from "#query/event.ts"
 import type { AnyQuery, ChainContext, Query } from "#query/lower.ts"
 import { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, taggedCmpLiteral } from "#query/lower.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
+import { type ProbabilityAnswer, type ProbabilityResult, probabilityResult } from "#query/probability.ts"
 import { type AnyVar, type MatchOwner, makeParam, makeSetParam, type ParamsRecord, v } from "#query/scope.ts"
 import { difference, type IntervalVar, intersection } from "#query/segments.ts"
-import type { FieldsShape } from "#relation.ts"
 import { handleOf } from "#rows.ts"
 import {
 	queryVarLeaf,
@@ -49,12 +49,19 @@ interface DescriptionParameter {
 	readonly members: readonly TaggedValue[] | undefined
 }
 
-type DescriptionRow<F extends FieldsShape> = { readonly [K in keyof F]: Infer<F[K]> }
+type ResultShape = Readonly<Record<string, AnyField | ProbabilityResult>>
+type DescriptionRow<F extends ResultShape> = {
+	readonly [K in keyof F]: F[K] extends ProbabilityResult
+		? ProbabilityAnswer
+		: F[K] extends AnyField
+			? Infer<F[K]>
+			: never
+}
 
 /** Checked result fields remain exact through v(imported), just as at runtime.
  * Carrier classes come from the replayed head and remain runtime-checked. */
-type DescriptionHead<F extends FieldsShape> = {
-	readonly [K in keyof F]: { readonly field: F[K]; readonly class: string | undefined }
+type DescriptionHead<F extends ResultShape> = {
+	readonly [K in keyof F]: F[K] extends AnyField ? { readonly field: F[K]; readonly class: string | undefined } : never
 }
 
 function refused(context: string, expected: string): never {
@@ -309,7 +316,8 @@ function replayRule(
 			let value: unknown
 			if (find.kind === "var") value = variableAt(find.var)
 			else if (find.kind === "compute") value = scalar(find.expr)
-			else if (find.kind === "event" || find.kind === "test") value = eventFindFromIr(find, variableAt)
+			else if (find.kind === "event" || find.kind === "test" || find.kind === "probability")
+				value = eventFindFromIr(find, variableAt)
 			else if (find.kind === "segments")
 				value = (find.op === "intersection" ? intersection : difference)(
 					variableAt(find.left) as IntervalVar,
@@ -323,7 +331,7 @@ function replayRule(
 	return chain.find(finds).rule
 }
 
-function queryFromDescription<Rels extends SchemaRelations, Classes extends SchemaClasses, const F extends FieldsShape>(
+function queryFromDescription<Rels extends SchemaRelations, Classes extends SchemaClasses, const F extends ResultShape>(
 	schema: Schema<Rels, Classes>,
 	input: unknown,
 	result: F
@@ -336,7 +344,10 @@ function queryFromDescription<Rels extends SchemaRelations, Classes extends Sche
 		typeof result === "object" && result !== null ? Object.keys(result) : []
 	)
 	const fields = Object.fromEntries(
-		Object.entries(resultRecord).map(([name, field]) => [name, fieldDescriptor(`query result.${name}`, field)])
+		Object.entries(resultRecord).map(([name, field]) => [
+			name,
+			field === probabilityResult ? probabilityResult : fieldDescriptor(`query result.${name}`, field)
+		])
 	)
 	const interiors: InteriorData[] = []
 	const usedParameters = new Set<number>()
@@ -414,7 +425,9 @@ function queryFromDescription<Rels extends SchemaRelations, Classes extends Sche
 		expected.length !== value.data.finds.length ||
 		expected.some(([name, field], ordinal) => {
 			const column = value.data.finds[ordinal]
-			return column?.name !== name || column.slot === undefined || !signaturesAgree(column.slot.field, field)
+			if (column?.name !== name) return true
+			if (field.kind === "probability") return column.entry.kind !== "probability"
+			return column.slot === undefined || !signaturesAgree(column.slot.field, field)
 		})
 	)
 		refused("query result", "result names and field domains must match the derived query head in order")

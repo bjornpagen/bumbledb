@@ -39,9 +39,10 @@ pub(crate) fn collect_from_payload(
     work.checkpoint()?;
     let capacity = usize::try_from(result.len()).map_err(|_| RuntimeError::InvalidArgument)?;
     let mut queued = marshal::result_rows(work, capacity).map_err(|error| engine_error(&error))?;
+    let mut budget = crate::query_probability::ObservationOutputWork::new(work);
     result
         .visit_rows(work, |row| {
-            marshal::push_result_row(work, &mut queued, &row)
+            marshal::push_result_row(work, &mut queued, &row, &mut budget)
         })
         .map_err(|error| engine_error(&error))?;
     Ok(Output::Rows(queued))
@@ -74,8 +75,9 @@ fn open_preview<'a>(
     work.checkpoint()?;
     let mut ticket = DeliveryTicket::open(cursor);
     let mut queued = marshal::result_rows(work, 0).map_err(|error| engine_error(&error))?;
+    let mut budget = crate::query_probability::ObservationOutputWork::new(work);
     match ticket.visit_page(work, |row| {
-        marshal::push_result_row(work, &mut queued, &row)
+        marshal::push_result_row(work, &mut queued, &row, &mut budget)
     }) {
         Ok(None) => {
             ticket.abort();

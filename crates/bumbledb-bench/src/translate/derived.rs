@@ -218,7 +218,8 @@ fn rule_arms(
                 FindTerm::Compute(_)
                 | FindTerm::Segments { .. }
                 | FindTerm::Event(_)
-                | FindTerm::Test(_) => {
+                | FindTerm::Test(_)
+                | FindTerm::Probability { .. } => {
                     return Err("computed heads are not translated to SQL".into());
                 }
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {

@@ -1382,6 +1382,16 @@ fn find_term_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<FindTerm> 
                 &mut EventBudget::new(copy),
             )?))
         }
+        tags::find_term::PROBABILITY => {
+            exact_fields(obj, &["kind", "event", "given"])?;
+            let event: Object = req(obj, "event", "Probability Event")?;
+            let given: Object = req(obj, "given", "Probability evidence")?;
+            let mut budget = EventBudget::new(copy);
+            Ok(FindTerm::Probability {
+                event: event_expr_in(&event, 1, &mut budget)?,
+                given: event_expr_in(&given, 1, &mut budget)?,
+            })
+        }
         tags::find_term::TEST => {
             exact_fields(obj, &["kind", "expr"])?;
             let expr: Object = req(obj, "expr", "Event test find")?;
@@ -1703,6 +1713,7 @@ pub(crate) fn query_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<Que
 
 #[derive(Debug)]
 pub enum ValueOut {
+    Probability(Box<crate::query_probability::ProbabilityOutput>),
     Bool(bool),
     U64(u64),
     I64(i64),
@@ -1776,6 +1787,11 @@ impl ToNapiValue for ValueOut {
     // against it lines above.
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
         match val {
+            Self::Probability(v) => {
+                let handle = Env::from_raw(env);
+                let object = v.object(&handle)?;
+                unsafe { Object::to_napi_value(env, object) }
+            }
             Self::Bool(v) => unsafe { bool::to_napi_value(env, v) },
             Self::U64(v) => unsafe { u64::to_napi_value(env, v) },
             Self::I64(v) => unsafe { i64n::to_napi_value(env, i64n(v)) },
@@ -1826,8 +1842,12 @@ pub(crate) fn output_vec<T>(len: usize) -> Result<Vec<T>, crate::runtime::Runtim
 fn value_out_from_answer(
     value: AnswerValue<'_>,
     control: &dyn bumbledb::event::Control,
+    budget: &mut crate::query_probability::ObservationOutputWork<'_>,
 ) -> Result<ValueOut, bumbledb::event::Error> {
     Ok(match value {
+        AnswerValue::Probability(v) => ValueOut::Probability(Box::new(
+            crate::query_probability::ProbabilityOutput::new(v, control, budget)?,
+        )),
         AnswerValue::Bool(v) => ValueOut::Bool(v),
         AnswerValue::U64(v) => ValueOut::U64(v),
         AnswerValue::I64(v) => ValueOut::I64(v),
@@ -1883,10 +1903,11 @@ pub(crate) fn row_out(
 ) -> Result<Vec<ValueOut>, crate::runtime::RuntimeError> {
     work.checkpoint()?;
     let mut values = output_vec(row.len())?;
+    let mut budget = crate::query_probability::ObservationOutputWork::new(work);
     for value in row {
         work.checkpoint()?;
         values.push(
-            value_out_from_answer(borrowed_value(value), work)
+            value_out_from_answer(borrowed_value(value), work, &mut budget)
                 .map_err(|error| crate::runtime::session::engine_error(&error.into()))?,
         );
     }
@@ -1921,6 +1942,7 @@ pub(crate) fn push_result_row(
     work: &bumbledb::work::WorkContext,
     output: &mut crate::runtime::QueuedOutput,
     row: &bumbledb::ResultRow<'_>,
+    budget: &mut crate::query_probability::ObservationOutputWork<'_>,
 ) -> Result<(), bumbledb::Error> {
     work.checkpoint().map_err(result_work_error)?;
     output
@@ -1933,7 +1955,7 @@ pub(crate) fn push_result_row(
         .map_err(result_allocation_error)?;
     for value in row.values() {
         work.checkpoint().map_err(result_work_error)?;
-        values.push(value_out_from_answer(value, work)?);
+        values.push(value_out_from_answer(value, work, budget)?);
     }
     work.checkpoint().map_err(result_work_error)?;
     output.rows.push(values);
@@ -2466,7 +2488,11 @@ mod event_tests {
         let work = bumbledb::WorkContext::new();
         work.cancel();
         assert!(matches!(
-            value_out_from_answer(AnswerValue::Event(&value), &work),
+            value_out_from_answer(
+                AnswerValue::Event(&value),
+                &work,
+                &mut crate::query_probability::ObservationOutputWork::new(&work)
+            ),
             Err(bumbledb::event::Error::Cancelled)
         ));
         assert!(matches!(

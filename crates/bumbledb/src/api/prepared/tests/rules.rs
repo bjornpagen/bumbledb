@@ -58,7 +58,7 @@ fn a_multi_rule_query_prepares_with_every_rules_plan() {
             .signature()
             .columns
             .iter()
-            .map(crate::ir::validate::SignatureColumn::ty)
+            .map(|column| column.ty().unwrap())
             .collect::<Vec<_>>(),
         vec![&ValueType::String, &ValueType::I64],
         "the head's answer tuple types the query once"

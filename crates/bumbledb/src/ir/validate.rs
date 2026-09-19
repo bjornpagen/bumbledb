@@ -47,7 +47,11 @@ impl std::fmt::Display for Signature {
             if let Some(op) = column.op() {
                 write!(f, "{op} ")?;
             }
-            match column.ty() {
+            let Some(ty) = column.ty() else {
+                f.write_str("probability")?;
+                continue;
+            };
+            match ty {
                 ValueType::Event => f.write_str("event")?,
                 ValueType::Bool => f.write_str("bool")?,
                 ValueType::U64 => f.write_str("u64")?,
@@ -82,23 +86,31 @@ impl std::fmt::Display for Signature {
 /// or a projection carrying a fold kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignatureColumn {
-    Project { ty: ValueType },
+    Project {
+        ty: ValueType,
+    },
+    /// Query-only owned observation; it is not a stored schema field.
+    Probability,
 
-    Fold { op: AggKind, ty: ValueType },
+    Fold {
+        op: AggKind,
+        ty: ValueType,
+    },
 }
 
 impl SignatureColumn {
     #[must_use]
-    pub fn ty(&self) -> &ValueType {
+    pub fn ty(&self) -> Option<&ValueType> {
         match self {
-            Self::Project { ty } | Self::Fold { ty, .. } => ty,
+            Self::Project { ty } | Self::Fold { ty, .. } => Some(ty),
+            Self::Probability => None,
         }
     }
 
     #[must_use]
     pub fn op(&self) -> Option<AggKind> {
         match self {
-            Self::Project { .. } => None,
+            Self::Project { .. } | Self::Probability => None,
             Self::Fold { op, .. } => Some(*op),
         }
     }
@@ -303,7 +315,7 @@ impl InteriorSignatures<'_> {
         self.lookup(interior)
             .columns
             .get(usize::from(field.0))
-            .map(SignatureColumn::ty)
+            .and_then(SignatureColumn::ty)
             .ok_or(ValidationError::InteriorColumnOutOfRange {
                 atom: AtomIndex(atom),
                 field,
@@ -654,6 +666,7 @@ impl<'a> RuleWitness<'a> {
                 FindTerm::Compute(_)
                     | FindTerm::Event(_)
                     | FindTerm::Test(_)
+                    | FindTerm::Probability { .. }
                     | FindTerm::Segments { .. }
                     | FindTerm::Count
                     | FindTerm::Aggregate { .. }

@@ -66,7 +66,11 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
         .signature()
         .columns
         .iter()
-        .map(|column| *column.ty())
+        .map(|column| {
+            *column
+                .ty()
+                .expect("benchmark uses stored-field result types")
+        })
         .collect();
     let mut buffer = Answers::new();
     for family in all() {

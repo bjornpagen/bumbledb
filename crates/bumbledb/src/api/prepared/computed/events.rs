@@ -77,12 +77,11 @@ pub(super) fn evaluate(
     generation: &GenerationHandle,
     work: &WorkContext,
     faults: &mut Faults,
-) -> crate::Result<Option<[u64; 2]>> {
-    let variables: Vec<_> = match &program.expression {
-        FindTerm::Event(expr) => expr.variables().collect(),
-        FindTerm::Test(test) => test.variables().collect(),
-        _ => unreachable!("only Event programs enter this evaluator"),
-    };
+) -> crate::Result<Option<[u64; 4]>> {
+    let variables = program
+        .expression
+        .event_variables()
+        .expect("Event operands");
     work.checkpoint()
         .map_err(super::super::source::work_error)?;
     let interner = crate::image::intern::InternerHandle::new(generation, work);
@@ -96,6 +95,7 @@ pub(super) fn evaluate(
     let roots = match &program.expression {
         FindTerm::Event(expr) => vec![expr],
         FindTerm::Test(test) => test.roots(),
+        FindTerm::Probability { event, given } => vec![event, given],
         _ => unreachable!("Event output"),
     };
     let space = roots
@@ -123,14 +123,26 @@ pub(super) fn evaluate(
         return Ok(None);
     }
     let mut inputs = admission.inputs.iter();
-    let words = match &program.expression {
-        FindTerm::Event(expr) => interner
-            .intern_event(&region(expr, &mut inputs, work)?)?
-            .key()
-            .words(),
-        FindTerm::Test(expr) => [u64::from(test(expr, &mut inputs, work)?), 0],
+    let mut words = [0; 4];
+    match &program.expression {
+        FindTerm::Event(expr) => words[..2].copy_from_slice(
+            &interner
+                .intern_event(&region(expr, &mut inputs, work)?)?
+                .key()
+                .words(),
+        ),
+        FindTerm::Test(expr) => words[0] = u64::from(test(expr, &mut inputs, work)?),
+        FindTerm::Probability { event, given } => {
+            let event = region(event, &mut inputs, work)?;
+            let given = region(given, &mut inputs, work)?;
+            if !event.space().is_measured() {
+                return Err(crate::event::Error::MissingLaw.into());
+            }
+            words[..2].copy_from_slice(&interner.intern_event(&event)?.key().words());
+            words[2..].copy_from_slice(&interner.intern_event(&given)?.key().words());
+        }
         _ => unreachable!("only Event programs enter this evaluator"),
-    };
+    }
     Ok(Some(words))
 }
 

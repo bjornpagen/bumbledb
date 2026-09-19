@@ -199,6 +199,9 @@ fn find_term(out: &mut String, term: &FindTerm) {
         FindTerm::Test(test) => {
             write!(out, "Test({test:?})").expect("writing to String");
         }
+        FindTerm::Probability { event, given } => {
+            write!(out, "Probability({event:?}, {given:?})").expect("writing to String");
+        }
         FindTerm::Count => out.push_str("Count"),
         FindTerm::Aggregate { op, over } => {
             aggregate(out, *op, *over);

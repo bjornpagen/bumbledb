@@ -533,7 +533,12 @@ fn d12_native_conversion_refusal_retries_same_first_row() {
         let mut queued = crate::marshal::result_rows(&cancelled, 0).unwrap();
         cancelled.cancel();
         let refused = ticket.visit_page(&ctx, |row| {
-            crate::marshal::push_result_row(&cancelled, &mut queued, &row)
+            crate::marshal::push_result_row(
+                &cancelled,
+                &mut queued,
+                &row,
+                &mut crate::query_probability::ObservationOutputWork::new(&cancelled),
+            )
         });
         assert!(matches!(refused, Err(bumbledb::Error::Store(_))));
         assert!(queued.rows.is_empty());

@@ -90,6 +90,10 @@ pub(crate) struct Query {
 
 #[derive(Debug)]
 pub(crate) enum FindTerm {
+    Probability {
+        event: EventExpr,
+        given: EventExpr,
+    },
     Var(VarId),
 
     Compute(ScalarExpr),
@@ -350,6 +354,10 @@ impl Admit for FindTerm {
             Self::Compute(v) => O::Compute(v.admit(work)?),
             Self::Event(v) => O::Event(v.admit(work)?),
             Self::Test(v) => O::Test(v.admit(work)?),
+            Self::Probability { event, given } => O::Probability {
+                event: event.admit(work)?,
+                given: given.admit(work)?,
+            },
             Self::Segments { op, left, right } => O::Segments { op, left, right },
             Self::Count => O::Count,
             Self::Aggregate { op, over } => O::Aggregate { op, over },

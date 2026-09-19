@@ -195,6 +195,7 @@ type FindTermIr =
 	| { readonly kind: "compute"; readonly expr: ScalarExprIr }
 	| { readonly kind: "event"; readonly expr: EventExprIr }
 	| { readonly kind: "test"; readonly expr: EventTestIr }
+	| { readonly kind: "probability"; readonly event: EventExprIr; readonly given: EventExprIr }
 	| { readonly kind: "count" }
 	| { readonly kind: "aggregate"; readonly op: FoldOpIr; readonly over: number }
 	| { readonly kind: "pack"; readonly over: number }

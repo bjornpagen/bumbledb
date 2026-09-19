@@ -236,6 +236,7 @@ wire_tags! {
         COMPUTE: FindTerm::Compute(_) => "compute",
         EVENT: FindTerm::Event(_) => "event",
         TEST: FindTerm::Test(_) => "test",
+        PROBABILITY: FindTerm::Probability { .. } => "probability",
         COUNT: FindTerm::Count => "count",
         AGGREGATE: FindTerm::Aggregate { .. } => "aggregate",
         PACK: FindTerm::Pack { .. } => "pack",

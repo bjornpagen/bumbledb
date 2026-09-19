@@ -293,7 +293,7 @@ fn scalar_expr_json(expr: &ScalarExpr) -> String {
 
 fn find_json(find: &FindTerm) -> String {
     match find {
-        FindTerm::Event(_) | FindTerm::Test(_) => {
+        FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
             panic!("Event heads have a separate query conformance fixture")
         }
         FindTerm::Segments { op, left, right } => format!(

@@ -41,6 +41,16 @@ pub struct OutputProgram {
     pub(crate) inputs: Vec<(VarId, usize, ValueType)>,
 }
 
+impl OutputProgram {
+    fn width(&self) -> usize {
+        match self.expression {
+            FindTerm::Probability { .. } => 4,
+            FindTerm::Segments { .. } | FindTerm::Event(_) | FindTerm::Pack { .. } => 2,
+            _ => 1,
+        }
+    }
+}
+
 /// The adapter: evaluates each program into its appended output slot,
 /// then forwards the widened binding row to the inner sink (projection
 /// or aggregate), whose find specs were lowered to read those slots.
@@ -75,14 +85,7 @@ pub(super) fn lower(finds: &[FindSpec], slots: usize) -> Lowered {
         .map(|find| match find {
             FindSpec::Compute(program) => {
                 let slot = next;
-                let width = if matches!(
-                    program.expression,
-                    FindTerm::Segments { .. } | FindTerm::Event(_) | FindTerm::Pack { .. }
-                ) {
-                    2
-                } else {
-                    1
-                };
+                let width = program.width();
                 next += width;
                 programs.push((slot, Arc::clone(program)));
                 FindSpec::Var { slot, width }
@@ -101,25 +104,8 @@ impl ComputedSink {
             pack.reset();
         }
         if self.bindings.slot_count() == 0 {
-            self.bindings.resize(
-                self.slots
-                    + self
-                        .programs
-                        .iter()
-                        .map(|(_, p)| {
-                            if matches!(
-                                p.expression,
-                                FindTerm::Segments { .. }
-                                    | FindTerm::Event(_)
-                                    | FindTerm::Pack { .. }
-                            ) {
-                                2
-                            } else {
-                                1
-                            }
-                        })
-                        .sum::<usize>(),
-            );
+            self.bindings
+                .resize(self.slots + self.programs.iter().map(|(_, p)| p.width()).sum::<usize>());
         }
         self.inner.reset();
     }
@@ -203,7 +189,10 @@ impl ComputedSink {
     fn event_outputs(&mut self) -> crate::Result<bool> {
         let mut admitted = true;
         for (slot, program) in &self.programs {
-            if !matches!(program.expression, FindTerm::Event(_) | FindTerm::Test(_)) {
+            if !matches!(
+                program.expression,
+                FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. }
+            ) {
                 continue;
             }
             let words = events::evaluate(
@@ -217,9 +206,8 @@ impl ComputedSink {
                 &mut self.faults,
             )?;
             if let Some(words) = words {
-                self.bindings.set(*slot, words[0]);
-                if matches!(program.expression, FindTerm::Event(_)) {
-                    self.bindings.set(*slot + 1, words[1]);
+                for (offset, word) in words.into_iter().take(program.width()).enumerate() {
+                    self.bindings.set(*slot + offset, word);
                 }
             } else {
                 admitted = false;

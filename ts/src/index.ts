@@ -181,7 +181,7 @@ export type {
 } from "#query/description.ts"
 export { describeQuery, queryFromDescription } from "#query/description.ts"
 export type { EventFind, EventOperand, EventVar } from "#query/event.ts"
-export { EventExpr, EventTest, RelationExpr } from "#query/event.ts"
+export { EventExpr, EventTest, probability, RelationExpr } from "#query/event.ts"
 export type { Agg, HeadRecordOf, RowOfFind } from "#query/find.ts"
 export type {
 	AnyQuery,
@@ -201,6 +201,8 @@ export type {
 	TermOps
 } from "#query/lower.ts"
 export { lowerQuery, query } from "#query/lower.ts"
+export type { ProbabilityAnswer, ProbabilityResult } from "#query/probability.ts"
+export { probabilityResult } from "#query/probability.ts"
 export type {
 	ClassedField,
 	Flatten,

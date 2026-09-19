@@ -421,7 +421,7 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
             }
             FindTerm::Count => {}
             FindTerm::Compute(expr) => vars.extend(expr.variables()),
-            FindTerm::Event(_) | FindTerm::Test(_) => {
+            FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
                 vars.extend(term.event_variables().expect("Event expression"));
             }
             FindTerm::Segments { left, right, .. } => vars.extend([*left, *right]),

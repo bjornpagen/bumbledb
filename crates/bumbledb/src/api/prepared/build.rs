@@ -413,7 +413,10 @@ fn prepare_interior(
     Ok(PreparedInterior {
         rules,
         sink,
-        field_types: columns.iter().map(|c| *c.ty()).collect(),
+        field_types: columns
+            .iter()
+            .map(|c| *c.ty().expect("validated relational interior"))
+            .collect(),
         units,
     })
 }
@@ -489,7 +492,10 @@ fn prepare_reach(
     Ok(super::reach::ReachDriver {
         base,
         rec: rec_rules,
-        field_types: columns.iter().map(|c| *c.ty()).collect(),
+        field_types: columns
+            .iter()
+            .map(|c| *c.ty().expect("validated relational interior"))
+            .collect(),
         sink,
         units,
         frontier: crate::image::TransientImage::default(),
@@ -498,7 +504,7 @@ fn prepare_reach(
 
 fn has_event_diagnostics(rule: crate::ir::validate::RuleWitness<'_>) -> bool {
     rule.rule().finds.iter().any(|term| match term {
-        FindTerm::Event(_) | FindTerm::Test(_) => true,
+        FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => true,
         FindTerm::Pack { over } => *rule.var_type(*over) == ValueType::Event,
         _ => false,
     })
@@ -752,6 +758,7 @@ fn prepare_rule(
                 | FindTerm::Compute(_)
                 | FindTerm::Event(_)
                 | FindTerm::Test(_)
+                | FindTerm::Probability { .. }
                 | FindTerm::Count
                 | FindTerm::Aggregate { .. }
                 | FindTerm::Pack { .. } => None,
@@ -955,7 +962,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                         .collect(),
                 }))
             }
-            FindTerm::Event(_) | FindTerm::Test(_) => {
+            FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
                 let inputs = term
                     .event_variables()
                     .expect("Event expression")
@@ -1037,7 +1044,7 @@ fn key_probe_find_table(
                     .iter()
                     .find(|v| v.slot == *slot)
                     .expect("find slots come from the key-probe plan's layout");
-                Some((var.field, *column.ty()))
+                Some((var.field, *column.ty()?))
             }
             FindSpec::Compute(_) | FindSpec::Agg(_) | FindSpec::Pack { .. } => None,
         })
@@ -1065,7 +1072,8 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
             FindTerm::Segments { .. }
             | FindTerm::Compute(_)
             | FindTerm::Event(_)
-            | FindTerm::Test(_) => return Vec::new(),
+            | FindTerm::Test(_)
+            | FindTerm::Probability { .. } => return Vec::new(),
             FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {}
         }
     }

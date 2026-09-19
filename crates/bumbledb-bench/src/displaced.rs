@@ -350,12 +350,8 @@ pub fn verify_family(
     let mut prepared = db
         .prepare(&query, crate::harness::bench_work())
         .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
-    let types: Vec<bumbledb::schema::ValueType> = prepared
-        .signature()
-        .columns
-        .iter()
-        .map(|column| *column.ty())
-        .collect();
+    let types: Vec<bumbledb::schema::ValueType> =
+        crate::compare::stored_types(prepared.signature())?;
     let mut stmt = conn
         .prepare(&translated.sql)
         .map_err(|e| format!("{}: mirror prepare: {e}", family.name))?;
@@ -473,12 +469,8 @@ pub fn bench_families(
 
         let translated = translate(&query, schema(), &[])
             .map_err(|e| format!("{}: translate: {e}", family.name))?;
-        let types: Vec<bumbledb::schema::ValueType> = prepared
-            .signature()
-            .columns
-            .iter()
-            .map(|column| *column.ty())
-            .collect();
+        let types: Vec<bumbledb::schema::ValueType> =
+            crate::compare::stored_types(prepared.signature())?;
         let mut mirror = sqlite_run::PreparedFamily::new(&conn, &translated, types)?;
         let mut cursor = 0usize;
         let (theirs, ghz_theirs) = clockproxy::frequency_checked(|| {

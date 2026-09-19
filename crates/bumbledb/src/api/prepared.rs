@@ -168,6 +168,7 @@ impl<'a> BindArgs<'a> for &'a Vec<ParamArg<'a>> {
 /// One decoded answer cell, borrowed from [`Answers`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnswerValue<'a> {
+    Probability(&'a crate::ProbabilityAnswer),
     Event(&'a crate::Event),
     Bool(bool),
     U64(u64),
@@ -194,6 +195,7 @@ pub enum AnswerValue<'a> {
 /// span collapses at materialization).
 #[derive(Debug, Clone, Copy)]
 enum Cell {
+    Probability(usize),
     Event(usize),
     Bool(bool),
     U64(u64),
@@ -223,6 +225,9 @@ pub struct Answers {
     /// The `bytes<N>` cells' heap: raw payloads, no text contract.
     blob: Vec<u8>,
     events: Vec<crate::Event>,
+    probabilities: Vec<crate::ProbabilityAnswer>,
+    probability_pairs: Vec<(crate::Event, crate::Event)>,
+    probability_indices: std::collections::HashMap<[u64; 4], usize>,
     event_indices: std::collections::HashMap<[u64; 2], usize>,
 }
 

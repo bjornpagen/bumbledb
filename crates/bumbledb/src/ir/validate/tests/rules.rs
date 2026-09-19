@@ -205,7 +205,7 @@ fn variables_are_rule_scoped_so_one_var_id_may_differ_in_type() {
         .signature()
         .columns
         .iter()
-        .map(|column| *column.ty())
+        .map(|column| *column.ty().unwrap())
         .collect();
     assert_eq!(types, vec![ValueType::U64]);
 }

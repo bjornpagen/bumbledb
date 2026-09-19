@@ -3,6 +3,92 @@ use crate::error::FindIndex;
 use crate::ir::FoldOp;
 
 #[test]
+fn probability_finalization_rolls_back_only_failed_appends_in_ram_and_spill() {
+    use crate::event::{
+        ArithmeticLimits, DensityPiece, ExactArithmetic, ExactRational, LawLimits, Space, SpaceId,
+    };
+    use crate::exec::run::{Bindings, Sink};
+    use crate::ir::validate::SignatureColumn;
+    use crate::work::{GenerationHandle, GenerationState};
+    let work = crate::WorkContext::new();
+    let generation = GenerationHandle::new(GenerationState::new(
+        crate::image::CacheGeneration::initial(),
+    ));
+    let interner = crate::image::intern::InternerHandle::new(&generation, &work);
+    let raw = Space::new(SpaceId([191; 32]), 1, &work).unwrap();
+    let mut arithmetic = ExactArithmetic::new(ArithmeticLimits::default(), &work);
+    let half = ExactRational::fraction("1", "2", &mut arithmetic).unwrap();
+    let source = raw
+        .with_density(
+            &[DensityPiece {
+                region: raw.full(),
+                density: half.clone(),
+            }],
+            LawLimits::default(),
+            &mut arithmetic,
+        )
+        .unwrap();
+    let full = interner.intern_event(&source.full()).unwrap().key().words();
+    let first = interner
+        .intern_event(&source.coordinate(0, &work).unwrap())
+        .unwrap()
+        .key()
+        .words();
+    let missing = interner.intern_event(&raw.full()).unwrap().key().words();
+    let pair = |a: [u64; 2], b: [u64; 2]| [a[0], a[1], b[0], b[1]];
+    for spill in [false, true] {
+        let append = |rows: &[[u64; 4]], out: &mut Answers| {
+            let mut sink = ProjectionSink::new(vec![0, 1, 2, 3]);
+            let mut bindings = Bindings::new(4);
+            for row in rows {
+                for (slot, word) in row.iter().enumerate() {
+                    bindings.set(slot, *word);
+                }
+                assert!(!sink.emit(&bindings).is_terminal());
+            }
+            if spill {
+                sink.force_spill().unwrap();
+            }
+            super::super::finalize::finalize(
+                &mut EitherSink::Projection(sink),
+                &mut Vec::new(),
+                &mut ResolveMemo::new(),
+                &interner,
+                &[SignatureColumn::Probability],
+                out,
+                &work,
+            )
+        };
+        let mut out = Answers::new();
+        out.begin(1);
+        append(&[pair(full, full)], &mut out).unwrap();
+        let AnswerValue::Probability(prior) = out.get(0, 0) else {
+            panic!("probability")
+        };
+        let prior = prior.clone();
+        assert!(matches!(
+            append(&[pair(first, full), pair(missing, missing)], &mut out),
+            Err(Error::Event(crate::event::Error::MissingLaw))
+        ));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(0, 0), AnswerValue::Probability(&prior));
+        append(&[pair(first, full)], &mut out).unwrap();
+        assert_eq!(out.len(), 2);
+        let AnswerValue::Probability(next) = out.get(1, 0) else {
+            panic!("probability")
+        };
+        let crate::ProbabilityValue::Fixed { value, .. } = next.value() else {
+            panic!("fixed")
+        };
+        assert_eq!(value, &Some(half.clone()));
+        assert_ne!(next, &prior);
+        // A repeated pair may reuse the old observation pool entry on append.
+        append(&[pair(full, full)], &mut out).unwrap();
+        assert_eq!(out.get(2, 0), AnswerValue::Probability(&prior));
+    }
+}
+
+#[test]
 fn event_results_resolve_spilled_keys_and_reject_stale_keys() {
     use crate::event::{Space, SpaceId};
     use crate::exec::run::{Bindings, Sink};

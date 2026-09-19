@@ -1,0 +1,59 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running unittests src/lib.rs (target/debug/build/bumbledb-theory/847d63c4ddf00f43/out/bumbledb_theory-847d63c4ddf00f43)
+
+running 40 tests
+test allen::tests::constants_and_parse_shape ... ok
+test float::tests::integer_cast_golden_bits_pin_the_boundaries ... ok
+test float::exact::tests::golden_exact_and_rounded_differences ... ok
+test float::tests::cast_boundaries_are_exact_or_refuse ... ok
+test allen::tests::exhaustive_converse_involution_over_all_8192_masks ... ok
+test float::tests::nan_equals_nan_and_zeros_collapse_in_the_database_domain ... ok
+test float::exact::tests::differential_against_host_subtraction_over_structured_operands ... ok
+test interval::segment_properties::rays_extremes_and_dense_endpoints_use_order_only ... ok
+test float::exact::tests::nonfinite_operands_are_a_programmer_invariant - should panic ... ok
+test interval::tests::accessors_return_the_parsed_bounds ... ok
+test interval::tests::adjacent_representable_endpoints_form_a_valid_positive_interval ... ok
+test interval::tests::allen_endpoint_order_serves_the_dense_line ... ok
+test interval::tests::const_and_runtime_integer_construction_agree_at_every_boundary_pair ... ok
+test interval::tests::bounded_length_rounds_once_and_overflow_is_distinct_from_unbounded ... ok
+test float::exact::tests::differential_against_host_subtraction_over_random_finite_pairs ... ok
+test interval::tests::const_construction_has_no_unchecked_escape ... ok
+test interval::tests::fixed_parses_the_q2_bound ... ok
+test interval::tests::float_membership_is_exact_half_open ... ok
+test interval::tests::infinity_placement_is_enforced_by_strict_order ... ok
+test interval::tests::integer_membership_at_the_ceiling_is_an_ordinary_nonmatch ... ok
+test interval::tests::nan_is_refused_at_either_endpoint ... ok
+test interval::tests::new_parses_strict_start_before_end ... ok
+test interval::tests::one_impl_serves_the_discrete_elements ... ok
+test interval::tests::ray_duration_refuses_and_bounded_duration_is_exact ... ok
+test interval::tests::ray_is_the_unbounded_denotation ... ok
+test interval::tests::signed_zero_normalizes_before_validation_so_neg0_pos0_refuses ... ok
+test float::tests::canonicalization_is_idempotent_and_total ... ok
+test interval::tests::the_left_ray_below_min_finite_is_a_nonempty_value ... ok
+test interval::tests::the_whole_line_is_a_value_and_nonfinite_probes_are_false ... ok
+test interval::tests::value_variants_accept_only_checked_intervals ... ok
+test float::tests::order_key_and_payload_byte_codecs_roundtrip_and_reject_holes ... ok
+test schema::spec_values::tests::admitted_empty_schemas_and_literal_free_statements_need_no_type_annotation ... ok
+test schema::tests::fixed_interval_elements_are_discrete_by_construction ... ok
+test float::tests::total_order_agrees_with_order_bytes_and_the_selected_placement ... ok
+test schema::tests::materialized_statements_have_no_generated_identity_keys ... ok
+test schema::tests::value_matches_covers_the_new_scalars_and_refuses_cross_kinds ... ok
+test float::tests::cast_boundary_sweep_and_exactness_against_the_oracle ... ok
+test allen::tests::mask_converse_agrees_with_basic_converse ... ok
+test float::tests::integer_conversion_differential_against_host_and_oracle ... ok
+test interval::segment_properties::finite_grid_decomposition_is_exact_and_maximal ... ok
+
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/spec.rs (target/debug/build/bumbledb-theory/c5f1b9f2a2558add/out/spec-c5f1b9f2a2558add)
+
+running 6 tests
+test public_enum_variant_imports_and_unconstrained_constructors_remain_compatible ... ok
+test the_issue_list_is_complete_in_one_pass ... ok
+test synthetic_id_newtype_rides_the_sealed_slot ... ok
+test closed_spec_carries_the_handle_newtype_by_construction ... ok
+test equivalent_capacity_spellings_normalize_and_real_errors_still_refuse ... ok
+test wide_relation_is_a_typed_issue_not_a_panic ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

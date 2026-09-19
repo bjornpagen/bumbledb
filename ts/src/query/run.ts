@@ -2,8 +2,8 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
 import type { QueryParam, TaggedValue } from "#native.ts"
 import type { FindColumn } from "#query/atom.ts"
 import { taggedCmpLiteral } from "#query/lower.ts"
+import { type AnswerCell, decodeProbability } from "#query/probability.ts"
 import type { ParamEntry } from "#query/scope.ts"
-import type { CellValue } from "#rows.ts"
 import { decodeCell, handleOf, setOwnField } from "#rows.ts"
 import { arrayValue, recordValue } from "#values.ts"
 
@@ -60,7 +60,7 @@ function isAnswerRow<Row>(
  * objects); an aggregate column without a slot passes the engine's owned
  * scalar through, with the closed lift when the column is closed-typed.
  */
-function decodeAnswers<Row>(finds: readonly FindColumn[], rows: readonly (readonly CellValue[])[]): Row[] {
+function decodeAnswers<Row>(finds: readonly FindColumn[], rows: readonly (readonly AnswerCell[])[]): Row[] {
 	return rows.map(function decodeRow(row) {
 		if (row.length !== finds.length) {
 			throw new SdkInvariantError({
@@ -72,6 +72,10 @@ function decodeAnswers<Row>(finds: readonly FindColumn[], rows: readonly (readon
 			const cell = row[ordinal]
 			if (cell === undefined) {
 				throw new SdkInvariantError({ message: `query answer cell ${ordinal} (${column.name}) is absent` })
+			}
+			if (column.entry.kind === "probability") {
+				setOwnField(decoded, column.name, decodeProbability(cell))
+				return
 			}
 			if (column.slot !== undefined) {
 				setOwnField(decoded, column.name, decodeCell(`query answer column ${column.name}`, column.slot.field, cell))

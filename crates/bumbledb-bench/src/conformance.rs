@@ -447,7 +447,8 @@ fn push_find(out: &mut String, find: &FindTerm) -> Result<(), Exclusion> {
         FindTerm::Compute(_)
         | FindTerm::Segments { .. }
         | FindTerm::Event(_)
-        | FindTerm::Test(_) => return Err(Exclusion::ComputedHead),
+        | FindTerm::Test(_)
+        | FindTerm::Probability { .. } => return Err(Exclusion::ComputedHead),
         FindTerm::Count => out.push_str("{\"agg\":{\"op\":\"count\"}}"),
         FindTerm::Pack { over } => {
             let _ = write!(out, "{{\"agg\":{{\"op\":\"pack\",\"over\":{}}}}}", over.0);
@@ -522,6 +523,11 @@ fn count_vars(rule: &Rule) -> u16 {
             }
             FindTerm::Event(expr) => {
                 for var in expr.variables() {
+                    see(&mut count, var);
+                }
+            }
+            FindTerm::Probability { event, given } => {
+                for var in event.variables().chain(given.variables()) {
                     see(&mut count, var);
                 }
             }

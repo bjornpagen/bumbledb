@@ -30,7 +30,11 @@ impl<S> Run<'_, S> {
                     .signature()
                     .columns
                     .iter()
-                    .map(|column| *column.ty())
+                    .map(|column| {
+                        *column
+                            .ty()
+                            .expect("benchmark uses stored-field result types")
+                    })
                     .collect();
                 let mut buffer = Answers::new();
                 let args = param_args(params);

@@ -11,6 +11,7 @@ import type { ChangeCounts } from "#changes.ts"
 import type { EventDescriptorInspectionWire, EventDescriptorWire } from "#event-descriptor-data.ts"
 import type { DbHandle, ParsedQuery, QueryParam, SealedDescriptor, Violation } from "#native.ts"
 import { native } from "#native.ts"
+import type { AnswerCell } from "#query/probability.ts"
 import type { CellValue } from "#rows.ts"
 import type { CloseWire, OperationHandle, RuntimeHandle } from "#runtime-native.ts"
 import type { SchemaSpec } from "#spec.ts"
@@ -184,7 +185,7 @@ interface DbBridge {
 	 * Failure leaves the sealed backing available.
 	 */
 	runtimeResultCollect(result: ResultHandle, callback: () => void): OperationHandle
-	runtimeRowsTake(operation: OperationHandle): readonly (readonly CellValue[])[]
+	runtimeRowsTake(operation: OperationHandle): readonly (readonly AnswerCell[])[]
 
 	/**
 	 * Atomic spend: moves the completed result's backing storage into one
@@ -195,7 +196,7 @@ interface DbBridge {
 	runtimeCursorTake(operation: OperationHandle): CursorHandle
 	/** One bounded delivery batch; null is EOF. Execution is already complete. */
 	runtimeCursorNext(cursor: CursorHandle, callback: () => void): OperationHandle
-	runtimePageTake(operation: OperationHandle): readonly (readonly CellValue[])[] | null
+	runtimePageTake(operation: OperationHandle): readonly (readonly AnswerCell[])[] | null
 	runtimeCursorClose(cursor: CursorHandle, callback: (report: CloseWire) => void): void
 
 	/** Database-free draft acquisition (schema compiled/checked on the executor). */

@@ -1,0 +1,14 @@
+'ParameterExpectations.sum_congr' depends on axioms: [propext]
+'ParameterExpectations.sum_zero' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterExpectations.sum_add' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterExpectations.sum_scale' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterExpectations.sum_mul' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterExpectations.sum_swap' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterExpectations.cell_contraction' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterExpectations.numerator_linearity' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterExpectations.defined_exactly' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterExpectations.zero_evidence_undefined_even_for_zero_payoff' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+'ParameterExpectations.indicator_numerator' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterExpectations.signed_values_are_not_probabilities' depends on axioms: [propext, Classical.choice, Quot.sound]

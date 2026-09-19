@@ -301,6 +301,11 @@ impl AggOp {
 mod events;
 
 enum HeadTerm {
+    Probability {
+        label: Name,
+        event: events::Region,
+        given: events::Region,
+    },
     Var(Name),
     Event {
         label: Name,
@@ -744,6 +749,14 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
     if peek_punct(tokens, ':') {
         expect_colon(tokens, "the head column's `:`")?;
         let agg_name = expect_ident(tokens, "an aggregate")?;
+        if agg_name.text == "Probability" {
+            let (event, given) = events::probability(tokens)?;
+            return Ok(HeadTerm::Probability {
+                label: name,
+                event,
+                given,
+            });
+        }
         if agg_name.text == "Event" {
             return Ok(HeadTerm::Event {
                 label: name,
@@ -761,7 +774,7 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
                 agg_name.span,
                 format!(
                     "query!: `{}` is not an aggregate — a named head position \
-                     takes Sum/Min/Max/Count/Pack/Event/Test",
+                     takes Sum/Min/Max/Count/Pack/Event/Test/Probability",
                     agg_name.text
                 ),
             );
@@ -1895,6 +1908,11 @@ impl Emitter<'_> {
 
     fn find(&self, scope: &Scope, term: &HeadTerm) -> Parse<String> {
         Ok(match term {
+            HeadTerm::Probability { event, given, .. } => format!(
+                "::bumbledb::FindTerm::Probability {{ event: {}, given: {} }}",
+                event.emit(scope, self.imports, 0)?,
+                given.emit(scope, self.imports, 0)?
+            ),
             HeadTerm::Event { expression, .. } => format!(
                 "::bumbledb::FindTerm::Event({})",
                 expression.emit(scope, self.imports, 0)?
@@ -1945,7 +1963,8 @@ impl Emitter<'_> {
                 }
                 HeadTerm::Agg { over, .. }
                 | HeadTerm::Event { label: over, .. }
-                | HeadTerm::Test { label: over, .. } => {
+                | HeadTerm::Test { label: over, .. }
+                | HeadTerm::Probability { label: over, .. } => {
                     return fail(
                         over.span,
                         "query!: a rec head projects bound variables only — no \
@@ -2673,7 +2692,9 @@ fn agg_display(op: AggOp) -> &'static str {
 /// or the fingerprint.
 fn column_name(term: &HeadTerm) -> String {
     match term {
-        HeadTerm::Event { label, .. } | HeadTerm::Test { label, .. } => label.text.clone(),
+        HeadTerm::Event { label, .. }
+        | HeadTerm::Test { label, .. }
+        | HeadTerm::Probability { label, .. } => label.text.clone(),
         HeadTerm::Var(name) => name.text.clone(),
         HeadTerm::Count { label } => label
             .as_ref()

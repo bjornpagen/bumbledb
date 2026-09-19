@@ -73,6 +73,15 @@ pub(super) fn test(tokens: &mut Tokens) -> Parse<Test> {
     })
 }
 
+pub(super) fn probability(tokens: &mut Tokens) -> Parse<(Region, Region)> {
+    let (mut args, _) = take_paren_group(tokens, "Probability's Event and evidence")?;
+    let event = expression(&mut args, 0, 0)?;
+    expect_punct(&mut args, ',', "`,` between Event and evidence")?;
+    let given = expression(&mut args, 0, 0)?;
+    end(&mut args)?;
+    Ok((event, given))
+}
+
 fn end(tokens: &mut Tokens) -> Parse<()> {
     if let Some(extra) = tokens.next() {
         fail(

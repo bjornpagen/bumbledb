@@ -287,6 +287,9 @@ pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) 
 
 fn owned_value(value: AnswerValue<'_>) -> Value {
     match value {
+        AnswerValue::Probability(_) => {
+            unreachable!("scalar differential generator has no observation heads")
+        }
         AnswerValue::Event(v) => Value::Event(v.clone()),
         AnswerValue::Bool(v) => Value::Bool(v),
         AnswerValue::U64(v) => Value::U64(v),

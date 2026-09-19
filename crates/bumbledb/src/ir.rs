@@ -179,6 +179,11 @@ pub enum FindTerm {
     Event(crate::EventExpr),
     /// A structural statement about whole regions.
     Test(crate::EventTest),
+    /// Exact source-owned conditional observation, not a numeric scalar.
+    Probability {
+        event: crate::EventExpr,
+        given: crate::EventExpr,
+    },
 
     /// Fully bound binary interval constructor. Independent outputs combine
     /// relationally; no result drops the input binding. Nonrecursive stages only.
@@ -205,6 +210,9 @@ impl FindTerm {
         match self {
             Self::Event(expr) => Some(expr.variables().collect()),
             Self::Test(test) => Some(test.variables().collect()),
+            Self::Probability { event, given } => {
+                Some(event.variables().chain(given.variables()).collect())
+            }
             _ => None,
         }
     }
@@ -213,9 +221,11 @@ impl FindTerm {
     pub fn head_term(&self) -> HeadTerm {
         match self {
             Self::Var(_) => HeadTerm::Var,
-            Self::Compute(_) | Self::Event(_) | Self::Test(_) | Self::Segments { .. } => {
-                HeadTerm::Compute
-            }
+            Self::Compute(_)
+            | Self::Event(_)
+            | Self::Test(_)
+            | Self::Probability { .. }
+            | Self::Segments { .. } => HeadTerm::Compute,
             Self::Count => HeadTerm::Aggregate(HeadOp::Count),
             Self::Aggregate { op, .. } => HeadTerm::Aggregate(op.head_op()),
             Self::Pack { .. } => HeadTerm::Aggregate(HeadOp::Pack),

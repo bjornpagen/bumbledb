@@ -42,7 +42,11 @@ fn fairness_and_the_prepared_sample_contract() {
             .signature()
             .columns
             .iter()
-            .map(|column| *column.ty())
+            .map(|column| {
+                *column
+                    .ty()
+                    .expect("benchmark uses stored-field result types")
+            })
             .collect()
     };
     let mut prepared = PreparedFamily::new(&conn, &translated, types).expect("prepare once");
@@ -87,7 +91,11 @@ fn fairness_and_the_prepared_sample_contract() {
             .signature()
             .columns
             .iter()
-            .map(|column| *column.ty())
+            .map(|column| {
+                *column
+                    .ty()
+                    .expect("benchmark uses stored-field result types")
+            })
             .collect()
     };
     let mut point_prepared =

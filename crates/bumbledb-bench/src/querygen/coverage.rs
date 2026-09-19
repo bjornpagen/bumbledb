@@ -438,6 +438,9 @@ impl Coverage {
                 FindTerm::Event(_) => {
                     projected_words += 2;
                 }
+                FindTerm::Probability { .. } => {
+                    projected_words += 4;
+                }
                 FindTerm::Test(_) | FindTerm::Compute(_) => {
                     projected_words += 1;
                 }

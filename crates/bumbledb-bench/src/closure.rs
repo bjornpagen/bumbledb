@@ -287,12 +287,8 @@ pub fn verify_family(
     let mut prepared = db
         .prepare(&query, crate::harness::bench_work())
         .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
-    let types: Vec<bumbledb::schema::ValueType> = prepared
-        .signature()
-        .columns
-        .iter()
-        .map(|column| *column.ty())
-        .collect();
+    let types: Vec<bumbledb::schema::ValueType> =
+        crate::compare::stored_types(prepared.signature())?;
     let mut stmt = conn
         .prepare(family.sql)
         .map_err(|e| format!("{}: mirror prepare: {e}", family.name))?;

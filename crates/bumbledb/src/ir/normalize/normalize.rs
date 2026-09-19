@@ -143,9 +143,10 @@ fn lower_atom(
             crate::ir::AtomSource::Edb(relation_id) => {
                 &schema.relation(relation_id).field(field).value_type
             }
-            crate::ir::AtomSource::Interior(pred) => {
-                signatures[pred.index()].columns[usize::from(field.0)].ty()
-            }
+            crate::ir::AtomSource::Interior(pred) => signatures[pred.index()].columns
+                [usize::from(field.0)]
+            .ty()
+            .expect("validated relational interior"),
         }
     };
 

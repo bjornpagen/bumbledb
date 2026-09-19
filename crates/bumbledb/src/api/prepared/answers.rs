@@ -16,6 +16,9 @@ impl Answers {
         self.text.clear();
         self.blob.clear();
         self.events.clear();
+        self.probabilities.clear();
+        self.probability_pairs.clear();
+        self.probability_indices.clear();
         self.event_indices.clear();
     }
 
@@ -49,6 +52,7 @@ impl Answers {
     pub fn get(&self, answer: usize, column: usize) -> AnswerValue<'_> {
         assert!(column < self.arity && answer < self.len());
         match self.cells[answer * self.arity + column] {
+            Cell::Probability(index) => AnswerValue::Probability(&self.probabilities[index]),
             Cell::Event(index) => AnswerValue::Event(&self.events[index]),
             Cell::Bool(v) => AnswerValue::Bool(v),
             Cell::U64(v) => AnswerValue::U64(v),
@@ -78,6 +82,11 @@ impl Answers {
     pub(crate) fn push_value(&mut self, value: &AnswerValue<'_>) {
         let cell = match value {
             AnswerValue::Event(value) => self.event_cell(value),
+            AnswerValue::Probability(value) => {
+                let index = self.probabilities.len();
+                self.probabilities.push((*value).clone());
+                Cell::Probability(index)
+            }
             AnswerValue::Bool(v) => Cell::Bool(*v),
             AnswerValue::U64(v) => Cell::U64(*v),
             AnswerValue::I64(v) => Cell::I64(*v),
@@ -139,6 +148,49 @@ impl Answers {
             index
         });
         Cell::Event(index)
+    }
+
+    /// Retain the whole source pair; equal masses do not collapse observations.
+    pub(super) fn probability_cell(
+        &mut self,
+        pair: &[u64],
+        interner: &InternerHandle<'_>,
+    ) -> Result<Cell> {
+        let key: [u64; 4] = pair.try_into().expect("four-word observation binding");
+        if let Some(index) = self.probability_indices.get(&key) {
+            return Ok(Cell::Probability(*index));
+        }
+        let event = interner.resolve_event([key[0], key[1]])?;
+        let given = interner.resolve_event([key[2], key[3]])?;
+        self.probability_pairs
+            .try_reserve(1)
+            .map_err(crate::event::Error::from)?;
+        self.probability_indices
+            .try_reserve(1)
+            .map_err(crate::event::Error::from)?;
+        let index = self.probabilities.len() + self.probability_pairs.len();
+        self.probability_pairs.push((event, given));
+        self.probability_indices.insert(key, index);
+        Ok(Cell::Probability(index))
+    }
+
+    /// Complete all exact observations before publishing any row. One budget
+    /// spans the full result; pair identity allows repeated outputs to share work.
+    pub(super) fn finish_probabilities(&mut self, control: &crate::WorkContext) -> Result<()> {
+        let mut work =
+            crate::event::ExactArithmetic::new(crate::event::ArithmeticLimits::default(), control);
+        self.probabilities
+            .try_reserve_exact(self.probability_pairs.len())
+            .map_err(crate::event::Error::from)?;
+        for (event, given) in &self.probability_pairs {
+            self.probabilities.push(crate::ProbabilityAnswer::new(
+                event.clone(),
+                given.clone(),
+                &mut work,
+            )?);
+        }
+        self.probability_pairs.clear();
+        Ok(())
     }
 
     pub(super) fn uuid_cell(hi: u64, lo: u64) -> Cell {

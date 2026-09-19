@@ -173,6 +173,12 @@ fn seal_interiors(
         )?;
         let (typings, signature) =
             type_rules(schema, &sigs(&sealed, id), &head, &lowered, params, false)?;
+        if let Some(position) = signature.columns.iter().position(|c| c.ty().is_none()) {
+            return Err(ValidationError::ObservationInterior {
+                interior: id,
+                find: FindIndex(position),
+            });
+        }
         sealed.push(signature.clone());
         interiors_out.push(ValidatedInterior {
             lowered,
@@ -362,6 +368,9 @@ fn lower_rules(
             let shape = match term {
                 FindTerm::Event(expr) => expr.validate_shape(),
                 FindTerm::Test(test) => test.validate_shape(),
+                FindTerm::Probability { event, given } => {
+                    crate::event_expr::validate_joint_shape(vec![event, given])
+                }
                 _ => Ok(()),
             };
             shape.map_err(|source| ValidationError::EventExpression {
@@ -494,6 +503,7 @@ fn validate_rule(
             | FindTerm::Compute(_)
             | FindTerm::Event(_)
             | FindTerm::Test(_)
+            | FindTerm::Probability { .. }
             | FindTerm::Count
             | FindTerm::Aggregate { .. }
             | FindTerm::Pack { .. } => None,
