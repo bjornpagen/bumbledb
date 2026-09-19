@@ -97,7 +97,30 @@ impl ParameterRestriction {
             }
         }
         let refinement = ParameterRefinement::new(identity, source, &predicates, limits, work)?;
+        Self::from_refinement(&refinement, predicate, limits, work)
+    }
+
+    /// Restrict an existing checked presentation, retaining its original prior.
+    /// The predicate must be expressible in that presentation; no new outcomes
+    /// or guards are invented and the law at every retained parameter is kept.
+    /// # Errors
+    /// Foreign/cutting predicate, empty domain, capacities or cancellation.
+    pub fn from_refinement(
+        refinement: &ParameterRefinement,
+        predicate: &ParameterRegion,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let control = work.control();
+        let mut budget = Budget::new(limits, control)?;
         let prior = refinement.refined();
+        ParameterDomain::new(
+            prior
+                .parameter_domain()
+                .ok_or(Error::MissingParameter)?
+                .region()
+                .apply(BoolOp4::AND, predicate, limits.parameters.region, work)?,
+        )?;
         let guard = prior.parameter_event(predicate, limits, work)?;
         let restricted = prior.restrict_with_parameters(&guard, limits, work)?;
         let domain = restricted
@@ -119,7 +142,7 @@ impl ParameterRestriction {
         };
         let inclusion = coordinate_inclusion(&space, prior, limits, work)?;
         Ok(Self {
-            refinement,
+            refinement: refinement.clone(),
             inclusion,
         })
     }
@@ -197,6 +220,7 @@ impl ParameterRevisedSource {
 /// Missing laws and operational failures remain errors, not impossible results.
 #[derive(Debug, Clone)]
 pub struct ParameterConditioning {
+    identity: SpaceId,
     prior: Space,
     evidence: Event,
     mass: ParameterFunction,
@@ -204,6 +228,11 @@ pub struct ParameterConditioning {
     revised: Option<ParameterRevisedSource>,
 }
 impl ParameterConditioning {
+    /// Requested presentation identity, including an impossible request.
+    #[must_use]
+    pub fn identity(&self) -> SpaceId {
+        self.identity
+    }
     #[must_use]
     pub fn prior(&self) -> &Space {
         &self.prior
@@ -267,6 +296,7 @@ impl Space {
         };
         control.checkpoint()?;
         Ok(ParameterConditioning {
+            identity,
             prior: self.clone(),
             evidence,
             mass,

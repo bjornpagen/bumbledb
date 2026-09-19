@@ -1,0 +1,12 @@
+'SchemaSelections.singleton_exact' depends on axioms: [propext]
+'SchemaSelections.alternatives_union' depends on axioms: [propext]
+'SchemaSelections.order_irrelevant' does not depend on any axioms
+'SchemaSelections.duplicate_semantics' depends on axioms: [propext]
+'SchemaSelections.exact_context' depends on axioms: [propext]
+'SchemaSelections.exact_support' depends on axioms: [propext]
+'SchemaSelections.exact_law' depends on axioms: [propext]
+'SchemaSelections.empty_still_selects' depends on axioms: [propext]
+'SchemaSelections.mass_not_used' depends on axioms: [propext]
+'SchemaSelections.overlap_is_not_selection' depends on axioms: [propext]
+'SchemaSelections.portable_selection' depends on axioms: [propext, Quot.sound]
+'SchemaSelections.selection_preserves_projection' does not depend on any axioms

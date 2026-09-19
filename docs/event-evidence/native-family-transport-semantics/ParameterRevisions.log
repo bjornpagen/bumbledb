@@ -1,0 +1,15 @@
+'ParameterRevisions.inclusion_keeps_parameter' does not depend on any axioms
+'ParameterRevisions.whole_cell_preserves_domain' does not depend on any axioms
+'ParameterRevisions.no_image_outside_source_domain' does not depend on any axioms
+'ParameterRevisions.coarse_code_is_insufficient' does not depend on any axioms
+'ParameterRevisions.sum_congr' depends on axioms: [propext]
+'ParameterRevisions.sum_div' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterRevisions.family_defined_exactly' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterRevisions.zero_evidence_excludes_parameter' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterRevisions.posterior_normalized' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterRevisions.posterior_zero_outside_evidence' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterRevisions.repeated_evidence' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterRevisions.support_is_not_evidence' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterRevisions.positive_mass_iff_nonzero' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterRevisions.posterior_nonnegative' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterRevisions.possible_event_can_have_no_posterior' depends on axioms: [propext, Classical.choice, Quot.sound]

@@ -1,5 +1,5 @@
-//! BESC v1; fixed-depth, explicitly versioned scalar/source envelope. The BEDC
-//! map grammar and BEVT/BERA blobs retain their existing byte contracts.
+//! BESC v1 fixed-law and v2 family envelopes, with fixed-depth grammars. BEDC
+//! maps and embedded Event/arithmetic formats retain their byte contracts.
 use super::super::wire::{Reader, Writer};
 use super::{
     AdmittedSourceDescriptor, Budget, Capacity, Control, Error, ExactArithmetic,
@@ -24,8 +24,13 @@ impl SourceDescriptor {
             limits: limits.descriptors,
             control,
         };
-        out.put(b"BESC\x01")?;
+        out.put(if matches!(self, Self::Family(_)) {
+            b"BESC\x02"
+        } else {
+            b"BESC\x01"
+        })?;
         match self {
+            Self::Family(f) => f.write(&mut out)?,
             Self::Function(f) => {
                 out.put(&[0])?;
                 out.function(f)?;
@@ -93,7 +98,7 @@ impl SourceDescriptor {
         Ok(out.bytes)
     }
 
-    /// Parse untrusted BESC data, without admitting its BEVT/BERA payloads.
+    /// Parse untrusted BESC data, without admitting its mathematical payloads.
     /// # Errors
     /// Unknown version/tag, malformed lengths, trailing bytes, limits/cancellation.
     pub fn from_bytes(
@@ -117,84 +122,18 @@ impl SourceDescriptor {
             return Err(Error::InvalidEncoding);
         }
         let version = input.take(1)?[0];
+        if version == 2 {
+            let value = Self::Family(Box::new(super::FamilyDescriptor::read(&mut input, limits)?));
+            if !input.bytes.is_empty() {
+                return Err(Error::InvalidEncoding);
+            }
+            control.checkpoint()?;
+            return Ok(value);
+        }
         if version != 1 {
             return Err(Error::UnsupportedVersion(version));
         }
-        let value = match input.take(1)?[0] {
-            0 => Self::Function(input.function(limits)?),
-            1 => {
-                input.budget.item(0)?;
-                Self::Kernel(KernelDescriptor {
-                    parent: input.map()?,
-                    density: input.function(limits)?,
-                })
-            }
-            2 => {
-                input.budget.item(0)?;
-                let prior = input.blob()?;
-                let receipt = match input.take(1)?[0] {
-                    0 => RevisionReceiptDescriptor::Condition {
-                        evidence: input.blob()?,
-                        mass: input.blob()?,
-                    },
-                    1 => RevisionReceiptDescriptor::Likelihood {
-                        likelihood: input.function(limits)?,
-                        normalizer: input.blob()?,
-                    },
-                    2 => {
-                        let count = input.count()?;
-                        shape(count, limits.partitions.cells, Capacity::PartitionCells)?;
-                        shape(count, limits.functions.cells, Capacity::FunctionCells)?;
-                        input.roster(count, 3)?;
-                        let (mut cells, mut old_masses, mut targets) =
-                            (Vec::new(), Vec::new(), Vec::new());
-                        cells.try_reserve_exact(count)?;
-                        old_masses.try_reserve_exact(count)?;
-                        targets.try_reserve_exact(count)?;
-                        for _ in 0..count {
-                            cells.push(input.blob()?);
-                            old_masses.push(input.blob()?);
-                            targets.push(input.blob()?);
-                        }
-                        RevisionReceiptDescriptor::Jeffrey {
-                            cells,
-                            old_masses,
-                            targets,
-                        }
-                    }
-                    _ => return Err(Error::InvalidEncoding),
-                };
-                let outcome = match input.take(1)?[0] {
-                    0 => RevisionOutcomeDescriptor::Revised {
-                        posterior: input.blob()?,
-                    },
-                    1 => RevisionOutcomeDescriptor::Impossible(RevisionImpossible::ZeroEvidence),
-                    2 => RevisionOutcomeDescriptor::Impossible(RevisionImpossible::ZeroLikelihood),
-                    3 => {
-                        let count = input.count()?;
-                        shape(count, limits.partitions.cells, Capacity::PartitionCells)?;
-                        let mut cells = Vec::new();
-                        cells.try_reserve_exact(count)?;
-                        for _ in 0..count {
-                            input.budget.item(0)?;
-                            cells.push(input.number()?);
-                        }
-                        RevisionOutcomeDescriptor::Impossible(
-                            RevisionImpossible::UnsupportedTargets {
-                                cells: cells.into(),
-                            },
-                        )
-                    }
-                    _ => return Err(Error::InvalidEncoding),
-                };
-                Self::Revision(RevisionDescriptor {
-                    prior,
-                    receipt,
-                    outcome,
-                })
-            }
-            _ => return Err(Error::InvalidEncoding),
-        };
+        let value = input.fixed_source(limits)?;
         if !input.bytes.is_empty() {
             return Err(Error::InvalidEncoding);
         }
@@ -227,6 +166,84 @@ impl Writer<'_> {
 }
 
 impl Reader<'_> {
+    fn fixed_source(&mut self, limits: SourceDescriptorLimits) -> Result<SourceDescriptor> {
+        Ok(match self.take(1)?[0] {
+            0 => SourceDescriptor::Function(self.function(limits)?),
+            1 => {
+                self.budget.item(0)?;
+                SourceDescriptor::Kernel(KernelDescriptor {
+                    parent: self.map()?,
+                    density: self.function(limits)?,
+                })
+            }
+            2 => {
+                self.budget.item(0)?;
+                let prior = self.blob()?;
+                let receipt = match self.take(1)?[0] {
+                    0 => RevisionReceiptDescriptor::Condition {
+                        evidence: self.blob()?,
+                        mass: self.blob()?,
+                    },
+                    1 => RevisionReceiptDescriptor::Likelihood {
+                        likelihood: self.function(limits)?,
+                        normalizer: self.blob()?,
+                    },
+                    2 => {
+                        let count = self.count()?;
+                        shape(count, limits.partitions.cells, Capacity::PartitionCells)?;
+                        shape(count, limits.functions.cells, Capacity::FunctionCells)?;
+                        self.roster(count, 3)?;
+                        let (mut cells, mut old_masses, mut targets) =
+                            (Vec::new(), Vec::new(), Vec::new());
+                        cells.try_reserve_exact(count)?;
+                        old_masses.try_reserve_exact(count)?;
+                        targets.try_reserve_exact(count)?;
+                        for _ in 0..count {
+                            cells.push(self.blob()?);
+                            old_masses.push(self.blob()?);
+                            targets.push(self.blob()?);
+                        }
+                        RevisionReceiptDescriptor::Jeffrey {
+                            cells,
+                            old_masses,
+                            targets,
+                        }
+                    }
+                    _ => return Err(Error::InvalidEncoding),
+                };
+                let outcome = match self.take(1)?[0] {
+                    0 => RevisionOutcomeDescriptor::Revised {
+                        posterior: self.blob()?,
+                    },
+                    1 => RevisionOutcomeDescriptor::Impossible(RevisionImpossible::ZeroEvidence),
+                    2 => RevisionOutcomeDescriptor::Impossible(RevisionImpossible::ZeroLikelihood),
+                    3 => {
+                        let count = self.count()?;
+                        shape(count, limits.partitions.cells, Capacity::PartitionCells)?;
+                        let mut cells = Vec::new();
+                        cells.try_reserve_exact(count)?;
+                        for _ in 0..count {
+                            self.budget.item(0)?;
+                            cells.push(self.number()?);
+                        }
+                        RevisionOutcomeDescriptor::Impossible(
+                            RevisionImpossible::UnsupportedTargets {
+                                cells: cells.into(),
+                            },
+                        )
+                    }
+                    _ => return Err(Error::InvalidEncoding),
+                };
+                SourceDescriptor::Revision(RevisionDescriptor {
+                    prior,
+                    receipt,
+                    outcome,
+                })
+            }
+            _ => return Err(Error::InvalidEncoding),
+        })
+    }
+
     fn roster(&self, count: usize, items: usize) -> Result<()> {
         shape(
             count,

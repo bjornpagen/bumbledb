@@ -1,0 +1,11 @@
+'UnaryProjection.image_exact' does not depend on any axioms
+'UnaryProjection.image_composes' does not depend on any axioms
+'UnaryProjection.image_empty' does not depend on any axioms
+'UnaryProjection.image_domain' does not depend on any axioms
+'UnaryProjection.image_negation' does not depend on any axioms
+'UnaryProjection.image_preserves_occupancy' depends on axioms: [propext]
+'UnaryProjection.hidden_is_union' does not depend on any axioms
+'UnaryProjection.known_nonempty' depends on axioms: [propext]
+'UnaryProjection.hidden_nonempty' depends on axioms: [propext]
+'UnaryProjection.empty_fibre_obstruction' does not depend on any axioms
+'UnaryProjection.normalize_complement' depends on axioms: [propext]

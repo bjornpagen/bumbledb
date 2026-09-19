@@ -1,0 +1,7 @@
+'ConstraintCounting.character_orthogonality' depends on axioms: [propext, Quot.sound]
+'ConstraintCounting.constraint_gap' depends on axioms: [propext, Quot.sound]
+'ConstraintCounting.zero_count_from_gap' depends on axioms: [propext, Quot.sound]
+'ConstraintCounting.constraint_zero_count' depends on axioms: [propext, Quot.sound]
+'ConstraintCounting.and_gate_constraint' does not depend on any axioms
+'ConstraintCounting.not_gate_constraint' does not depend on any axioms
+'ConstraintCounting.output_constraint' does not depend on any axioms

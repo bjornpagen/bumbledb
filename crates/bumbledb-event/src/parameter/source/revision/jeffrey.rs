@@ -13,6 +13,7 @@ use crate::{
 /// intrinsic evidence probability. Empty partition positions remain observable.
 #[derive(Debug, Clone)]
 pub struct ParameterJeffrey {
+    identity: SpaceId,
     prior: Space,
     partition: EventPartition,
     targets: Arc<[ParameterFunction]>,
@@ -23,6 +24,11 @@ pub struct ParameterJeffrey {
 }
 
 impl ParameterJeffrey {
+    /// Requested presentation identity, including an impossible request.
+    #[must_use]
+    pub fn identity(&self) -> SpaceId {
+        self.identity
+    }
     #[must_use]
     pub fn prior(&self) -> &Space {
         &self.prior
@@ -163,6 +169,7 @@ impl Space {
         retained_targets.extend_from_slice(targets);
         control.checkpoint()?;
         Ok(ParameterJeffrey {
+            identity,
             prior: self.clone(),
             partition,
             targets: retained_targets.into(),

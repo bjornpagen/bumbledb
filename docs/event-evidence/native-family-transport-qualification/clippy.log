@@ -1,0 +1,31 @@
+    Checking bumbledb-event v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-event)
+    Checking bumbledb-theory v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-theory)
+    Checking bumbledb-query-macros v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-query-macros)
+    Checking bumbledb-macros v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-macros)
+error: use of `format!` to build up a string from an iterator
+   --> crates/bumbledb-event/src/family_descriptor_tests.rs:787:15
+    |
+787 |       let hex = bytes
+    |  _______________^
+788 | |         .iter()
+789 | |         .map(|byte| format!("{byte:02x}"))
+790 | |         .collect::<String>();
+    | |____________________________^
+    |
+help: call `fold` instead
+   --> crates/bumbledb-event/src/family_descriptor_tests.rs:789:10
+    |
+789 |         .map(|byte| format!("{byte:02x}"))
+    |          ^^^
+help: ... and use the `write!` macro here
+   --> crates/bumbledb-event/src/family_descriptor_tests.rs:789:21
+    |
+789 |         .map(|byte| format!("{byte:02x}"))
+    |                     ^^^^^^^^^^^^^^^^^^^^^
+    = note: this can be written more efficiently by appending to a `String` directly
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#format_collect
+    = note: `-D clippy::format-collect` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::format_collect)]`
+
+error: could not compile `bumbledb-event` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

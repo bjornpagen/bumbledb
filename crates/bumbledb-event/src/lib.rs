@@ -37,10 +37,12 @@ pub use action::{ActionArena, ReachStrategy, SafetyStrategy};
 pub use algebraic::{AlgebraicLimits, AlgebraicRoot, RootLimits};
 pub use boolean::{BoolOp4, Signature};
 pub use descriptor::{
-    AdmittedDescriptor, AdmittedSourceDescriptor, Descriptor, DescriptorLimits, FibreDescriptor,
+    AdmittedDescriptor, AdmittedFamilyDescriptor, AdmittedSourceDescriptor, Descriptor,
+    DescriptorLimits, FamilyDescriptor, FamilyFunctionDescriptor, FamilyKernelDescriptor,
+    FamilyPosteriorDescriptor, FamilyReceiptDescriptor, FamilyRevisionDescriptor, FibreDescriptor,
     FunctionDescriptor, FunctionPieceDescriptor, KernelDescriptor, MapDescriptor,
-    RevisionDescriptor, RevisionOutcomeDescriptor, RevisionReceiptDescriptor, SourceDescriptor,
-    SourceDescriptorLimits,
+    ParameterFunctionDescriptor, RefinementDescriptor, RestrictionDescriptor, RevisionDescriptor,
+    RevisionOutcomeDescriptor, RevisionReceiptDescriptor, SourceDescriptor, SourceDescriptorLimits,
 };
 pub use diagram::{Diagram, DiagramNode, DiagramView};
 pub use error::{Capacity, Control, Error, Limits, Result};
@@ -153,3 +155,6 @@ mod family_kernel_tests;
 
 #[cfg(test)]
 mod parameter_jeffrey_tests;
+
+#[cfg(test)]
+mod family_descriptor_tests;

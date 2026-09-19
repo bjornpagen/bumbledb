@@ -9,6 +9,7 @@ use crate::{
 /// This is not an import of posterior targets or a fresh observation identity.
 #[derive(Debug, Clone)]
 pub struct ParameterLikelihood {
+    identity: SpaceId,
     prior: Space,
     likelihood: FamilyFunction,
     normalizer: ParameterFunction,
@@ -17,6 +18,11 @@ pub struct ParameterLikelihood {
 }
 
 impl ParameterLikelihood {
+    /// Requested presentation identity, including an impossible request.
+    #[must_use]
+    pub fn identity(&self) -> SpaceId {
+        self.identity
+    }
     #[must_use]
     pub fn prior(&self) -> &Space {
         &self.prior
@@ -102,6 +108,7 @@ impl Space {
         };
         work.control().checkpoint()?;
         Ok(ParameterLikelihood {
+            identity,
             prior: self.clone(),
             likelihood,
             normalizer,

@@ -1395,9 +1395,9 @@ fn family_posterior_zero_mass_outcomes_still_require_relational_coverage() {
 #[allow(clippy::too_many_lines)]
 fn family_channel_and_jeffrey_maps_keep_owned_probabilities_through_free_join() {
     use bumbledb::event::{
-        CoordinateMap, EventPartition, ExactPolynomial, FamilyFunction, FamilyFunctionPiece,
-        FamilyKernel, GuardedRationalFunction, ParameterFunction, ParameterSourceLimits,
-        PartitionLimits,
+        AdmittedFamilyDescriptor, CoordinateMap, EventPartition, ExactPolynomial, FamilyFunction,
+        FamilyFunctionPiece, FamilyKernel, GuardedRationalFunction, ParameterFunction,
+        ParameterSourceLimits, PartitionLimits,
     };
     let limits = ParameterSourceLimits::default();
     let prior = parameterized_draws();
@@ -1444,6 +1444,11 @@ fn family_channel_and_jeffrey_maps_keep_owned_probabilities_through_free_join() 
     .unwrap();
     let parent = CoordinateMap::coordinates(&raw, &prior, &[0, 1, 2], &()).unwrap();
     let kernel = FamilyKernel::new(&parent, &density, limits, &mut arithmetic()).unwrap();
+    let AdmittedFamilyDescriptor::Kernel(kernel) =
+        restore_family_source(AdmittedFamilyDescriptor::Kernel(kernel))
+    else {
+        panic!("imported family channel");
+    };
     let joint = kernel.close(&prior, limits, &mut arithmetic()).unwrap();
     let first = joint.space().coordinate(0, &()).unwrap();
     let next = joint.space().coordinate(3, &()).unwrap();
@@ -1475,6 +1480,11 @@ fn family_channel_and_jeffrey_maps_keep_owned_probabilities_through_free_join() 
             &mut arithmetic(),
         )
         .unwrap();
+    let AdmittedFamilyDescriptor::Jeffrey(receipt) =
+        restore_family_source(AdmittedFamilyDescriptor::Jeffrey(receipt))
+    else {
+        panic!("imported family revision");
+    };
     let revised = receipt.revised().unwrap();
     let cases = [
         (
@@ -1500,6 +1510,23 @@ fn family_channel_and_jeffrey_maps_keep_owned_probabilities_through_free_join() 
     for (map, old, next, replaced) in cases {
         check_family_dynamics_map(map, old, next, replaced);
     }
+}
+
+fn restore_family_source(
+    source: bumbledb::event::AdmittedFamilyDescriptor,
+) -> bumbledb::event::AdmittedFamilyDescriptor {
+    use bumbledb::event::{AdmittedSourceDescriptor, SourceDescriptor, SourceDescriptorLimits};
+    let limits = SourceDescriptorLimits::default();
+    let source = AdmittedSourceDescriptor::Family(Box::new(source));
+    let data = SourceDescriptor::capture(&source, limits, &mut arithmetic()).unwrap();
+    let bytes = data.to_bytes(limits, &()).unwrap();
+    drop((source, data));
+    let AdmittedSourceDescriptor::Family(source) =
+        SourceDescriptor::import(&bytes, limits, &mut arithmetic()).unwrap()
+    else {
+        panic!("imported family source");
+    };
+    *source
 }
 
 fn check_family_dynamics_map(

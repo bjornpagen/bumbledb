@@ -1,4 +1,7 @@
-//! Portable fixed-law scalar objects. Parsing never grants mathematical claims;
+// Source admission keeps a copyable policy argument across the existing public
+// API. Its expanded solver policy is large but contains only scalar bounds.
+#![allow(clippy::large_types_passed_by_value)]
+//! Portable fixed-law and shared-parameter objects. Parsing never grants mathematical claims;
 //! admission replays native constructors and checks every recorded revision result.
 use crate::{
     EventPartition, ExactArithmetic, ExactRational, FiniteFunction, FiniteKernel, FunctionLimits,
@@ -8,7 +11,13 @@ use crate::{
 
 use super::{Budget, Capacity, Control, DescriptorLimits, Error, MapDescriptor, Result};
 
+mod family;
 mod wire;
+pub use family::{
+    AdmittedFamilyDescriptor, FamilyDescriptor, FamilyFunctionDescriptor, FamilyKernelDescriptor,
+    FamilyPosteriorDescriptor, FamilyReceiptDescriptor, FamilyRevisionDescriptor,
+    ParameterFunctionDescriptor, RefinementDescriptor, RestrictionDescriptor,
+};
 
 /// Nonzero scalar cells on a full named context. Plain inputs may use redundant
 /// disjoint cells; admission merges equal values and supplies the zero default.
@@ -65,13 +74,14 @@ pub struct RevisionDescriptor {
     pub outcome: RevisionOutcomeDescriptor,
 }
 
-/// Inspectable, untrusted fixed-law transport. Source history is separate from
+/// Inspectable, untrusted source transport. Source history is separate from
 /// canonical Event identity. No provider provenance or fresh draw is inferred.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceDescriptor {
     Function(FunctionDescriptor),
     Kernel(KernelDescriptor),
     Revision(RevisionDescriptor),
+    Family(Box<FamilyDescriptor>),
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +89,7 @@ pub enum AdmittedSourceDescriptor {
     Function(FiniteFunction),
     Kernel(FiniteKernel),
     Revision(SourceRevision),
+    Family(Box<AdmittedFamilyDescriptor>),
 }
 
 /// Envelope/roster and native-operation bounds. The caller separately supplies
@@ -90,6 +101,8 @@ pub struct SourceDescriptorLimits {
     pub functions: FunctionLimits,
     pub laws: LawLimits,
     pub partitions: PartitionLimits,
+    /// Bounds for shared-parameter objects; fixed finite objects use `functions`/`laws`.
+    pub parameters: crate::ParameterSourceLimits,
 }
 
 fn shape(count: usize, limit: usize, capacity: Capacity) -> Result<()> {
@@ -407,6 +420,7 @@ impl SourceDescriptor {
         work.control().checkpoint()?;
         // Native shape bounds are checked before building the portable roster.
         match value {
+            AdmittedSourceDescriptor::Family(_) => {}
             AdmittedSourceDescriptor::Function(f) => shape(
                 f.pieces().len(),
                 limits.functions.cells,
@@ -441,6 +455,9 @@ impl SourceDescriptor {
         let mut budget = Budget::new(limits.descriptors);
         budget.item(0)?;
         let result = match value {
+            AdmittedSourceDescriptor::Family(f) => Self::Family(Box::new(
+                FamilyDescriptor::capture(f, limits, &mut budget, work)?,
+            )),
             AdmittedSourceDescriptor::Function(f) => {
                 Self::Function(FunctionDescriptor::capture(f, &mut budget, work)?)
             }
@@ -464,6 +481,7 @@ impl SourceDescriptor {
         let mut budget = Budget::new(limits.descriptors);
         budget.item(0)?;
         match self {
+            Self::Family(f) => f.preflight(limits, &mut budget, control),
             Self::Function(f) => f.preflight(&mut budget, limits, control),
             Self::Kernel(k) => {
                 budget.item(0)?;
@@ -486,6 +504,7 @@ impl SourceDescriptor {
     ) -> Result<AdmittedSourceDescriptor> {
         self.preflight(limits, work.control())?;
         let result = match self {
+            Self::Family(f) => AdmittedSourceDescriptor::Family(Box::new(f.admit(limits, work)?)),
             Self::Function(f) => AdmittedSourceDescriptor::Function(f.admit(limits, work)?),
             Self::Kernel(k) => {
                 let parent = k.parent.admit_with_arithmetic(limits, work)?;

@@ -1,0 +1,8 @@
+'LocalCompletion.separately_invariant' does not depend on any axioms
+'LocalCompletion.existential_preserves_invariance' does not depend on any axioms
+'LocalCompletion.universal_preserves_invariance' does not depend on any axioms
+'LocalCompletion.local_completion_exact' does not depend on any axioms
+'LocalCompletion.resolved_environment_invariance' does not depend on any axioms
+'LocalCompletion.indexed_local_completion_exact' does not depend on any axioms
+'LocalCompletion.retained_gate_obstruction' does not depend on any axioms
+'LocalCompletion.coupled_decoder_obstruction' does not depend on any axioms

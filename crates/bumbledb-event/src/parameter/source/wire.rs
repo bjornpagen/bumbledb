@@ -102,7 +102,7 @@ pub(super) fn encode_context(
 
 /// This is canonical *definition* data. Equivalent rational expressions on a
 /// constrained domain need not be the same declared source definition.
-pub(super) fn encode_function(
+pub(crate) fn encode_function(
     value: &GuardedRationalFunction,
     limits: ParameterSourceLimits,
     work: &mut ExactArithmetic<'_>,
@@ -126,7 +126,7 @@ pub(super) fn encode_function(
     out.blob(&value.defined_on().to_bytes(limits.parameters, work)?)?;
     Ok(out.bytes)
 }
-fn decode_function(
+pub(crate) fn decode_function(
     bytes: &[u8],
     domain: &ParameterDomain,
     limits: ParameterSourceLimits,

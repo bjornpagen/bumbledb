@@ -1,5 +1,8 @@
 //! Fixed-law SDK operations. One worker and arithmetic budget admit every
 //! operand, perform native algebra, and encode owned outputs before delivery.
+// Match the core source API's copyable scalar policy; the family solver bounds
+// expand this value beyond clippy's default 256-byte suggestion.
+#![allow(clippy::large_types_passed_by_value)]
 use crate::exact_wire::scalar;
 use crate::ingress::{CopyContext, event_error};
 use crate::marshal::{ValueOut, output_vec};
