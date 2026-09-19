@@ -280,6 +280,67 @@ fn prior_observations_share_admission_contraction_and_output_work() {
 }
 
 #[test]
+fn function_covers_admit_all_patches_under_one_worker_budget() {
+    use bumbledb::event::{AdmittedSourceDescriptor, FiniteFunction, SourceDescriptor};
+    let control = WorkContext::new();
+    let mut work = ExactArithmetic::new(ArithmeticLimits::default(), &control);
+    let [_, parent, _] = prior_inputs(&control, &mut work);
+    let source = source::space(&parent, &mut work).unwrap();
+    let one =
+        FiniteFunction::constant(&source, ExactRational::one(), limits().functions, &mut work)
+            .unwrap();
+    let function = SourceDescriptor::capture(
+        &AdmittedSourceDescriptor::Function(one),
+        limits(),
+        &mut work,
+    )
+    .unwrap()
+    .to_bytes(limits(), &control)
+    .unwrap();
+    let inputs = [parent.clone(), parent.clone(), function.clone()];
+    let mut probe = ExactArithmetic::new(ArithmeticLimits::default(), &control);
+    SourceDescriptor::import(&function, limits(), &mut probe).unwrap();
+    let mut bounded = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: probe.operations(),
+            ..ArithmeticLimits::default()
+        },
+        &control,
+    );
+    assert!(matches!(
+        run("cover.finite", &inputs, &control, &mut bounded),
+        Err(Error::Capacity(Capacity::ArithmeticSteps))
+    ));
+    assert!(matches!(
+        run("cover.finite", &inputs, &control, &mut work),
+        Ok(Output::Parameter(ParameterOutput::Cover(_)))
+    ));
+    let empty = source.empty().to_bytes(&control).unwrap();
+    assert!(
+        run(
+            "cover.finite",
+            &[
+                parent.clone(),
+                parent,
+                function,
+                empty,
+                b"BESC\x01\x00".to_vec()
+            ],
+            &control,
+            &mut work
+        )
+        .is_err()
+    );
+    assert!(!Op::parse("cover.finite").unwrap().valid(2, 0));
+    assert!(!Op::parse("cover.familyMask").unwrap().valid(2, 1));
+    control.cancel();
+    assert!(matches!(
+        run("cover.finite", &inputs, &control, &mut work),
+        Err(Error::Cancelled)
+    ));
+}
+
+#[test]
 fn family_observations_share_nested_admission_work_and_keep_owned_inputs() {
     use bumbledb::event::{
         FamilyFunction, GuardedRationalFunction, ParameterDomain, Space, SpaceId,

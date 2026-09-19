@@ -16,6 +16,7 @@ use bumbledb::work::WorkContext;
 use napi::bindgen_prelude::{Array, BigInt, Env, External, Function};
 use napi_derive::napi;
 
+mod cover;
 mod dynamics;
 mod family;
 mod function;
@@ -30,6 +31,7 @@ type Result<T> = bumbledb::event::Result<T>;
 
 #[derive(Clone, Copy)]
 enum Op {
+    Cover(cover::Op),
     Prior(prior::Op),
     Region(region::Op),
     Root(root::Op),
@@ -41,6 +43,9 @@ enum Op {
 }
 impl Op {
     fn parse(name: &str) -> Option<Self> {
+        if let Some(name) = name.strip_prefix("cover.") {
+            return cover::Op::parse(name).map(Self::Cover);
+        }
         if let Some(name) = name.strip_prefix("prior.") {
             return prior::Op::parse(name).map(Self::Prior);
         }
@@ -66,6 +71,7 @@ impl Op {
     }
     fn valid(self, count: usize, argument: u8) -> bool {
         match self {
+            Self::Cover(op) => op.valid(count, argument),
             Self::Prior(op) => op.valid(count, argument),
             Self::Region(op) => op.valid(count, argument),
             Self::Root(op) => op.valid(count, argument),
@@ -141,6 +147,7 @@ fn execute(
         return Err(Error::InvalidEncoding);
     }
     match op {
+        Op::Cover(op) => cover::execute(op, inputs, control, work),
         Op::Prior(op) => prior::execute(op, inputs, control, work),
         Op::Region(op) => region::execute(op, inputs, argument, work),
         Op::Root(op) => root::execute(op, inputs, work),

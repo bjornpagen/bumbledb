@@ -29,6 +29,7 @@ pub struct FunctionPiece {
     pub defined: Vec<u8>,
 }
 pub enum ParameterOutput {
+    Cover(super::cover::Details),
     Prior(Box<super::prior::Details>),
     Dynamics(super::dynamics::Details),
     Region {
@@ -164,6 +165,7 @@ impl napi::bindgen_prelude::ToNapiValue for ParameterOutput {
                 }
                 object.set("pieces", values)?;
             }
+            Self::Cover(details) => object = details.object(&handle)?,
             Self::Prior(details) => object = details.object(&handle)?,
             Self::Dynamics(details) => object = details.object(&handle)?,
             other => object = other.source_object(&handle)?,

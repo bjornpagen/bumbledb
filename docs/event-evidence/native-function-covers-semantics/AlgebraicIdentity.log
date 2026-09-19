@@ -1,0 +1,9 @@
+'AlgebraicIdentity.root_in_one_factor' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicIdentity.select_other_factor' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicIdentity.nonzero_evaluation_excludes_zero_factor' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicIdentity.global_factor_sign' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicIdentity.one_factor_has_small_degree' depends on axioms: [propext, Classical.choice, Quot.sound]
+'AlgebraicIdentity.complete_grid_recovers_factor' does not depend on any axioms
+'AlgebraicIdentity.exhaustive_negative_proves_no_factor' does not depend on any axioms
+'AlgebraicIdentity.partial_search_is_insufficient' does not depend on any axioms
+'AlgebraicIdentity.key_iff_value' does not depend on any axioms

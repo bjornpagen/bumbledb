@@ -1,0 +1,26 @@
+   Compiling bumbledb-event v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-event)
+    Checking bumbledb-theory v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-theory)
+    Checking bumbledb-query-macros v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-query-macros)
+    Checking bumbledb-macros v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-macros)
+    Checking bumbledb v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb)
+    Checking bumbledb-bench v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-bench)
+    Checking bumbledb-log v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-log)
+    Checking bumbledb-query v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-query)
+error: casting `u64` to `usize` may truncate the value on targets with 32-bit wide pointers
+   --> crates/bumbledb/tests/event_function_covers.rs:119:37
+    |
+119 |                 function: functions[expression as usize - 1].clone(),
+    |                                     ^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#cast_possible_truncation
+    = note: `-D clippy::cast-possible-truncation` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::cast_possible_truncation)]`
+help: ... or use `try_from` and handle the error accordingly
+    |
+119 -                 function: functions[expression as usize - 1].clone(),
+119 +                 function: functions[usize::try_from(expression) - 1].clone(),
+    |
+
+error: could not compile `bumbledb` (test "event_function_covers") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

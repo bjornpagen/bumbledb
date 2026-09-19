@@ -57,7 +57,7 @@ pub use expectation::ExpectationObservation;
 pub use fixed_point::{
     FiniteCarrier, FixedPointLimits, FixedPointProgram, FixedPointResult, LayeredFixedPointResult,
 };
-pub use function::{FiniteFunction, FunctionLimits, FunctionPiece};
+pub use function::{FiniteFunction, FunctionCover, FunctionLimits, FunctionPatch, FunctionPiece};
 pub use information::InformationCases;
 pub use kernel::{FamilyKernel, FiniteKernel, SourceExtension};
 pub use map::{CoordinateMap, SurjectiveMap};
@@ -174,3 +174,6 @@ mod family_descriptor_tests;
 
 #[cfg(test)]
 mod prior_tests;
+
+#[cfg(test)]
+mod function_cover_tests;

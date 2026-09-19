@@ -86,6 +86,8 @@ pub enum Error {
     LawNotNormalized,
     MissingLaw,
     FunctionOverlap,
+    FunctionCoverConflict,
+    FunctionCoverGap,
     FunctionInvariant,
     KernelNotNormalized,
     DescriptorClaimMismatch,
@@ -176,6 +178,8 @@ impl fmt::Display for Error {
             Self::NegativeMass => f.write_str("a probability law cannot have negative mass"),
             Self::LawOverlap => f.write_str("probability density pieces overlap"),
             Self::LawNotNormalized => f.write_str("the joint probability law does not sum to one"),
+            Self::FunctionCoverConflict => f.write_str("function patches disagree on their overlap"),
+            Self::FunctionCoverGap => f.write_str("function patches do not cover the required Event"),
             Self::FunctionOverlap => f.write_str("finite function pieces overlap"),
             Self::FunctionInvariant => {
                 f.write_str("finite function contraction violated its coordinate invariant")

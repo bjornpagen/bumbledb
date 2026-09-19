@@ -2,6 +2,7 @@ import { Result } from "effect"
 import { EventDescriptor } from "#event-descriptor.ts"
 import { type Event, encodedEvent, eventBytes } from "#event-value.ts"
 import { type ExactRational, encodedRational, rationalBytes } from "#exact-value.ts"
+import { type FunctionPatch, glueFunctions, maskFunction } from "#function-cover.ts"
 import type { ParameterFunction, ParameterFunctionPiece } from "#parameter-function.ts"
 import { parameterBoolean, parameterData, parameterResult } from "#parameter-operation.ts"
 import type { ParameterRefinement } from "#parameter-refinement.ts"
@@ -160,7 +161,17 @@ function outcomeSum(value: FamilyFunction, given: Event) {
 		(bytes) => encodedSource("parameterFunction", bytes)
 	)
 }
+/** Zero outside the supplied region without changing the source context. */
+function mask(value: FamilyFunction, region: Event) {
+	return maskFunction("familyFunction", value, region)
+}
+/** Glue local values that agree on overlaps and completely cover parent. */
+function glue(parent: Event, patches: readonly FunctionPatch<FamilyFunction>[]) {
+	return glueFunctions("familyFunction", parent, patches)
+}
 const FamilyFunction = Object.freeze({
+	mask,
+	glue,
 	fromBytes,
 	toBytes,
 	isFamilyFunction,

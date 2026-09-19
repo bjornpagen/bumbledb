@@ -1,0 +1,10 @@
+'Inspection.read_exact' does not depend on any axioms
+'Inspection.node_exact' does not depend on any axioms
+'Inspection.graph_exact' depends on axioms: [propext]
+'Inspection.root_exact' depends on axioms: [propext]
+'Inspection.two_root_reconstruction' depends on axioms: [propext]
+'Inspection.original_support_removes_decoder_aliases' depends on axioms: [propext]
+'Inspection.retraction_rebuild_preserves_membership' depends on axioms: [propext]
+'Inspection.split_polarity' does not depend on any axioms
+'Inspection.regular_sign_involution' depends on axioms: [propext]
+'Inspection.true_leaf_is_not_a_legal_witness' does not depend on any axioms

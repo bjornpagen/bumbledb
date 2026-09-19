@@ -4,6 +4,7 @@ import { AuthoringError } from "#errors.ts"
 import { EventDescriptor } from "#event-descriptor.ts"
 import { type Event, encodedEvent, eventBytes, eventValue } from "#event-value.ts"
 import { type ExactRational, encodedRational, rationalBytes } from "#exact-value.ts"
+import { type FunctionPatch, glueFunctions, maskFunction } from "#function-cover.ts"
 import { parameterExpectation } from "#parameter-source.ts"
 import { argumentError, type DbError } from "#runtime-errors.ts"
 import { expectation, sourceBoolean, sourceOperation, sourceResult } from "#source-operation.ts"
@@ -111,7 +112,17 @@ function at(value: FiniteFunction, world: bigint) {
 function designate(value: FiniteFunction) {
 	return sourceResult("designate", () => [toBytes(value)], encodedEvent)
 }
+/** Zero outside the supplied region without changing the source context. */
+function mask(value: FiniteFunction, region: Event) {
+	return maskFunction("function", value, region)
+}
+/** Glue local values that agree on overlaps and completely cover parent. */
+function glue(parent: Event, patches: readonly FunctionPatch<FiniteFunction>[]) {
+	return glueFunctions("function", parent, patches)
+}
 const FiniteFunction = Object.freeze({
+	mask,
+	glue,
 	fromBytes,
 	toBytes,
 	isFiniteFunction,

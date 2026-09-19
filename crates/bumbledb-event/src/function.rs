@@ -8,6 +8,8 @@ use crate::{
     Result, Space,
 };
 
+mod cover;
+pub use cover::{FunctionCover, FunctionPatch};
 mod image;
 pub(crate) mod raw;
 

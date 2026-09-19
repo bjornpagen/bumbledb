@@ -21,6 +21,7 @@ export type { FiniteFunctionDescription, FunctionPiece } from "#finite-function.
 export { FiniteFunction } from "#finite-function.ts"
 export type { FiniteKernelDescription, SourceExtension } from "#finite-kernel.ts"
 export { FiniteKernel } from "#finite-kernel.ts"
+export type { FunctionCover, FunctionPatch } from "#function-cover.ts"
 export type { ParameterFunctionDescription, ParameterFunctionPiece } from "#parameter-function.ts"
 export { ParameterFunction } from "#parameter-function.ts"
 export type { CommonParameterSource, ParameterRefinementDescription } from "#parameter-refinement.ts"
