@@ -11,12 +11,14 @@ import { EventDescriptor } from "#event-descriptor.ts"
 import { ExactRational } from "#exact.ts"
 import { bool, event, i64, interval, str, u64, uuid } from "#fields.ts"
 import { FiniteFunction } from "#finite-function.ts"
+import { FiniteKernel } from "#finite-kernel.ts"
 import { loadNativeBinding, nativeBindingIsLoaded } from "#native.ts"
 import { Compute } from "#query/compute.ts"
 import { query } from "#query/lower.ts"
 import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
+import { SourceRevision } from "#source-revision.ts"
 import { key } from "#statements.ts"
 
 assert.equal(nativeBindingIsLoaded(), false, "package import must not load the addon")
@@ -64,6 +66,18 @@ FiniteFunction.isZero(fn)
 FiniteFunction.expectation(fn, value)
 Event.mass(value)
 Event.probability(value, value)
+const kernel = Result.getOrThrow(FiniteKernel.fromBytes(Buffer.from("BESC\x01\x01")))
+const revision = Result.getOrThrow(SourceRevision.fromBytes(Buffer.from("BESC\x01\x02")))
+FiniteKernel.new(descriptor, fn)
+FiniteKernel.validate(kernel)
+FiniteKernel.describe(kernel)
+FiniteKernel.close(kernel, value)
+FiniteKernel.factorsThrough(kernel, descriptor)
+SourceRevision.validate(revision)
+SourceRevision.inspect(revision)
+SourceRevision.condition(value, value)
+SourceRevision.likelihood(value, fn)
+SourceRevision.jeffrey(value, [{ cell: value, target: rational }])
 assert.equal(nativeBindingIsLoaded(), false, "source Effects must be lazy without the addon")
 
 assert.throws(

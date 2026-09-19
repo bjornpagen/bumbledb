@@ -16,8 +16,11 @@ use bumbledb::work::WorkContext;
 use napi::bindgen_prelude::{Array, BigInt, Env, External, Function, Object, Uint8Array};
 use napi_derive::napi;
 
+mod dynamics;
+
 pub enum SourceOutput {
     Function(FunctionDescriptor),
+    Dynamics(dynamics::Details),
     Observation {
         probability: bool,
         input: Vec<u8>,
@@ -47,6 +50,7 @@ enum Op {
     Mass,
     Probability,
     Expectation,
+    Dynamics(dynamics::Op),
 }
 impl Op {
     fn parse(name: &str) -> Option<Self> {
@@ -69,11 +73,12 @@ impl Op {
             "mass" => Self::Mass,
             "probability" => Self::Probability,
             "expectation" => Self::Expectation,
-            _ => return None,
+            _ => Self::Dynamics(dynamics::Op::parse(name)?),
         })
     }
     fn arity(self, n: usize) -> bool {
         match self {
+            Self::Dynamics(op) => op.arity(n),
             Self::New => n > 0 && n % 2 == 1,
             Self::Constant
             | Self::Add
@@ -195,6 +200,7 @@ fn execute(
     let limits = SourceDescriptorLimits::default();
     let functions = limits.functions;
     match op {
+        Op::Dynamics(op) => dynamics::execute(op, inputs, control, work),
         Op::New => {
             let space = space(&inputs[0], limits, work)?;
             let mut pieces = Vec::new();
@@ -370,6 +376,7 @@ impl napi::bindgen_prelude::ToNapiValue for SourceOutput {
         let handle = Env::from_raw(env);
         let mut object = Object::new(&handle)?;
         match value {
+            Self::Dynamics(data) => object = data.object(&handle)?,
             Self::Function(data) => {
                 object.set("space", Uint8Array::from(data.space))?;
                 let mut pieces = output_vec(data.pieces.len()).map_err(|e| thrown(handle, e))?;

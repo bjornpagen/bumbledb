@@ -2,7 +2,12 @@ export { Event } from "#event.ts"
 export { ExactRational } from "#exact.ts"
 export type { FiniteFunctionDescription, FunctionPiece } from "#finite-function.ts"
 export { FiniteFunction } from "#finite-function.ts"
+export type { FiniteKernelDescription, SourceExtension } from "#finite-kernel.ts"
+export { FiniteKernel } from "#finite-kernel.ts"
 export type { ExpectationObservation, ProbabilityObservation } from "#source-operation.ts"
+export type { JeffreyTarget } from "#source-revision.ts"
+export { SourceRevision } from "#source-revision.ts"
+export type { RevisionOutcome, RevisionReceipt, SourceRevisionInspection } from "#source-revision-data.ts"
 /**
  * @bjornpagen/bumbledb — the Effect-native TypeScript SDK for the
  * bumbledb embedded relational engine. Pure
