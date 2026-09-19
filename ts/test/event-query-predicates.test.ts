@@ -11,6 +11,8 @@ import {
 	event,
 	FamilyFunction,
 	FiniteFunction,
+	Guard,
+	GuardPlan,
 	i64,
 	key,
 	NumberExpr as N,
@@ -125,6 +127,24 @@ test("predicate authoring is pure, authentic and bounded across numerical subtre
 	let numerical: unknown = { kind: "integer", var: 0 }
 	for (let i = 1; i < 128; i++) numerical = { kind: "abs", value: numerical }
 	assert.throws(() => parsePredicateIr("test", { kind: "sign", number: numerical, signs: 7 }), /shape/)
+	const domain = Result.getOrThrow(D.fromBytes(Buffer.from("BEPR\x01")))
+	const region = Result.getOrThrow(R.fromBytes(Buffer.from("BEPR\x01")))
+	assert.throws(() => T.region(region as never, domain as never), /owned domain/)
+	const regionQuery = query(Theory).rule((r) => r.match(Trial, v(Trial)).find({ verdict: T.region(domain, region) }))
+	const regionDescription = describeQuery(regionQuery)
+	assert.deepEqual(
+		describeQuery(queryFromDescription(Theory, regionDescription, { verdict: predicateResult })),
+		regionDescription
+	)
+	assert.throws(() =>
+		parsePredicateIr("test", { kind: "region", domain: D.toBytes(domain), region: R.toBytes(region) }, 1, {
+			nodes: 1,
+			bytes: 9
+		})
+	)
+	assert.throws(() =>
+		parsePredicateIr("test", { kind: "region", domain: D.toBytes(domain), region: R.toBytes(region), ignored: true })
+	)
 	assert.equal(nativeBindingIsLoaded(), false)
 })
 
@@ -374,4 +394,107 @@ test("predicate algebra keeps parameter holes, explicit quantifiers and producer
 			})
 		)
 	)
+})
+
+test("direct region predicates retain exact origins, totality, common guards and owned replay", async () => {
+	const retained = await run(
+		Effect.scoped(
+			Effect.gen(function* () {
+				const parameter = new Uint8Array(32).fill(246)
+				const one = yield* Q.fraction(1n)
+				const zero = yield* Q.fraction(0n)
+				const p = yield* P.parameter(parameter)
+				const polyOne = yield* P.constant(one)
+				const unit = yield* R.and(
+					yield* R.whereSign(parameter, p, S.nonNegative),
+					yield* R.whereSign(parameter, yield* P.subtract(polyOne, p), S.nonNegative)
+				)
+				const domain = yield* D.new(unit)
+				const full = yield* R.full(parameter)
+				const atZero = yield* R.whereSign(parameter, p, S.zero)
+				const source = yield* Event.withParameters(yield* Event.space(new Uint8Array(32).fill(247), 1n), domain, [])
+				const plan = GuardPlan.refine(new Uint8Array(32).fill(248), source)
+				const db = yield* Db.create(storeDir("sdk-region-predicates"), Theory)
+				const changes = yield* ChangeSet.builder(Theory)
+				yield* changes.insert(Trial, [{ id: 1n, value: 0n, when: source, given: source }])
+				assert.equal((yield* db.apply(yield* changes.finish(), { expected: { kind: "any" } })).kind, "accepted")
+				const snapshot = yield* db.snapshot()
+				const region = T.region(domain, atZero)
+				const hole = T.sign(N.divide(N.literal(one), N.literal(zero)), S.any)
+				const context = Guard.common(plan, [region, hole])
+				const program = query(Theory).rule((r) =>
+					r.match(Trial, v(Trial)).find({
+						region,
+						clipped: T.region(domain, unit),
+						global: T.region(domain, full),
+						partial: T.or(region, hole),
+						yes: Guard.holds(region, context),
+						no: Guard.fails(region, context),
+						unknown: Guard.undefined(region, context),
+						total: Test.isTotal(region)
+					})
+				)
+				const fields = {
+					region: predicateResult,
+					clipped: predicateResult,
+					global: predicateResult,
+					partial: predicateResult,
+					yes: event,
+					no: event,
+					unknown: event,
+					total: bool
+				}
+				const description = describeQuery(program)
+				const replay = queryFromDescription(Theory, description, fields)
+				assert.deepEqual(describeQuery(replay), description)
+				const rows = yield* (yield* snapshot.execute(replay, {})).collect()
+				const row = rows[0]
+				assert.ok(row)
+				assert.equal(rows.length, 1)
+				assert.equal(row.total, true)
+				assert.equal(yield* Event.isEmpty(row.unknown), true)
+				assert.equal(yield* Event.isEmpty(row.yes), false)
+				assert.equal(yield* Event.equal(row.no, yield* Event.complement(row.yes)), true)
+				assert.ok(row.region.law === "parameter" && row.partial.law === "parameter")
+				assert.equal(yield* R.containsRational(row.region.holds, zero), true)
+				assert.equal(yield* R.containsRational(row.region.fails, one), true)
+				assert.equal(yield* R.equivalent(row.partial.undefined, unit), true)
+				assert.notDeepEqual(
+					ObservationPredicate.toBytes(row.clipped.predicate),
+					ObservationPredicate.toBytes(row.global.predicate)
+				)
+				assert.equal(ObservationPredicate.toBytes(row.region.predicate)[4], 2)
+				const imported = query(Theory).rule((r) =>
+					r.match(Trial, v(Trial)).find({ region: T.imported(row.region.predicate) })
+				)
+				const importedRows = yield* (yield* snapshot.execute(imported, {})).collect()
+				const importedRow = importedRows[0]
+				assert.ok(importedRow)
+				assert.deepEqual(
+					ObservationPredicate.toBytes(importedRow.region.predicate),
+					ObservationPredicate.toBytes(row.region.predicate)
+				)
+				const foreign = yield* R.empty(new Uint8Array(32).fill(249))
+				const bad = query(Theory).rule((r) => r.match(Trial, v(Trial)).find({ p: T.region(domain, foreign) }))
+				const filtered = query(Theory).rule((r) => {
+					const a = v(bad)
+					const b = v(Trial)
+					return r.match(bad, a).match(Trial, b).where(r.eq(b.id, 999n)).find(a)
+				})
+				assert.ok(Result.isFailure(yield* Effect.result(snapshot.execute(filtered, {}))))
+				const corrupt = Result.getOrThrow(R.fromBytes(Buffer.from("BEPR\x01")))
+				const unreachable = query(Theory).rule((r) => {
+					const a = v(Trial)
+					return r
+						.match(Trial, a)
+						.where(r.eq(a.id, 999n))
+						.find({ p: T.region(domain, corrupt) })
+				})
+				assert.ok(Result.isFailure(yield* Effect.result(snapshot.execute(unreachable, {}))))
+				return { predicate: row.region.predicate, yes: row.yes }
+			})
+		)
+	)
+	assert.equal(ObservationPredicate.toBytes(retained.predicate)[4], 2)
+	assert.equal(await run(Event.isEmpty(retained.yes)), false)
 })

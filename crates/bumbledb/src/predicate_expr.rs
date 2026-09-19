@@ -4,12 +4,16 @@ use crate::event::{BoolOp4, Error, ExactArithmetic, PolynomialSigns};
 use crate::number_expr::{ObservationInputKind, ObservationOperand};
 use crate::{
     NumberDomain, NumberExpr, NumberExprError, ObservationNumberCodecLimits, ObservationPredicate,
-    ObservationPredicateImport, Result, VarId,
+    ObservationPredicateImport, ParameterRegionImport, Result, VarId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredicateExpr {
     Var(VarId),
+    Region {
+        domain: NumberDomain,
+        region: ParameterRegionImport,
+    },
     Sign {
         number: NumberExpr,
         signs: PolynomialSigns,
@@ -53,7 +57,7 @@ impl PredicateExpr {
             match node {
                 Self::Var(var) => variables.push(*var),
                 Self::Sign { number, .. } => variables.extend(number.variables()),
-                Self::Imported(_) => {}
+                Self::Imported(_) | Self::Region { .. } => {}
                 Self::Negate(value) | Self::OnDomain { value, .. } => pending.push(value),
                 Self::Binary { left, right, .. } => {
                     pending.push(right);
@@ -94,7 +98,7 @@ impl PredicateExpr {
                 Self::Sign { number, .. } => {
                     number.collect_inputs(depth + 1, nodes, inputs)?;
                 }
-                Self::Imported(_) => {}
+                Self::Imported(_) | Self::Region { .. } => {}
                 Self::Negate(value) | Self::OnDomain { value, .. } => {
                     pending.push((value, depth + 1));
                 }
@@ -145,6 +149,12 @@ impl PredicateExpr {
                         Self::Sign { number, signs } => number
                             .evaluate(&mut operand, limits, work)?
                             .where_sign(*signs, limits.numbers, work)?,
+                        Self::Region { domain, region } => ObservationPredicate::region(
+                            domain.value(),
+                            region.value(),
+                            limits.numbers,
+                            work,
+                        )?,
                         Self::Imported(value) => {
                             ObservationPredicateImport::from_bytes(value.bytes(), *limits, work)?
                                 .value()

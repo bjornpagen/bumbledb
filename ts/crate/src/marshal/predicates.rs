@@ -31,6 +31,13 @@ pub(super) fn parse(
                 exact_fields(obj, &["kind", "var"])?;
                 PredicateExpr::Var(var_in(obj, "var", "predicate variable")?)
             }
+            "region" => {
+                exact_fields(obj, &["kind", "domain", "region"])?;
+                PredicateExpr::Region {
+                    domain: numbers::bytes(obj, "domain", budget)?,
+                    region: numbers::bytes(obj, "region", budget)?,
+                }
+            }
             "sign" => {
                 exact_fields(obj, &["kind", "number", "signs"])?;
                 let signs = u8::try_from(ordinal(req(obj, "signs", "sign mask")?, "sign mask")?)

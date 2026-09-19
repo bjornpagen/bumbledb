@@ -209,18 +209,19 @@ type NumberExprIr<V = number, Q = Uint8Array, N = Uint8Array, D = Uint8Array> =
 	| { readonly kind: "pow"; readonly value: NumberExprIr<V, Q, N, D>; readonly exponent: number }
 	| { readonly kind: "onDomain"; readonly value: NumberExprIr<V, Q, N, D>; readonly domain: D }
 
-type PredicateExprIr<V = number, N = NumberExprIr, P = Uint8Array, D = Uint8Array> =
+type PredicateExprIr<V = number, N = NumberExprIr, P = Uint8Array, D = Uint8Array, R = Uint8Array> =
 	| { readonly kind: "var"; readonly var: V }
+	| { readonly kind: "region"; readonly domain: D; readonly region: R }
 	| { readonly kind: "sign"; readonly number: N; readonly signs: number }
 	| { readonly kind: "imported"; readonly bytes: P }
-	| { readonly kind: "negate"; readonly value: PredicateExprIr<V, N, P, D> }
+	| { readonly kind: "negate"; readonly value: PredicateExprIr<V, N, P, D, R> }
 	| {
 			readonly kind: "apply"
 			readonly op: number
-			readonly left: PredicateExprIr<V, N, P, D>
-			readonly right: PredicateExprIr<V, N, P, D>
+			readonly left: PredicateExprIr<V, N, P, D, R>
+			readonly right: PredicateExprIr<V, N, P, D, R>
 	  }
-	| { readonly kind: "onDomain"; readonly value: PredicateExprIr<V, N, P, D>; readonly domain: D }
+	| { readonly kind: "onDomain"; readonly value: PredicateExprIr<V, N, P, D, R>; readonly domain: D }
 type PredicateQuantifier = "possibly" | "always" | "isTotal"
 
 type GuardPlanIr =

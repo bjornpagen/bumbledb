@@ -27,7 +27,23 @@ module.exports = async ({ native, runtime, snapshot, operation, close, collect, 
     }
     evaluations += 2;
   }
+  const parameter = async (op, inputs) => operation(cb => native.runtimeEventParameter(runtime, op, inputs, 0n, cb), native.runtimeBytesTake);
+  const name = Buffer.alloc(32, 246);
+  const domain = await parameter('region.full', [name]);
+  const emptyRegion = await parameter('region.empty', [name]);
+  const region = {kind:'region', domain, region:emptyRegion};
+  const regionRows = await collect(query({kind:'predicate',expr:region}));
+  assert.equal(regionRows[0][0].law,'parameter');
+  assert.equal(Buffer.from(regionRows[0][0].bytes).subarray(0,5).toString(),'BENP\x02');
+  assert.deepEqual(Buffer.from(regionRows[0][0].holds),Buffer.from(emptyRegion));
+  assert.deepEqual(Buffer.from(regionRows[0][0].fails),Buffer.from(domain));
+  assert.deepEqual(await collect(query({kind:'predicateTest',expr:region,quantifier:'isTotal'})),[[true]]);
+  assert.deepEqual(await collect(query({kind:'predicate',expr:{kind:'imported',bytes:regionRows[0][0].bytes}})),regionRows);
+  evaluations+=3;
   const malformed = [
+    {...region, ignored:true}, {kind:'region',domain},
+    {...region,region:Buffer.from('BEPR\x01')}, {...region,domain:emptyRegion},
+    {...region,region:new Uint8Array(new SharedArrayBuffer(5))},
     { kind: 'var', var: 0 }, // an Event variable cannot become a predicate
     { kind: 'sign', number: { kind: 'var', var: 0 }, signs: 7 },
     { ...truth, signs: -1 }, { ...truth, signs: 8 }, { ...truth, signs: 0.5 },

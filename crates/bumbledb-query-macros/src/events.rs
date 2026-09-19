@@ -315,6 +315,9 @@ pub(super) fn imported(name: &Name, imports: &[Import], kind: ImportKind) -> Par
                 ImportKind::NumberDomain => {
                     "query!: OnDomain requires a declared `use number_domain` import"
                 }
+                ImportKind::ParameterRegion => {
+                    "query!: Region requires a declared `use parameter_region` import"
+                }
                 ImportKind::Template => unreachable!("Event imports"),
             },
         );

@@ -1,0 +1,30 @@
+▶ parseQueryIr
+  ✔ brands a shape-legal QueryIr (0.904666ms)
+  ✔ owns complete descriptions without freezing or retaining caller arrays (0.451458ms)
+  ✔ rejects malformed nodes and ordinal overflow at every boundary (1.182167ms)
+  ✔ rejects getters, sparse arrays and malformed binding tuples without invoking accessors (0.242125ms)
+  ✔ bounds recursive input before stack exhaustion and checks aggregate operators (0.887666ms)
+  ✔ logical byte literals are detached and scalars use canonical field values (0.182875ms)
+  ✔ rejects empty main with populated interiors (0.075ms)
+  ✔ rejects rec with an empty base (0.107959ms)
+  ✔ a compute find term requires the shared expr grammar arm (0.099167ms)
+  ✔ rejects Count-with-over (0.125417ms)
+  ✔ preparation rejects an unbranded QueryIr object literal (0.05525ms)
+  ▶ raw Event query programs
+    ✔ owns all structural constructors and test operators (1.065291ms)
+    ✔ refuses malformed, cyclic and oversized programs before native execution (0.841791ms)
+    ✔ owns bounded BEDC payloads while native import remains the semantic gate (1.468708ms)
+    ✔ parses owned relation programs under the shared Event tree budget (1.563583ms)
+  ✔ raw Event query programs (5.069667ms)
+✔ parseQueryIr (10.096708ms)
+✔ fixed-point wire parsing owns scopes and shares imported-byte limits (1.492125ms)
+✔ exact payoff ratios own their operands and reject malformed presentations (0.298167ms)
+✔ the wire-tag rosters equal the tags.json golden, key for key (0.929584ms)
+ℹ tests 18
+ℹ suites 2
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 275.067417

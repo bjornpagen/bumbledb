@@ -1,0 +1,8 @@
+'NumberReplay.run_append' depends on axioms: [propext]
+'NumberReplay.replay_stack_isolation' depends on axioms: [propext]
+'NumberReplay.replay_continuation' depends on axioms: [propext]
+'NumberReplay.replay_has_one_result' depends on axioms: [propext]
+'NumberReplay.replay_retains_ordered_origins' depends on axioms: [propext]
+'NumberReplay.malformed_binary_is_not_undefined' depends on axioms: [propext]
+'NumberReplay.subtraction_order' depends on axioms: [propext]
+'NumberReplay.equal_values_do_not_identify_origins' depends on axioms: [propext]

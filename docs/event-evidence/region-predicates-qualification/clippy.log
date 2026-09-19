@@ -1,0 +1,12 @@
+    Checking bumbledb v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb)
+error: using `chunks_exact` with a constant chunk size
+   --> crates/bumbledb/src/observation/number/predicate/tests.rs:959:10
+    |
+959 |         .chunks_exact(2)
+    |          ^^^^^^^^^^^^^^^ help: consider using `as_chunks` instead: `as_chunks::<2>().0.iter()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#chunks_exact_to_as_chunks
+    = note: `-D clippy::chunks-exact-to-as-chunks` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::chunks_exact_to_as_chunks)]`
+
+error: could not compile `bumbledb` (lib test) due to 1 previous error

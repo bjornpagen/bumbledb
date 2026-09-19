@@ -8,6 +8,7 @@ use proc_macro::{Delimiter, TokenTree};
 
 pub(super) enum Expression {
     Variable(Name),
+    Region(Name, Name),
     Sign(numbers::Expression, u8),
     Imported(Name),
     Negate(Box<Self>),
@@ -149,6 +150,14 @@ fn unary(tokens: &mut Tokens, depth: usize) -> Parse<Expression> {
     }
     let (mut args, _) = take_paren_group(tokens, "predicate operands")?;
     let value = match name.text.as_str() {
+        "Region" => {
+            let domain = expect_ident(&mut args, "a declared number_domain import")?;
+            expect_punct(&mut args, ',', "a comma")?;
+            Expression::Region(
+                domain,
+                expect_ident(&mut args, "a declared parameter_region import")?,
+            )
+        }
         "Sign" => {
             let number = numbers::expression(&mut args, 0, depth + 1)?;
             expect_punct(&mut args, ',', "a comma")?;
@@ -222,6 +231,11 @@ impl Expression {
             Self::Sign(number, signs) => format!(
                 "Sign {{ number: {}, signs: ::bumbledb::event::PolynomialSigns::new({signs}u8).expect(\"checked mask\") }}",
                 number.emit(scope, imports, depth + 1)?
+            ),
+            Self::Region(domain, region) => format!(
+                "Region {{ domain: {}, region: {} }}",
+                events::imported(domain, imports, ImportKind::NumberDomain)?,
+                events::imported(region, imports, ImportKind::ParameterRegion)?
             ),
             Self::Imported(name) => format!(
                 "Imported({})",

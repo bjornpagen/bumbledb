@@ -882,3 +882,96 @@ fn replay_and_guard_construction_share_work_and_obey_cancellation() {
             .is_err()
     );
 }
+
+#[test]
+fn region_derivations_retain_unclipped_origins_and_versioned_replay() {
+    let domain = domain(ParameterId([212; 32]));
+    let full = ParameterRegion::full(domain.parameter());
+    let clipped = P::region(&domain, domain.region(), limits(), &mut work()).unwrap();
+    let global = P::region(&domain, &full, limits(), &mut work()).unwrap();
+    assert!(clipped.predicate().always() && global.predicate().is_total());
+    assert!(clipped.equivalent(&global, limits(), &mut work()).unwrap());
+    let a = roundtrip(&clipped);
+    let b = roundtrip(&global);
+    assert_ne!(
+        a, b,
+        "authored region survives clipping in the truth partition"
+    );
+    assert_eq!(&a.bytes()[..5], b"BENP\x02");
+    let ObservationPredicateExpr::Region { region, .. } = b.value().expression() else {
+        panic!("region origin")
+    };
+    assert!(region.is_full());
+    let hole = truth(None);
+    let mixed = global
+        .apply(BoolOp4::OR, &hole, limits(), &mut work())
+        .unwrap();
+    let mixed = roundtrip(&mixed);
+    assert_eq!(mixed.bytes()[4], 2);
+    assert!(!mixed.value().predicate().possibly() && !mixed.value().predicate().is_total());
+    assert_eq!(
+        roundtrip(&truth(Some(true))).bytes()[4],
+        1,
+        "v1 bytes stay v1"
+    );
+    for version in [0, 1, 3, 255] {
+        let mut bytes = a.bytes().to_vec();
+        bytes[4] = version;
+        assert!(I::from_bytes(&bytes, codec(), &mut work()).is_err());
+    }
+    for n in 0..a.bytes().len() {
+        assert!(I::from_bytes(&a.bytes()[..n], codec(), &mut work()).is_err());
+    }
+    let mut small = codec();
+    small.sources.descriptors.items = 2;
+    assert!(I::from_bytes(a.bytes(), small, &mut work()).is_err());
+    small = codec();
+    small.sources.descriptors.bytes = a.bytes().len() - 1;
+    assert!(I::from_bytes(a.bytes(), small, &mut work()).is_err());
+    let source = source();
+    assert!(
+        global
+            .events(&source, ParameterSourceLimits::default(), &mut work())
+            .unwrap()
+            .holds()
+            .is_full()
+    );
+    let foreign = ParameterRegion::empty(ParameterId([250; 32]));
+    assert!(P::region(&domain, &foreign, limits(), &mut work()).is_err());
+    let mut measured = work();
+    I::from_bytes(a.bytes(), codec(), &mut measured).unwrap();
+    let spent = measured.operations();
+    assert!(spent > 0);
+    let mut shared = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: spent,
+            ..ArithmeticLimits::default()
+        },
+        &(),
+    );
+    I::from_bytes(a.bytes(), codec(), &mut shared).unwrap();
+    assert!(I::from_bytes(a.bytes(), codec(), &mut shared).is_err());
+    // Pinned BENP v2: Region(full domain, empty set), named parameter all zero.
+    // Two independent 46-byte BEPR blobs use little-endian u32 lengths.
+    let golden = "42454e5002042e000000424550520100000000000000000000000000000000000000000000000000000000000000000000000000000000012e00000042455052010000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+    let bytes: Vec<u8> = golden
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect();
+    let pinned = I::from_bytes(&bytes, codec(), &mut work()).unwrap();
+    assert!(pinned.value().predicate().is_total() && !pinned.value().predicate().possibly());
+    assert_eq!(pinned.bytes(), bytes);
+    let context = crate::WorkContext::new();
+    context.cancel();
+    assert!(
+        I::from_bytes(
+            a.bytes(),
+            codec(),
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &context)
+        )
+        .is_err()
+    );
+}

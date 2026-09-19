@@ -8,6 +8,10 @@ use bumbledb::{ObservationNumberCodecLimits, PredicateExpr as O, VarId};
 #[derive(Debug)]
 pub(crate) enum PredicateExpr {
     Var(VarId),
+    Region {
+        domain: Vec<u8>,
+        region: Vec<u8>,
+    },
     Sign {
         number: NumberExpr,
         signs: PolynomialSigns,
@@ -39,6 +43,24 @@ impl PayoffAdmission<'_> {
         }
         Ok(match value {
             PredicateExpr::Var(v) => O::Var(v),
+            PredicateExpr::Region { domain, region } => {
+                self.number_bytes(&domain)?;
+                self.number_bytes(&region)?;
+                O::Region {
+                    domain: bumbledb::NumberDomain::from_bytes(
+                        &domain,
+                        ParameterCodecLimits::default(),
+                        &mut self.arithmetic,
+                    )
+                    .map_err(|e| crate::db_wire::engine_error(&e))?,
+                    region: bumbledb::ParameterRegionImport::from_bytes(
+                        &region,
+                        ParameterCodecLimits::default(),
+                        &mut self.arithmetic,
+                    )
+                    .map_err(|e| crate::db_wire::engine_error(&e))?,
+                }
+            }
             PredicateExpr::Sign { number, signs } => O::Sign {
                 number: self.number(number, depth + 1)?,
                 signs,
@@ -85,6 +107,49 @@ mod tests {
         HeadTerm, ObservationNumber, ObservationNumberLimits, ObservationPredicateImport,
         PredicateQuantifier, WorkContext,
     };
+
+    #[test]
+    fn region_imports_share_both_byte_charges_and_reject_unreachable_corruption() {
+        use bumbledb::event::{ParameterId, ParameterRegion};
+        let work = WorkContext::new();
+        let mut arithmetic = ExactArithmetic::new(ArithmeticLimits::default(), &work);
+        let full = ParameterRegion::full(ParameterId([252; 32]))
+            .to_bytes(ParameterCodecLimits::default(), &mut arithmetic)
+            .unwrap();
+        let input = || PredicateExpr::Region {
+            domain: full.clone(),
+            region: full.clone(),
+        };
+        let mut admitted = PayoffAdmission::new(&work);
+        admitted.remaining = full.len() * 2;
+        admitted.predicate(input(), 1).unwrap();
+        assert_eq!(admitted.remaining, 0);
+        assert!(admitted.predicate(input(), 1).is_err());
+        let mut short = PayoffAdmission::new(&work);
+        short.remaining = full.len() * 2 - 1;
+        assert!(short.predicate(input(), 1).is_err());
+        let rule = |value| Rule {
+            finds: vec![FindTerm::Predicate(value)],
+            atoms: vec![],
+            negated: vec![],
+            conditions: vec![],
+        };
+        let query = Query {
+            interiors: vec![],
+            head: vec![HeadTerm::Var],
+            rules: vec![
+                rule(input()),
+                rule(PredicateExpr::Region {
+                    domain: full.clone(),
+                    region: b"BEPR\x01".to_vec(),
+                }),
+            ],
+            rec: None,
+        };
+        assert!(query.admit(&work).is_err());
+        work.cancel();
+        assert!(PayoffAdmission::new(&work).predicate(input(), 1).is_err());
+    }
 
     #[test]
     fn predicates_share_numerical_and_payoff_admission_and_check_unreachable_imports() {

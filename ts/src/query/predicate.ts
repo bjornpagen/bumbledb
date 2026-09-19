@@ -16,7 +16,13 @@ import { type AnyVar, isTerm, term } from "#query/scope.ts"
 
 const expressionTag: unique symbol = Symbol("bumbledb.PredicateExpression")
 const testTag: unique symbol = Symbol("bumbledb.PredicateTest")
-type Node = PredicateExprIr<AnyVar, NumberExpr, ObservationPredicate, ParameterValue<"domain">>
+type Node = PredicateExprIr<
+	AnyVar,
+	NumberExpr,
+	ObservationPredicate,
+	ParameterValue<"domain">,
+	ParameterValue<"region">
+>
 export interface PredicateExpr {
 	readonly kind: "predicate"
 	readonly [expressionTag]: true
@@ -93,6 +99,12 @@ function compare(a: NumberOperand, b: NumberOperand, signs: number | bigint): Pr
 	return sign(NumberExpr.subtract(a, b), signs)
 }
 export const PredicateExpr = Object.freeze({
+	region: (domain: ParameterValue<"domain">, region: ParameterValue<"region">) =>
+		own(
+			{ kind: "region", domain, region },
+			[],
+			parameterBytes("domain", domain).length + parameterBytes("region", region).length
+		),
 	sign,
 	compare,
 	apply,
@@ -152,6 +164,7 @@ export function predicateVars(input: PredicateExpr): readonly AnyVar[] {
 				variables.push(...numberVars(node.number))
 				break
 			case "imported":
+			case "region":
 				break
 			case "apply":
 				pending.push(node.right, node.left)
@@ -167,6 +180,12 @@ export function predicateIr(input: PredicateExpr, variable: (v: AnyVar) => numbe
 		switch (node.kind) {
 			case "var":
 				return { kind: node.kind, var: variable(node.var) }
+			case "region":
+				return {
+					kind: node.kind,
+					domain: parameterBytes("domain", node.domain),
+					region: parameterBytes("region", node.region)
+				}
 			case "sign":
 				return { kind: node.kind, number: numberIr(node.number, variable), signs: node.signs }
 			case "imported":
@@ -186,6 +205,8 @@ export function predicateFromIr(input: PredicateExprIr, variableAt: (v: number) 
 		switch (node.kind) {
 			case "var":
 				return expression(variableAt(node.var) as PredicateVar)
+			case "region":
+				return PredicateExpr.region(encodedParameter("domain", node.domain), encodedParameter("region", node.region))
 			case "sign":
 				return sign(numberFromIr(node.number, variableAt), node.signs)
 			case "imported":

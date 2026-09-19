@@ -3,7 +3,8 @@
 use super::{ObservationNumber, ObservationNumberLimits};
 use crate::Result;
 use crate::event::{
-    BoolOp4, Capacity, Error, ExactArithmetic, NumberPredicate, ParameterDomain, PolynomialSigns,
+    BoolOp4, Capacity, Error, ExactArithmetic, NumberPredicate, ParameterDomain, ParameterRegion,
+    PolynomialSigns,
 };
 use std::sync::Arc;
 
@@ -16,6 +17,10 @@ mod tests;
 
 #[derive(Debug, Clone)]
 pub enum ObservationPredicateExpr {
+    Region {
+        domain: ParameterDomain,
+        region: ParameterRegion,
+    },
     Sign {
         number: ObservationNumber,
         signs: PolynomialSigns,
@@ -62,6 +67,29 @@ fn shape(children: &[(usize, usize)], limits: ObservationNumberLimits) -> Result
 }
 
 impl ObservationPredicate {
+    /// A total membership predicate on an explicit ambient domain. The complete
+    /// authored region remains in the derivation, including outside-domain parts.
+    /// No measured source, law or independence claim is introduced.
+    /// # Errors
+    /// Foreign parameter names, expression/solver/arithmetic bounds or cancellation.
+    pub fn region(
+        domain: &ParameterDomain,
+        region: &ParameterRegion,
+        limits: ObservationNumberLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let size = shape(&[], limits)?;
+        let predicate = NumberPredicate::region(domain, region, limits.numbers, work)?;
+        Ok(Self::new(
+            ObservationPredicateExpr::Region {
+                domain: domain.clone(),
+                region: region.clone(),
+            },
+            predicate,
+            size,
+        ))
+    }
+
     fn new(
         expression: ObservationPredicateExpr,
         predicate: NumberPredicate,

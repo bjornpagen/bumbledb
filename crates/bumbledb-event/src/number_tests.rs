@@ -515,3 +515,96 @@ fn foreign_domains_and_resource_errors_cannot_hide_behind_undefined_or_constant_
         Err(Error::Cancelled)
     ));
 }
+
+#[test]
+fn direct_region_predicates_are_total_exact_and_check_the_complete_operand() {
+    let ambient = unit(P);
+    let p = Poly::parameter(P);
+    let polynomial = p
+        .mul(&p, limits().parameters.polynomial, &mut work())
+        .unwrap()
+        .sub(
+            &Poly::constant(rat(1, 2)),
+            limits().parameters.polynomial,
+            &mut work(),
+        )
+        .unwrap();
+    // Two irrational points on the real line; only the positive one is in [0,1].
+    let points = ParameterRegion::from_polynomial(
+        P,
+        &polynomial,
+        Signs::ZERO,
+        limits().parameters,
+        &mut work(),
+    )
+    .unwrap();
+    let predicate = NumberPredicate::region(&ambient, &points, limits(), &mut work()).unwrap();
+    assert!(predicate.possibly() && predicate.is_total() && !predicate.always());
+    let NumberPredicateView::Parameter {
+        holds,
+        fails,
+        undefined,
+        ..
+    } = predicate.view()
+    else {
+        panic!("parameter")
+    };
+    assert!(undefined.is_empty());
+    let witness = holds
+        .witness(limits().parameters, &mut work())
+        .unwrap()
+        .unwrap();
+    assert!(matches!(witness, RealWitness::Algebraic(_)));
+    assert!(
+        points
+            .contains(&witness, limits().parameters, &mut work())
+            .unwrap()
+    );
+    assert!(
+        !fails
+            .contains(&witness, limits().parameters, &mut work())
+            .unwrap()
+    );
+    for n in 0..=16 {
+        assert_eq!(truth(&predicate, n, 16), Some(false));
+    }
+    for region in [
+        ParameterRegion::empty(P),
+        ParameterRegion::full(P),
+        ambient.region().clone(),
+        points,
+    ] {
+        let result = NumberPredicate::region(&ambient, &region, limits(), &mut work()).unwrap();
+        for n in 0..=16 {
+            let expected = region
+                .contains(
+                    &RealWitness::Rational(rat(n, 16)),
+                    limits().parameters,
+                    &mut work(),
+                )
+                .unwrap();
+            assert_eq!(truth(&result, n, 16), Some(expected));
+            assert_eq!(truth(&result.negate(), n, 16), Some(!expected));
+        }
+    }
+    let foreign = ParameterRegion::empty(ParameterId([248; 32]));
+    assert!(matches!(
+        NumberPredicate::region(&ambient, &foreign, limits(), &mut work()),
+        Err(Error::ParameterScopeMismatch)
+    ));
+    let mut small = limits();
+    small.parameters.cells = 1;
+    assert!(
+        NumberPredicate::region(&ambient, &ParameterRegion::empty(P), small, &mut work()).is_err()
+    );
+    let stop = Stop(Cell::new(0));
+    assert!(
+        NumberPredicate::region(
+            &ambient,
+            &ParameterRegion::full(P),
+            limits(),
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &stop)
+        )
+        .is_err()
+    );
+}

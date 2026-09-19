@@ -1,4 +1,5 @@
-//! BENP v1: replay the entire predicate and its embedded BENO node grammar.
+//! BENP v1/v2: replay the entire predicate and its embedded BENO node grammar.
+//! Version 2 adds exact region membership; trees without it retain v1 bytes.
 //! One byte/item/node budget spans both trees. No truth partition is trusted.
 #![allow(clippy::large_types_passed_by_value)]
 use super::super::{
@@ -7,7 +8,9 @@ use super::super::{
 };
 use super::{ObservationPredicate, ObservationPredicateExpr};
 use crate::Result;
-use crate::event::{BoolOp4, Capacity, Error, ExactArithmetic, ParameterDomain, PolynomialSigns};
+use crate::event::{
+    BoolOp4, Capacity, Error, ExactArithmetic, ParameterDomain, ParameterRegion, PolynomialSigns,
+};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -74,10 +77,10 @@ impl ObservationPredicateImport {
             return Err(Error::InvalidEncoding.into());
         }
         let version = input.byte()?;
-        if version != 1 {
+        if !matches!(version, 1 | 2) {
             return Err(Error::UnsupportedVersion(version).into());
         }
-        let value = read(&mut input, limits, work)?;
+        let value = read(&mut input, version, limits, work)?;
         if input.offset != bytes.len() {
             return Err(Error::InvalidEncoding.into());
         }
@@ -119,6 +122,18 @@ fn encode(
         output.budget.node(depth, work.control())?;
         pending.try_reserve(2).map_err(Error::from)?;
         match value.expression() {
+            ObservationPredicateExpr::Region { domain, region } => {
+                output.bytes[4] = 2;
+                output.put(&[4], work.control())?;
+                output.blob(
+                    &domain.to_bytes(limits.sources.parameters.parameters, work)?,
+                    work.control(),
+                )?;
+                output.blob(
+                    &region.to_bytes(limits.sources.parameters.parameters, work)?,
+                    work.control(),
+                )?;
+            }
             ObservationPredicateExpr::Sign { number, signs } => {
                 output.put(&[0, signs.bits()], work.control())?;
                 output.node(number, depth + 1, work)?;
@@ -147,6 +162,7 @@ fn encode(
 
 fn read(
     input: &mut Reader<'_>,
+    version: u8,
     limits: ObservationNumberCodecLimits,
     work: &mut ExactArithmetic<'_>,
 ) -> Result<ObservationPredicate> {
@@ -196,6 +212,19 @@ fn read(
                         pending.push(Pending::OnDomain(domain));
                         pending.push(Pending::Read(depth + 1));
                         continue;
+                    }
+                    4 if version == 2 => {
+                        let domain = ParameterDomain::from_bytes(
+                            input.blob(work.control())?,
+                            limits.sources.parameters.parameters,
+                            work,
+                        )?;
+                        let region = ParameterRegion::from_bytes(
+                            input.blob(work.control())?,
+                            limits.sources.parameters.parameters,
+                            work,
+                        )?;
+                        ObservationPredicate::region(&domain, &region, limits.numbers, work)?
                     }
                     _ => return Err(Error::InvalidEncoding.into()),
                 }

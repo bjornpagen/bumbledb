@@ -740,3 +740,164 @@ fn common_query_guards_compose_on_one_parameter_and_retain_holes_and_origins() {
         }
     }
 }
+
+#[test]
+fn parameter_region_queries_share_guards_with_partial_observations_without_a_new_law() {
+    use bumbledb::{NumberDomain, ParameterRegionImport, PredicateGuardPlan};
+    let path = common::TempDir::new("region-query-guards");
+    let db = Db::create(path.path(), PredicateGuards, common::work())
+        .unwrap()
+        .unwrap();
+    let source = source();
+    db.write(common::work(), |tx| {
+        tx.insert([&Trial {
+            game: 1,
+            claim: source.coordinate(0, &()).unwrap(),
+            given: source.full(),
+        }])
+    })
+    .unwrap()
+    .unwrap();
+    let limits = ParameterSourceLimits::default();
+    let ambient = source.parameter_domain().unwrap();
+    let point = ParameterRegion::from_polynomial(
+        ambient.parameter(),
+        &Poly::parameter(ambient.parameter()),
+        Signs::ZERO,
+        limits.parameters.region,
+        &mut work(),
+    )
+    .unwrap();
+    let domain = NumberDomain::capture(ambient.clone(), limits.parameters, &mut work()).unwrap();
+    let region = ParameterRegionImport::capture(point, limits.parameters, &mut work()).unwrap();
+    let plan = PredicateGuardPlan::capture(
+        &source,
+        Some(SpaceId([233; 32])),
+        ObservationNumberCodecLimits::default(),
+        &mut work(),
+    )
+    .unwrap();
+    let program = query!(PredicateGuards {
+        use number_domain d = &domain;
+        use parameter_region r = &region;
+        use guard g = &plan;
+        interior observed(game,claim,p: Probability(claim,given)) | Trial(game,claim,given);
+        interior truths(game,claim,z: Predicate(Region(d,r)),known: Predicate(Value(p)/Value(p)>0)) | observed(game,claim,p);
+        interior cases(game,z,known,
+            yes: Guard(Holds(z,Common(g,known))),
+            no: Guard(Fails(z,Common(g,known))),
+            hole: Guard(Undefined(known,Common(g,z))),
+            held: Guard(Lift(z,Common(g,known),claim)),
+            mixed: Predicate(z | known),total: PredicateTest(IsTotal(z))) | truths(game,claim,z,known);
+        (game,z,yes,no,hole,zero: Event(yes & held),mixed,total,
+            original: Guard(Descend(z,Common(g,known),held))) | cases(game,z,known,yes,no,hole,held,mixed,total);
+    });
+    let mut retained = Vec::new();
+    for fallback in [false, true] {
+        let mut prepared = db.prepare(&program, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        retained.push(
+            db.read(common::work(), |tx| {
+                tx.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((db, program, source, plan, region, domain));
+    for answers in &retained {
+        assert_eq!(answers.len(), 1);
+        let AnswerValue::Predicate(z) = answers.get(0, 1) else {
+            panic!("predicate")
+        };
+        assert_eq!(z.bytes()[4], 2);
+        let restored = ObservationPredicateImport::from_bytes(
+            z.bytes(),
+            ObservationNumberCodecLimits::default(),
+            &mut work(),
+        )
+        .unwrap();
+        assert!(restored.value().predicate().is_total());
+        assert_eq!(answers.get(0, 7), AnswerValue::Bool(true));
+        for column in 2..=5 {
+            let AnswerValue::Event(event) = answers.get(0, column) else {
+                panic!("event")
+            };
+            for n in 0..=4 {
+                for outcomes in 0..2 {
+                    let expected = match column {
+                        2 | 4 => n == 0,
+                        3 => n != 0,
+                        5 => n == 0 && outcomes == 1,
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(
+                        event
+                            .contains_parameter(
+                                &ParameterWorld {
+                                    parameter: RealWitness::Rational(q(n, 4)),
+                                    outcomes
+                                },
+                                limits,
+                                &mut work()
+                            )
+                            .unwrap(),
+                        expected
+                    );
+                }
+            }
+        }
+        let AnswerValue::Predicate(mixed) = answers.get(0, 6) else {
+            panic!("predicate")
+        };
+        let bumbledb::event::NumberPredicateView::Parameter { undefined, .. } =
+            mixed.value().predicate().view()
+        else {
+            panic!("parameter")
+        };
+        assert!(
+            undefined
+                .contains(
+                    &RealWitness::Rational(q(0, 1)),
+                    limits.parameters.region,
+                    &mut work()
+                )
+                .unwrap()
+        );
+    }
+    let db = Db::open(path.path(), PredicateGuards, common::work()).unwrap();
+    let row = &retained[0];
+    let event = |col| {
+        let AnswerValue::Event(value) = row.get(0, col) else {
+            panic!("event")
+        };
+        value.clone()
+    };
+    db.write(common::work(), |tx| {
+        tx.insert([&Decision { game: 1 }])?;
+        tx.insert([
+            &Truth {
+                game: 1,
+                case: 1,
+                when: event(2),
+            },
+            &Truth {
+                game: 1,
+                case: 0,
+                when: event(3),
+            },
+        ])
+    })
+    .unwrap()
+    .unwrap();
+    // A region predicate itself required no observed law; the source law only
+    // enters when producing its Event cases. Stored cases are ordinary values.
+    let stored = query!(PredicateGuards {(case,when) | Truth(game,case,when);});
+    let mut prepared = db.prepare(&stored, common::work()).unwrap();
+    assert_eq!(
+        db.read(common::work(), |tx| tx
+            .execute_collect(&mut prepared, &[] as &[BindValue]))
+            .unwrap()
+            .len(),
+        2
+    );
+}

@@ -2483,6 +2483,7 @@ enum ImportKind {
     Payoff,
     Number,
     NumberDomain,
+    ParameterRegion,
     Guard,
     Predicate,
 }
@@ -2504,6 +2505,7 @@ fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
                 | "payoff"
                 | "number"
                 | "number_domain"
+                | "parameter_region"
                 | "predicate"
                 | "guard"
         ) && !peek_punct(tokens, '=')
@@ -2516,6 +2518,7 @@ fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
                     "number" => ImportKind::Number,
                     "predicate" => ImportKind::Predicate,
                     "number_domain" => ImportKind::NumberDomain,
+                    "parameter_region" => ImportKind::ParameterRegion,
                     "guard" => ImportKind::Guard,
                     _ => ImportKind::Product,
                 },
@@ -2741,6 +2744,7 @@ fn emit_import_prelude(imports: &[Import]) -> String {
                 ImportKind::Predicate => "ObservationPredicateImport",
                 ImportKind::Guard => "PredicateGuardPlan",
                 ImportKind::NumberDomain => "NumberDomain",
+                ImportKind::ParameterRegion => "ParameterRegionImport",
                 _ => "EventImport",
             };
             let _ = write!(

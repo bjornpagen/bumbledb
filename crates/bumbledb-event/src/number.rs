@@ -431,6 +431,33 @@ impl PartialNumber {
 }
 
 impl NumberPredicate {
+    /// Interpret membership in an exact named region on an explicit inhabited
+    /// ambient domain. This predicate is total: outside the region is false,
+    /// not undefined. The region may extend beyond the ambient domain.
+    /// # Errors
+    /// Foreign parameter names, solver/arithmetic capacities or cancellation.
+    pub fn region(
+        domain: &ParameterDomain,
+        region: &ParameterRegion,
+        limits: NumberLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let holds = domain
+            .region()
+            .apply(BoolOp4::AND, region, limits.parameters, work)?;
+        let fails = domain
+            .region()
+            .apply(BoolOp4::DIFFERENCE, region, limits.parameters, work)?;
+        Ok(Self {
+            cases: PredicateCases::Parameter {
+                ambient: domain.clone(),
+                holds,
+                fails,
+                undefined: ParameterRegion::empty(domain.parameter()),
+            },
+        })
+    }
+
     /// Recheck every truth region under the caller's exact solver budget.
     /// # Errors
     /// Capacities or cancellation, including constant truth partitions.

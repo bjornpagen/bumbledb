@@ -36,6 +36,14 @@ export function parsePredicateIr(
 		case "var":
 			fields(["var"])
 			return Object.freeze({ kind: raw.kind, var: ordinal(raw.var) })
+		case "region": {
+			fields(["domain", "region"])
+			const domain = bytes("domain")
+			const region = bytes("region")
+			encodedParameter("domain", domain)
+			encodedParameter("region", region)
+			return Object.freeze({ kind: raw.kind, domain, region })
+		}
 		case "sign":
 			fields(["number", "signs"])
 			return Object.freeze({
