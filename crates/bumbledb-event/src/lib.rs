@@ -55,11 +55,12 @@ pub use kernel::{FiniteKernel, SourceExtension};
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use measure::{DensityPiece, LawLimits, ProbabilityObservation};
 pub use parameter::{
-    GuardedRationalFunction, ParameterCell, ParameterCodecLimits, ParameterConditioning,
-    ParameterDensityPiece, ParameterDomain, ParameterExpectationObservation, ParameterFunction,
-    ParameterGuard, ParameterLimits, ParameterProbabilityObservation, ParameterRefinement,
-    ParameterRegion, ParameterRestriction, ParameterRevisedSource, ParameterSourceLimits,
-    ParameterWorld, PolynomialSigns, RealWitness, WorldCardinality,
+    FamilyFunction, FamilyFunctionPiece, GuardedRationalFunction, ParameterCell,
+    ParameterCodecLimits, ParameterConditioning, ParameterDensityPiece, ParameterDomain,
+    ParameterExpectationObservation, ParameterFunction, ParameterGuard, ParameterLikelihood,
+    ParameterLimits, ParameterProbabilityObservation, ParameterRefinement, ParameterRegion,
+    ParameterRestriction, ParameterRevisedSource, ParameterSourceLimits, ParameterWorld,
+    PolynomialSigns, RealWitness, WorldCardinality,
 };
 pub use partition::{EventPartition, PartitionLimits};
 pub use polynomial::{ExactPolynomial, ParameterId, PolynomialLimits, PolynomialTerm};
@@ -140,3 +141,9 @@ mod parameter_revision_tests;
 
 #[cfg(test)]
 mod parameter_expectation_tests;
+
+#[cfg(test)]
+mod family_function_tests;
+
+#[cfg(test)]
+mod parameter_likelihood_tests;

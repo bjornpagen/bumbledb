@@ -10,14 +10,18 @@ use crate::{
 };
 
 mod expectation;
+mod family;
 mod measure;
 mod refinement;
 mod revision;
 pub(crate) mod wire;
 pub use expectation::ParameterExpectationObservation;
+pub use family::{FamilyFunction, FamilyFunctionPiece};
 pub use measure::{ParameterDensityPiece, ParameterProbabilityObservation};
 pub use refinement::ParameterRefinement;
-pub use revision::{ParameterConditioning, ParameterRestriction, ParameterRevisedSource};
+pub use revision::{
+    ParameterConditioning, ParameterLikelihood, ParameterRestriction, ParameterRevisedSource,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ParameterSourceLimits {

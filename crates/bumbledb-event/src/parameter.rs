@@ -15,7 +15,8 @@ mod wire;
 pub use function::GuardedRationalFunction;
 pub use piecewise::ParameterFunction;
 pub use source::{
-    ParameterConditioning, ParameterDensityPiece, ParameterExpectationObservation, ParameterGuard,
+    FamilyFunction, FamilyFunctionPiece, ParameterConditioning, ParameterDensityPiece,
+    ParameterExpectationObservation, ParameterGuard, ParameterLikelihood,
     ParameterProbabilityObservation, ParameterRefinement, ParameterRestriction,
     ParameterRevisedSource, ParameterSourceLimits, ParameterWorld, WorldCardinality,
 };

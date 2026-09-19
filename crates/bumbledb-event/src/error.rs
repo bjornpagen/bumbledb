@@ -106,6 +106,7 @@ pub enum Error {
     InfiniteWorlds,
     ParameterizedMeasurement,
     UndefinedDensity,
+    UndefinedFunction,
 }
 
 impl fmt::Display for Error {
@@ -223,6 +224,7 @@ impl fmt::Display for Error {
                 f.write_str("the designated law requires a parameter-valued observation")
             }
             Self::UndefinedDensity => f.write_str("density is undefined on a legal source fibre"),
+            Self::UndefinedFunction => f.write_str("function is undefined at a legal source world"),
         }
     }
 }

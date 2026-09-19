@@ -1,18 +1,18 @@
-//! Signed finite payoffs under a shared-parameter law. Contraction returns an
+//! Signed payoffs under a shared-parameter law. Contraction returns an
 //! owned partial function of the parameter, never a prior-averaged scalar.
-use super::{ParameterSourceLimits, measure::constant};
+use super::{FamilyFunction, ParameterSourceLimits, measure::constant};
 use crate::function::raw::Budget;
 use crate::{
     BoolOp4, Event, ExactArithmetic, ExactRational, FiniteFunction, ParameterDomain,
     ParameterFunction, ParameterRegion, Result, Space,
 };
 
-/// An owned signed expectation under a parameter family. A total finite payoff
-/// has an explicit zero default; a query value roster must establish coverage
+/// An owned signed expectation under a parameter family. Total payoffs
+/// have an explicit zero default; a query value roster must establish coverage
 /// separately. The evidence and complete original mass functions remain owned.
 #[derive(Debug, Clone)]
-pub struct ParameterExpectationObservation {
-    function: FiniteFunction,
+pub struct ParameterExpectationObservation<F = FiniteFunction> {
+    function: F,
     evidence: Event,
     numerator: ParameterFunction,
     evidence_mass: ParameterFunction,
@@ -24,8 +24,18 @@ impl ParameterExpectationObservation {
     pub fn space(&self) -> &Space {
         self.function.space()
     }
+}
+
+impl ParameterExpectationObservation<FamilyFunction> {
     #[must_use]
-    pub fn function(&self) -> &FiniteFunction {
+    pub fn space(&self) -> &Space {
+        self.function.space()
+    }
+}
+
+impl<F> ParameterExpectationObservation<F> {
+    #[must_use]
+    pub fn function(&self) -> &F {
         &self.function
     }
     #[must_use]
@@ -65,6 +75,30 @@ impl ParameterExpectationObservation {
         self.conditional
             .value_at(value, limits.parameters.region, limits.functions, work)
     }
+
+    pub(super) fn new(
+        function: F,
+        evidence: Event,
+        numerator: ParameterFunction,
+        evidence_mass: ParameterFunction,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let conditional = numerator.div(
+            &evidence_mass,
+            limits.parameters.region,
+            limits.functions,
+            work,
+        )?;
+        work.control().checkpoint()?;
+        Ok(Self {
+            function,
+            evidence,
+            numerator,
+            evidence_mass,
+            conditional,
+        })
+    }
 }
 
 impl FiniteFunction {
@@ -99,20 +133,14 @@ impl FiniteFunction {
             )?;
             numerator = numerator.add(&term, limits.parameters.region, limits.functions, work)?;
         }
-        let conditional = numerator.div(
-            &evidence_mass,
-            limits.parameters.region,
-            limits.functions,
-            work,
-        )?;
-        control.checkpoint()?;
-        Ok(ParameterExpectationObservation {
-            function: self.clone(),
+        ParameterExpectationObservation::new(
+            self.clone(),
             evidence,
             numerator,
             evidence_mass,
-            conditional,
-        })
+            limits,
+            work,
+        )
     }
 }
 

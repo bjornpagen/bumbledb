@@ -1263,7 +1263,10 @@ fn check_family_posterior(answers: &bumbledb::Answers) {
 }
 
 fn check_family_query_payoff(head: &bumbledb::Event, observed: &bumbledb::Event) {
-    use bumbledb::event::{FiniteFunction, FunctionPiece, ParameterSourceLimits};
+    use bumbledb::event::{
+        ExactPolynomial, FamilyFunction, FiniteFunction, FunctionPiece, GuardedRationalFunction,
+        ParameterSourceLimits,
+    };
     let limits = ParameterSourceLimits::default();
     let function = FiniteFunction::new(
         &head.space(),
@@ -1278,8 +1281,40 @@ fn check_family_query_payoff(head: &bumbledb::Event, observed: &bumbledb::Event)
     let observation = function
         .parameter_expectation(observed, limits, &mut arithmetic())
         .unwrap();
+    let family = FamilyFunction::from_finite(&function, limits, &mut arithmetic()).unwrap();
+    let domain = head.space().parameter_domain().unwrap().clone();
+    let p = FamilyFunction::constant(
+        &head.space(),
+        GuardedRationalFunction::new(
+            domain.clone(),
+            ExactPolynomial::parameter(domain.parameter()),
+            ExactPolynomial::one(),
+            limits.parameters.region,
+            &mut arithmetic(),
+        )
+        .unwrap(),
+        limits,
+        &mut arithmetic(),
+    )
+    .unwrap();
+    let parameter_payoff = family
+        .multiply(&p, limits, &mut arithmetic())
+        .unwrap()
+        .expectation(observed, limits, &mut arithmetic())
+        .unwrap();
+    drop((family, p));
     drop(function);
     for n in 0..=8 {
+        assert_eq!(
+            parameter_payoff
+                .value_at(&ratio(n, 8), limits, &mut arithmetic())
+                .unwrap(),
+            if n == 0 || n == 8 {
+                None
+            } else {
+                Some(ratio(n, 4))
+            }
+        );
         assert_eq!(
             observation
                 .value_at(&ratio(n, 8), limits, &mut arithmetic())

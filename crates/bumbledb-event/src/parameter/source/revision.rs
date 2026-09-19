@@ -7,6 +7,9 @@ use crate::{
     ParameterFunction, ParameterRegion, PolynomialSigns, Result, Space, SpaceId,
 };
 
+mod likelihood;
+pub use likelihood::ParameterLikelihood;
+
 /// A captured smaller parameter domain, with the original outcome fibres and
 /// per-parameter law. A checked inclusion targets a refined prior presentation
 /// in which the new domain is expressible. The original source remains owned.
