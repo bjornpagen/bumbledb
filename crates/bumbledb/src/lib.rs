@@ -68,8 +68,9 @@ mod payoff;
 pub use observation::{
     ExpectationAnswer, ExpectationFunction, ExpectationPayoff, ExpectationValue,
     ObservationComponent, ObservationNumber, ObservationNumberCodecLimits, ObservationNumberExpr,
-    ObservationNumberImport, ObservationNumberLimits, ObservationPredicate, ProbabilityAnswer,
-    ProbabilityValue,
+    ObservationNumberImport, ObservationNumberLimits, ObservationPredicate,
+    ObservationPredicateExpr, ObservationPredicateImport, PredicateEvents, PredicateRefinement,
+    ProbabilityAnswer, ProbabilityValue,
 };
 pub use payoff::{ImportedPayoff, PayoffExpr, PayoffImport};
 pub(crate) mod exec;

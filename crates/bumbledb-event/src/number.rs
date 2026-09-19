@@ -431,7 +431,10 @@ impl PartialNumber {
 }
 
 impl NumberPredicate {
-    fn validate(&self, limits: NumberLimits, work: &mut ExactArithmetic<'_>) -> Result<()> {
+    /// Recheck every truth region under the caller's exact solver budget.
+    /// # Errors
+    /// Capacities or cancellation, including constant truth partitions.
+    pub fn validate(&self, limits: NumberLimits, work: &mut ExactArithmetic<'_>) -> Result<()> {
         work.validate(&ExactRational::zero())?;
         if let PredicateCases::Parameter {
             ambient,
@@ -445,6 +448,87 @@ impl NumberPredicate {
             }
         }
         Ok(())
+    }
+
+    /// Restrict the ambient domain explicitly, or lift a fixed partial truth
+    /// value to it. This never fills a hole or changes an observation's source.
+    /// # Errors
+    /// Foreign/extended domains, capacities or cancellation.
+    pub fn on_domain(
+        &self,
+        domain: &ParameterDomain,
+        limits: NumberLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        self.validate(limits, work)?;
+        domain
+            .region()
+            .equivalent(domain.region(), limits.parameters, work)?;
+        let cases = match &self.cases {
+            PredicateCases::Fixed(value) => {
+                let region = |case| {
+                    if *value == case {
+                        domain.region().clone()
+                    } else {
+                        ParameterRegion::empty(domain.parameter())
+                    }
+                };
+                PredicateCases::Parameter {
+                    ambient: domain.clone(),
+                    holds: region(Some(true)),
+                    fails: region(Some(false)),
+                    undefined: region(None),
+                }
+            }
+            PredicateCases::Parameter {
+                ambient,
+                holds,
+                fails,
+                undefined,
+            } => {
+                if !domain
+                    .region()
+                    .included(ambient.region(), limits.parameters, work)?
+                {
+                    return Err(Error::ParameterDomainMismatch);
+                }
+                let mut clip = |region: &ParameterRegion| {
+                    region.apply(BoolOp4::AND, domain.region(), limits.parameters, work)
+                };
+                PredicateCases::Parameter {
+                    ambient: domain.clone(),
+                    holds: clip(holds)?,
+                    fails: clip(fails)?,
+                    undefined: clip(undefined)?,
+                }
+            }
+        };
+        Ok(Self { cases })
+    }
+
+    /// Extensional equality of all three truth regions. Unlike a strict
+    /// Boolean equality operation, identical undefined regions compare equal.
+    /// # Errors
+    /// Foreign/different ambient domains, capacities or cancellation.
+    pub fn equivalent(
+        &self,
+        rhs: &Self,
+        limits: NumberLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<bool> {
+        self.validate(limits, work)?;
+        rhs.validate(limits, work)?;
+        let ambient = match (&self.cases, &rhs.cases) {
+            (PredicateCases::Fixed(a), PredicateCases::Fixed(b)) => return Ok(a == b),
+            (PredicateCases::Parameter { ambient, .. }, _)
+            | (_, PredicateCases::Parameter { ambient, .. }) => ambient,
+        };
+        let a = self.regions(ambient, limits, work)?;
+        let b = rhs.regions(ambient, limits, work)?;
+        // Do both checks: a constant result must not hide a region refusal.
+        let false_equal = a[0].equivalent(&b[0], limits.parameters, work)?;
+        let true_equal = a[1].equivalent(&b[1], limits.parameters, work)?;
+        Ok(false_equal && true_equal)
     }
 
     fn regions(

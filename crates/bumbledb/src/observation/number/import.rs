@@ -124,13 +124,13 @@ impl ObservationNumberImport {
     }
 }
 
-struct Budget {
+pub(super) struct Budget {
     limits: ObservationNumberCodecLimits,
     items: usize,
     nodes: usize,
 }
 impl Budget {
-    fn new(limits: ObservationNumberCodecLimits) -> Self {
+    pub(super) fn new(limits: ObservationNumberCodecLimits) -> Self {
         Self {
             limits,
             items: 0,
@@ -146,7 +146,7 @@ impl Budget {
             .ok_or(Error::Capacity(Capacity::DescriptorItems))?;
         Ok(())
     }
-    fn node(&mut self, depth: usize, control: &dyn Control) -> Result<()> {
+    pub(super) fn node(&mut self, depth: usize, control: &dyn Control) -> Result<()> {
         self.items(1, control)?;
         self.nodes = self
             .nodes
@@ -160,9 +160,9 @@ impl Budget {
     }
 }
 
-struct Writer {
-    bytes: Vec<u8>,
-    budget: Budget,
+pub(super) struct Writer {
+    pub(super) bytes: Vec<u8>,
+    pub(super) budget: Budget,
 }
 fn encode(
     value: &ObservationNumber,
@@ -178,7 +178,7 @@ fn encode(
     Ok(output.bytes)
 }
 impl Writer {
-    fn put(&mut self, bytes: &[u8], control: &dyn Control) -> Result<()> {
+    pub(super) fn put(&mut self, bytes: &[u8], control: &dyn Control) -> Result<()> {
         control.checkpoint()?;
         if bytes.len()
             > self
@@ -199,7 +199,7 @@ impl Writer {
         let count = u32::try_from(count).map_err(|_| Error::Capacity(Capacity::DescriptorBytes))?;
         self.put(&count.to_le_bytes(), control)
     }
-    fn blob(&mut self, bytes: &[u8], control: &dyn Control) -> Result<()> {
+    pub(super) fn blob(&mut self, bytes: &[u8], control: &dyn Control) -> Result<()> {
         self.budget.items(1, control)?;
         self.count(bytes.len(), control)?;
         self.put(bytes, control)
@@ -217,7 +217,7 @@ impl Writer {
             SourceDescriptor::capture(function, limits, work)?.to_bytes(limits, work.control())?;
         self.blob(&bytes, work.control())
     }
-    fn node(
+    pub(super) fn node(
         &mut self,
         value: &ObservationNumber,
         depth: usize,
@@ -323,13 +323,13 @@ impl Writer {
     }
 }
 
-struct Reader<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-    budget: Budget,
+pub(super) struct Reader<'a> {
+    pub(super) bytes: &'a [u8],
+    pub(super) offset: usize,
+    pub(super) budget: Budget,
 }
 impl<'a> Reader<'a> {
-    fn take(&mut self, count: usize) -> Result<&'a [u8]> {
+    pub(super) fn take(&mut self, count: usize) -> Result<&'a [u8]> {
         let end = self
             .offset
             .checked_add(count)
@@ -341,7 +341,7 @@ impl<'a> Reader<'a> {
         self.offset = end;
         Ok(bytes)
     }
-    fn byte(&mut self) -> Result<u8> {
+    pub(super) fn byte(&mut self) -> Result<u8> {
         Ok(self.take(1)?[0])
     }
     fn word(&mut self) -> Result<u32> {
@@ -352,7 +352,7 @@ impl<'a> Reader<'a> {
     fn count(&mut self) -> Result<usize> {
         usize::try_from(self.word()?).map_err(|_| Error::InvalidEncoding.into())
     }
-    fn blob(&mut self, control: &dyn Control) -> Result<&'a [u8]> {
+    pub(super) fn blob(&mut self, control: &dyn Control) -> Result<&'a [u8]> {
         self.budget.items(1, control)?;
         let count = self.count()?;
         self.take(count)
@@ -379,7 +379,11 @@ impl<'a> Reader<'a> {
         })
     }
     // Explicit work/value stacks: hostile depth never consumes the host stack.
-    fn node(&mut self, depth: usize, work: &mut ExactArithmetic<'_>) -> Result<ObservationNumber> {
+    pub(super) fn node(
+        &mut self,
+        depth: usize,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<ObservationNumber> {
         enum Pending {
             Read(usize),
             Binary(NumberOp),

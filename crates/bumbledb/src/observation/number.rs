@@ -3,13 +3,18 @@
 use std::sync::Arc;
 
 use crate::event::{
-    Capacity, ExactArithmetic, ExactRational, NumberLimits, NumberOp, NumberPredicate,
-    ParameterDomain, PartialNumber, PolynomialSigns,
+    Capacity, ExactArithmetic, ExactRational, NumberLimits, NumberOp, ParameterDomain,
+    PartialNumber, PolynomialSigns,
 };
 use crate::{ExpectationAnswer, ExpectationValue, ProbabilityAnswer, ProbabilityValue, Result};
 
 mod import;
 pub use import::{ObservationNumberCodecLimits, ObservationNumberImport};
+mod predicate;
+pub use predicate::{
+    ObservationPredicate, ObservationPredicateExpr, ObservationPredicateImport, PredicateEvents,
+    PredicateRefinement,
+};
 
 /// Selecting a numerical component never discards the original observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,15 +84,6 @@ struct NumberData {
 #[derive(Debug, Clone)]
 pub struct ObservationNumber(Arc<NumberData>);
 
-/// An exact sign judgment retaining the entire numerical derivation and its
-/// true/false/undefined partition. A caller chooses explicit quantification.
-#[derive(Debug, Clone)]
-pub struct ObservationPredicate {
-    number: ObservationNumber,
-    signs: PolynomialSigns,
-    predicate: NumberPredicate,
-}
-
 fn shape(
     children: &[&ObservationNumber],
     limits: ObservationNumberLimits,
@@ -107,6 +103,9 @@ fn shape(
     Ok((nodes, depth))
 }
 impl ObservationNumber {
+    pub(super) fn expression_shape(&self) -> (usize, usize) {
+        (self.0.nodes, self.0.depth)
+    }
     fn new(
         expression: ObservationNumberExpr,
         value: PartialNumber,
@@ -320,13 +319,7 @@ impl ObservationNumber {
         limits: ObservationNumberLimits,
         work: &mut ExactArithmetic<'_>,
     ) -> Result<ObservationPredicate> {
-        shape(&[self], limits)?;
-        let predicate = self.value().where_sign(signs, limits.numbers, work)?;
-        Ok(ObservationPredicate {
-            number: self.clone(),
-            signs,
-            predicate,
-        })
+        ObservationPredicate::where_sign(self, signs, limits, work)
     }
     /// Pointwise comparison, retaining both operands and undefined assignments.
     /// # Errors
@@ -354,18 +347,4 @@ fn parameter_value<F>(
         }
         .clone(),
     )
-}
-impl ObservationPredicate {
-    #[must_use]
-    pub fn number(&self) -> &ObservationNumber {
-        &self.number
-    }
-    #[must_use]
-    pub fn signs(&self) -> PolynomialSigns {
-        self.signs
-    }
-    #[must_use]
-    pub fn predicate(&self) -> &NumberPredicate {
-        &self.predicate
-    }
 }

@@ -1,0 +1,17 @@
+'Retraction.exact_identity' does not depend on any axioms
+'Retraction.boolean_homomorphism' does not depend on any axioms
+'Retraction.complement_homomorphism' does not depend on any axioms
+'Retraction.normalization_idempotent' depends on axioms: [propext]
+'Retraction.normalized_iff_fibre_dependency' does not depend on any axioms
+'Retraction.possibility_reflected' does not depend on any axioms
+'Retraction.commuting_substitution' depends on axioms: [propext]
+'Retraction.fixed_point_obstruction' does not depend on any axioms
+'Retraction.no_commuting_decoder_for_legal_pair' does not depend on any axioms
+'Retraction.whole_face_exists' does not depend on any axioms
+'Retraction.whole_face_forall' does not depend on any axioms
+'Retraction.face_dependency_reflected' does not depend on any axioms
+'Retraction.composition_preserved' does not depend on any axioms
+'Retraction.decoded_identity_right' does not depend on any axioms
+'Retraction.partial_projection_counterexample' does not depend on any axioms
+'Retraction.alias_count_counterexample' does not depend on any axioms
+'Retraction.encoded_unit_is_not_raw_equality' does not depend on any axioms

@@ -90,6 +90,7 @@ mod number;
 pub use number::{
     ObservationComponent, ObservationNumber, ObservationNumberCodecLimits, ObservationNumberExpr,
     ObservationNumberImport, ObservationNumberLimits, ObservationPredicate,
+    ObservationPredicateExpr, ObservationPredicateImport, PredicateEvents, PredicateRefinement,
 };
 
 mod payoff;
