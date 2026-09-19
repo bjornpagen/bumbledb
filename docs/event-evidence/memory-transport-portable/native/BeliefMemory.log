@@ -1,0 +1,24 @@
+'BeliefMemory.update_is_exact_post_intersection' does not depend on any axioms
+'BeliefMemory.actual_successor_remains_possible' does not depend on any axioms
+'BeliefMemory.every_possible_successor_has_a_witness' does not depend on any axioms
+'BeliefMemory.uniform_enabledness_is_greatest_sound_permission' does not depend on any axioms
+'BeliefMemory.empty_belief_has_no_enabled_action' does not depend on any axioms
+'BeliefMemory.one_disabled_world_blocks_the_action' does not depend on any axioms
+'BeliefMemory.enabled_action_has_an_inhabited_observation' does not depend on any axioms
+'BeliefMemory.different_observations_have_disjoint_successors' does not depend on any axioms
+'BeliefMemory.observation_splits_cover_exactly_the_post' does not depend on any axioms
+'BeliefMemory.equal_beliefs_have_equal_updates' does not depend on any axioms
+'BeliefMemory.equal_beliefs_have_equal_permissions' does not depend on any axioms
+'BeliefMemory.memory_is_exactly_the_worlds_consistent_with_the_entire_history' depends on axioms: [propext]
+'BeliefMemory.actual_history_never_reaches_an_empty_belief' depends on axioms: [propext]
+'BeliefMemory.initial_observation_is_evidence_intersection' does not depend on any axioms
+'BeliefMemory.retained_environment_witness_cannot_change' does not depend on any axioms
+'BeliefMemory.known_goal_is_true_for_every_consistent_actual_world' depends on axioms: [propext]
+'BeliefMemory.all_observation_successors_safe_iff_all_actual_successors_safe' does not depend on any axioms
+'BeliefMemory.same_screen_does_not_identify_memories' does not depend on any axioms
+'BeliefMemory.decoded_recipe_preserves_updates' does not depend on any axioms
+'BeliefMemory.decoded_recipe_preserves_all_histories' does not depend on any axioms
+'BeliefMemory.decoded_recipe_preserves_permissions' does not depend on any axioms
+'BeliefMemory.replay_preserves_knowledge_and_possibility' does not depend on any axioms
+'BeliefMemory.action_relabeling_without_reindexing_changes_memory' depends on axioms: [propext, Quot.sound]
+'BeliefMemory.retained_empty_observation_has_no_successor' does not depend on any axioms

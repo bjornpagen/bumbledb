@@ -174,6 +174,29 @@ impl BeliefMemory {
         limits: BeliefLimits,
         control: &dyn Control,
     ) -> Result<Self> {
+        Self::new_with_parameters(
+            actions,
+            observations,
+            given,
+            limits,
+            crate::ParameterSourceLimits::default(),
+            &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Build memory with one arithmetic allowance for parameter-preserving action
+    /// normalization. Symbolic expansion retains its separate graph/kernel bounds.
+    /// # Errors
+    /// Has `new`'s contract, plus parameter-source and arithmetic capacities.
+    pub fn new_with_parameters(
+        actions: &[WorldRelation],
+        observations: &EventPartition,
+        given: &Event,
+        limits: BeliefLimits,
+        parameters: crate::ParameterSourceLimits,
+        work: &mut crate::ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let control = work.control();
         control.checkpoint()?;
         let space = observations.parent().space();
         let given = given.align_to(&space, control)?;
@@ -199,7 +222,8 @@ impl BeliefMemory {
                 action.product().right_environment().map(),
                 control,
             )?;
-            let action = action.in_product(actions[0].product(), control)?;
+            let action =
+                action.in_product_with_parameters(actions[0].product(), parameters, work)?;
             domains.try_reserve(1)?;
             domains.push(action.domain(control)?.align_to(&space, control)?);
             retained.try_reserve(1)?;

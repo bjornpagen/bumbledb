@@ -55,6 +55,29 @@ impl FaceProduct {
         limits: Limits,
         control: &dyn Control,
     ) -> Result<Self> {
+        Self::with_order_and_parameters(
+            identity,
+            faces,
+            order,
+            limits,
+            crate::ParameterSourceLimits::default(),
+            &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Construct a full product with one shared parameter arithmetic allowance.
+    /// Guard attachment and every projection consume the supplied allowance.
+    /// # Errors
+    /// Has `with_order`'s contract, plus parameter-source and arithmetic capacities.
+    pub fn with_order_and_parameters(
+        identity: SpaceId,
+        faces: &[SurjectiveMap],
+        order: &[u8],
+        limits: Limits,
+        parameters: crate::ParameterSourceLimits,
+        work: &mut crate::ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let control = work.control();
         control.checkpoint()?;
         let first = faces.first().ok_or(Error::NoFaces)?;
         let mut dimensions = 0usize;
@@ -113,12 +136,7 @@ impl FaceProduct {
                 }
                 offset += source.dimensions();
             }
-            space = space.with_parameters(
-                domain.clone(),
-                &guards,
-                crate::ParameterSourceLimits::default(),
-                &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), control),
-            )?;
+            space = space.with_parameters(domain.clone(), &guards, parameters, work)?;
         }
         let mut projections = Vec::new();
         projections.try_reserve_exact(faces.len())?;
@@ -128,13 +146,14 @@ impl FaceProduct {
         for face in faces {
             let source = face.map().source();
             let coordinates = coordinates(offset, source.dimensions());
-            let projection = CoordinateMap::coordinates(
-                &space,
-                source,
-                &coordinates[..usize::from(source.dimensions())],
-                control,
-            )?
-            .certify_surjective(control)?;
+            let mut readouts = Vec::new();
+            readouts.try_reserve_exact(usize::from(source.dimensions()))?;
+            for &coordinate in &coordinates[..usize::from(source.dimensions())] {
+                readouts.push(space.coordinate(coordinate, control)?);
+            }
+            let projection =
+                CoordinateMap::new_with_parameters(&space, source, &readouts, parameters, work)?
+                    .certify_surjective(control)?;
             projections.push(projection);
             environments.push(face.clone());
             offset += source.dimensions();
@@ -231,12 +250,36 @@ impl FibreProduct {
         limits: Limits,
         control: &dyn Control,
     ) -> Result<Self> {
-        let faces = FaceProduct::with_order(
+        Self::with_order_and_parameters(
+            identity,
+            left,
+            right,
+            order,
+            limits,
+            crate::ParameterSourceLimits::default(),
+            &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Full fibres with explicit source limits and shared arithmetic.
+    /// # Errors
+    /// Has `with_order`'s contract, plus parameter-source and arithmetic capacities.
+    pub fn with_order_and_parameters(
+        identity: SpaceId,
+        left: &SurjectiveMap,
+        right: &SurjectiveMap,
+        order: &[u8],
+        limits: Limits,
+        parameters: crate::ParameterSourceLimits,
+        work: &mut crate::ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let faces = FaceProduct::with_order_and_parameters(
             identity,
             &[left.clone(), right.clone()],
             order,
             limits,
-            control,
+            parameters,
+            work,
         )?;
         Ok(Self {
             inner: Arc::new(Product {
@@ -312,6 +355,25 @@ impl FibreProduct {
         right: &CoordinateMap,
         control: &dyn Control,
     ) -> Result<CoordinateMap> {
+        self.pair_with_parameters(
+            left,
+            right,
+            crate::ParameterSourceLimits::default(),
+            &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Pair with explicit source limits and shared arithmetic.
+    /// # Errors
+    /// Has `pair`'s contract, plus parameter-source and arithmetic capacities.
+    pub fn pair_with_parameters(
+        &self,
+        left: &CoordinateMap,
+        right: &CoordinateMap,
+        parameters: crate::ParameterSourceLimits,
+        work: &mut crate::ExactArithmetic<'_>,
+    ) -> Result<CoordinateMap> {
+        let control = work.control();
         left.target()
             .full()
             .align_to(self.left().map().target(), control)?;
@@ -329,7 +391,7 @@ impl FibreProduct {
         };
         readouts.extend(first.readouts().iter().cloned());
         readouts.extend(second.readouts().iter().cloned());
-        CoordinateMap::new(left.source(), self.space(), &readouts, control)
+        CoordinateMap::new_with_parameters(left.source(), self.space(), &readouts, parameters, work)
     }
 
     /// Check complete joint fibres in addition to commutation.
@@ -357,6 +419,23 @@ impl FibreProduct {
     /// # Errors
     /// Refuses unequal endpoint contexts or environment maps, cancellation or capacity.
     pub fn map_to(&self, target: &Self, control: &dyn Control) -> Result<CoordinateMap> {
+        self.map_to_with_parameters(
+            target,
+            crate::ParameterSourceLimits::default(),
+            &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Reindex with explicit source limits and shared arithmetic.
+    /// # Errors
+    /// Has `map_to`'s contract, plus parameter-source and arithmetic capacities.
+    pub fn map_to_with_parameters(
+        &self,
+        target: &Self,
+        parameters: crate::ParameterSourceLimits,
+        work: &mut crate::ExactArithmetic<'_>,
+    ) -> Result<CoordinateMap> {
+        let control = work.control();
         require_same_map(
             self.left_environment().map(),
             target.left_environment().map(),
@@ -367,7 +446,7 @@ impl FibreProduct {
             target.right_environment().map(),
             control,
         )?;
-        target.pair(self.left().map(), self.right().map(), control)
+        target.pair_with_parameters(self.left().map(), self.right().map(), parameters, work)
     }
 }
 

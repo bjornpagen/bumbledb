@@ -115,6 +115,8 @@ export type {
 	EventFibreDescription,
 	EventMapDescription
 } from "#event-descriptor-data.ts"
+export { EventMemory } from "#event-memory.ts"
+export type { EventMemoryDescription, EventMemoryInspection, EventMemoryTransition } from "#event-memory-data.ts"
 export type {
 	AnyFace,
 	Arity,

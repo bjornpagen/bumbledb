@@ -75,7 +75,7 @@ function kind(input: unknown): unknown {
 	if (typeof input !== "object" || input === null) return invalid("expected a plain description")
 	return recordValue("Event descriptor", input, Object.keys(input)).kind
 }
-class Budget {
+export class DescriptorBudget {
 	bytes = 16 * 1024 * 1024
 	items = 4096
 	item() {
@@ -97,27 +97,34 @@ class Budget {
 	}
 }
 
-function description<E>(input: unknown, budget: Budget, event: (input: unknown) => E): DescriptorData<E> {
-	const map = (input: unknown): MapData<E> => {
-		budget.item()
-		const value = recordValue("Event map", input, ["source", "target", "readouts"])
-		return Object.freeze({
-			source: event(value.source),
-			target: event(value.target),
-			readouts: budget.list(value.readouts, event)
-		})
-	}
-	const fibre = (input: unknown): FibreData<E> => {
-		budget.item()
-		const value = recordValue("Event fibre", input, ["identity", "left", "right", "reversed"])
-		if (typeof value.reversed !== "boolean") invalid("reversed must be Boolean")
-		return Object.freeze({
-			identity: budget.identity(value.identity),
-			left: map(value.left),
-			right: map(value.right),
-			reversed: value.reversed
-		})
-	}
+export function mapDescription<E>(input: unknown, budget: DescriptorBudget, event: (input: unknown) => E): MapData<E> {
+	budget.item()
+	const value = recordValue("Event map", input, ["source", "target", "readouts"])
+	return Object.freeze({
+		source: event(value.source),
+		target: event(value.target),
+		readouts: budget.list(value.readouts, event)
+	})
+}
+export function fibreDescription<E>(
+	input: unknown,
+	budget: DescriptorBudget,
+	event: (input: unknown) => E
+): FibreData<E> {
+	budget.item()
+	const value = recordValue("Event fibre", input, ["identity", "left", "right", "reversed"])
+	if (typeof value.reversed !== "boolean") invalid("reversed must be Boolean")
+	return Object.freeze({
+		identity: budget.identity(value.identity),
+		left: mapDescription(value.left, budget, event),
+		right: mapDescription(value.right, budget, event),
+		reversed: value.reversed
+	})
+}
+
+function description<E>(input: unknown, budget: DescriptorBudget, event: (input: unknown) => E): DescriptorData<E> {
+	const map = (input: unknown) => mapDescription(input, budget, event)
+	const fibre = (input: unknown) => fibreDescription(input, budget, event)
 	budget.item()
 	const tag = kind(input)
 	switch (tag) {
@@ -162,7 +169,7 @@ function description<E>(input: unknown, budget: Budget, event: (input: unknown) 
 }
 
 export function encodeDescription(input: EventDescriptorDescription): EventDescriptorWire {
-	const budget = new Budget()
+	const budget = new DescriptorBudget()
 	return description(input, budget, (value) => {
 		budget.item()
 		const event = eventValue("Event descriptor", value)
@@ -171,7 +178,7 @@ export function encodeDescription(input: EventDescriptorDescription): EventDescr
 	})
 }
 export function decodeDescription(input: EventDescriptorWire): EventDescriptorDescription {
-	const budget = new Budget()
+	const budget = new DescriptorBudget()
 	return description(input, budget, (value) => {
 		budget.item()
 		const event = encodedEvent(value)
@@ -181,7 +188,7 @@ export function decodeDescription(input: EventDescriptorWire): EventDescriptorDe
 }
 
 export function decodeInspection(input: EventDescriptorInspectionWire): EventDescriptorInspection {
-	const budget = new Budget()
+	const budget = new DescriptorBudget()
 	const bytes = (value: unknown) => {
 		budget.item()
 		const owned = bytesValue("Event inspection", value, budget.bytes)

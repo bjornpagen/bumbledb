@@ -5,8 +5,11 @@ use crate::{
     Limits, RelationalProduct, Result, Space, SpaceId, WorldRelation,
 };
 
+mod memory;
 mod source;
 mod wire;
+
+pub use memory::{BeliefActionDescriptor, BeliefDescriptor, BeliefDescriptorLimits};
 
 pub use source::{
     AdmittedFamilyDescriptor, AdmittedSourceDescriptor, BetaSourceDescriptor, FamilyDescriptor,

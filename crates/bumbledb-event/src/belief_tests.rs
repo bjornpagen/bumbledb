@@ -45,6 +45,33 @@ fn ids() -> BeliefSpaceIds {
     }
 }
 
+fn replay(memory: &BeliefMemory) -> BeliefMemory {
+    let limits = BeliefDescriptorLimits::default();
+    let data = BeliefDescriptor::capture(memory, limits.descriptors, &()).unwrap();
+    let bytes = data.to_bytes(limits.descriptors, &()).unwrap();
+    let result = BeliefDescriptor::import(
+        &bytes,
+        limits,
+        &mut ExactArithmetic::new(ArithmeticLimits::default(), &()),
+    )
+    .unwrap();
+    assert_eq!(
+        BeliefDescriptor::capture(&result, limits.descriptors, &()).unwrap(),
+        data
+    );
+    assert_eq!(result.initial(), memory.initial());
+    assert_eq!(result.states().len(), memory.states().len());
+    for (a, b) in result.states().iter().zip(memory.states()) {
+        assert_eq!(
+            a.possible().to_bytes(&()).unwrap(),
+            b.possible().to_bytes(&()).unwrap()
+        );
+        assert_eq!(a.observation(), b.observation());
+        assert_eq!(a.transitions(), b.transitions());
+    }
+    result
+}
+
 // A separate dense graph oracle; it knows no Event operations or product maps.
 fn next(edges: u64, belief: u64, observation: u64, worlds: u64) -> Option<u64> {
     let mut post = 0;
@@ -84,6 +111,7 @@ fn every_two_state_game_matches_dense_reachable_memory_and_history_updates() {
                         &(),
                     )
                     .unwrap();
+                    let memory = replay(&memory);
                     let mut expected: Vec<u64> = cells
                         .iter()
                         .map(|o| o & initial)
@@ -242,6 +270,7 @@ fn remembered_observation_selects_the_right_action_after_the_display_is_erased()
         &(),
     )
     .unwrap();
+    let memory = replay(&memory);
     let start = memory.initial()[0].unwrap();
     assert!(memory.initial()[5].is_none());
     let left = memory.update(start, 0, 1).unwrap().unwrap();
@@ -517,6 +546,10 @@ fn shared_unknown_parameter_survives_belief_updates_without_becoming_visible() {
         &(),
     )
     .unwrap();
+    let memory = replay(&memory);
+    let given = given.align_to(&memory.given().space(), &()).unwrap();
+    let g = g.align_to(&memory.given().space(), &()).unwrap();
+    let outcome = outcome.align_to(&memory.given().space(), &()).unwrap();
     assert_eq!(memory.states().len(), 2);
     assert_eq!(memory.states()[0].possible(), &given);
     assert_eq!(
@@ -567,6 +600,7 @@ fn zero_mass_worlds_still_participate_and_mixed_environments_refuse() {
         &(),
     )
     .unwrap();
+    let memory = replay(&memory);
     assert!(!memory.enabled(0, 0).unwrap());
     assert!(memory.states()[0].possible().contains(1).unwrap());
     let dead = BeliefMemory::new(
@@ -620,4 +654,342 @@ fn zero_mass_worlds_still_participate_and_mixed_environments_refuse() {
         .unwrap_err(),
         Error::EnvironmentMismatch
     );
+}
+
+#[test]
+fn memory_recipe_preserves_reversal_indices_and_compilation() {
+    let s = space(191, 1);
+    let p = pairs(&s, 192);
+    // The first authored product is reversed; retaining its roles is essential.
+    let actions = [relation(&p, 6).converse(), relation(&pairs(&s, 193), 9)];
+    let memory = BeliefMemory::new(
+        &actions,
+        &partition(&s, &[0, 1, 2]),
+        &s.full(),
+        BeliefLimits::default(),
+        &(),
+    )
+    .unwrap();
+    let data = BeliefDescriptor::capture(&memory, DescriptorLimits::default(), &()).unwrap();
+    assert!(data.actions.iter().all(|a| a.product.reversed));
+    assert!(
+        data.actions
+            .iter()
+            .all(|a| a.product.identity == SpaceId([192; 32]))
+    );
+    let old = memory.arena(ids(), &()).unwrap();
+    let restored = replay(&memory);
+    drop(memory);
+    drop(actions);
+    drop(p);
+    let new = restored.arena(ids(), &()).unwrap();
+    assert_eq!(
+        old.initial().to_bytes(&()).unwrap(),
+        new.initial().to_bytes(&()).unwrap()
+    );
+    assert_eq!(
+        old.arena().transition().region().to_bytes(&()).unwrap(),
+        new.arena().transition().region().to_bytes(&()).unwrap()
+    );
+    assert_eq!(
+        old.known(&s.coordinate(0, &()).unwrap(), &())
+            .unwrap()
+            .to_bytes(&())
+            .unwrap(),
+        new.known(&s.coordinate(0, &()).unwrap(), &())
+            .unwrap()
+            .to_bytes(&())
+            .unwrap()
+    );
+    assert_eq!(restored.initial(), &[None, Some(0), Some(1)]);
+    assert_eq!(restored.update(0, 0, 2).unwrap(), Some(1));
+    assert_eq!(restored.update(0, 1, 1).unwrap(), Some(0));
+    // Non-symmetric converse is observable even without a fully enabled action.
+    let one_way = BeliefMemory::new(
+        &[relation(&pairs(&s, 194), 2).converse()],
+        &partition(&s, &[1, 2]),
+        &s.full(),
+        BeliefLimits::default(),
+        &(),
+    )
+    .unwrap();
+    let restored = replay(&one_way);
+    assert!(restored.enabled(0, 0).unwrap());
+    assert!(!restored.enabled(1, 0).unwrap());
+    assert_eq!(restored.update(0, 0, 1).unwrap(), Some(1));
+}
+
+#[test]
+fn memory_recipe_checks_every_context_even_with_no_reachable_states() {
+    let s = space(194, 1);
+    let memory = BeliefMemory::new(
+        &[relation(&pairs(&s, 195), 9)],
+        &partition(&s, &[3, 0]),
+        &s.empty(),
+        BeliefLimits::default(),
+        &(),
+    )
+    .unwrap();
+    let limits = BeliefDescriptorLimits::default();
+    let data = BeliefDescriptor::capture(&memory, limits.descriptors, &()).unwrap();
+    let restored = replay(&memory);
+    assert!(restored.states().is_empty());
+    assert!(matches!(restored.arena(ids(), &()), Err(Error::EmptySpace)));
+    let admit = |d: &BeliefDescriptor| {
+        d.admit(
+            limits,
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &()),
+        )
+    };
+    let mut bad = data.clone();
+    bad.source = s.empty().to_bytes(&()).unwrap();
+    assert!(matches!(admit(&bad), Err(Error::InvalidEncoding)));
+    bad = data.clone();
+    bad.actions[0].product.left.source = s.coordinate(0, &()).unwrap().to_bytes(&()).unwrap();
+    assert!(matches!(admit(&bad), Err(Error::InvalidEncoding)));
+    bad = data.clone();
+    bad.observations = vec![s.empty().to_bytes(&()).unwrap()];
+    assert!(matches!(admit(&bad), Err(Error::PartitionGap)));
+    bad = data.clone();
+    bad.observations[1] = s.full().to_bytes(&()).unwrap();
+    assert!(matches!(admit(&bad), Err(Error::PartitionOverlap)));
+    bad = data.clone();
+    bad.actions[0].product.identity = SpaceId([196; 32]);
+    assert!(admit(&bad).is_err());
+    bad = data.clone();
+    bad.given = space(197, 1).empty().to_bytes(&()).unwrap();
+    assert!(admit(&bad).is_err());
+    bad = data.clone();
+    bad.actions[0]
+        .product
+        .left
+        .readouts
+        .push(s.empty().to_bytes(&()).unwrap());
+    assert!(matches!(admit(&bad), Err(Error::MapArity)));
+    let no_actions = BeliefMemory::new(
+        &[],
+        &partition(&s, &[3]),
+        &s.full(),
+        BeliefLimits::default(),
+        &(),
+    )
+    .unwrap();
+    assert_eq!(replay(&no_actions).states().len(), 1);
+}
+
+#[test]
+fn memory_recipe_envelope_and_combined_budgets_refuse_atomically() {
+    struct Cancel;
+    impl Control for Cancel {
+        fn checkpoint(&self) -> Result<()> {
+            Err(Error::Cancelled)
+        }
+    }
+    let s = space(198, 1);
+    let memory = BeliefMemory::new(
+        &[relation(&pairs(&s, 199), 9)],
+        &partition(&s, &[3, 0]),
+        &s.full(),
+        BeliefLimits::default(),
+        &(),
+    )
+    .unwrap();
+    let limits = BeliefDescriptorLimits::default();
+    let data = BeliefDescriptor::capture(&memory, limits.descriptors, &()).unwrap();
+    let bytes = data.to_bytes(limits.descriptors, &()).unwrap();
+    for end in 0..bytes.len() {
+        assert!(BeliefDescriptor::from_bytes(&bytes[..end], limits.descriptors, &()).is_err());
+    }
+    let mut bad = bytes.clone();
+    bad.push(0);
+    assert!(BeliefDescriptor::from_bytes(&bad, limits.descriptors, &()).is_err());
+    let mut bad = bytes.clone();
+    bad[4] = 2;
+    assert_eq!(
+        BeliefDescriptor::from_bytes(&bad, limits.descriptors, &()).unwrap_err(),
+        Error::UnsupportedVersion(2)
+    );
+    let minimum = (0..100)
+        .find(|&items| {
+            data.to_bytes(
+                DescriptorLimits {
+                    items,
+                    ..limits.descriptors
+                },
+                &(),
+            )
+            .is_ok()
+        })
+        .unwrap();
+    // One shared allowance includes maps and all their source/readout blobs.
+    let mut repeated = data.clone();
+    repeated.actions.push(data.actions[0].clone());
+    let bounded = DescriptorLimits {
+        items: minimum,
+        ..limits.descriptors
+    };
+    assert!(BeliefDescriptor::from_bytes(&bytes, bounded, &()).is_ok());
+    assert!(matches!(
+        repeated.to_bytes(bounded, &()),
+        Err(Error::Capacity(Capacity::DescriptorItems))
+    ));
+    assert!(matches!(
+        repeated.admit(
+            BeliefDescriptorLimits {
+                descriptors: bounded,
+                ..limits
+            },
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &())
+        ),
+        Err(Error::Capacity(Capacity::DescriptorItems))
+    ));
+    let repeated_bytes = repeated.to_bytes(limits.descriptors, &()).unwrap();
+    assert!(matches!(
+        BeliefDescriptor::from_bytes(&repeated_bytes, bounded, &()),
+        Err(Error::Capacity(Capacity::DescriptorItems))
+    ));
+    let bounded = DescriptorLimits {
+        bytes: bytes.len() - 1,
+        ..limits.descriptors
+    };
+    assert!(matches!(
+        data.to_bytes(bounded, &()),
+        Err(Error::Capacity(Capacity::DescriptorBytes))
+    ));
+    assert!(matches!(
+        BeliefDescriptor::from_bytes(&bytes, bounded, &()),
+        Err(Error::Capacity(Capacity::DescriptorBytes))
+    ));
+    for (policy, expected) in [
+        (
+            BeliefDescriptorLimits {
+                partitions: PartitionLimits { cells: 1 },
+                ..limits
+            },
+            Capacity::PartitionCells,
+        ),
+        (
+            BeliefDescriptorLimits {
+                beliefs: BeliefLimits {
+                    states: 0,
+                    ..limits.beliefs
+                },
+                ..limits
+            },
+            Capacity::BeliefStates,
+        ),
+        (
+            BeliefDescriptorLimits {
+                beliefs: BeliefLimits {
+                    transitions: 0,
+                    ..limits.beliefs
+                },
+                ..limits
+            },
+            Capacity::BeliefTransitions,
+        ),
+    ] {
+        assert!(
+            matches!(data.admit(policy, &mut ExactArithmetic::new(ArithmeticLimits::default(), &())), Err(Error::Capacity(c)) if c == expected)
+        );
+    }
+    assert!(matches!(
+        data.admit(
+            limits,
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &Cancel)
+        ),
+        Err(Error::Cancelled)
+    ));
+    assert!(matches!(
+        BeliefDescriptor::from_bytes(&bytes, limits.descriptors, &Cancel),
+        Err(Error::Cancelled)
+    ));
+    assert!(matches!(
+        BeliefDescriptor::capture(&memory, limits.descriptors, &Cancel),
+        Err(Error::Cancelled)
+    ));
+}
+
+#[test]
+fn parameter_memory_replay_charges_one_counter_including_normalization() {
+    use crate::parameter_source_tests::{c, p, sign, space as family, sub};
+    let guard = ParameterGuard {
+        coordinate: 0,
+        region: sign(&sub(&p(), &c(1)), PolynomialSigns::NEGATIVE),
+    };
+    let s = family(200, 2, std::slice::from_ref(&guard));
+    let env = family(201, 1, &[guard]);
+    let map = CoordinateMap::coordinates(&s, &env, &[0], &())
+        .unwrap()
+        .certify_surjective(&())
+        .unwrap();
+    let product = FibreProduct::new(SpaceId([202; 32]), &map, &map, &()).unwrap();
+    let action = WorldRelation::identity(&product, &()).unwrap();
+    let obs = EventPartition::on(&s.full(), &[s.full()], PartitionLimits::default(), &()).unwrap();
+    let memory =
+        BeliefMemory::new(&[action], &obs, &s.full(), BeliefLimits::default(), &()).unwrap();
+    let limits = BeliefDescriptorLimits::default();
+    let data = BeliefDescriptor::capture(&memory, limits.descriptors, &()).unwrap();
+    let mut work = ExactArithmetic::new(ArithmeticLimits::default(), &());
+    let restored = data.admit(limits, &mut work).unwrap();
+    let cost = work.operations();
+    assert!(cost > 0);
+    assert_eq!(
+        restored.states()[0].possible().to_bytes(&()).unwrap(),
+        s.full().to_bytes(&()).unwrap()
+    );
+    let mut exact = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: cost,
+            ..ArithmeticLimits::default()
+        },
+        &(),
+    );
+    assert!(data.admit(limits, &mut exact).is_ok());
+    assert!(matches!(
+        data.admit(limits, &mut exact),
+        Err(Error::Capacity(Capacity::ArithmeticSteps))
+    ));
+    let mut short = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: cost - 1,
+            ..ArithmeticLimits::default()
+        },
+        &(),
+    );
+    assert!(matches!(
+        data.admit(limits, &mut short),
+        Err(Error::Capacity(Capacity::ArithmeticSteps))
+    ));
+    let mut work = ExactArithmetic::new(ArithmeticLimits::default(), &());
+    BeliefMemory::new_with_parameters(
+        memory.actions(),
+        &obs,
+        &s.full(),
+        limits.beliefs,
+        limits.parameters,
+        &mut work,
+    )
+    .unwrap();
+    // Canonically identical guards can normalize without arithmetic. Fresh
+    // products must still charge guard attachment/projection admission.
+    let mut no_work = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: 0,
+            ..ArithmeticLimits::default()
+        },
+        &(),
+    );
+    assert!(matches!(
+        FibreProduct::with_order_and_parameters(
+            SpaceId([203; 32]),
+            &map,
+            &map,
+            &[0, 1, 2, 3],
+            Limits::default(),
+            limits.parameters,
+            &mut no_work,
+        ),
+        Err(Error::Capacity(Capacity::ArithmeticSteps))
+    ));
 }

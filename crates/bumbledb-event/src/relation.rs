@@ -117,7 +117,24 @@ impl WorldRelation {
     /// # Errors
     /// Refuses differing endpoint/environment meanings or unavailable resources.
     pub fn in_product(&self, target: &FibreProduct, control: &dyn Control) -> Result<Self> {
-        let map = target.map_to(&self.product, control)?;
+        self.in_product_with_parameters(
+            target,
+            crate::ParameterSourceLimits::default(),
+            &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Reindex with explicit source limits and shared arithmetic.
+    /// # Errors
+    /// Has `in_product`'s contract, plus parameter-source and arithmetic capacities.
+    pub fn in_product_with_parameters(
+        &self,
+        target: &FibreProduct,
+        parameters: crate::ParameterSourceLimits,
+        work: &mut crate::ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let map = target.map_to_with_parameters(&self.product, parameters, work)?;
+        let control = work.control();
         Self::new(target, &map.pullback(&self.region, control)?, control)
     }
 

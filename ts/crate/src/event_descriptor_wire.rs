@@ -11,7 +11,7 @@ use crate::runtime_wire::{
     OperationHandle, RuntimeHandle, notification, operation_handle, owner, take_output, thrown,
 };
 
-mod data;
+pub(crate) mod data;
 mod inspection;
 
 pub enum DescriptorOutput {

@@ -1,0 +1,9 @@
+'ParameterRefinement.lift_preserves_denotation' depends on axioms: [propext]
+'ParameterRefinement.lift_reflects_inclusion' does not depend on any axioms
+'ParameterRefinement.lift_preserves_complement' does not depend on any axioms
+'ParameterRefinement.envelope_is_extensive' does not depend on any axioms
+'ParameterRefinement.envelope_after_lift' does not depend on any axioms
+'ParameterRefinement.exact_descent_iff_guard_invariant' does not depend on any axioms
+'ParameterRefinement.descent_is_unique' does not depend on any axioms
+'ParameterRefinement.new_guard_cannot_descend' does not depend on any axioms
+'ParameterRefinement.density_roster_unchanged' does not depend on any axioms

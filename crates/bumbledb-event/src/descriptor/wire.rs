@@ -194,7 +194,7 @@ impl Writer<'_> {
         }
         Ok(())
     }
-    fn fibre(&mut self, value: &FibreDescriptor) -> Result<()> {
+    pub(super) fn fibre(&mut self, value: &FibreDescriptor) -> Result<()> {
         self.put(&value.identity.0)?;
         self.put(&[u8::from(value.reversed)])?;
         self.map(&value.left)?;
@@ -235,7 +235,7 @@ impl<'a> Reader<'a> {
         }
         Ok(count)
     }
-    fn identity(&mut self) -> Result<SpaceId> {
+    pub(super) fn identity(&mut self) -> Result<SpaceId> {
         Ok(SpaceId(self.take(32)?.try_into().expect("32 bytes")))
     }
     pub(super) fn blob(&mut self) -> Result<Vec<u8>> {
@@ -266,7 +266,7 @@ impl<'a> Reader<'a> {
             readouts,
         })
     }
-    fn fibre(&mut self) -> Result<FibreDescriptor> {
+    pub(super) fn fibre(&mut self) -> Result<FibreDescriptor> {
         self.budget.item(0)?;
         let identity = self.identity()?;
         let reversed = match self.take(1)?[0] {

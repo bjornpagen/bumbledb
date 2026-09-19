@@ -1,8 +1,9 @@
 use bumbledb::{
     AnswerValue, BindValue, Db,
     event::{
-        BeliefArena, BeliefLimits, BeliefMemory, BeliefSpaceIds, CoordinateMap, EventPartition,
-        FibreProduct, FixedPointLimits, PartitionLimits, Space, SpaceId, WorldRelation,
+        ArithmeticLimits, BeliefArena, BeliefDescriptor, BeliefDescriptorLimits, BeliefLimits,
+        BeliefMemory, BeliefSpaceIds, CoordinateMap, EventPartition, ExactArithmetic, FibreProduct,
+        FixedPointLimits, PartitionLimits, Space, SpaceId, WorldRelation,
     },
 };
 mod common;
@@ -50,12 +51,24 @@ fn game() -> BeliefArena {
         &(),
     )
     .unwrap();
-    BeliefMemory::new(
+    let memory = BeliefMemory::new(
         &[reset],
         &observation,
         &hidden.full(),
         BeliefLimits::default(),
         &(),
+    )
+    .unwrap();
+    let limits = BeliefDescriptorLimits::default();
+    let recipe = BeliefDescriptor::capture(&memory, limits.descriptors, &())
+        .unwrap()
+        .to_bytes(limits.descriptors, &())
+        .unwrap();
+    drop(memory);
+    BeliefDescriptor::import(
+        &recipe,
+        limits,
+        &mut ExactArithmetic::new(ArithmeticLimits::default(), &()),
     )
     .unwrap()
     .arena(

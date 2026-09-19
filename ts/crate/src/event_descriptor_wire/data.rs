@@ -10,13 +10,22 @@ use napi::bindgen_prelude::{Array, Env, Object, Uint8Array, Unknown};
 use crate::ingress::{CopyContext, event_error};
 use crate::marshal::{err, output_vec, req, req_at, req_text};
 
-struct Budget<'a, 'work> {
+pub(crate) struct Budget<'a, 'work> {
     copy: &'a CopyContext<'work>,
     bytes: usize,
     items: usize,
 }
-impl Budget<'_, '_> {
-    fn item(&mut self) -> napi::Result<()> {
+impl<'a, 'work> Budget<'a, 'work> {
+    pub(crate) fn new(copy: &'a CopyContext<'work>) -> Self {
+        let limits = DescriptorLimits::default();
+        Self {
+            copy,
+            bytes: limits.bytes,
+            items: limits.items,
+        }
+    }
+
+    pub(crate) fn item(&mut self) -> napi::Result<()> {
         self.copy.checkpoint()?;
         self.items = self.copy.checked(
             self.items
@@ -25,7 +34,7 @@ impl Budget<'_, '_> {
         )?;
         Ok(())
     }
-    fn bytes(&mut self, value: Unknown) -> napi::Result<Vec<u8>> {
+    pub(crate) fn bytes(&mut self, value: Unknown) -> napi::Result<Vec<u8>> {
         self.item()?;
         let bytes = self.copy.bytes(value, self.bytes)?;
         self.bytes -= bytes.len();
@@ -40,7 +49,7 @@ impl Budget<'_, '_> {
             err("Event identity needs 32 bytes".into())
         })?))
     }
-    fn list<T>(&self, len: u32) -> napi::Result<Vec<T>> {
+    pub(crate) fn list<T>(&self, len: u32) -> napi::Result<Vec<T>> {
         if len as usize > self.items {
             return self.copy.checked(Err(event_error(EventError::Capacity(
                 Capacity::DescriptorItems,
@@ -50,7 +59,7 @@ impl Budget<'_, '_> {
     }
 }
 
-fn fields(object: &Object, allowed: &[&str]) -> napi::Result<()> {
+pub(crate) fn fields(object: &Object, allowed: &[&str]) -> napi::Result<()> {
     let keys = Object::keys(object)?;
     if keys.len() != allowed.len() || keys.iter().any(|key| !allowed.contains(&key.as_str())) {
         return Err(err("unknown or missing Event descriptor field".into()));
@@ -91,7 +100,7 @@ fn fibre(object: &Object, budget: &mut Budget<'_, '_>) -> napi::Result<FibreDesc
         reversed: req(object, "reversed", "Event fibre")?,
     })
 }
-fn fibre_field(
+pub(crate) fn fibre_field(
     object: &Object,
     key: &str,
     budget: &mut Budget<'_, '_>,
@@ -105,12 +114,7 @@ pub(super) fn parse(input: Unknown, copy: &CopyContext<'_>) -> napi::Result<Desc
         return Err(err("Event descriptor needs an object".into()));
     }
     let object: Object = input.coerce_to_object()?;
-    let limits = DescriptorLimits::default();
-    let mut budget = Budget {
-        copy,
-        bytes: limits.bytes,
-        items: limits.items,
-    };
+    let mut budget = Budget::new(copy);
     budget.item()?;
     let kind = req_text(&object, "kind", "Event descriptor")?;
     Ok(match kind.as_str() {
@@ -178,7 +182,7 @@ fn map_object(env: &Env, value: MapDescriptor) -> napi::Result<Object<'_>> {
     object.set("readouts", readouts)?;
     Ok(object)
 }
-fn fibre_object(env: &Env, value: FibreDescriptor) -> napi::Result<Object<'_>> {
+pub(crate) fn fibre_object(env: &Env, value: FibreDescriptor) -> napi::Result<Object<'_>> {
     let mut object = Object::new(env)?;
     object.set("identity", Uint8Array::from(value.identity.0.to_vec()))?;
     object.set("left", map_object(env, *value.left)?)?;
