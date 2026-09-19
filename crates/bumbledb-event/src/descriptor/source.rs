@@ -14,9 +14,10 @@ use super::{Budget, Capacity, Control, DescriptorLimits, Error, MapDescriptor, R
 mod family;
 mod wire;
 pub use family::{
-    AdmittedFamilyDescriptor, FamilyDescriptor, FamilyFunctionDescriptor, FamilyKernelDescriptor,
-    FamilyPosteriorDescriptor, FamilyReceiptDescriptor, FamilyRevisionDescriptor,
-    ParameterFunctionDescriptor, RefinementDescriptor, RestrictionDescriptor,
+    AdmittedFamilyDescriptor, BetaSourceDescriptor, FamilyDescriptor, FamilyFunctionDescriptor,
+    FamilyKernelDescriptor, FamilyPosteriorDescriptor, FamilyReceiptDescriptor,
+    FamilyRevisionDescriptor, ParameterFunctionDescriptor, RefinementDescriptor,
+    RestrictionDescriptor,
 };
 
 /// Nonzero scalar cells on a full named context. Plain inputs may use redundant

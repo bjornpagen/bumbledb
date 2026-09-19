@@ -126,7 +126,7 @@ export function parameterMass(value: Event) {
 		(input) => encodedSource("parameterFunction", input)
 	)
 }
-function observation(input: unknown, kind: string) {
+export function observation(input: unknown, kind: string) {
 	const data = recordValue("Parameter observation", input, [
 		"kind",
 		"input",

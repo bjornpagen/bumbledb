@@ -92,6 +92,8 @@ pub enum Error {
     InvalidPolynomial,
     ParameterBinding,
     InvalidBetaPrior,
+    UnsupportedBetaDomain,
+    UnsupportedBetaIntegrand,
     NotUnivariate,
     IndeterminateRoots,
     InvalidRootInterval,
@@ -188,6 +190,8 @@ impl fmt::Display for Error {
             Self::ParameterBinding => {
                 f.write_str("parameter bindings contain a duplicate or omit a required parameter")
             }
+            Self::UnsupportedBetaDomain => f.write_str("Beta binding requires the full named [0,1] parameter domain"),
+            Self::UnsupportedBetaIntegrand => f.write_str("Beta binding requires a total integrand equal to one polynomial outside finitely many points"),
             Self::InvalidBetaPrior => {
                 f.write_str("Beta prior shapes must both be strictly positive")
             }

@@ -205,7 +205,33 @@ pub(super) fn observation(
     control: &WorkContext,
     work: &mut ExactArithmetic<'_>,
 ) -> Result<Output> {
-    let mut budget = Budget::default();
+    Ok(Output::Parameter(observation_with_budget(
+        kind,
+        input,
+        evidence,
+        numerator,
+        mass,
+        conditional,
+        &mut Budget::default(),
+        control,
+        work,
+    )?))
+}
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one shared budget covers all nested observation bytes"
+)]
+pub(super) fn observation_with_budget(
+    kind: &'static str,
+    input: Vec<u8>,
+    evidence: &Event,
+    numerator: &bumbledb::event::ParameterFunction,
+    mass: &bumbledb::event::ParameterFunction,
+    conditional: &bumbledb::event::ParameterFunction,
+    budget: &mut Budget,
+    control: &WorkContext,
+    work: &mut ExactArithmetic<'_>,
+) -> Result<ParameterOutput> {
     let input = budget.blob(input)?;
     let given = budget.blob(evidence.to_bytes(control)?)?;
     let numerator = budget.blob(function::encoded(numerator.clone(), control, work)?)?;
@@ -216,7 +242,7 @@ pub(super) fn observation(
             .to_bytes(limits().parameters.parameters, work)?,
     )?;
     let value = budget.blob(function::encoded(conditional.clone(), control, work)?)?;
-    Ok(Output::Parameter(ParameterOutput::Observation {
+    Ok(ParameterOutput::Observation {
         kind,
         input,
         given,
@@ -224,7 +250,7 @@ pub(super) fn observation(
         mass,
         value,
         defined,
-    }))
+    })
 }
 
 fn create(

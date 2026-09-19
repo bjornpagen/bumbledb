@@ -9,11 +9,12 @@ mod source;
 mod wire;
 
 pub use source::{
-    AdmittedFamilyDescriptor, AdmittedSourceDescriptor, FamilyDescriptor, FamilyFunctionDescriptor,
-    FamilyKernelDescriptor, FamilyPosteriorDescriptor, FamilyReceiptDescriptor,
-    FamilyRevisionDescriptor, FunctionDescriptor, FunctionPieceDescriptor, KernelDescriptor,
-    ParameterFunctionDescriptor, RefinementDescriptor, RestrictionDescriptor, RevisionDescriptor,
-    RevisionOutcomeDescriptor, RevisionReceiptDescriptor, SourceDescriptor, SourceDescriptorLimits,
+    AdmittedFamilyDescriptor, AdmittedSourceDescriptor, BetaSourceDescriptor, FamilyDescriptor,
+    FamilyFunctionDescriptor, FamilyKernelDescriptor, FamilyPosteriorDescriptor,
+    FamilyReceiptDescriptor, FamilyRevisionDescriptor, FunctionDescriptor, FunctionPieceDescriptor,
+    KernelDescriptor, ParameterFunctionDescriptor, RefinementDescriptor, RestrictionDescriptor,
+    RevisionDescriptor, RevisionOutcomeDescriptor, RevisionReceiptDescriptor, SourceDescriptor,
+    SourceDescriptorLimits,
 };
 
 /// Source and target are canonical full-space BEVT values. Readouts are

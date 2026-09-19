@@ -1,9 +1,9 @@
 //! BESC v2, fixed-depth family grammar. Blobs remain untrusted until replay.
 use super::{
-    Capacity, Error, FamilyDescriptor, FamilyFunctionDescriptor, FamilyKernelDescriptor,
-    FamilyPosteriorDescriptor, FamilyReceiptDescriptor, FamilyRevisionDescriptor,
-    ParameterFunctionDescriptor, RefinementDescriptor, RestrictionDescriptor, Result,
-    SourceDescriptorLimits, SpaceId, roster, shape,
+    BetaSourceDescriptor, Capacity, Error, FamilyDescriptor, FamilyFunctionDescriptor,
+    FamilyKernelDescriptor, FamilyPosteriorDescriptor, FamilyReceiptDescriptor,
+    FamilyRevisionDescriptor, ParameterFunctionDescriptor, RefinementDescriptor,
+    RestrictionDescriptor, Result, SourceDescriptorLimits, SpaceId, roster, shape,
 };
 use crate::descriptor::wire::{Reader, Writer};
 
@@ -32,6 +32,12 @@ impl FamilyDescriptor {
                 out.refinement(&r.refinement)?;
                 out.blob(&r.predicate)?;
                 out.blob(&r.restricted)?;
+            }
+            Self::Beta(b) => {
+                out.put(&[6])?;
+                out.blob(&b.source)?;
+                out.blob(&b.alpha)?;
+                out.blob(&b.beta)?;
             }
             Self::Revision(r) => {
                 out.put(&[5])?;
@@ -99,6 +105,11 @@ impl FamilyDescriptor {
                 })
             }
             5 => Self::Revision(input.family_revision(limits)?),
+            6 => Self::Beta(BetaSourceDescriptor {
+                source: input.blob()?,
+                alpha: input.blob()?,
+                beta: input.blob()?,
+            }),
             _ => return Err(Error::InvalidEncoding),
         })
     }

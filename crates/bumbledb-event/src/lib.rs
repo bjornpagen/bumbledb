@@ -27,6 +27,7 @@ mod measure;
 mod parameter;
 mod partition;
 mod polynomial;
+mod prior;
 mod product;
 mod program;
 mod registry;
@@ -41,12 +42,13 @@ pub use belief::{
 };
 pub use boolean::{BoolOp4, Signature};
 pub use descriptor::{
-    AdmittedDescriptor, AdmittedFamilyDescriptor, AdmittedSourceDescriptor, Descriptor,
-    DescriptorLimits, FamilyDescriptor, FamilyFunctionDescriptor, FamilyKernelDescriptor,
-    FamilyPosteriorDescriptor, FamilyReceiptDescriptor, FamilyRevisionDescriptor, FibreDescriptor,
-    FunctionDescriptor, FunctionPieceDescriptor, KernelDescriptor, MapDescriptor,
-    ParameterFunctionDescriptor, RefinementDescriptor, RestrictionDescriptor, RevisionDescriptor,
-    RevisionOutcomeDescriptor, RevisionReceiptDescriptor, SourceDescriptor, SourceDescriptorLimits,
+    AdmittedDescriptor, AdmittedFamilyDescriptor, AdmittedSourceDescriptor, BetaSourceDescriptor,
+    Descriptor, DescriptorLimits, FamilyDescriptor, FamilyFunctionDescriptor,
+    FamilyKernelDescriptor, FamilyPosteriorDescriptor, FamilyReceiptDescriptor,
+    FamilyRevisionDescriptor, FibreDescriptor, FunctionDescriptor, FunctionPieceDescriptor,
+    KernelDescriptor, MapDescriptor, ParameterFunctionDescriptor, RefinementDescriptor,
+    RestrictionDescriptor, RevisionDescriptor, RevisionOutcomeDescriptor,
+    RevisionReceiptDescriptor, SourceDescriptor, SourceDescriptorLimits,
 };
 pub use diagram::{Diagram, DiagramNode, DiagramView};
 pub use error::{Capacity, Control, Error, Limits, Result};
@@ -70,6 +72,10 @@ pub use parameter::{
 };
 pub use partition::{EventPartition, PartitionLimits};
 pub use polynomial::{ExactPolynomial, ParameterId, PolynomialLimits, PolynomialTerm};
+pub use prior::{
+    BetaExpectationObservation, BetaIntegral, BetaObservation, BetaProbabilityObservation,
+    BetaSource,
+};
 pub use product::{CompleteFibreSquare, FaceProduct, FibreProduct};
 pub use program::{
     EventProgram, EventProgramBuilder, MapOp, ModalOp, ProgramInstruction, ProgramOp, ProgramValue,
@@ -165,3 +171,6 @@ mod parameter_jeffrey_tests;
 
 #[cfg(test)]
 mod family_descriptor_tests;
+
+#[cfg(test)]
+mod prior_tests;

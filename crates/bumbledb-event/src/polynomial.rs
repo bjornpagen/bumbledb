@@ -172,6 +172,56 @@ impl ExactPolynomial {
         op.mul(self, other)
     }
 
+    /// Exact Euclidean division in one named parameter. A nonzero remainder
+    /// means the quotient is not a polynomial; no domain holes are cancelled.
+    /// # Errors
+    /// Other parameters, zero divisor, intermediate limits or cancellation.
+    pub fn div_rem_univariate(
+        &self,
+        divisor: &Self,
+        parameter: ParameterId,
+        limits: PolynomialLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<(Self, Self)> {
+        let mut op = Operation::new(limits, work)?;
+        op.validate(self)?;
+        op.validate(divisor)?;
+        for term in self.terms.iter().chain(&divisor.terms) {
+            op.step()?;
+            if term.powers.iter().any(|&(name, _)| name != parameter) {
+                return Err(Error::NotUnivariate);
+            }
+        }
+        let lead = divisor.terms.last().ok_or(Error::DivisionByZero)?;
+        let degree = |term: &PolynomialTerm| term.powers.first().map_or(0, |p| p.1);
+        let divisor_degree = degree(lead);
+        let mut quotient = Self::zero();
+        let mut remainder = self.clone();
+        while let Some(last) = remainder.terms.last() {
+            op.step()?;
+            if degree(last) < divisor_degree {
+                break;
+            }
+            let exponent = degree(last) - divisor_degree;
+            let coefficient = last.coefficient.div(&lead.coefficient, op.work)?;
+            let term = Self {
+                terms: Box::new([PolynomialTerm {
+                    coefficient,
+                    powers: if exponent == 0 {
+                        Box::new([])
+                    } else {
+                        Box::new([(parameter, exponent)])
+                    },
+                }]),
+            };
+            quotient = op.add(&quotient, &term, false)?;
+            let removed = op.mul(divisor, &term)?;
+            remainder = op.add(&remainder, &removed, true)?;
+        }
+        op.step()?;
+        Ok((quotient, remainder))
+    }
+
     /// Natural power; zero power is one. This creates no outcome coordinates
     /// and makes no independence assertion about experiments.
     /// # Errors

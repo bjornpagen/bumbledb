@@ -802,6 +802,147 @@ fn parameterized_draws() -> Space {
         .unwrap()
 }
 
+fn seed_explicit_beta(db: &Db<SourceSchema>) -> Vec<u8> {
+    use bumbledb::event::{
+        AdmittedFamilyDescriptor, AdmittedSourceDescriptor, BetaSource, ParameterSourceLimits,
+        SourceDescriptor, SourceDescriptorLimits,
+    };
+    let limits = ParameterSourceLimits::default();
+    let descriptors = SourceDescriptorLimits::default();
+    let source = parameterized_draws();
+    let beta =
+        BetaSource::new(&source, ratio(1, 1), ratio(1, 1), limits, &mut arithmetic()).unwrap();
+    let descriptor = SourceDescriptor::capture(
+        &AdmittedSourceDescriptor::Family(Box::new(AdmittedFamilyDescriptor::Beta(beta))),
+        descriptors,
+        &mut arithmetic(),
+    )
+    .unwrap()
+    .to_bytes(descriptors, &())
+    .unwrap();
+    db.write(common::work(), |tx| {
+        tx.insert([
+            &Region {
+                id: 1,
+                condition: source.coordinate(1, &())?,
+            },
+            &Region {
+                id: 2,
+                condition: source.coordinate(2, &())?,
+            },
+        ])?;
+        tx.insert([
+            &Observation {
+                id: 1,
+                condition: source.coordinate(0, &())?,
+            },
+            &Observation {
+                id: 2,
+                condition: source.full(),
+            },
+        ])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    descriptor
+}
+
+#[test]
+fn explicit_beta_binding_of_owned_query_results_preserves_source_after_reopen() {
+    use bumbledb::{
+        ProbabilityValue,
+        event::{
+            AdmittedFamilyDescriptor, AdmittedSourceDescriptor, ParameterSourceLimits,
+            SourceDescriptor, SourceDescriptorLimits,
+        },
+        query,
+    };
+    let limits = ParameterSourceLimits::default();
+    let descriptors = SourceDescriptorLimits::default();
+    let dir = common::TempDir::new("beta-source-query");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let saved = dir.path().join("explicit-prior.besc");
+    std::fs::write(&saved, seed_explicit_beta(&db)).unwrap();
+    drop(db);
+    let db = Db::open(dir.path(), SourceSchema, common::work()).unwrap();
+    let query = query!(SourceSchema {
+        (source_id, chance: Probability(a, b), possible: Event(a)) |
+            Region(id: source_id, condition: a), Observation(id: source_id, condition: b);
+    });
+    let mut retained = Vec::new();
+    for fallback in [false, true] {
+        let mut prepared = db.prepare(&query, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        retained.push(
+            db.read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((db, query));
+    let descriptor = std::fs::read(saved).unwrap();
+    let AdmittedSourceDescriptor::Family(prior) =
+        SourceDescriptor::import(&descriptor, descriptors, &mut arithmetic()).unwrap()
+    else {
+        panic!("family")
+    };
+    let AdmittedFamilyDescriptor::Beta(prior) = *prior else {
+        panic!("prior")
+    };
+    for answers in retained {
+        assert_eq!(answers.len(), 2);
+        for row in 0..answers.len() {
+            let AnswerValue::U64(id) = answers.get(row, 0) else {
+                panic!("id")
+            };
+            let AnswerValue::Probability(answer) = answers.get(row, 1) else {
+                panic!("probability")
+            };
+            let ProbabilityValue::Parameter(original) = answer.value() else {
+                panic!("parameter observation")
+            };
+            let AnswerValue::Event(possible) = answers.get(row, 2) else {
+                panic!("event")
+            };
+            let bound = prior
+                .bind_probability(original, limits, &mut arithmetic())
+                .unwrap();
+            assert!(!possible.is_empty());
+            assert_eq!(
+                bound.original().event().to_bytes(&()).unwrap(),
+                possible.to_bytes(&()).unwrap()
+            );
+            assert_eq!(
+                bound.value(),
+                Some(&if id == 1 { ratio(2, 3) } else { ratio(0, 1) })
+            );
+            if id == 1 {
+                assert_eq!(
+                    bound
+                        .original()
+                        .value_at(&ratio(0, 1), limits, &mut arithmetic())
+                        .unwrap(),
+                    None
+                );
+                assert_eq!(bound.evidence_mass().value(), &ratio(1, 2));
+            } else {
+                assert!(!bound.numerator().exceptions().is_empty());
+                assert_eq!(
+                    bound
+                        .original()
+                        .value_at(&ratio(0, 1), limits, &mut arithmetic())
+                        .unwrap(),
+                    Some(ratio(1, 1))
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn shared_unknown_parameter_survives_reopen_both_free_join_paths_and_owner_release() {
     use bumbledb::{

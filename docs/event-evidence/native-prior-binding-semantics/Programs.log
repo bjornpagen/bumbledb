@@ -1,0 +1,13 @@
+'Programs.permits_iff_bounds' does not depend on any axioms
+'Programs.complement_sound' depends on axioms: [propext, Quot.sound]
+'Programs.binary_sound' does not depend on any axioms
+'Programs.ternary_sound' does not depend on any axioms
+'Programs.pullback_is_monotone' does not depend on any axioms
+'Programs.existential_readout_is_monotone' does not depend on any axioms
+'Programs.universal_readout_is_monotone' does not depend on any axioms
+'Programs.enabled_readout_is_monotone' depends on axioms: [propext]
+'Programs.monotone_transports_variance' does not depend on any axioms
+'Programs.program_variance_sound' depends on axioms: [propext, Quot.sound]
+'Programs.sealed_program_is_monotone' depends on axioms: [propext, Quot.sound]
+'Programs.negation_is_refused' does not depend on any axioms
+'Programs.double_negation_is_admitted' does not depend on any axioms

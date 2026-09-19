@@ -7,6 +7,78 @@ use crate::*;
 fn dl() -> SourceDescriptorLimits {
     SourceDescriptorLimits::default()
 }
+
+#[test]
+fn beta_transport_replays_scope_shapes_and_measured_source_without_erasing_worlds() {
+    let source = shared_bias();
+    let prior = BetaSource::new(&source, 2u64.into(), 3u64.into(), limits(), &mut work()).unwrap();
+    let descriptor = capture(AdmittedFamilyDescriptor::Beta(prior));
+    let bytes = descriptor.to_bytes(dl(), &()).unwrap();
+    assert_eq!(&bytes[..6], b"BESC\x02\x06");
+    let AdmittedFamilyDescriptor::Beta(restored) = restore(&descriptor) else {
+        panic!("Beta source")
+    };
+    let a = source.coordinate(0, &()).unwrap();
+    let b = source.coordinate(1, &()).unwrap();
+    assert_eq!(
+        restored
+            .probability(&b, &a, limits(), &mut work())
+            .unwrap()
+            .value(),
+        Some(&ratio("1", "2"))
+    );
+    assert_eq!(
+        restored.source().full().to_bytes(&()).unwrap(),
+        source.full().to_bytes(&()).unwrap()
+    );
+    for mutation in 0..5 {
+        let mut bad = descriptor.clone();
+        let FamilyDescriptor::Beta(data) = family(&mut bad) else {
+            panic!("Beta descriptor")
+        };
+        match mutation {
+            0 => data.alpha = ExactRational::zero().to_bytes(&mut work()).unwrap(),
+            1 => data.beta = ratio("-1", "2").to_bytes(&mut work()).unwrap(),
+            2 => data.source = a.to_bytes(&()).unwrap(),
+            3 => data.source = space(231, 2, &[]).full().to_bytes(&()).unwrap(),
+            _ => data.alpha.push(0),
+        }
+        assert!(bad.admit(dl(), &mut work()).is_err());
+    }
+    for cut in 0..bytes.len() {
+        assert!(SourceDescriptor::import(&bytes[..cut], dl(), &mut work()).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(SourceDescriptor::import(&trailing, dl(), &mut work()).is_err());
+    assert!(matches!(
+        SourceDescriptor::import(
+            &bytes,
+            SourceDescriptorLimits {
+                descriptors: DescriptorLimits {
+                    items: 3,
+                    ..dl().descriptors
+                },
+                ..dl()
+            },
+            &mut work()
+        ),
+        Err(Error::Capacity(Capacity::DescriptorItems))
+    ));
+    let mut probe = work();
+    SourceDescriptor::import(&bytes, dl(), &mut probe).unwrap();
+    let mut bounded = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: probe.operations() - 1,
+            ..ArithmeticLimits::default()
+        },
+        &(),
+    );
+    assert!(matches!(
+        SourceDescriptor::import(&bytes, dl(), &mut bounded),
+        Err(Error::Capacity(Capacity::ArithmeticSteps))
+    ));
+}
 fn coefficient(s: &Space, n: ExactPolynomial, d: ExactPolynomial) -> GuardedRationalFunction {
     GuardedRationalFunction::new(
         s.parameter_domain().unwrap().clone(),

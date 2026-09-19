@@ -20,6 +20,7 @@ mod dynamics;
 mod family;
 mod function;
 mod output;
+mod prior;
 mod refinement;
 mod region;
 mod root;
@@ -29,6 +30,7 @@ type Result<T> = bumbledb::event::Result<T>;
 
 #[derive(Clone, Copy)]
 enum Op {
+    Prior(prior::Op),
     Region(region::Op),
     Root(root::Op),
     Function(function::Op),
@@ -39,6 +41,9 @@ enum Op {
 }
 impl Op {
     fn parse(name: &str) -> Option<Self> {
+        if let Some(name) = name.strip_prefix("prior.") {
+            return prior::Op::parse(name).map(Self::Prior);
+        }
         if let Some(name) = name.strip_prefix("region.") {
             return region::Op::parse(name).map(Self::Region);
         }
@@ -61,6 +66,7 @@ impl Op {
     }
     fn valid(self, count: usize, argument: u8) -> bool {
         match self {
+            Self::Prior(op) => op.valid(count, argument),
             Self::Region(op) => op.valid(count, argument),
             Self::Root(op) => op.valid(count, argument),
             Self::Function(op) => op.valid(count, argument),
@@ -135,6 +141,7 @@ fn execute(
         return Err(Error::InvalidEncoding);
     }
     match op {
+        Op::Prior(op) => prior::execute(op, inputs, control, work),
         Op::Region(op) => region::execute(op, inputs, argument, work),
         Op::Root(op) => root::execute(op, inputs, work),
         Op::Function(op) => function::execute(op, inputs, argument, control, work),

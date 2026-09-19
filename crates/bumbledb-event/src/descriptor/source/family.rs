@@ -3,10 +3,10 @@
 use super::{Budget, SourceDescriptorLimits, claim, shape};
 use crate::parameter::source::wire::{decode_function, encode_function};
 use crate::{
-    Capacity, Control, Error, ExactArithmetic, FamilyFunction, FamilyFunctionPiece, FamilyKernel,
-    MapDescriptor, ParameterConditioning, ParameterDomain, ParameterFunction, ParameterJeffrey,
-    ParameterLikelihood, ParameterRefinement, ParameterRegion, ParameterRestriction, Result, Space,
-    SpaceId,
+    BetaSource, Capacity, Control, Error, ExactArithmetic, ExactRational, FamilyFunction,
+    FamilyFunctionPiece, FamilyKernel, MapDescriptor, ParameterConditioning, ParameterDomain,
+    ParameterFunction, ParameterJeffrey, ParameterLikelihood, ParameterRefinement, ParameterRegion,
+    ParameterRestriction, Result, Space, SpaceId,
 };
 
 mod revision;
@@ -45,6 +45,13 @@ pub struct RestrictionDescriptor {
     pub predicate: Vec<u8>,
     pub restricted: Vec<u8>,
 }
+/// Explicit Beta commitment retaining the original full measured source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BetaSourceDescriptor {
+    pub source: Vec<u8>,
+    pub alpha: Vec<u8>,
+    pub beta: Vec<u8>,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FamilyDescriptor {
     Parameter(ParameterFunctionDescriptor),
@@ -53,6 +60,7 @@ pub enum FamilyDescriptor {
     Refinement(RefinementDescriptor),
     Restriction(RestrictionDescriptor),
     Revision(FamilyRevisionDescriptor),
+    Beta(BetaSourceDescriptor),
 }
 #[derive(Debug, Clone)]
 pub enum AdmittedFamilyDescriptor {
@@ -64,6 +72,7 @@ pub enum AdmittedFamilyDescriptor {
     Conditioning(ParameterConditioning),
     Likelihood(ParameterLikelihood),
     Jeffrey(ParameterJeffrey),
+    Beta(BetaSource),
 }
 
 fn blob(value: Vec<u8>, budget: &mut Budget) -> Result<Vec<u8>> {
@@ -395,6 +404,37 @@ impl RestrictionDescriptor {
     }
 }
 
+impl BetaSourceDescriptor {
+    fn capture(
+        value: &BetaSource,
+        budget: &mut Budget,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        budget.item(0)?;
+        Ok(Self {
+            source: budget.event(&value.source().full(), work.control())?,
+            alpha: blob(value.alpha().to_bytes(work)?, budget)?,
+            beta: blob(value.beta().to_bytes(work)?, budget)?,
+        })
+    }
+    fn preflight(&self, budget: &mut Budget) -> Result<()> {
+        budget.item(0)?;
+        budget.item(self.source.len())?;
+        budget.item(self.alpha.len())?;
+        budget.item(self.beta.len())
+    }
+    fn admit(
+        &self,
+        limits: SourceDescriptorLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<BetaSource> {
+        let source = full(&self.source, limits, work)?;
+        let alpha = ExactRational::from_bytes(&self.alpha, work)?;
+        let beta = ExactRational::from_bytes(&self.beta, work)?;
+        BetaSource::new(&source, alpha, beta, limits.parameters, work)
+    }
+}
+
 impl FamilyDescriptor {
     pub(super) fn capture(
         value: &AdmittedFamilyDescriptor,
@@ -422,6 +462,9 @@ impl FamilyDescriptor {
             AdmittedFamilyDescriptor::Restriction(r) => {
                 Self::Restriction(RestrictionDescriptor::capture(r, limits, budget, work)?)
             }
+            AdmittedFamilyDescriptor::Beta(b) => {
+                Self::Beta(BetaSourceDescriptor::capture(b, budget, work)?)
+            }
             r => Self::Revision(FamilyRevisionDescriptor::capture(r, limits, budget, work)?),
         })
     }
@@ -442,6 +485,7 @@ impl FamilyDescriptor {
             Self::Refinement(r) => r.preflight(budget, control),
             Self::Restriction(r) => r.preflight(budget, control),
             Self::Revision(r) => r.preflight(limits, budget, control),
+            Self::Beta(b) => b.preflight(budget),
         }
     }
     pub(super) fn admit(
@@ -465,6 +509,7 @@ impl FamilyDescriptor {
             Self::Refinement(r) => AdmittedFamilyDescriptor::Refinement(r.admit(limits, work)?),
             Self::Restriction(r) => AdmittedFamilyDescriptor::Restriction(r.admit(limits, work)?),
             Self::Revision(r) => r.admit(limits, work)?,
+            Self::Beta(b) => AdmittedFamilyDescriptor::Beta(b.admit(limits, work)?),
         })
     }
 }

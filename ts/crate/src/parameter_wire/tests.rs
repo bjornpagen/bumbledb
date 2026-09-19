@@ -167,6 +167,118 @@ fn parameter_structured_payloads_refuse_combined_output_overflow() {
     ));
 }
 
+fn prior_inputs(control: &WorkContext, work: &mut ExactArithmetic<'_>) -> [Vec<u8>; 3] {
+    use bumbledb::event::{BoolOp4, FamilyFunction, GuardedRationalFunction, Space, SpaceId};
+    let name = ParameterId([77; 32]);
+    let p = ExactPolynomial::parameter(name);
+    let tail = ExactPolynomial::one()
+        .sub(&p, limits().parameters.parameters.region.polynomial, work)
+        .unwrap();
+    let low = ParameterRegion::from_polynomial(
+        name,
+        &p,
+        PolynomialSigns::NON_NEGATIVE,
+        limits().parameters.parameters.region,
+        work,
+    )
+    .unwrap();
+    let high = ParameterRegion::from_polynomial(
+        name,
+        &tail,
+        PolynomialSigns::NON_NEGATIVE,
+        limits().parameters.parameters.region,
+        work,
+    )
+    .unwrap();
+    let domain = ParameterDomain::new(
+        low.apply(
+            BoolOp4::AND,
+            &high,
+            limits().parameters.parameters.region,
+            work,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let source = Space::new(SpaceId([78; 32]), 0, control)
+        .unwrap()
+        .with_parameters(domain.clone(), &[], limits().parameters, work)
+        .unwrap();
+    let one = GuardedRationalFunction::new(
+        domain,
+        ExactPolynomial::one(),
+        ExactPolynomial::one(),
+        limits().parameters.parameters.region,
+        work,
+    )
+    .unwrap();
+    let source = FamilyFunction::constant(&source, one, limits().parameters, work)
+        .unwrap()
+        .designate(limits().parameters, work)
+        .unwrap();
+    let full = source.full().to_bytes(control).unwrap();
+    let shape = ExactRational::one().to_bytes(work).unwrap();
+    let beta = take_bytes(
+        run(
+            "prior.new",
+            &[full.clone(), shape.clone(), shape],
+            control,
+            work,
+        )
+        .unwrap(),
+    );
+    [beta, full.clone(), full]
+}
+
+#[test]
+fn prior_observations_share_admission_contraction_and_output_work() {
+    let control = WorkContext::new();
+    let mut work = ExactArithmetic::new(ArithmeticLimits::default(), &control);
+    let inputs = prior_inputs(&control, &mut work);
+    let mut probe = ExactArithmetic::new(ArithmeticLimits::default(), &control);
+    bumbledb::event::SourceDescriptor::import(&inputs[0], limits(), &mut probe).unwrap();
+    let mut bounded = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: probe.operations(),
+            ..ArithmeticLimits::default()
+        },
+        &control,
+    );
+    assert!(matches!(
+        run("prior.probability", &inputs, &control, &mut bounded),
+        Err(Error::Capacity(Capacity::ArithmeticSteps))
+    ));
+    let result = run("prior.probability", &inputs, &control, &mut work).unwrap();
+    let Output::Parameter(ParameterOutput::Prior(details)) = result else {
+        panic!("prior details")
+    };
+    let prior::Details::Observation {
+        original, value, ..
+    } = *details
+    else {
+        panic!("prior observation")
+    };
+    assert_eq!(
+        rational(value.as_ref().unwrap(), &mut work).unwrap(),
+        ExactRational::one()
+    );
+    assert!(matches!(
+        *original,
+        ParameterOutput::Observation {
+            kind: "probability",
+            ..
+        }
+    ));
+    assert!(!Op::parse("prior.probability").unwrap().valid(2, 0));
+    assert!(!Op::parse("prior.new").unwrap().valid(3, 1));
+    assert!(Op::parse("prior.implicit").is_none());
+    control.cancel();
+    assert!(matches!(
+        run("prior.probability", &inputs, &control, &mut work),
+        Err(Error::Cancelled)
+    ));
+}
+
 #[test]
 fn family_observations_share_nested_admission_work_and_keep_owned_inputs() {
     use bumbledb::event::{

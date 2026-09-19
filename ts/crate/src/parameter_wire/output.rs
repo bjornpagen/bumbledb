@@ -29,6 +29,7 @@ pub struct FunctionPiece {
     pub defined: Vec<u8>,
 }
 pub enum ParameterOutput {
+    Prior(Box<super::prior::Details>),
     Dynamics(super::dynamics::Details),
     Region {
         parameter: [u8; 32],
@@ -163,6 +164,7 @@ impl napi::bindgen_prelude::ToNapiValue for ParameterOutput {
                 }
                 object.set("pieces", values)?;
             }
+            Self::Prior(details) => object = details.object(&handle)?,
             Self::Dynamics(details) => object = details.object(&handle)?,
             other => object = other.source_object(&handle)?,
         }
@@ -172,7 +174,7 @@ impl napi::bindgen_prelude::ToNapiValue for ParameterOutput {
 }
 
 impl ParameterOutput {
-    fn source_object(self, handle: &Env) -> napi::Result<Object<'_>> {
+    pub(super) fn source_object(self, handle: &Env) -> napi::Result<Object<'_>> {
         let mut object = Object::new(handle)?;
         match self {
             Self::Source {

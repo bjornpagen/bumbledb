@@ -1,5 +1,13 @@
 export type { AlgebraicRootDescription } from "#algebraic-root.ts"
 export { AlgebraicRoot } from "#algebraic-root.ts"
+export type {
+	BetaExpectationObservation,
+	BetaIntegral,
+	BetaObservation,
+	BetaProbabilityObservation,
+	BetaSourceDescription
+} from "#beta-source.ts"
+export { BetaSource } from "#beta-source.ts"
 export { Event } from "#event.ts"
 export { ExactRational } from "#exact.ts"
 export type { FamilyFunctionDescription, FamilyFunctionPiece } from "#family-function.ts"
