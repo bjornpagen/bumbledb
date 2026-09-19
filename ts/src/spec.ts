@@ -204,7 +204,7 @@ function renderLiteral(literal: LiteralSpec): string {
 			return `${out}"`
 		}
 		case "event":
-			return `event:${Array.from(value.value, byte => byte.toString(16).padStart(2, "0")).join("")}`
+			return `event:${Array.from(value.value, (byte) => byte.toString(16).padStart(2, "0")).join("")}`
 		case "intervalU64":
 		case "intervalI64":
 			return `${value.start}..${value.end}`
@@ -274,10 +274,10 @@ export type {
 	FieldSpec,
 	LiteralSetSpec,
 	LiteralSpec,
+	ProjectionSpec,
 	RelationSpec,
 	RowSpec,
 	SchemaSpec,
-	ProjectionSpec,
 	SideSpec,
 	StatementSpec,
 	ValueSpec,

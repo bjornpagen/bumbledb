@@ -174,6 +174,7 @@ fn fill_resident_rows<'a>(
         if let Some(kind) = match column {
             SignatureColumn::ProjectObservation(kind) => Some(*kind),
             SignatureColumn::Number => Some(crate::ir::validate::ObservationKind::Number),
+            SignatureColumn::Predicate => Some(crate::ir::validate::ObservationKind::Predicate),
             _ => None,
         } {
             let mut answers = answers.clone();
@@ -379,6 +380,7 @@ fn push_resolved_answer(
         if let Some(kind) = match column {
             SignatureColumn::ProjectObservation(kind) => Some(*kind),
             SignatureColumn::Number => Some(crate::ir::validate::ObservationKind::Number),
+            SignatureColumn::Predicate => Some(crate::ir::validate::ObservationKind::Predicate),
             _ => None,
         } {
             let cell = out.observed_cell(observations, kind, answer[word])?;

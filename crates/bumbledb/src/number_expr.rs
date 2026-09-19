@@ -109,7 +109,8 @@ impl std::fmt::Display for NumberExprError {
 impl std::error::Error for NumberExprError {}
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum NumberInputKind {
+pub(crate) enum ObservationInputKind {
+    Predicate,
     Number,
     Integer,
     Observation,
@@ -142,23 +143,33 @@ impl NumberExpr {
     /// also keeps every variable occurrence, including zero/undefined branches.
     pub(crate) fn inputs(
         &self,
-    ) -> std::result::Result<Vec<(VarId, NumberInputKind)>, NumberExprError> {
-        let mut pending = vec![(self, 1usize)];
-        let mut nodes = 0usize;
+    ) -> std::result::Result<Vec<(VarId, ObservationInputKind)>, NumberExprError> {
+        let mut nodes = 0;
         let mut inputs = Vec::new();
+        self.collect_inputs(1, &mut nodes, &mut inputs)?;
+        Ok(inputs)
+    }
+
+    pub(crate) fn collect_inputs(
+        &self,
+        depth: usize,
+        nodes: &mut usize,
+        inputs: &mut Vec<(VarId, ObservationInputKind)>,
+    ) -> std::result::Result<(), NumberExprError> {
+        let mut pending = vec![(self, depth)];
         while let Some((node, depth)) = pending.pop() {
             if depth > 256 {
                 return Err(NumberExprError::TooDeep);
             }
-            nodes += 1;
-            if nodes > 65_536 {
+            *nodes += 1;
+            if *nodes > 65_536 {
                 return Err(NumberExprError::TooLarge);
             }
             match node {
-                Self::Var(var) => inputs.push((*var, NumberInputKind::Number)),
-                Self::Integer(var) => inputs.push((*var, NumberInputKind::Integer)),
+                Self::Var(var) => inputs.push((*var, ObservationInputKind::Number)),
+                Self::Integer(var) => inputs.push((*var, ObservationInputKind::Integer)),
                 Self::Component { observation, .. } => {
-                    inputs.push((*observation, NumberInputKind::Observation));
+                    inputs.push((*observation, ObservationInputKind::Observation));
                 }
                 Self::Literal(_) | Self::Imported(_) => {}
                 Self::Binary { left, right, .. } => {
@@ -171,12 +182,12 @@ impl NumberExpr {
                 | Self::OnDomain { value, .. } => pending.push((value, depth + 1)),
             }
         }
-        Ok(inputs)
+        Ok(())
     }
 
     pub(crate) fn evaluate(
         &self,
-        mut operand: impl FnMut(VarId) -> Result<NumberOperand>,
+        mut operand: impl FnMut(VarId) -> Result<ObservationOperand>,
         limits: &ObservationNumberCodecLimits,
         work: &mut ExactArithmetic<'_>,
     ) -> Result<ObservationNumber> {
@@ -206,14 +217,14 @@ impl NumberExpr {
             } else {
                 match node {
                     Self::Var(var) => {
-                        let NumberOperand::Number(value) = operand(*var)? else {
+                        let ObservationOperand::Number(value) = operand(*var)? else {
                             return Err(Error::InvalidEncoding.into());
                         };
                         value.value().validate(limits.numbers.numbers, work)?;
                         value
                     }
                     Self::Integer(var) => {
-                        let NumberOperand::Integer(value) = operand(*var)? else {
+                        let ObservationOperand::Integer(value) = operand(*var)? else {
                             return Err(Error::InvalidEncoding.into());
                         };
                         ObservationNumber::literal(value, limits.numbers, work)?
@@ -222,10 +233,10 @@ impl NumberExpr {
                         observation,
                         component,
                     } => match operand(*observation)? {
-                        NumberOperand::Probability(value) => {
+                        ObservationOperand::Probability(value) => {
                             ObservationNumber::probability(value, *component, limits.numbers, work)?
                         }
-                        NumberOperand::Expectation(value) => {
+                        ObservationOperand::Expectation(value) => {
                             ObservationNumber::expectation(value, *component, limits.numbers, work)?
                         }
                         _ => return Err(Error::InvalidEncoding.into()),
@@ -264,7 +275,8 @@ impl NumberExpr {
     }
 }
 
-pub(crate) enum NumberOperand {
+pub(crate) enum ObservationOperand {
+    Predicate(crate::ObservationPredicate),
     Number(ObservationNumber),
     Integer(ExactRational),
     Probability(crate::ProbabilityAnswer),

@@ -29,6 +29,7 @@ use crate::ingress::query::{
 use crate::ingress::{CopyContext, ImportInput, ParamInput, ValueInput};
 use crate::tags;
 mod numbers;
+mod predicates;
 
 /// LMDB/file measurements, not process heap or mapped-page residency.
 pub(crate) fn storage_report<'env>(
@@ -1393,6 +1394,31 @@ fn find_term_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<FindTerm> 
     let kind: String = req_text(obj, "kind", "find term")?;
     match kind.as_str() {
         tags::find_term::VAR => Ok(FindTerm::Var(var_in(obj, "var", "var find")?)),
+        tags::find_term::PREDICATE | tags::find_term::PREDICATE_TEST => {
+            if kind == tags::find_term::PREDICATE {
+                exact_fields(obj, &["kind", "expr"])?;
+            } else {
+                exact_fields(obj, &["kind", "expr", "quantifier"])?;
+            }
+            let predicate = predicates::parse(
+                &req::<Object>(obj, "expr", "predicate find")?,
+                1,
+                &mut EventBudget::new(copy),
+            )?;
+            if kind == tags::find_term::PREDICATE {
+                return Ok(FindTerm::Predicate(predicate));
+            }
+            let quantifier = match req_text(obj, "quantifier", "predicate quantifier")?.as_str() {
+                "possibly" => bumbledb::PredicateQuantifier::Possibly,
+                "always" => bumbledb::PredicateQuantifier::Always,
+                "isTotal" => bumbledb::PredicateQuantifier::IsTotal,
+                _ => return Err(err("unknown predicate quantifier".into())),
+            };
+            Ok(FindTerm::PredicateTest {
+                predicate,
+                quantifier,
+            })
+        }
         tags::find_term::NUMBER => {
             exact_fields(obj, &["kind", "expr"])?;
             let expr: Object = req(obj, "expr", "number find")?;
@@ -1791,6 +1817,7 @@ pub(crate) fn query_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<Que
 
 #[derive(Debug)]
 pub enum ValueOut {
+    Predicate(Box<crate::query_predicate::PredicateOutput>),
     Number(Box<crate::query_number::NumberOutput>),
     Probability(Box<crate::query_probability::ProbabilityOutput>),
     Expectation(Box<crate::query_expectation::ExpectationOutput>),
@@ -1867,6 +1894,11 @@ impl ToNapiValue for ValueOut {
     // against it lines above.
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
         match val {
+            Self::Predicate(v) => {
+                let handle = Env::from_raw(env);
+                let object = v.object(&handle)?;
+                unsafe { Object::to_napi_value(env, object) }
+            }
             Self::Number(v) => {
                 let handle = Env::from_raw(env);
                 let object = v.object(&handle)?;
@@ -1937,6 +1969,9 @@ fn value_out_from_answer(
     Ok(match value {
         AnswerValue::Expectation(v) => ValueOut::Expectation(Box::new(
             crate::query_expectation::ExpectationOutput::new(v, control, budget)?,
+        )),
+        AnswerValue::Predicate(v) => ValueOut::Predicate(Box::new(
+            crate::query_predicate::PredicateOutput::new(v, control, budget)?,
         )),
         AnswerValue::Number(v) => ValueOut::Number(Box::new(
             crate::query_number::NumberOutput::new(v, control, budget)?,

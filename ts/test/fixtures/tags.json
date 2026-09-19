@@ -48,6 +48,8 @@
 		"probability",
 		"expectation",
 		"number",
+		"predicate",
+		"predicateTest",
 		"count",
 		"aggregate",
 		"pack"

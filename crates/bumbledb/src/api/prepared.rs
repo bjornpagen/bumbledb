@@ -170,6 +170,7 @@ impl<'a> BindArgs<'a> for &'a Vec<ParamArg<'a>> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnswerValue<'a> {
     Number(&'a crate::ObservationNumberImport),
+    Predicate(&'a crate::ObservationPredicateImport),
     Probability(&'a crate::ProbabilityAnswer),
     Expectation(&'a crate::ExpectationAnswer),
     Event(&'a crate::Event),
@@ -199,6 +200,7 @@ pub enum AnswerValue<'a> {
 #[derive(Debug, Clone, Copy)]
 enum Cell {
     Number(usize),
+    Predicate(usize),
     Observed {
         kind: crate::ir::validate::ObservationKind,
         token: u64,
@@ -241,6 +243,7 @@ pub struct Answers {
     blob: Vec<u8>,
     events: Vec<crate::Event>,
     numbers: Vec<crate::ObservationNumberImport>,
+    predicates: Vec<crate::ObservationPredicateImport>,
     observed: observations::ObservationRegistry,
     probabilities: Vec<crate::ProbabilityAnswer>,
     expectations: Vec<crate::ExpectationAnswer>,

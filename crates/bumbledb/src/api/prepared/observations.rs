@@ -9,6 +9,8 @@ use crate::{AnswerValue, ExpectationAnswer, ProbabilityAnswer, Result};
 
 #[derive(Debug, Default)]
 pub(super) struct ObservationRegistry {
+    predicates: Vec<crate::ObservationPredicateImport>,
+    predicate_keys: std::collections::HashMap<crate::ObservationPredicateImport, u64>,
     numbers: Vec<crate::ObservationNumberImport>,
     number_keys: std::collections::HashMap<crate::ObservationNumberImport, u64>,
     probabilities: Vec<ProbabilityAnswer>,
@@ -22,17 +24,21 @@ impl ObservationRegistry {
         *self = Self::default();
     }
 
-    pub(super) fn checkpoint(&self) -> (usize, usize, usize) {
+    pub(super) fn checkpoint(&self) -> (usize, usize, usize, usize) {
         (
             self.probabilities.len(),
             self.expectations.len(),
             self.numbers.len(),
+            self.predicates.len(),
         )
     }
     pub(super) fn rollback(
         &mut self,
-        (probabilities, expectations, numbers): (usize, usize, usize),
+        (probabilities, expectations, numbers, predicates): (usize, usize, usize, usize),
     ) {
+        self.predicates.truncate(predicates);
+        self.predicate_keys
+            .retain(|_, token| *token < predicates as u64);
         self.numbers.truncate(numbers);
         self.number_keys.retain(|_, token| *token < numbers as u64);
         self.probabilities.truncate(probabilities);
@@ -46,6 +52,7 @@ impl ObservationRegistry {
     pub(super) fn get(&self, kind: ObservationKind, token: u64) -> Result<AnswerValue<'_>> {
         let index = usize::try_from(token).map_err(|_| crate::event::Error::UnknownKey)?;
         match kind {
+            ObservationKind::Predicate => self.predicates.get(index).map(AnswerValue::Predicate),
             ObservationKind::Number => self.numbers.get(index).map(AnswerValue::Number),
             ObservationKind::Probability => {
                 self.probabilities.get(index).map(AnswerValue::Probability)
@@ -59,11 +66,32 @@ impl ObservationRegistry {
 
     pub(super) fn copy(&mut self, value: AnswerValue<'_>) -> Result<u64> {
         match value {
+            AnswerValue::Predicate(value) => self.insert_predicate(value.clone()),
             AnswerValue::Number(value) => self.insert_number(value.clone()),
             AnswerValue::Probability(value) => self.insert_probability(value.clone()),
             AnswerValue::Expectation(value) => self.insert_expectation(value.clone()),
             _ => unreachable!("observation registry resolves only observations"),
         }
+    }
+
+    pub(super) fn insert_predicate(
+        &mut self,
+        value: crate::ObservationPredicateImport,
+    ) -> Result<u64> {
+        if let Some(token) = self.predicate_keys.get(&value) {
+            return Ok(*token);
+        }
+        self.predicates
+            .try_reserve(1)
+            .map_err(crate::event::Error::from)?;
+        self.predicate_keys
+            .try_reserve(1)
+            .map_err(crate::event::Error::from)?;
+        let token =
+            u64::try_from(self.predicates.len()).map_err(|_| crate::Error::ResultBytesOverflow)?;
+        self.predicates.push(value.clone());
+        self.predicate_keys.insert(value, token);
+        Ok(token)
     }
 
     pub(super) fn insert_number(&mut self, value: crate::ObservationNumberImport) -> Result<u64> {
@@ -178,6 +206,11 @@ impl ObservationRegistry {
                 }
                 SignatureColumn::ProjectObservation(kind) => {
                     self.get(*kind, row[offset])?;
+                    out.push(row[offset]);
+                    offset += 1;
+                }
+                SignatureColumn::Predicate => {
+                    self.get(ObservationKind::Predicate, row[offset])?;
                     out.push(row[offset]);
                     offset += 1;
                 }

@@ -221,6 +221,8 @@ fn rule_arms(
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
                 | FindTerm::Number(_)
+                | FindTerm::Predicate(_)
+                | FindTerm::PredicateTest { .. }
                 | FindTerm::Expectation { .. } => {
                     return Err("computed heads are not translated to SQL".into());
                 }

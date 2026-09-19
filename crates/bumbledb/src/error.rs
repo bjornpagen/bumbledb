@@ -564,6 +564,10 @@ pub enum ValidationError {
         find: FindIndex,
         source: crate::NumberExprError,
     },
+    PredicateExpression {
+        find: FindIndex,
+        source: crate::NumberExprError,
+    },
     EventExpression {
         find: FindIndex,
         source: crate::EventExprError,

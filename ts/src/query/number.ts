@@ -181,3 +181,12 @@ export function numberFromIr(input: NumberExprIr, variableAt: (v: number) => Any
 	}
 	return walk(input)
 }
+
+/** Internal composition boundary: predicate shape accounting includes numeric children. */
+export function asNumberExpr(input: NumberOperand): NumberExpr {
+	if (isNumberExpr(input)) return input
+	return own({ kind: "var", var: variable(input, ["number"]) })
+}
+export function numberShape(input: NumberExpr): Readonly<{ nodes: number; depth: number; bytes: number }> {
+	return data(input)
+}

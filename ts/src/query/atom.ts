@@ -5,6 +5,7 @@ import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type { QueryNode } from "#query/compute.ts"
 import type { EventFind } from "#query/event.ts"
 import type { NumberExpr } from "#query/number.ts"
+import type { PredicateExpr, PredicateTest } from "#query/predicate.ts"
 import type {
 	AntiJoinOk,
 	AnyVar,
@@ -82,6 +83,8 @@ type FindEntryData =
 	| Segments
 	| EventFind
 	| NumberExpr
+	| PredicateExpr
+	| PredicateTest
 	| { readonly kind: "var"; readonly over: AnyVar }
 	| { readonly kind: "aggregate"; readonly agg: AggData }
 	| { readonly kind: "compute"; readonly expr: QueryNode; readonly result: ScalarKind }

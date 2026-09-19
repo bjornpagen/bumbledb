@@ -421,7 +421,8 @@ fn family_observations_keep_their_parameter_holes_after_staging_and_owner_releas
         use payoff utility = &utility;
         interior observed(id, chance: Probability(region, given), expected: Expectation(Payoff(utility), region, given)) | Trial(id, region, given);
         interior copied(chance, expected, zero: Number(0 * Value(expected)), difference: Number(Value(chance) - Value(chance)), power: Number(Pow(Value(chance),0))) | observed(1: chance, 2: expected);
-        (chance, expected, zero, difference, power) | copied(chance, expected, zero, difference, power);
+        interior truths(chance, expected, zero, difference, power, verdict: Predicate(Value(expected) > 1/2), missing: Predicate(Bool4(15,Value(chance)>0,Value(expected)>0))) | copied(chance, expected, zero, difference, power);
+        (chance, expected, zero, difference, power, verdict, missing, total: PredicateTest(IsTotal(verdict))) | truths(chance, expected, zero, difference, power, verdict, missing);
     });
     let mut retained = Vec::new();
     for fallback in [false, true] {
@@ -471,6 +472,47 @@ fn family_observations_keep_their_parameter_holes_after_staging_and_owner_releas
             Some(q(1, 3))
         );
         assert_eq!(&evidence, mean.evidence());
+        assert_eq!(answers.get(0, 7), AnswerValue::Bool(false));
+        for column in [5, 6] {
+            let AnswerValue::Predicate(value) = answers.get(0, column) else {
+                panic!("predicate")
+            };
+            let bumbledb::event::NumberPredicateView::Parameter {
+                holds,
+                fails,
+                undefined,
+                ..
+            } = value.value().predicate().view()
+            else {
+                panic!("parameter")
+            };
+            for (point, expected) in [
+                (q(0, 1), None),
+                (q(1, 3), Some(column == 6)),
+                (q(3, 4), Some(true)),
+            ] {
+                let witness = bumbledb::event::RealWitness::Rational(point);
+                for (region, truth) in
+                    [(holds, Some(true)), (fails, Some(false)), (undefined, None)]
+                {
+                    assert_eq!(
+                        region
+                            .contains(&witness, limits.parameters.region, &mut arithmetic())
+                            .unwrap(),
+                        truth == expected
+                    );
+                }
+            }
+            assert_eq!(
+                *value,
+                bumbledb::ObservationPredicateImport::from_bytes(
+                    value.bytes(),
+                    bumbledb::ObservationNumberCodecLimits::default(),
+                    &mut arithmetic()
+                )
+                .unwrap()
+            );
+        }
         for (column, expected) in [(2, 0), (3, 0), (4, 1)] {
             let AnswerValue::Number(number) = answers.get(0, column) else {
                 panic!("number")

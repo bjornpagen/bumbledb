@@ -177,6 +177,7 @@ export type {
 	ViolationFact
 } from "#native.ts"
 export { ObservationNumber } from "#observation-number.ts"
+export { ObservationPredicate } from "#observation-predicate.ts"
 export type { NonemptyProjection, ProjectionTerm } from "#projection.ts"
 export type { FindColumn } from "#query/atom.ts"
 export { ALLEN } from "#query/atom.ts"
@@ -223,6 +224,8 @@ export type {
 export { lowerQuery, query } from "#query/lower.ts"
 export { NumberExpr, type NumberOperand } from "#query/number.ts"
 export { type NumberAnswer, type NumberResult, numberResult } from "#query/number-result.ts"
+export { PredicateExpr, type PredicateOperand, PredicateTest } from "#query/predicate.ts"
+export { type PredicateAnswer, type PredicateResult, predicateResult } from "#query/predicate-result.ts"
 export type { ProbabilityAnswer, ProbabilityResult } from "#query/probability.ts"
 export { probabilityResult } from "#query/probability.ts"
 export type {

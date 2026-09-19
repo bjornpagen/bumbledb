@@ -301,8 +301,18 @@ impl AggOp {
 mod events;
 mod numbers;
 mod payoffs;
+mod predicates;
 
 enum HeadTerm {
+    Predicate {
+        label: Name,
+        expression: predicates::Expression,
+    },
+    PredicateTest {
+        label: Name,
+        expression: predicates::Expression,
+        quantifier: String,
+    },
     Number {
         label: Name,
         expression: numbers::Expression,
@@ -761,6 +771,20 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
     if peek_punct(tokens, ':') {
         expect_colon(tokens, "the head column's `:`")?;
         let agg_name = expect_ident(tokens, "an aggregate")?;
+        if agg_name.text == "Predicate" {
+            return Ok(HeadTerm::Predicate {
+                label: name,
+                expression: predicates::parse(tokens)?,
+            });
+        }
+        if agg_name.text == "PredicateTest" {
+            let (expression, quantifier) = predicates::parse_test(tokens)?;
+            return Ok(HeadTerm::PredicateTest {
+                label: name,
+                expression,
+                quantifier,
+            });
+        }
         if agg_name.text == "Number" {
             return Ok(HeadTerm::Number {
                 label: name,
@@ -1947,6 +1971,18 @@ impl Emitter<'_> {
 
     fn find(&self, scope: &Scope, term: &HeadTerm) -> Parse<String> {
         Ok(match term {
+            HeadTerm::Predicate { expression, .. } => format!(
+                "::bumbledb::FindTerm::Predicate({})",
+                expression.emit(scope, self.imports, 0)?
+            ),
+            HeadTerm::PredicateTest {
+                expression,
+                quantifier,
+                ..
+            } => format!(
+                "::bumbledb::FindTerm::PredicateTest {{ predicate: {}, quantifier: ::bumbledb::PredicateQuantifier::{quantifier} }}",
+                expression.emit(scope, self.imports, 0)?
+            ),
             HeadTerm::Number { expression, .. } => format!(
                 "::bumbledb::FindTerm::Number({})",
                 expression.emit(scope, self.imports, 0)?
@@ -2016,6 +2052,8 @@ impl Emitter<'_> {
                 }
                 HeadTerm::Agg { over, .. }
                 | HeadTerm::Number { label: over, .. }
+                | HeadTerm::Predicate { label: over, .. }
+                | HeadTerm::PredicateTest { label: over, .. }
                 | HeadTerm::Event { label: over, .. }
                 | HeadTerm::Test { label: over, .. }
                 | HeadTerm::Expectation { label: over, .. }
@@ -2426,6 +2464,7 @@ enum ImportKind {
     Payoff,
     Number,
     NumberDomain,
+    Predicate,
 }
 
 /// Parses the leading `use <name> = <expr>;` clauses — nonrecursive
@@ -2439,7 +2478,7 @@ fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
         let first = expect_ident(tokens, "the imported template's local name or `map`")?;
         let (kind, name) = if matches!(
             first.text.as_str(),
-            "map" | "faces" | "product" | "payoff" | "number" | "number_domain"
+            "map" | "faces" | "product" | "payoff" | "number" | "number_domain" | "predicate"
         ) && !peek_punct(tokens, '=')
         {
             (
@@ -2448,6 +2487,7 @@ fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
                     "faces" => ImportKind::Faces,
                     "payoff" => ImportKind::Payoff,
                     "number" => ImportKind::Number,
+                    "predicate" => ImportKind::Predicate,
                     "number_domain" => ImportKind::NumberDomain,
                     _ => ImportKind::Product,
                 },
@@ -2670,6 +2710,7 @@ fn emit_import_prelude(imports: &[Import]) -> String {
             let ty = match import.kind {
                 ImportKind::Payoff => "PayoffImport",
                 ImportKind::Number => "ObservationNumberImport",
+                ImportKind::Predicate => "ObservationPredicateImport",
                 ImportKind::NumberDomain => "NumberDomain",
                 _ => "EventImport",
             };
@@ -2763,6 +2804,8 @@ fn column_name(term: &HeadTerm) -> String {
     match term {
         HeadTerm::Event { label, .. }
         | HeadTerm::Number { label, .. }
+        | HeadTerm::Predicate { label, .. }
+        | HeadTerm::PredicateTest { label, .. }
         | HeadTerm::Test { label, .. }
         | HeadTerm::Expectation { label, .. }
         | HeadTerm::Probability { label, .. } => label.text.clone(),

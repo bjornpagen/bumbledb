@@ -49,6 +49,7 @@ impl Signature {
                 SignatureColumn::Probability
                 | SignatureColumn::Expectation
                 | SignatureColumn::Number
+                | SignatureColumn::Predicate
                 | SignatureColumn::ProjectObservation(_) => {
                     unreachable!("matched above")
                 }
@@ -97,8 +98,9 @@ impl Signature {
                 },
                 FindTerm::Probability { .. } => SignatureColumn::Probability,
                 FindTerm::Number(_) => SignatureColumn::Number,
+                FindTerm::Predicate(_) => SignatureColumn::Predicate,
                 FindTerm::Expectation { .. } => SignatureColumn::Expectation,
-                FindTerm::Test(_) => SignatureColumn::Project {
+                FindTerm::Test(_) | FindTerm::PredicateTest { .. } => SignatureColumn::Project {
                     ty: ValueType::Bool,
                 },
                 FindTerm::Count => SignatureColumn::Fold {
@@ -147,7 +149,11 @@ impl Context {
         for (find_idx, term) in rule.finds.iter().enumerate() {
             let find = FindIndex(find_idx);
             let required: Vec<VarId> = match term {
-                FindTerm::Var(_) | FindTerm::Count | FindTerm::Number(_) => Vec::new(),
+                FindTerm::Var(_)
+                | FindTerm::Count
+                | FindTerm::Number(_)
+                | FindTerm::Predicate(_)
+                | FindTerm::PredicateTest { .. } => Vec::new(),
                 FindTerm::Compute(expr) => expr.variables().collect(),
                 FindTerm::Segments { left, right, .. } => vec![*left, *right],
                 FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => vec![*over],
@@ -166,7 +172,14 @@ impl Context {
                 }
             }
             match term {
-                FindTerm::Number(expression) => self.check_number(expression, find)?,
+                FindTerm::Number(expression) => {
+                    self.check_observation_inputs(expression.inputs(), find, false)?;
+                }
+                FindTerm::Predicate(expression)
+                | FindTerm::PredicateTest {
+                    predicate: expression,
+                    ..
+                } => self.check_observation_inputs(expression.inputs(), find, true)?,
                 FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
                     for var in term.event_variables().expect("Event expression") {
                         if !self.atom_vars.contains(&var) {
@@ -315,28 +328,42 @@ impl Context {
         Ok(())
     }
 
-    fn check_number(
+    fn check_observation_inputs(
         &self,
-        expression: &crate::NumberExpr,
+        inputs: std::result::Result<
+            Vec<(VarId, crate::number_expr::ObservationInputKind)>,
+            crate::NumberExprError,
+        >,
         find: FindIndex,
+        predicate: bool,
     ) -> Result<(), ValidationError> {
         use super::ObservationKind;
-        use crate::number_expr::NumberInputKind;
-        let error = |source| ValidationError::NumberExpression { find, source };
-        for (var, expected) in expression.inputs().map_err(error)? {
+        use crate::number_expr::ObservationInputKind;
+        let error = |source| {
+            if predicate {
+                ValidationError::PredicateExpression { find, source }
+            } else {
+                ValidationError::NumberExpression { find, source }
+            }
+        };
+        for (var, expected) in inputs.map_err(error)? {
             if !self.atom_vars.contains(&var) {
                 return Err(error(crate::NumberExprError::UnboundVariable(var)));
             }
             let valid = match expected {
-                NumberInputKind::Integer => matches!(
+                ObservationInputKind::Integer => matches!(
                     self.var_types.get(&var),
                     Some(QueryType::Stored(ValueType::I64 | ValueType::U64))
                 ),
-                NumberInputKind::Number => matches!(
+                ObservationInputKind::Predicate => matches!(
+                    self.var_types.get(&var),
+                    Some(QueryType::Observation(ObservationKind::Predicate))
+                ),
+                ObservationInputKind::Number => matches!(
                     self.var_types.get(&var),
                     Some(QueryType::Observation(ObservationKind::Number))
                 ),
-                NumberInputKind::Observation => matches!(
+                ObservationInputKind::Observation => matches!(
                     self.var_types.get(&var),
                     Some(QueryType::Observation(
                         ObservationKind::Probability | ObservationKind::Expectation

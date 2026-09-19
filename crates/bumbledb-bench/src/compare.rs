@@ -17,6 +17,7 @@ pub enum Owned {
     Event(Vec<u8>),
     Probability(Vec<u8>, Vec<u8>),
     Number(Vec<u8>),
+    Predicate(Vec<u8>),
     Expectation(Vec<u8>, Vec<u8>),
     IntervalU64(u64, u64),
     IntervalI64(i64, i64),
@@ -82,6 +83,7 @@ pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
                             .to_vec(),
                         )
                     }
+                    AnswerValue::Predicate(v) => Owned::Predicate(v.bytes().to_vec()),
                     AnswerValue::Number(v) => Owned::Number(v.bytes().to_vec()),
                     AnswerValue::Probability(v) => {
                         Owned::Probability(event_bytes(v.event()), event_bytes(v.given()))

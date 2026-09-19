@@ -189,6 +189,13 @@ fn find_term(out: &mut String, term: &FindTerm) {
             var_name(out, *right);
             out.push(')');
         }
+        FindTerm::Predicate(expr) => write!(out, "Predicate({expr:?})").expect("writing to String"),
+        FindTerm::PredicateTest {
+            predicate,
+            quantifier,
+        } => {
+            write!(out, "PredicateTest({quantifier:?}, {predicate:?})").expect("writing to String");
+        }
         FindTerm::Number(expr) => write!(out, "Number({expr:?})").expect("writing to String"),
         FindTerm::Compute(expr) => {
             use std::fmt::Write as _;

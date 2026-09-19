@@ -90,8 +90,10 @@ pub(crate) struct Query {
 
 mod numbers;
 mod payoffs;
+mod predicates;
 pub(crate) use numbers::NumberExpr;
 use payoffs::PayoffAdmission;
+pub(crate) use predicates::PredicateExpr;
 
 #[derive(Debug)]
 pub(crate) enum Payoff {
@@ -106,6 +108,11 @@ pub(crate) enum Payoff {
 #[derive(Debug)]
 pub(crate) enum FindTerm {
     Number(NumberExpr),
+    Predicate(PredicateExpr),
+    PredicateTest {
+        predicate: PredicateExpr,
+        quantifier: bumbledb::PredicateQuantifier,
+    },
     Expectation {
         value: Payoff,
         when: VarId,
@@ -364,6 +371,14 @@ impl Admit for FindTerm {
         use bumbledb::FindTerm as O;
         work.checkpoint()?;
         Ok(match self {
+            Self::Predicate(v) => O::Predicate(PayoffAdmission::new(work).predicate(v, 1)?),
+            Self::PredicateTest {
+                predicate,
+                quantifier,
+            } => O::PredicateTest {
+                predicate: PayoffAdmission::new(work).predicate(predicate, 1)?,
+                quantifier,
+            },
             Self::Number(v) => O::Number(PayoffAdmission::new(work).number(v, 1)?),
             Self::Var(v) => O::Var(v),
             Self::Compute(v) => O::Compute(v.admit(work)?),

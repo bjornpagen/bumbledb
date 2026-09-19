@@ -74,6 +74,14 @@ import { count, max, mean, min, pack, sum } from "#query/find.ts"
 import { isNumberExpr, numberIr, numberVars, snapshotNumberExpression } from "#query/number.ts"
 import { numberResult } from "#query/number-result.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
+import {
+	isPredicateExpr,
+	isPredicateTest,
+	predicateIr,
+	predicateVars,
+	snapshotPredicateExpression
+} from "#query/predicate.ts"
+import { predicateResult } from "#query/predicate-result.ts"
 import { probabilityResult } from "#query/probability.ts"
 import type {
 	AnyVar,
@@ -905,7 +913,7 @@ function aggDataOf(name: string, entry: { readonly agg: string; readonly over?: 
 }
 
 function findColumnOf(name: string, entry: unknown): FindColumn {
-	if (isEventFind(entry) || isNumberExpr(entry))
+	if (isEventFind(entry) || isNumberExpr(entry) || isPredicateExpr(entry) || isPredicateTest(entry))
 		return Object.freeze({ name, entry, closed: undefined, slot: undefined })
 	if (isTerm(entry)) {
 		if (entry[term] === "var") {
@@ -997,6 +1005,8 @@ function assertNumeric(where: string, position: string, ref: AnyVar): void {
  */
 function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedField | undefined {
 	const entry = column.entry
+	if (entry.kind === "predicate") return { field: predicateResult, class: undefined }
+	if (entry.kind === "predicateTest") return { field: boolField, class: undefined }
 	if (entry.kind === "number") return { field: numberResult, class: undefined }
 	if (entry.kind === "probability") return { field: probabilityResult, class: undefined }
 	if (entry.kind === "expectation") return { field: expectationResult, class: undefined }
@@ -1033,6 +1043,13 @@ function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedFie
 function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, column: FindColumn): void {
 	const where = `${contextLabel(context)} find ${column.name}`
 	const entry = column.entry
+	if (entry.kind === "predicate" || entry.kind === "predicateTest") {
+		if (context.kind === "rec-base" || context.kind === "rec-arm")
+			throw new AuthoringError({ message: `${where}: produce predicates in a nonrecursive query stage` })
+		for (const ref of predicateVars(entry.kind === "predicate" ? entry : entry.expression))
+			assertBound(where, bound, ref)
+		return
+	}
 	if (entry.kind === "number") {
 		if (context.kind === "rec-base" || context.kind === "rec-arm")
 			throw new AuthoringError({ message: `${where}: produce numbers in a nonrecursive query stage` })
@@ -1332,6 +1349,7 @@ function snapshotQueryData<A>(input: A): A {
 	return snapshotData(input, (source, snapshot) => {
 		snapshotEventExpression(source, snapshot)
 		snapshotNumberExpression(source, snapshot)
+		snapshotPredicateExpression(source, snapshot)
 		// Detached imports retain their authoring identity for deduplication.
 		if (importTables.has(source as InteriorData)) {
 			const table = snapshot as InteriorData
@@ -1787,7 +1805,8 @@ function alignedHeadOf(label: string, rules: readonly RuleData[]): readonly Find
 					lead.name !== column.name ||
 					headOperation(lead) !== headOperation(column) ||
 					(lead.entry.kind === "probability") !== (column.entry.kind === "probability") ||
-					(lead.entry.kind === "number") !== (column.entry.kind === "number")
+					(lead.entry.kind === "number") !== (column.entry.kind === "number") ||
+					(lead.entry.kind === "predicate") !== (column.entry.kind === "predicate")
 				)
 			})
 		) {
@@ -2328,6 +2347,13 @@ function lowerComputeGrammar(node: QueryNode, ids: VarIds): ScalarExprIr {
 }
 
 function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
+	if (entry.kind === "predicate") return { kind: "predicate", expr: predicateIr(entry, (ref) => ids.of(ref)) }
+	if (entry.kind === "predicateTest")
+		return {
+			kind: "predicateTest",
+			expr: predicateIr(entry.expression, (ref) => ids.of(ref)),
+			quantifier: entry.quantifier
+		}
 	if (entry.kind === "number") return { kind: "number", expr: numberIr(entry, (ref) => ids.of(ref)) }
 	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability" || entry.kind === "expectation")
 		return eventFindIr(entry, (ref) => ids.of(ref))
@@ -2364,7 +2390,14 @@ function headOpOf(agg: AggData): HeadOpIr {
 function headTermOf(column: FindColumn): HeadTermIr {
 	const entry = column.entry
 	if (entry.kind === "expectation") return { kind: "aggregate", op: "expectation" }
-	if (entry.kind === "number" || entry.kind === "event" || entry.kind === "test" || entry.kind === "probability")
+	if (
+		entry.kind === "predicate" ||
+		entry.kind === "predicateTest" ||
+		entry.kind === "number" ||
+		entry.kind === "event" ||
+		entry.kind === "test" ||
+		entry.kind === "probability"
+	)
 		return { kind: "compute" }
 	if (entry.kind === "segments") return { kind: "compute" }
 	if (entry.kind === "var") {

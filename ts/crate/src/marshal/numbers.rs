@@ -16,7 +16,11 @@ fn child(
         budget,
     )
 }
-fn bytes(obj: &Object, key: &str, budget: &mut EventBudget<'_, '_>) -> napi::Result<Vec<u8>> {
+pub(super) fn bytes(
+    obj: &Object,
+    key: &str,
+    budget: &mut EventBudget<'_, '_>,
+) -> napi::Result<Vec<u8>> {
     let value = budget
         .copy
         .bytes(req(obj, key, "numerical bytes")?, budget.bytes)?;

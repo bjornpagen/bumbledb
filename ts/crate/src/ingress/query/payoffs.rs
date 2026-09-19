@@ -49,6 +49,16 @@ impl<'a> PayoffAdmission<'a> {
         for find in input.finds {
             work.checkpoint()?;
             finds.push(match find {
+                FindTerm::Predicate(value) => {
+                    bumbledb::FindTerm::Predicate(self.predicate(value, 1)?)
+                }
+                FindTerm::PredicateTest {
+                    predicate,
+                    quantifier,
+                } => bumbledb::FindTerm::PredicateTest {
+                    predicate: self.predicate(predicate, 1)?,
+                    quantifier,
+                },
                 FindTerm::Number(value) => bumbledb::FindTerm::Number(self.number(value, 1)?),
                 FindTerm::Expectation { value, when, given } => bumbledb::FindTerm::Expectation {
                     value: self.admit(value)?,

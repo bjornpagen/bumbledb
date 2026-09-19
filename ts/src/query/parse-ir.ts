@@ -16,6 +16,7 @@ import type {
 } from "#native.ts"
 import { parseNumberIr } from "#query/number-ir.ts"
 import { payoffFromBytes } from "#query/payoff.ts"
+import { parsePredicateIr } from "#query/predicate-ir.ts"
 import { roundingMode } from "#scalar.ts"
 import { arrayValue as array, bytesValue, recordValue, valueDescriptor } from "#values.ts"
 
@@ -313,6 +314,14 @@ function payoffRatioIr(context: string, input: unknown) {
 
 function find(context: string, input: unknown): FindTermIr {
 	const raw = tagged(context, input)
+	if (raw.kind === "predicate" || raw.kind === "predicateTest") {
+		recordValue(context, raw, raw.kind === "predicate" ? ["kind", "expr"] : ["kind", "expr", "quantifier"])
+		const expr = parsePredicateIr(`${context}.expr`, raw.expr)
+		if (raw.kind === "predicate") return Object.freeze({ kind: raw.kind, expr })
+		if (raw.quantifier !== "possibly" && raw.quantifier !== "always" && raw.quantifier !== "isTotal")
+			return fail(context, "unknown predicate quantifier")
+		return Object.freeze({ kind: raw.kind, expr, quantifier: raw.quantifier })
+	}
 	if (raw.kind === "number") {
 		recordValue(context, raw, ["kind", "expr"])
 		return Object.freeze({ kind: "number", expr: parseNumberIr(`${context}.expr`, raw.expr) })
@@ -465,7 +474,9 @@ function align(context: string, head: readonly HeadTermIr[], rules: readonly Rul
 				find.kind === "event" ||
 				find.kind === "test" ||
 				find.kind === "probability" ||
-				find.kind === "number"
+				find.kind === "number" ||
+				find.kind === "predicate" ||
+				find.kind === "predicateTest"
 			if (term === undefined || (term.kind === "aggregate") === projects)
 				fail(`${context}.rules[${index}].finds[${position}]`, "find family does not match head")
 			if (term.kind === "aggregate") {

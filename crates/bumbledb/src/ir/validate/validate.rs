@@ -367,6 +367,19 @@ fn lower_rules(
                         source,
                     })?;
             }
+            if let FindTerm::Predicate(expression)
+            | FindTerm::PredicateTest {
+                predicate: expression,
+                ..
+            } = term
+            {
+                expression
+                    .inputs()
+                    .map_err(|source| ValidationError::PredicateExpression {
+                        find: FindIndex(find),
+                        source,
+                    })?;
+            }
             let shape = match term {
                 FindTerm::Event(expr) => expr.validate_shape(),
                 FindTerm::Test(test) => test.validate_shape(),
@@ -504,6 +517,8 @@ fn validate_rule(
             FindTerm::Segments { .. }
             | FindTerm::Compute(_)
             | FindTerm::Number(_)
+            | FindTerm::Predicate(_)
+            | FindTerm::PredicateTest { .. }
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }

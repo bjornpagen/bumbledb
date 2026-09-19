@@ -32,6 +32,16 @@ impl std::hash::Hash for ObservationPredicateImport {
     }
 }
 impl ObservationPredicateImport {
+    /// Executor-produced predicates have already admitted every operand under
+    /// the shared budget. Encode identity without recontracting their leaves.
+    pub(crate) fn checked(
+        value: ObservationPredicate,
+        limits: ObservationNumberCodecLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let bytes = encode(&value, limits, work)?.into_boxed_slice();
+        Ok(Self(Arc::new(Import { value, bytes })))
+    }
     /// Reconstruct independently owned leaves and replay every operation.
     /// # Errors
     /// Source/numerical/domain admission, encoding limits or cancellation.

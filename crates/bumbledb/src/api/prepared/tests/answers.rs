@@ -717,7 +717,7 @@ fn staged_observation_copy_rolls_back_failed_appends_in_both_representations() {
         append(&[0], &mut out).unwrap();
         assert!(append(&[0, 99], &mut out).is_err());
         assert_eq!(out.len(), 1);
-        assert_eq!(out.observed.checkpoint(), (1, 0, 0));
+        assert_eq!(out.observed.checkpoint(), (1, 0, 0, 0));
         assert_eq!(out.get(0, 0), AnswerValue::Probability(&observation));
         append(&[0], &mut out).unwrap();
         assert_eq!(out.len(), 2);
@@ -780,11 +780,93 @@ fn numerical_finalization_keeps_complete_identity_and_rolls_back_failed_appends(
             append(&[0], &mut out).unwrap();
             assert!(append(&[0, 99], &mut out).is_err());
             assert_eq!(out.len(), 1);
-            assert_eq!(out.observed.checkpoint(), (0, 0, 1));
+            assert_eq!(out.observed.checkpoint(), (0, 0, 1, 0));
             assert_eq!(out.get(0, 0), AnswerValue::Number(&value));
             append(&[0], &mut out).unwrap();
             assert_eq!(out.len(), 2);
             assert_eq!(out.get(1, 0), AnswerValue::Number(&value));
+        }
+    }
+}
+
+#[test]
+fn predicate_finalization_keeps_complete_identity_and_rolls_back_failed_appends() {
+    use crate::event::{ArithmeticLimits, ExactArithmetic, ExactRational};
+    use crate::ir::validate::{ObservationKind, SignatureColumn};
+    let work = crate::WorkContext::new();
+    let generation = crate::image::test_generation();
+    let interner = crate::image::intern::InternerHandle::new(&generation, &work);
+    let mut arithmetic = ExactArithmetic::new(ArithmeticLimits::default(), &work);
+    let value = crate::ObservationNumber::literal(
+        ExactRational::one(),
+        crate::ObservationNumberLimits::default(),
+        &mut arithmetic,
+    )
+    .unwrap();
+    let value = value
+        .where_sign(
+            crate::event::PolynomialSigns::POSITIVE,
+            crate::ObservationNumberLimits::default(),
+            &mut arithmetic,
+        )
+        .unwrap();
+    let value = crate::ObservationPredicateImport::capture(
+        &value,
+        crate::ObservationNumberCodecLimits::default(),
+        &mut arithmetic,
+    )
+    .unwrap();
+    let mut owners = super::super::observations::ObservationRegistry::default();
+    assert_eq!(owners.copy(AnswerValue::Predicate(&value)).unwrap(), 0);
+    let other = value
+        .value()
+        .negate(crate::ObservationNumberLimits::default(), &mut arithmetic)
+        .unwrap();
+    let other = crate::ObservationPredicateImport::capture(
+        &other,
+        crate::ObservationNumberCodecLimits::default(),
+        &mut arithmetic,
+    )
+    .unwrap();
+    assert_eq!(owners.copy(AnswerValue::Predicate(&other)).unwrap(), 1);
+    for spill in [false, true] {
+        for column in [
+            SignatureColumn::Predicate,
+            SignatureColumn::ProjectObservation(ObservationKind::Predicate),
+        ] {
+            let mut out = Answers::new();
+            out.begin(1);
+            let mut append = |tokens: &[u64], out: &mut Answers| {
+                let mut sink = ProjectionSink::new(vec![0]);
+                sink.begin(Some(work.clone()));
+                for token in tokens {
+                    sink.insert_row(&[*token]).unwrap();
+                }
+                if spill {
+                    sink.force_spill().unwrap();
+                }
+                super::super::finalize::finalize(
+                    &mut EitherSink::Projection(sink),
+                    &mut Vec::new(),
+                    &mut ResolveMemo::new(),
+                    super::super::finalize::AnswerSources {
+                        interner: &interner,
+                        observations: &owners,
+                        work: &work,
+                    },
+                    std::slice::from_ref(&column),
+                    out,
+                    &mut arithmetic,
+                )
+            };
+            append(&[0], &mut out).unwrap();
+            assert!(append(&[1, 99], &mut out).is_err());
+            assert_eq!(out.len(), 1);
+            assert_eq!(out.observed.checkpoint(), (0, 0, 0, 1));
+            assert_eq!(out.get(0, 0), AnswerValue::Predicate(&value));
+            append(&[1], &mut out).unwrap();
+            assert_eq!(out.len(), 2);
+            assert_eq!(out.get(1, 0), AnswerValue::Predicate(&other));
         }
     }
 }

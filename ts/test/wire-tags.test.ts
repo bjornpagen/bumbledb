@@ -87,6 +87,8 @@ const ROSTERS = {
 		"probability",
 		"expectation",
 		"number",
+		"predicate",
+		"predicateTest",
 		"count",
 		"aggregate",
 		"pack"

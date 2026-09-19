@@ -123,6 +123,7 @@ async function main() {
     assert.equal(packed.length, 1);
     assert.deepEqual(Buffer.from(packed[0][0]), full);
     const numberChecks = await require('./event-number-wire.cjs')({ native, runtime, snapshot, operation, close, collect, query });
+    const predicateChecks = await require('./event-predicate-wire.cjs')({ native, runtime, snapshot, operation, close, collect, query });
     const staged = query({ kind: 'event', expr: { kind: 'not', expr: a } });
     staged.interiors = [{ head: pack.head, rules: pack.rules }];
     staged.rules[0].atoms[0].source = { kind: 'interior', interior: 0 };
@@ -171,7 +172,7 @@ async function main() {
       event_pack_evaluations: 4,
       event_map_evaluations: 8,
       measured_wire_evaluations: 4, malformed_laws_refused: 1,
-      ...relationChecks, ...numberChecks,
+      ...relationChecks, ...numberChecks, ...predicateChecks,
       addon_sha256: createHash('sha256').update(fs.readFileSync(binary)).digest('hex') }));
   } finally {
     if (snapshot) await close(native.runtimeSnapshotClose, snapshot);

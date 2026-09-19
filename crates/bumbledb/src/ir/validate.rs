@@ -49,6 +49,7 @@ impl std::fmt::Display for Signature {
                     QueryType::Observation(ObservationKind::Expectation) => "expectation",
                     QueryType::Observation(ObservationKind::Probability) => "probability",
                     QueryType::Observation(ObservationKind::Number) => "number",
+                    QueryType::Observation(ObservationKind::Predicate) => "predicate",
                     QueryType::Stored(_) => unreachable!("stored columns have a type"),
                 })?;
                 continue;
@@ -99,6 +100,7 @@ pub enum ObservationKind {
     Probability,
     Expectation,
     Number,
+    Predicate,
 }
 
 impl QueryType {
@@ -147,6 +149,7 @@ pub enum SignatureColumn {
     Probability,
     Expectation,
     Number,
+    Predicate,
     /// Projection of an already finalized, source-owned observation.
     ProjectObservation(ObservationKind),
 
@@ -161,9 +164,11 @@ impl SignatureColumn {
     pub fn ty(&self) -> Option<&ValueType> {
         match self {
             Self::Project { ty } | Self::Fold { ty, .. } => Some(ty),
-            Self::Probability | Self::Expectation | Self::Number | Self::ProjectObservation(_) => {
-                None
-            }
+            Self::Probability
+            | Self::Expectation
+            | Self::Number
+            | Self::Predicate
+            | Self::ProjectObservation(_) => None,
         }
     }
 
@@ -174,6 +179,7 @@ impl SignatureColumn {
             Self::Probability => QueryType::Observation(ObservationKind::Probability),
             Self::Expectation => QueryType::Observation(ObservationKind::Expectation),
             Self::Number => QueryType::Observation(ObservationKind::Number),
+            Self::Predicate => QueryType::Observation(ObservationKind::Predicate),
             Self::ProjectObservation(kind) => QueryType::Observation(*kind),
         }
     }
@@ -184,6 +190,7 @@ impl SignatureColumn {
             Self::Project { .. }
             | Self::Probability
             | Self::Number
+            | Self::Predicate
             | Self::ProjectObservation(_) => None,
             Self::Fold { op, .. } => Some(*op),
             Self::Expectation => Some(AggKind::Expectation),

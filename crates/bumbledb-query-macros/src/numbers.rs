@@ -33,7 +33,7 @@ fn end(tokens: &mut Tokens) -> Parse<()> {
         Ok(())
     }
 }
-fn expression(tokens: &mut Tokens, precedence: u8, depth: usize) -> Parse<Expression> {
+pub(super) fn expression(tokens: &mut Tokens, precedence: u8, depth: usize) -> Parse<Expression> {
     if precedence == 2 {
         return unary(tokens, depth);
     }
@@ -169,11 +169,14 @@ fn unary(tokens: &mut Tokens, depth: usize) -> Parse<Expression> {
 // left-associative operator chain otherwise builds an unbounded recursive AST
 // before emission can refuse it (and then dropping that AST can overflow).
 fn bounded(value: Expression) -> Parse<Expression> {
-    let mut pending = vec![(&value, 1usize)];
-    let mut nodes = 0usize;
+    check_shape(&value, 1, &mut 0)?;
+    Ok(value)
+}
+pub(super) fn check_shape(value: &Expression, depth: usize, nodes: &mut usize) -> Parse<()> {
+    let mut pending = vec![(value, depth)];
     while let Some((node, depth)) = pending.pop() {
-        nodes += 1;
-        if depth > 128 || nodes > 4096 {
+        *nodes += 1;
+        if depth > 128 || *nodes > 4096 {
             return fail(
                 proc_macro::Span::call_site(),
                 "query!: numerical expression exceeds shape budget",
@@ -190,7 +193,7 @@ fn bounded(value: Expression) -> Parse<Expression> {
             _ => {}
         }
     }
-    Ok(value)
+    Ok(())
 }
 impl Expression {
     pub(super) fn emit(&self, scope: &Scope, imports: &[Import], depth: usize) -> Parse<String> {

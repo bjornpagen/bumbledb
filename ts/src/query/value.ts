@@ -5,23 +5,31 @@ import type { AnyField, Infer, SignatureOf } from "#fields.ts"
 import { rosterOf, signaturesAgree } from "#fields.ts"
 import type { ExpectationAnswer, ExpectationResult } from "#query/expectation.ts"
 import type { NumberAnswer, NumberResult } from "#query/number-result.ts"
+import type { PredicateAnswer, PredicateResult } from "#query/predicate-result.ts"
 import type { ProbabilityAnswer, ProbabilityResult } from "#query/probability.ts"
 
-type ObservationResult = ProbabilityResult | ExpectationResult | NumberResult
+type ObservationResult = ProbabilityResult | ExpectationResult | NumberResult | PredicateResult
 type QueryValue = AnyField | ObservationResult
-type QueryInfer<F extends QueryValue> = F extends NumberResult
-	? NumberAnswer
-	: F extends ProbabilityResult
-		? ProbabilityAnswer
-		: F extends ExpectationResult
-			? ExpectationAnswer
-			: F extends AnyField
-				? Infer<F>
-				: never
+type QueryInfer<F extends QueryValue> = F extends PredicateResult
+	? PredicateAnswer
+	: F extends NumberResult
+		? NumberAnswer
+		: F extends ProbabilityResult
+			? ProbabilityAnswer
+			: F extends ExpectationResult
+				? ExpectationAnswer
+				: F extends AnyField
+					? Infer<F>
+					: never
 type QuerySignature<F extends QueryValue> = F extends AnyField ? SignatureOf<F> : readonly [F["kind"]]
 
 function isObservation(field: QueryValue): field is ObservationResult {
-	return field.kind === "number" || field.kind === "probability" || field.kind === "expectation"
+	return (
+		field.kind === "predicate" ||
+		field.kind === "number" ||
+		field.kind === "probability" ||
+		field.kind === "expectation"
+	)
 }
 
 function queryValuesAgree(a: QueryValue, b: QueryValue): boolean {

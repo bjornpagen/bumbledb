@@ -62,6 +62,8 @@ pub(crate) mod encoding;
 pub mod error;
 mod event_expr;
 mod number_expr;
+mod predicate_expr;
+pub use predicate_expr::{PredicateExpr, PredicateQuantifier};
 mod observation;
 pub use number_expr::{NumberDomain, NumberExpr, NumberExprError};
 mod payoff;

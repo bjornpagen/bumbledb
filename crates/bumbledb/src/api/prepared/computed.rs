@@ -320,7 +320,7 @@ impl ComputedSink {
             }
             self.pieces.push((*slot, values, len, 0));
         }
-        if let Err(error) = self.number_outputs() {
+        if let Err(error) = self.observation_outputs() {
             self.error = Some(error);
             return;
         }
@@ -393,58 +393,80 @@ impl ComputedSink {
         self.pack_row()
     }
 
-    fn number_outputs(&mut self) -> crate::Result<()> {
-        use crate::ir::validate::{ObservationKind, QueryType};
-        use crate::number_expr::NumberOperand;
-        if self
-            .programs
-            .iter()
-            .all(|(_, program)| !matches!(program.expression, FindTerm::Number(_)))
-        {
+    fn observation_outputs(&mut self) -> crate::Result<()> {
+        use crate::ir::validate::QueryType;
+        use crate::number_expr::ObservationOperand;
+        if self.programs.iter().all(|(_, program)| {
+            !matches!(
+                program.expression,
+                FindTerm::Number(_) | FindTerm::Predicate(_) | FindTerm::PredicateTest { .. }
+            )
+        }) {
             return Ok(());
         }
         let control = self.work.as_ref().ok_or(crate::event::Error::UnknownKey)?;
         let mut arithmetic = crate::event::ExactArithmetic::borrow(&mut self.arithmetic, control);
         let limits = crate::ObservationNumberCodecLimits::default();
         for (slot, program) in &self.programs {
-            let FindTerm::Number(expression) = &program.expression else {
+            if !matches!(
+                program.expression,
+                FindTerm::Number(_) | FindTerm::Predicate(_) | FindTerm::PredicateTest { .. }
+            ) {
                 continue;
-            };
-            let value = expression.evaluate(
-                |var| {
-                    let (_, slot, ty) = program
-                        .inputs
-                        .iter()
-                        .find(|(id, _, _)| *id == var)
-                        .expect("validated numerical input");
-                    let word = self.bindings.get(*slot);
-                    Ok(match ty {
-                        QueryType::Stored(ValueType::U64) => NumberOperand::Integer(word.into()),
-                        QueryType::Stored(ValueType::I64) => {
-                            NumberOperand::Integer((word ^ (1 << 63)).cast_signed().into())
+            }
+            let operand = |var| {
+                let (_, slot, ty) = program
+                    .inputs
+                    .iter()
+                    .find(|(id, _, _)| *id == var)
+                    .expect("validated numerical input");
+                let word = self.bindings.get(*slot);
+                Ok(match ty {
+                    QueryType::Stored(ValueType::U64) => ObservationOperand::Integer(word.into()),
+                    QueryType::Stored(ValueType::I64) => {
+                        ObservationOperand::Integer((word ^ (1 << 63)).cast_signed().into())
+                    }
+                    QueryType::Observation(kind) => match self.observations.get(*kind, word)? {
+                        crate::AnswerValue::Predicate(value) => {
+                            ObservationOperand::Predicate(value.value().clone())
                         }
-                        QueryType::Observation(kind) => match self.observations.get(*kind, word)? {
-                            crate::AnswerValue::Number(value) => {
-                                NumberOperand::Number(value.value().clone())
-                            }
-                            crate::AnswerValue::Probability(value) => {
-                                NumberOperand::Probability(value.clone())
-                            }
-                            crate::AnswerValue::Expectation(value) => {
-                                NumberOperand::Expectation(value.clone())
-                            }
-                            _ => unreachable!("owned observation"),
-                        },
-                        QueryType::Stored(_) => unreachable!("validated numerical input type"),
-                    })
-                },
-                &limits,
-                &mut arithmetic,
-            )?;
-            let value = crate::ObservationNumberImport::checked(value, limits, &mut arithmetic)?;
-            let token = self.observations.insert_number(value)?;
-            self.observations.get(ObservationKind::Number, token)?;
-            self.bindings.set(*slot, token);
+                        crate::AnswerValue::Number(value) => {
+                            ObservationOperand::Number(value.value().clone())
+                        }
+                        crate::AnswerValue::Probability(value) => {
+                            ObservationOperand::Probability(value.clone())
+                        }
+                        crate::AnswerValue::Expectation(value) => {
+                            ObservationOperand::Expectation(value.clone())
+                        }
+                        _ => unreachable!("owned observation"),
+                    },
+                    QueryType::Stored(_) => unreachable!("validated numerical input type"),
+                })
+            };
+            let word = match &program.expression {
+                FindTerm::Number(expression) => {
+                    let value = expression.evaluate(operand, &limits, &mut arithmetic)?;
+                    let value =
+                        crate::ObservationNumberImport::checked(value, limits, &mut arithmetic)?;
+                    self.observations.insert_number(value)?
+                }
+                FindTerm::Predicate(expression) => {
+                    let value = expression.evaluate(operand, &limits, &mut arithmetic)?;
+                    let value =
+                        crate::ObservationPredicateImport::checked(value, limits, &mut arithmetic)?;
+                    self.observations.insert_predicate(value)?
+                }
+                FindTerm::PredicateTest {
+                    predicate,
+                    quantifier,
+                } => {
+                    let value = predicate.evaluate(operand, &limits, &mut arithmetic)?;
+                    u64::from(quantifier.evaluate(&value))
+                }
+                _ => unreachable!("only numerical/predicate programs"),
+            };
+            self.bindings.set(*slot, word);
         }
         Ok(())
     }

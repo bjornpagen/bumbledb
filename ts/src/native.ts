@@ -209,7 +209,23 @@ type NumberExprIr<V = number, Q = Uint8Array, N = Uint8Array, D = Uint8Array> =
 	| { readonly kind: "pow"; readonly value: NumberExprIr<V, Q, N, D>; readonly exponent: number }
 	| { readonly kind: "onDomain"; readonly value: NumberExprIr<V, Q, N, D>; readonly domain: D }
 
+type PredicateExprIr<V = number, N = NumberExprIr, P = Uint8Array, D = Uint8Array> =
+	| { readonly kind: "var"; readonly var: V }
+	| { readonly kind: "sign"; readonly number: N; readonly signs: number }
+	| { readonly kind: "imported"; readonly bytes: P }
+	| { readonly kind: "negate"; readonly value: PredicateExprIr<V, N, P, D> }
+	| {
+			readonly kind: "apply"
+			readonly op: number
+			readonly left: PredicateExprIr<V, N, P, D>
+			readonly right: PredicateExprIr<V, N, P, D>
+	  }
+	| { readonly kind: "onDomain"; readonly value: PredicateExprIr<V, N, P, D>; readonly domain: D }
+type PredicateQuantifier = "possibly" | "always" | "isTotal"
+
 type FindTermIr =
+	| { readonly kind: "predicate"; readonly expr: PredicateExprIr }
+	| { readonly kind: "predicateTest"; readonly expr: PredicateExprIr; readonly quantifier: PredicateQuantifier }
 	| { readonly kind: "number"; readonly expr: NumberExprIr }
 	| {
 			readonly kind: "segments"
@@ -810,6 +826,8 @@ export type {
 	NumericCastIr,
 	OpenKind,
 	ParsedQuery,
+	PredicateExprIr,
+	PredicateQuantifier,
 	PrepareKind,
 	QueryIr,
 	QueryParam,

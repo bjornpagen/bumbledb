@@ -297,6 +297,8 @@ fn find_json(find: &FindTerm) -> String {
         | FindTerm::Test(_)
         | FindTerm::Probability { .. }
         | FindTerm::Number(_)
+        | FindTerm::Predicate(_)
+        | FindTerm::PredicateTest { .. }
         | FindTerm::Expectation { .. } => {
             panic!("Event heads have a separate query conformance fixture")
         }

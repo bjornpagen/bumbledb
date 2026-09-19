@@ -177,6 +177,13 @@ pub enum FindTerm {
     Compute(crate::ScalarExpr),
     /// Exact source-retaining arithmetic, evaluated before relational grouping.
     Number(crate::NumberExpr),
+    /// An owned exact true/false/undefined partition, preserving its derivation.
+    Predicate(crate::PredicateExpr),
+    /// Explicit reduction of a truth partition to a database Boolean.
+    PredicateTest {
+        predicate: crate::PredicateExpr,
+        quantifier: crate::PredicateQuantifier,
+    },
 
     /// One owned region per binding, including scoped empty.
     Event(crate::EventExpr),
@@ -233,6 +240,8 @@ impl FindTerm {
             Self::Var(_) => HeadTerm::Var,
             Self::Compute(_)
             | Self::Number(_)
+            | Self::Predicate(_)
+            | Self::PredicateTest { .. }
             | Self::Event(_)
             | Self::Test(_)
             | Self::Probability { .. }

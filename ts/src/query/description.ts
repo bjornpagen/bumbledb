@@ -14,6 +14,8 @@ import { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, tagg
 import { numberFromIr } from "#query/number.ts"
 import { type NumberAnswer, type NumberResult, numberResult } from "#query/number-result.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
+import { PredicateTest, predicateFromIr } from "#query/predicate.ts"
+import { type PredicateAnswer, type PredicateResult, predicateResult } from "#query/predicate-result.ts"
 import { type ProbabilityAnswer, type ProbabilityResult, probabilityResult } from "#query/probability.ts"
 import { type AnyVar, type MatchOwner, makeParam, makeSetParam, type ParamsRecord, v } from "#query/scope.ts"
 import { difference, type IntervalVar, intersection } from "#query/segments.ts"
@@ -56,15 +58,17 @@ interface DescriptionParameter {
 
 type ResultShape = Readonly<Record<string, QueryValue>>
 type DescriptionRow<F extends ResultShape> = {
-	readonly [K in keyof F]: F[K] extends NumberResult
-		? NumberAnswer
-		: F[K] extends ExpectationResult
-			? ExpectationAnswer
-			: F[K] extends ProbabilityResult
-				? ProbabilityAnswer
-				: F[K] extends AnyField
-					? Infer<F[K]>
-					: never
+	readonly [K in keyof F]: F[K] extends PredicateResult
+		? PredicateAnswer
+		: F[K] extends NumberResult
+			? NumberAnswer
+			: F[K] extends ExpectationResult
+				? ExpectationAnswer
+				: F[K] extends ProbabilityResult
+					? ProbabilityAnswer
+					: F[K] extends AnyField
+						? Infer<F[K]>
+						: never
 }
 
 /** Checked result fields remain exact through v(imported), just as at runtime.
@@ -328,6 +332,9 @@ function replayRule(
 			let value: unknown
 			if (find.kind === "var") value = variableAt(find.var)
 			else if (find.kind === "compute") value = scalar(find.expr)
+			else if (find.kind === "predicate") value = predicateFromIr(find.expr, variableAt)
+			else if (find.kind === "predicateTest")
+				value = PredicateTest[find.quantifier](predicateFromIr(find.expr, variableAt))
 			else if (find.kind === "number") value = numberFromIr(find.expr, variableAt)
 			else if (
 				find.kind === "event" ||
@@ -363,6 +370,7 @@ function queryFromDescription<Rels extends SchemaRelations, Classes extends Sche
 	)
 	const fields = Object.fromEntries(
 		Object.entries(resultRecord).map(([name, field]): [string, QueryValue] => {
+			if (field === predicateResult) return [name, predicateResult]
 			if (field === numberResult) return [name, numberResult]
 			if (field === expectationResult) return [name, expectationResult]
 			if (field === probabilityResult) return [name, probabilityResult]

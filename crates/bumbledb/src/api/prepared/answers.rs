@@ -18,6 +18,7 @@ impl Answers {
         self.blob.clear();
         self.events.clear();
         self.numbers.clear();
+        self.predicates.clear();
         self.probabilities.clear();
         self.expectations.clear();
         self.expectation_inputs.clear();
@@ -56,6 +57,7 @@ impl Answers {
     pub fn get(&self, answer: usize, column: usize) -> AnswerValue<'_> {
         assert!(column < self.arity && answer < self.len());
         match self.cells[answer * self.arity + column] {
+            Cell::Predicate(index) => AnswerValue::Predicate(&self.predicates[index]),
             Cell::Number(index) => AnswerValue::Number(&self.numbers[index]),
             Cell::Observed { kind, token } => self
                 .observed
@@ -91,6 +93,11 @@ impl Answers {
     /// byte payloads land in this buffer's own heaps.
     pub(crate) fn push_value(&mut self, value: &AnswerValue<'_>) {
         let cell = match value {
+            AnswerValue::Predicate(value) => {
+                let index = self.predicates.len();
+                self.predicates.push((*value).clone());
+                Cell::Predicate(index)
+            }
             AnswerValue::Number(value) => {
                 let index = self.numbers.len();
                 self.numbers.push((*value).clone());

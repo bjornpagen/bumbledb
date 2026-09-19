@@ -507,6 +507,8 @@ fn has_event_diagnostics(rule: crate::ir::validate::RuleWitness<'_>) -> bool {
     rule.rule().finds.iter().any(|term| match term {
         FindTerm::Event(_)
         | FindTerm::Number(_)
+        | FindTerm::Predicate(_)
+        | FindTerm::PredicateTest { .. }
         | FindTerm::Test(_)
         | FindTerm::Probability { .. }
         | FindTerm::Expectation { .. } => true,
@@ -765,6 +767,8 @@ fn prepare_rule(
                 FindTerm::Segments { .. }
                 | FindTerm::Compute(_)
                 | FindTerm::Number(_)
+                | FindTerm::Predicate(_)
+                | FindTerm::PredicateTest { .. }
                 | FindTerm::Event(_)
                 | FindTerm::Test(_)
                 | FindTerm::Probability { .. }
@@ -961,6 +965,10 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                 width: layout.width_of(*var),
             },
             FindTerm::Number(expr) => compute(find_idx, term, expr.variables().collect()),
+            FindTerm::Predicate(expr)
+            | FindTerm::PredicateTest {
+                predicate: expr, ..
+            } => compute(find_idx, term, expr.variables().collect()),
             FindTerm::Compute(expr) => compute(find_idx, term, expr.variables().collect()),
             FindTerm::Segments { left, right, .. } => compute(find_idx, term, vec![*left, *right]),
             FindTerm::Expectation { value, when, given } => compute(
@@ -1062,6 +1070,8 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
             FindTerm::Segments { .. }
             | FindTerm::Compute(_)
             | FindTerm::Number(_)
+            | FindTerm::Predicate(_)
+            | FindTerm::PredicateTest { .. }
             | FindTerm::Event(_)
             | FindTerm::Test(_)
             | FindTerm::Probability { .. }

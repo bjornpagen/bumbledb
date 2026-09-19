@@ -1,0 +1,19 @@
+'PredicateGuards.decode_code' does not depend on any axioms
+'PredicateGuards.code_injective' does not depend on any axioms
+'PredicateGuards.impossible_double_truth' does not depend on any axioms
+'PredicateGuards.undefined_is_ambient_remainder' does not depend on any axioms
+'PredicateGuards.false_is_not_complement_of_true_at_a_hole' does not depend on any axioms
+'PredicateGuards.total_needs_one_bit' does not depend on any axioms
+'PredicateGuards.forget_refine' does not depend on any axioms
+'PredicateGuards.refine_forget' does not depend on any axioms
+'PredicateGuards.no_world_is_added' does not depend on any axioms
+'PredicateGuards.no_world_is_merged' does not depend on any axioms
+'PredicateGuards.truth_is_represented' does not depend on any axioms
+'PredicateGuards.lifted_membership' does not depend on any axioms
+'PredicateGuards.lift_every_truth_table' does not depend on any axioms
+'PredicateGuards.lifted_event_has_same_witnesses' does not depend on any axioms
+'PredicateGuards.zero_weight_world_is_retained' depends on axioms: [propext, Quot.sound]
+'PredicateGuards.contraction_is_preserved' depends on axioms: [propext, Classical.choice, Quot.sound]
+'PredicateGuards.unresolved_cell_refuses_factor' does not depend on any axioms
+'PredicateGuards.refinement_resolves_truth' does not depend on any axioms
+'PredicateGuards.factor_implies_resolution' does not depend on any axioms

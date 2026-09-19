@@ -33,7 +33,7 @@ pub(crate) enum NumberExpr {
     },
 }
 impl PayoffAdmission<'_> {
-    fn number_bytes(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
+    pub(super) fn number_bytes(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
         self.remaining = self
             .remaining
             .checked_sub(bytes.len())
