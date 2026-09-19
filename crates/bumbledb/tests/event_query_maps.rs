@@ -156,7 +156,10 @@ fn typed_boundaries_validate_each_occurrence_even_when_one_variable_changes_role
         };
         assert_eq!(values.len(), 1);
         assert_eq!(values[0].operand, 1);
-        assert_eq!(values[0].variable, VarId(0));
+        assert_eq!(
+            values[0].source,
+            bumbledb::EventOperandSource::Variable(VarId(0))
+        );
         assert_eq!(
             &*values[0].expected_space,
             target.full().to_bytes(&()).unwrap()

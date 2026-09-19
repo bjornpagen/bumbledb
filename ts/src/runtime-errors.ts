@@ -39,17 +39,21 @@ const SchemaDiagnostic = Schema.Struct({
 })
 
 /** A member of the complete failing Event stage. Omitted stage denotes main;
- * present stage is the logical interior ordinal. Bytes are owned canonical BEVT. */
-const EventOperandFault = Schema.Struct({
+ * present stage is the logical interior ordinal. Imported payoff failures carry
+ * owned BESC; variable failures carry owned BEVT. */
+const eventFaultFields = {
 	stage: Schema.optional(Schema.Number),
 	rule: Schema.Number,
 	find: Schema.Number,
 	operand: Schema.Number,
-	variable: Schema.Number,
 	category: Schema.Literal("SpaceMismatch"),
 	expectedSpace: Schema.Uint8Array,
 	offendingValue: Schema.Uint8Array
-})
+}
+const EventOperandFault = Schema.Union([
+	Schema.Struct({ ...eventFaultFields, source: Schema.Literal("variable"), variable: Schema.Number }),
+	Schema.Struct({ ...eventFaultFields, source: Schema.Literal("payoff"), variable: Schema.optional(Schema.Never) })
+])
 export type EventOperandFault = typeof EventOperandFault.Type
 
 /** A typed engine refusal, including native statement coordinates when known. */

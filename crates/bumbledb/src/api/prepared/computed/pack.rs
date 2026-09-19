@@ -191,7 +191,9 @@ impl Pack {
                         rule: u16::try_from(rule).map_err(|_| corrupt())?,
                         find: self.find,
                         operand: 0,
-                        variable: VarId(u16::try_from(variable).map_err(|_| corrupt())?),
+                        source: crate::EventOperandSource::Variable(VarId(
+                            u16::try_from(variable).map_err(|_| corrupt())?,
+                        )),
                         category: EventFaultCategory::SpaceMismatch,
                         expected_space: context[16..].into(),
                         offending_value: value.to_bytes(work)?.into_boxed_slice(),

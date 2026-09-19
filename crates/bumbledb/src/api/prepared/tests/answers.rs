@@ -3,13 +3,14 @@ use crate::error::FindIndex;
 use crate::ir::FoldOp;
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn expectation_finalization_preserves_the_initialized_prefix_on_failed_append() {
     use crate::event::{
         ArithmeticLimits, DensityPiece, ExactArithmetic, ExactRational, LawLimits, Space, SpaceId,
     };
     use crate::exec::run::{Bindings, Sink};
     use crate::ir::validate::SignatureColumn;
-    use crate::observation::ExpectationInput;
+    use crate::observation::{ExpectationInput, PayoffInput};
     let work = crate::WorkContext::new();
     let generation = crate::image::test_generation();
     let interner = crate::image::intern::InternerHandle::new(&generation, &work);
@@ -27,7 +28,7 @@ fn expectation_finalization_preserves_the_initialized_prefix_on_failed_append() 
     let input = |source: &Space, value: i64| ExpectationInput {
         given: source.full(),
         payoffs: vec![(
-            [u64::from(value < 0), value.unsigned_abs(), 1],
+            PayoffInput::Ratio([u64::from(value < 0), value.unsigned_abs(), 1]),
             source.full(),
         )],
     };
@@ -69,11 +70,43 @@ fn expectation_finalization_preserves_the_initialized_prefix_on_failed_append() 
         assert!(out.expectation_inputs.is_empty());
         let invalid = ExpectationInput {
             given: source.full(),
-            payoffs: vec![([0, 1, 1], source.full()), ([0, 0, 0], source.empty())],
+            payoffs: vec![
+                (PayoffInput::Ratio([0, 1, 1]), source.full()),
+                (PayoffInput::Ratio([0, 0, 0]), source.empty()),
+            ],
         };
         assert!(matches!(
             append(vec![input(&source, 9), invalid], &mut out),
             Err(Error::Event(crate::event::Error::DivisionByZero))
+        ));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(0, 0), AnswerValue::Expectation(&prior));
+        assert!(out.expectation_inputs.is_empty());
+        let mut arithmetic = ExactArithmetic::new(ArithmeticLimits::default(), &work);
+        let mut patches = Vec::new();
+        for value in [1u64, 2] {
+            let function = crate::event::FiniteFunction::constant(
+                &source,
+                ExactRational::from(value),
+                crate::event::FunctionLimits::default(),
+                &mut arithmetic,
+            )
+            .unwrap();
+            let import = crate::PayoffImport::capture(
+                crate::ImportedPayoff::Finite(function),
+                crate::event::SourceDescriptorLimits::default(),
+                &mut arithmetic,
+            )
+            .unwrap();
+            patches.push((PayoffInput::Imported(import), source.full()));
+        }
+        let conflict = ExpectationInput {
+            given: source.full(),
+            payoffs: patches,
+        };
+        assert!(matches!(
+            append(vec![input(&source, 9), conflict], &mut out),
+            Err(Error::Event(crate::event::Error::FunctionCoverConflict))
         ));
         assert_eq!(out.len(), 1);
         assert_eq!(out.get(0, 0), AnswerValue::Expectation(&prior));

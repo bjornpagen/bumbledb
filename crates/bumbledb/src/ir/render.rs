@@ -202,6 +202,7 @@ fn find_term(out: &mut String, term: &FindTerm) {
         FindTerm::Expectation { value, when, given } => {
             out.push_str("Expectation(");
             match value {
+                crate::PayoffExpr::Imported(value) => write!(out, "Payoff({:?})", value.bytes()),
                 crate::PayoffExpr::Integer(value) => write!(out, "v{}", value.0),
                 crate::PayoffExpr::Ratio {
                     numerator,

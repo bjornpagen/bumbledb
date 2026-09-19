@@ -13,9 +13,9 @@ use crate::{
     Event, EventFaultCategory, EventOperandFault, FindIndex, FindTerm, Result, Value, VarId,
 };
 
-// token, payoff sign/numerator/denominator, Event keys and written provenance.
+// token, tagged ratio/import payload, Event keys and written provenance.
 // Ratios are not normalized here: arithmetic belongs to one finalization budget.
-type Claim = ScratchWordKey<12>;
+type Claim = ScratchWordKey<13>;
 const _: () = assert!(Claim::BYTE_LEN <= crate::exec::scratch::MAX_INLINE_KEY);
 
 pub(super) struct Expectations {
@@ -23,6 +23,9 @@ pub(super) struct Expectations {
     table: Option<ScratchRelation>,
     next_group: u64,
     retained: usize,
+    imports: Vec<crate::PayoffImport>,
+    import_indices: std::collections::HashMap<crate::PayoffImport, u64>,
+    import_bytes: usize,
 }
 
 impl Expectations {
@@ -35,6 +38,9 @@ impl Expectations {
             table: None,
             next_group: 0,
             retained: 0,
+            imports: Vec::new(),
+            import_indices: std::collections::HashMap::new(),
+            import_bytes: 0,
         };
         value.aim(finds, programs);
         value
@@ -68,6 +74,9 @@ impl Expectations {
         self.table = None;
         self.next_group = 0;
         self.retained = 0;
+        self.imports.clear();
+        self.import_indices.clear();
+        self.import_bytes = 0;
     }
 
     pub(super) fn observe(
@@ -79,10 +88,15 @@ impl Expectations {
     ) -> Result<u64> {
         work.checkpoint()
             .map_err(super::super::source::work_error)?;
-        let FindTerm::Expectation { value, when, given } = program.expression else {
+        let FindTerm::Expectation { value, when, given } = &program.expression else {
             unreachable!("sealed expectation");
         };
-        let [sign, magnitude, denominator] = payoff_ratio(bindings, program, value);
+        let payoff = if let crate::PayoffExpr::Imported(import) = value {
+            [1, self.retain_import(import)?, 0, 0]
+        } else {
+            let [sign, numerator, denominator] = payoff_ratio(bindings, program, value);
+            [0, sign, numerator, denominator]
+        };
         let key = |var| {
             let (_, slot, _) = program
                 .inputs
@@ -91,17 +105,10 @@ impl Expectations {
                 .expect("bound Event");
             [bindings.get(*slot), bindings.get(*slot + 1)]
         };
-        let when_key = key(when);
-        let given_key = key(given);
+        let when_key = key(*when);
+        let given_key = key(*given);
         let interner = InternerHandle::new(generation, work);
-        let contexts = [when_key, given_key].map(|words| {
-            let event = interner.resolve_event(words)?;
-            Ok::<_, crate::Error>((words, event.space().full().to_bytes(work)?))
-        });
-        let [a, b] = contexts;
-        let a = a?;
-        let b = b?;
-        let (anchor, context) = if a.1 <= b.1 { a } else { b };
+        let (anchor, context) = context_anchor(&interner, [when_key, given_key], value, work)?;
         let mut group = (program.find as u64).to_be_bytes().to_vec();
         for &(slot, width) in &self.groups {
             for i in slot..slot + width {
@@ -146,9 +153,10 @@ impl Expectations {
         for &rule in &program.rules {
             let claim = Claim::new([
                 token,
-                sign,
-                magnitude,
-                denominator,
+                payoff[0],
+                payoff[1],
+                payoff[2],
+                payoff[3],
                 when_key[0],
                 when_key[1],
                 given_key[0],
@@ -168,6 +176,30 @@ impl Expectations {
         Ok(token)
     }
 
+    fn retain_import(&mut self, import: &crate::PayoffImport) -> Result<u64> {
+        if let Some(index) = self.import_indices.get(import) {
+            return Ok(*index);
+        }
+        let bytes = self
+            .import_bytes
+            .checked_add(import.bytes().len())
+            .filter(|n| *n <= 16 * 1024 * 1024)
+            .ok_or(crate::event::Error::Capacity(
+                crate::event::Capacity::DescriptorBytes,
+            ))?;
+        self.imports
+            .try_reserve(1)
+            .map_err(crate::event::Error::from)?;
+        self.import_indices
+            .try_reserve(1)
+            .map_err(crate::event::Error::from)?;
+        let index = self.imports.len() as u64;
+        self.imports.push(import.clone());
+        self.import_indices.insert(import.clone(), index);
+        self.import_bytes = bytes;
+        Ok(index)
+    }
+
     pub(super) fn finish(
         &mut self,
         generation: &GenerationHandle,
@@ -179,12 +211,38 @@ impl Expectations {
             return Ok(Vec::new());
         };
         let interner = InternerHandle::new(generation, work);
-        admit_contexts(&mut table, &interner, work, stage, faults)?;
+        admit_contexts(&mut table, &interner, &self.imports, work, stage, faults)?;
         if !faults.is_empty() {
             return Ok(Vec::new());
         }
-        collect_rosters(&mut table, &interner, work)
+        collect_rosters(&mut table, &interner, &self.imports, work)
     }
+}
+
+fn context_anchor(
+    interner: &InternerHandle<'_>,
+    keys: [[u64; 2]; 2],
+    value: &crate::PayoffExpr,
+    work: &WorkContext,
+) -> Result<([u64; 2], Vec<u8>)> {
+    let [a, b] = keys.map(|words| {
+        let event = interner.resolve_event(words)?;
+        Ok::<_, crate::Error>((words, event.space().full().to_bytes(work)?))
+    });
+    let a = a?;
+    let b = b?;
+    let (mut anchor, mut context) = if a.1 <= b.1 { a } else { b };
+    if let crate::PayoffExpr::Imported(import) = value
+        && let Some(marker) = import.marker()
+        && marker < context.as_slice()
+    {
+        anchor = interner
+            .intern_event(&import.space().expect("function space").full())?
+            .key()
+            .words();
+        context = marker.to_vec();
+    }
+    Ok((anchor, context))
 }
 
 // Capture full signed magnitudes, including u64::MAX / -1. Exact reduction is
@@ -192,7 +250,7 @@ impl Expectations {
 fn payoff_ratio(
     bindings: &Bindings,
     program: &OutputProgram,
-    value: crate::PayoffExpr,
+    value: &crate::PayoffExpr,
 ) -> [u64; 3] {
     let integer = |var| match super::read_value(bindings, program, var).expect("typed integer") {
         Value::I64(n) => (n < 0, n.unsigned_abs()),
@@ -200,11 +258,12 @@ fn payoff_ratio(
         _ => unreachable!("validated exact integer"),
     };
     let ((negative, magnitude), (divisor_negative, denominator)) = match value {
-        crate::PayoffExpr::Integer(var) => (integer(var), (false, 1)),
+        crate::PayoffExpr::Imported(_) => unreachable!("import capture"),
+        crate::PayoffExpr::Integer(var) => (integer(*var), (false, 1)),
         crate::PayoffExpr::Ratio {
             numerator,
             denominator,
-        } => (integer(numerator), integer(denominator)),
+        } => (integer(*numerator), integer(*denominator)),
     };
     let sign = u64::from(magnitude != 0 && (negative ^ divisor_negative));
     [sign, magnitude, denominator]
@@ -213,6 +272,7 @@ fn payoff_ratio(
 fn admit_contexts(
     table: &mut ScratchRelation,
     interner: &InternerHandle<'_>,
+    imports: &[crate::PayoffImport],
     work: &WorkContext,
     stage: Option<usize>,
     faults: &mut Faults,
@@ -222,8 +282,21 @@ fn admit_contexts(
     let mut space = None;
     // Validate every written occurrence, including zero and empty inputs.
     table.visit_with_lookup(ScratchMapId::Default, &mut |lookup, key, _| {
-        let [token, _, _, _, a, b, c, d, rule, when_var, given_var, find] =
-            Claim::decode(key).ok_or_else(corrupt)?.words();
+        let [
+            token,
+            kind,
+            payload,
+            _,
+            _,
+            a,
+            b,
+            c,
+            d,
+            rule,
+            when_var,
+            given_var,
+            find,
+        ] = Claim::decode(key).ok_or_else(corrupt)?.words();
         if current != Some(token) {
             if !lookup.get(
                 ScratchMapId::EventPackContext,
@@ -250,13 +323,41 @@ fn admit_contexts(
                         rule: u16::try_from(rule).map_err(|_| corrupt())?,
                         find: usize::try_from(find).map_err(|_| corrupt())?,
                         operand,
-                        variable: VarId(u16::try_from(variable).map_err(|_| corrupt())?),
+                        source: crate::EventOperandSource::Variable(VarId(
+                            u16::try_from(variable).map_err(|_| corrupt())?,
+                        )),
                         category: EventFaultCategory::SpaceMismatch,
                         expected_space: context[16..].into(),
                         offending_value: event.to_bytes(work)?.into_boxed_slice(),
                     })?;
                 }
                 Err(error) => return Err(error.into()),
+            }
+        }
+        if kind == 1 {
+            let import = imports
+                .get(usize::try_from(payload).map_err(|_| corrupt())?)
+                .ok_or_else(corrupt)?;
+            if let Some(source) = import.space() {
+                match source
+                    .full()
+                    .align_to(space.as_ref().expect("group context"), work)
+                {
+                    Ok(_) => {}
+                    Err(crate::event::Error::SpaceMismatch) => {
+                        faults.insert(EventOperandFault {
+                            stage,
+                            rule: u16::try_from(rule).map_err(|_| corrupt())?,
+                            find: usize::try_from(find).map_err(|_| corrupt())?,
+                            operand: 2,
+                            source: crate::EventOperandSource::PayoffImport,
+                            category: EventFaultCategory::SpaceMismatch,
+                            expected_space: context[16..].into(),
+                            offending_value: import.bytes().into(),
+                        })?;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
             }
         }
         Ok(true)
@@ -267,6 +368,7 @@ fn admit_contexts(
 fn collect_rosters(
     table: &mut ScratchRelation,
     interner: &InternerHandle<'_>,
+    imports: &[crate::PayoffImport],
     work: &WorkContext,
 ) -> Result<Vec<ExpectationInput>> {
     let mut inputs = Vec::new();
@@ -274,8 +376,9 @@ fn collect_rosters(
     table.visit_with_lookup(ScratchMapId::Default, &mut |_, key, _| {
         let [
             token,
-            sign,
-            magnitude,
+            kind,
+            payload,
+            numerator,
             denominator,
             a,
             b,
@@ -289,7 +392,7 @@ fn collect_rosters(
         if group.as_ref().is_none_or(|g| g.token != token) {
             if let Some(prior) = group.take() {
                 inputs.try_reserve(1).map_err(crate::event::Error::from)?;
-                inputs.push(prior.finish());
+                inputs.push(prior.finish(imports)?);
             }
             group = Some(Group {
                 token,
@@ -309,7 +412,7 @@ fn collect_rosters(
         if let Some((_, prior)) = group
             .values
             .last_mut()
-            .filter(|(value, _)| *value == [sign, magnitude, denominator])
+            .filter(|(value, _)| *value == [kind, payload, numerator, denominator])
         {
             *prior = prior.apply(BoolOp4::OR, &when, work)?;
         } else {
@@ -322,13 +425,15 @@ fn collect_rosters(
                 .values
                 .try_reserve(1)
                 .map_err(crate::event::Error::from)?;
-            group.values.push(([sign, magnitude, denominator], when));
+            group
+                .values
+                .push(([kind, payload, numerator, denominator], when));
         }
         Ok(true)
     })?;
     if let Some(group) = group {
         inputs.try_reserve(1).map_err(crate::event::Error::from)?;
-        inputs.push(group.finish());
+        inputs.push(group.finish(imports)?);
     }
     Ok(inputs)
 }
@@ -337,15 +442,32 @@ struct Group {
     token: u64,
     given: Event,
     // Inline keys group identical presentations. Equal ratios merge at admission.
-    values: Vec<([u64; 3], Event)>,
+    values: Vec<([u64; 4], Event)>,
 }
 
 impl Group {
-    fn finish(self) -> ExpectationInput {
-        ExpectationInput {
-            given: self.given,
-            payoffs: self.values,
+    fn finish(self, imports: &[crate::PayoffImport]) -> Result<ExpectationInput> {
+        let mut payoffs = Vec::new();
+        payoffs
+            .try_reserve_exact(self.values.len())
+            .map_err(crate::event::Error::from)?;
+        for ([kind, payload, numerator, denominator], region) in self.values {
+            let value = if kind == 0 {
+                crate::observation::PayoffInput::Ratio([payload, numerator, denominator])
+            } else {
+                crate::observation::PayoffInput::Imported(
+                    imports
+                        .get(usize::try_from(payload).map_err(|_| corrupt())?)
+                        .ok_or_else(corrupt)?
+                        .clone(),
+                )
+            };
+            payoffs.push((value, region));
         }
+        Ok(ExpectationInput {
+            given: self.given,
+            payoffs,
+        })
     }
 }
 
@@ -460,10 +582,122 @@ mod tests {
                                 ),
                             )
                             .unwrap();
-                        assert_eq!(input.values, [crate::event::ExactRational::zero()]);
-                        assert!(input.partition.cells()[0].is_full());
+                        let crate::ExpectationPayoff::Scalar { values, partition } = input else {
+                            panic!("scalar")
+                        };
+                        assert_eq!(values, [crate::event::ExactRational::zero()]);
+                        assert!(partition.cells()[0].is_full());
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn imported_payoffs_survive_spill_reaim_and_reset_without_losing_owners() {
+        use crate::event::{
+            ArithmeticLimits, ExactArithmetic, ExactRational, FiniteFunction,
+            SourceDescriptorLimits,
+        };
+        let source = Space::new(SpaceId([76; 32]), 1, &()).unwrap();
+        let function = FiniteFunction::constant(
+            &source,
+            ExactRational::from(7u64),
+            FunctionLimits::default(),
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &()),
+        )
+        .unwrap();
+        let import = crate::PayoffImport::capture(
+            crate::ImportedPayoff::Finite(function),
+            SourceDescriptorLimits::default(),
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &()),
+        )
+        .unwrap();
+        for spill in [false, true] {
+            let work = WorkContext::new();
+            let generation = crate::image::test_generation();
+            let interner = InternerHandle::new(&generation, &work);
+            let mut program = (*program()).clone();
+            program.expression = FindTerm::Expectation {
+                value: crate::PayoffExpr::Imported(import.clone()),
+                when: VarId(1),
+                given: VarId(2),
+            };
+            program.inputs.remove(0);
+            let program = Arc::new(program);
+            let finds = [
+                FindSpec::Var { slot: 0, width: 64 },
+                FindSpec::Var { slot: 69, width: 1 },
+            ];
+            let mut collector = Expectations::new(&finds, &[(69, program.clone())]);
+            for turn in 0..2 {
+                let offset = if turn == 0 { 0 } else { 4 };
+                if turn == 1 {
+                    collector.aim(
+                        &[
+                            FindSpec::Var { slot: 4, width: 64 },
+                            FindSpec::Var { slot: 70, width: 1 },
+                        ],
+                        &[(70, program.clone())],
+                    );
+                }
+                let mut relocated = (*program).clone();
+                relocated.inputs = vec![
+                    (VarId(1), 71, ValueType::Event),
+                    (VarId(2), 73, ValueType::Event),
+                ];
+                for group in 0..2 {
+                    let mut row = Bindings::new(75);
+                    row.set(offset + 63, group);
+                    let head = source.coordinate(0, &()).unwrap();
+                    for (slot, region) in [
+                        (71, if turn == 0 { head } else { head.complement() }),
+                        (73, source.full()),
+                    ] {
+                        let words = interner.intern_event(&region).unwrap().key().words();
+                        row.set(slot, words[0]);
+                        row.set(slot + 1, words[1]);
+                    }
+                    assert_eq!(
+                        collector
+                            .observe(&row, &relocated, &generation, &work)
+                            .unwrap(),
+                        group
+                    );
+                }
+                if turn == 0 && spill {
+                    collector.table.as_mut().unwrap().force_spill().unwrap();
+                }
+            }
+            assert_eq!(collector.imports.len(), 1);
+            assert_eq!(collector.import_bytes, import.bytes().len());
+            assert_eq!(collector.table.as_ref().unwrap().spilled(), spill);
+            let mut faults = Faults::default();
+            let inputs = collector
+                .finish(&generation, &work, None, &mut faults)
+                .unwrap();
+            faults.finish().unwrap();
+            collector.reset();
+            assert_eq!(collector.import_bytes, 0);
+            assert!(collector.imports.is_empty() && collector.import_indices.is_empty());
+            assert_eq!(inputs.len(), 2);
+            for input in inputs {
+                let crate::ExpectationPayoff::Finite(cover) = input
+                    .admit(
+                        &work,
+                        &mut ExactArithmetic::new(ArithmeticLimits::default(), &work),
+                    )
+                    .unwrap()
+                else {
+                    panic!("finite cover")
+                };
+                assert_eq!(cover.patches().len(), 1);
+                assert!(cover.patches()[0].region.is_full());
+                assert_eq!(
+                    cover.function().at(0, &()).unwrap(),
+                    ExactRational::from(7u64)
+                );
             }
         }
     }

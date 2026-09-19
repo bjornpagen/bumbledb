@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { Effect, ManagedRuntime, Stream } from "effect"
+import { Effect, ManagedRuntime, Result, Stream } from "effect"
 import {
 	ChangeSet,
 	closed,
@@ -63,6 +63,14 @@ function typePins(answer: QueryRow<typeof observed>) {
 	payoffRatio(row.value, row.value)
 }
 void typePins
+function payoffTypePins(partial: ParameterFunction) {
+	const row = v(Payoff)
+	// @ts-expect-error A partial parameter-only function is not a total source payoff.
+	expectation(partial, row.region, row.given)
+	// @ts-expect-error JavaScript numbers are not exact payoffs.
+	expectation(0.5, row.region, row.given)
+}
+void payoffTypePins
 async function run<A, E>(program: Effect.Effect<A, E, NativeRuntime>) {
 	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
 	try {
@@ -146,6 +154,33 @@ test("fraction payoffs remain owned pure query expressions across description im
 	)
 })
 
+test("numerical imports author and snapshot without loading native code", () => {
+	assert.equal(nativeBindingIsLoaded(), false)
+	// Pure constructors certify envelopes only; worker preparation validates the mathematics.
+	const imports = [
+		Result.getOrThrow(Q.fromBytes(Buffer.from("BERA\x01"))),
+		Result.getOrThrow(FiniteFunction.fromBytes(Buffer.from("BESC\x01\x00"))),
+		Result.getOrThrow(FamilyFunction.fromBytes(Buffer.from("BESC\x02\x01")))
+	]
+	for (const value of imports) {
+		const authored = query(Theory).rule((r) => {
+			const row = v(Payoff)
+			return r.match(Payoff, row).find({ mean: expectation(value, row.region, row.given) })
+		})
+		const description = describeQuery(authored)
+		const restored = queryFromDescription(Theory, description, { mean: expectationResult })
+		assert.deepEqual(describeQuery(restored), description)
+		const first = description.ir.rules[0]?.finds[0]
+		assert.ok(first?.kind === "expectation" && typeof first.value !== "number" && first.value.kind === "imported")
+		first.value.bytes.fill(0)
+		assert.deepEqual(describeQuery(restored), describeQuery(authored))
+	}
+	const row = v(Payoff)
+	const partial = Result.getOrThrow(ParameterFunction.fromBytes(Buffer.from("BESC\x02\x00")))
+	assert.throws(() => expectation(partial as never, row.region, row.given), /integer variable/)
+	assert.equal(nativeBindingIsLoaded(), false)
+})
+
 test("query expectations own complete payoff rosters and survive collection, paging, and closed owners", async () => {
 	const retained = await run(
 		Effect.scoped(
@@ -182,7 +217,7 @@ test("query expectations own complete payoff rosters and survive collection, pag
 				assert.equal(rows.length, 2)
 				assert.equal(Array.from(yield* Stream.runCollect(result.pages())).flat().length, 2)
 				for (const row of rows) {
-					assert.ok(row.mean.law === "fixed" && row.second.law === "fixed")
+					assert.ok(row.mean.law === "fixed" && row.second.law === "fixed" && row.mean.payoffKind === "scalar")
 					if (row.group === 1n) {
 						assert.ok(row.mean.value !== null && row.second.value !== null)
 						assert.equal(yield* Q.toString(row.mean.value), "-4")
@@ -200,7 +235,11 @@ test("query expectations own complete payoff rosters and survive collection, pag
 			})
 		)
 	)
-	assert.ok(retained.every((r) => Event.toBytes(r.mean.given).length > 0 && Object.isFrozen(r.mean.payoffs)))
+	assert.ok(
+		retained.every(
+			(r) => Event.toBytes(r.mean.given).length > 0 && r.mean.payoffKind === "scalar" && Object.isFrozen(r.mean.payoffs)
+		)
+	)
 })
 
 test("family expectations transport signed payoff functions and preserve impossible parameter endpoints", async () => {
@@ -261,7 +300,7 @@ test("family expectations transport signed payoff functions and preserve impossi
 				assert.ok(half !== null)
 				assert.equal(yield* Q.toString(half), "1/2")
 				const answer = rows[0]?.mean
-				assert.ok(answer?.law === "parameter")
+				assert.ok(answer?.law === "parameter" && answer.payoffKind === "scalar")
 				assert.equal(yield* ParameterFunction.at(answer.value, yield* Q.fraction(0n)), null)
 				const third = yield* Q.fraction(1n, 3n)
 				const value = yield* ParameterFunction.at(answer.value, third)
@@ -309,7 +348,7 @@ test("fraction queries normalize equal presentations and reject hidden zero divi
 				const rows = yield* result.collect()
 				assert.equal(rows.length, 1)
 				const row = rows[0]
-				assert.ok(row && row.mean.law === "fixed" && row.mean.value !== null)
+				assert.ok(row && row.mean.law === "fixed" && row.mean.value !== null && row.mean.payoffKind === "scalar")
 				assert.equal(yield* Q.toString(row.mean.value), "-1/12")
 				assert.equal(row.paths, 4n)
 				assert.equal(row.mean.payoffs.length, 3)
@@ -325,6 +364,208 @@ test("fraction queries normalize equal presentations and reject hidden zero divi
 				yield* after.close()
 				yield* db.close()
 				assert.equal(yield* Q.toString(row.mean.value), "-1/12")
+			})
+		)
+	)
+})
+
+test("function imports retain local covers, exact constants, descriptions and closed owners", async () => {
+	const retained = await run(
+		Effect.scoped(
+			Effect.gen(function* () {
+				const raw = yield* Event.space(new Uint8Array(32).fill(242), 1n)
+				const source = yield* FiniteFunction.designate(yield* FiniteFunction.constant(raw, yield* Q.fraction(1n, 2n)))
+				const head = yield* Event.coordinate(source, 0n)
+				const a = yield* FiniteFunction.new(source, [
+					{ region: head, value: yield* Q.fraction(1n, 3n) },
+					{ region: yield* Event.complement(head), value: yield* Q.fraction(-2n) }
+				])
+				const b = yield* FiniteFunction.constant(source, yield* Q.fraction(1n, 3n))
+				const big = yield* Q.fraction(123456789012345678901234567890123456789n, 7n)
+				const db = yield* Db.create(storeDir("query-function-imports"), Theory)
+				const changes = yield* ChangeSet.builder(Theory)
+				yield* changes.insert(Payoff, [
+					{ id: 0n, group: 0n, value: 0n, second: 0n, region: source, given: source },
+					{ id: 1n, group: 0n, value: 0n, second: 0n, region: head, given: source },
+					{ id: 2n, group: 0n, value: 0n, second: 0n, region: yield* Event.empty(source), given: source }
+				])
+				assert.equal((yield* db.apply(yield* changes.finish(), { expected: { kind: "any" } })).kind, "accepted")
+				const authored = query(Theory)
+					.rule((r) => {
+						const row = v(Payoff)
+						return r
+							.match(Payoff, { id: 0n, region: row.region, given: row.given })
+							.find({ mean: expectation(a, row.region, row.given), huge: expectation(big, row.given, row.given) })
+					})
+					.rule((r) => {
+						const row = v(Payoff)
+						return r
+							.match(Payoff, { id: 1n, region: row.region, given: row.given })
+							.find({ mean: expectation(b, row.region, row.given), huge: expectation(big, row.given, row.given) })
+					})
+					.rule((r) => {
+						const row = v(Payoff)
+						return r
+							.match(Payoff, { id: 2n, region: row.region, given: row.given })
+							.find({ mean: expectation(big, row.region, row.given), huge: expectation(big, row.given, row.given) })
+					})
+				const description = describeQuery(authored)
+				const restored = queryFromDescription(Theory, description, { mean: expectationResult, huge: expectationResult })
+				assert.deepEqual(describeQuery(restored), description)
+				const malformed = structuredClone(description)
+				const bad = malformed.ir.rules[0]?.finds[0]
+				assert.ok(bad?.kind === "expectation")
+				Object.assign(bad, { value: { kind: "imported", bytes: new Uint8Array([66, 69, 83, 67, 2, 0]) } })
+				assert.throws(
+					() => queryFromDescription(Theory, malformed, { mean: expectationResult, huge: expectationResult }),
+					/total finite\/family/
+				)
+
+				for (const rule of description.ir.rules)
+					for (const find of rule.finds) {
+						if (find.kind === "expectation" && typeof find.value !== "number" && find.value.kind === "imported")
+							find.value.bytes.fill(0)
+					}
+				assert.deepEqual(describeQuery(restored), describeQuery(authored))
+				const snapshot = yield* db.snapshot()
+				const result = yield* snapshot.execute(restored, {})
+				yield* snapshot.close()
+				yield* db.close()
+				const rows = yield* result.collect()
+				assert.equal(Array.from(yield* Stream.runCollect(result.pages())).flat().length, 1)
+				const row = rows[0]
+				assert.ok(row?.mean.law === "fixed" && row.mean.payoffKind === "finite" && row.mean.value !== null)
+				assert.equal(yield* Q.toString(row.mean.value), "-5/6")
+				assert.equal(row.mean.patches.length, 3)
+				assert.ok(row.huge.law === "fixed" && row.huge.payoffKind === "scalar" && row.huge.value !== null)
+				assert.equal(yield* Q.toString(row.huge.value), yield* Q.toString(big))
+				return row.mean
+			})
+		)
+	)
+	await run(
+		Effect.gen(function* () {
+			const replay = yield* FiniteFunction.glue(retained.given, retained.patches)
+			assert.equal(yield* FiniteFunction.equivalent(replay.function, retained.function), true)
+		})
+	)
+})
+
+test("family payoff queries glue at exact boundaries and promote finite patches", async () => {
+	await run(
+		Effect.scoped(
+			Effect.gen(function* () {
+				const name = new Uint8Array(32).fill(243)
+				const p = yield* P.parameter(name)
+				const one = yield* P.constant(yield* Q.fraction(1n))
+				const tail = yield* P.subtract(one, p)
+				const domain = yield* ParameterDomain.new(
+					yield* ParameterRegion.and(
+						yield* ParameterRegion.whereSign(name, p, PolynomialSigns.nonNegative),
+						yield* ParameterRegion.whereSign(name, tail, PolynomialSigns.nonNegative)
+					)
+				)
+				const threshold = yield* P.subtract(p, yield* P.constant(yield* Q.fraction(1n, 2n)))
+				const raw = yield* Event.withParameters(yield* Event.space(new Uint8Array(32).fill(244), 2n), domain, [
+					{ coordinate: 0n, region: yield* ParameterRegion.whereSign(name, threshold, PolynomialSigns.nonPositive) },
+					{ coordinate: 1n, region: yield* ParameterRegion.whereSign(name, threshold, PolynomialSigns.nonNegative) }
+				])
+				const source = yield* FamilyFunction.designate(
+					yield* FamilyFunction.fromParameter(raw, yield* ParameterFunction.ratio(domain, one, one))
+				)
+				const a = yield* FamilyFunction.fromParameter(source, yield* ParameterFunction.ratio(domain, p, one))
+				const b = yield* FamilyFunction.fromParameter(source, yield* ParameterFunction.ratio(domain, tail, one))
+				const half = yield* FiniteFunction.constant(source, yield* Q.fraction(1n, 2n))
+				const left = yield* Event.coordinate(source, 0n)
+				const right = yield* Event.coordinate(source, 1n)
+				const db = yield* Db.create(storeDir("query-family-imports"), Theory)
+				const changes = yield* ChangeSet.builder(Theory)
+				yield* changes.insert(Payoff, [
+					{ id: 0n, group: 0n, value: 0n, second: 0n, region: left, given: source },
+					{ id: 1n, group: 0n, value: 0n, second: 0n, region: right, given: source },
+					{ id: 2n, group: 0n, value: 0n, second: 0n, region: yield* Event.and(left, right), given: source }
+				])
+				yield* db.apply(yield* changes.finish(), { expected: { kind: "any" } })
+				const authored = query(Theory)
+					.rule((r) => {
+						const row = v(Payoff)
+						return r
+							.match(Payoff, { id: 0n, region: row.region, given: row.given })
+							.find({ mean: expectation(a, row.region, row.given) })
+					})
+					.rule((r) => {
+						const row = v(Payoff)
+						return r
+							.match(Payoff, { id: 1n, region: row.region, given: row.given })
+							.find({ mean: expectation(b, row.region, row.given) })
+					})
+					.rule((r) => {
+						const row = v(Payoff)
+						return r
+							.match(Payoff, { id: 2n, region: row.region, given: row.given })
+							.find({ mean: expectation(half, row.region, row.given) })
+					})
+				const restored = queryFromDescription(Theory, describeQuery(authored), { mean: expectationResult })
+				const snapshot = yield* db.snapshot()
+				const rows = yield* (yield* snapshot.execute(restored, {})).collect()
+				const mean = rows[0]?.mean
+				assert.ok(mean?.payoffKind === "family" && mean.law === "parameter")
+				assert.equal(mean.patches.length, 3)
+				const replay = yield* FamilyFunction.glue(mean.given, mean.patches)
+				assert.equal(yield* FamilyFunction.equivalent(replay.function, mean.function), true)
+				for (const [n, expected] of [
+					[0n, "0"],
+					[1n, "1/4"],
+					[2n, "1/2"],
+					[3n, "1/4"],
+					[4n, "0"]
+				] as const) {
+					const value: Q | null = yield* ParameterFunction.at(mean.value, yield* Q.fraction(n, 4n))
+					assert.ok(value)
+					assert.equal(yield* Q.toString(value), expected)
+				}
+				const bad = yield* Q.fraction(7n)
+				const conflict = authored.rule((r) => {
+					const row = v(Payoff)
+					return r
+						.match(Payoff, { id: 2n, region: row.region, given: row.given })
+						.find({ mean: expectation(bad, row.region, row.given) })
+				})
+				const failure = yield* Effect.flip(Effect.flatMap(snapshot.execute(conflict, {}), (result) => result.collect()))
+				assert.ok(failure.reason._tag === "Engine")
+				assert.match(failure.reason.message, /disagree/)
+			})
+		)
+	)
+})
+
+test("empty function import faults retain descriptors without invented variables", async () => {
+	await run(
+		Effect.scoped(
+			Effect.gen(function* () {
+				const source = yield* Event.space(new Uint8Array(32).fill(1), 0n)
+				const foreign = yield* Event.space(new Uint8Array(32).fill(250), 0n)
+				const payoff = yield* FiniteFunction.constant(foreign, yield* Q.fraction(0n))
+				const db = yield* Db.create(storeDir("query-imported-payoff-faults"), Theory)
+				const changes = yield* ChangeSet.builder(Theory)
+				yield* changes.insert(Payoff, [
+					{ id: 0n, group: 0n, value: 0n, second: 0n, region: yield* Event.empty(source), given: source }
+				])
+				yield* db.apply(yield* changes.finish(), { expected: { kind: "any" } })
+				const authored = query(Theory).rule((r) => {
+					const row = v(Payoff)
+					return r.match(Payoff, row).find({ mean: expectation(payoff, row.region, row.given) })
+				})
+				const snapshot = yield* db.snapshot()
+				const failure = yield* Effect.flip(Effect.flatMap(snapshot.execute(authored, {}), (result) => result.collect()))
+				assert.ok(failure.reason._tag === "Engine")
+				const faults = failure.reason.eventFaults
+				assert.equal(faults?.length, 1)
+				const fault = faults?.[0]
+				assert.ok(fault?.source === "payoff")
+				assert.equal(Object.hasOwn(fault, "variable"), false)
+				assert.deepEqual(fault.offendingValue, FiniteFunction.toBytes(payoff))
+				assert.deepEqual(fault.expectedSpace, Event.toBytes(source))
 			})
 		)
 	)

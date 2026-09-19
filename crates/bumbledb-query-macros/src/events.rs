@@ -292,7 +292,7 @@ impl Region {
     }
 }
 
-fn imported(name: &Name, imports: &[Import], kind: ImportKind) -> Parse<String> {
+pub(super) fn imported(name: &Name, imports: &[Import], kind: ImportKind) -> Parse<String> {
     let Some((index, _)) = imports
         .iter()
         .enumerate()
@@ -306,6 +306,7 @@ fn imported(name: &Name, imports: &[Import], kind: ImportKind) -> Parse<String> 
                 ImportKind::Product => {
                     "query!: composition/residual/closure requires a declared `use product` import"
                 }
+                ImportKind::Payoff => "query!: Payoff requires a declared `use payoff` import",
                 ImportKind::Template => unreachable!("Event imports"),
             },
         );

@@ -79,142 +79,95 @@ pub enum ExpectationValue {
         value: Option<ExactRational>,
     },
     Parameter(crate::event::ParameterExpectationObservation),
+    Family(crate::event::ParameterExpectationObservation<crate::event::FamilyFunction>),
 }
 
-/// Context-checked claims retain exact fraction presentations until the shared
-/// finalization budget can normalize them. Empty regions still supply a value.
-#[derive(Debug, Clone)]
-pub(crate) struct ExpectationInput {
-    pub given: Event,
-    // sign, numerator magnitude, denominator magnitude; sign is 0 or 1.
-    pub payoffs: Vec<([u64; 3], Event)>,
-}
+mod payoff;
+pub use payoff::ExpectationPayoff;
+pub(crate) use payoff::{ExpectationInput, PayoffInput};
 
-/// A checked roster retains supplied zero payoffs and empty indexed buckets.
-#[derive(Debug, Clone)]
-pub(crate) struct AdmittedExpectationInput {
-    pub partition: crate::event::EventPartition,
-    pub values: Vec<ExactRational>,
-}
-
-impl ExpectationInput {
-    pub(crate) fn admit(
-        &self,
-        control: &crate::WorkContext,
-        work: &mut ExactArithmetic<'_>,
-    ) -> Result<AdmittedExpectationInput> {
-        use crate::event::{BoolOp4, EventPartition, PartitionLimits};
-        let mut merged = std::collections::HashMap::<Vec<u8>, (ExactRational, Event)>::new();
-        for ([sign, numerator, denominator], region) in &self.payoffs {
-            // No empty-region or zero-numerator shortcut may hide an invalid divisor.
-            let value =
-                ExactRational::from(*numerator).div(&ExactRational::from(*denominator), work)?;
-            let value = if *sign == 0 {
-                value
-            } else {
-                ExactRational::zero().sub(&value, work)?
-            };
-            let key = value.to_bytes(work)?;
-            if let Some((_, prior)) = merged.get_mut(&key) {
-                *prior = prior.apply(BoolOp4::OR, region, control)?;
-            } else {
-                merged.try_reserve(1).map_err(crate::event::Error::from)?;
-                merged.insert(key, (value, region.clone()));
-            }
-        }
-        let mut regions = Vec::new();
-        let mut values = Vec::new();
-        regions
-            .try_reserve_exact(merged.len())
-            .map_err(crate::event::Error::from)?;
-        values
-            .try_reserve_exact(merged.len())
-            .map_err(crate::event::Error::from)?;
-        let mut ordered = Vec::new();
-        ordered
-            .try_reserve_exact(merged.len())
-            .map_err(crate::event::Error::from)?;
-        ordered.extend(merged);
-        ordered.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        for (_, (value, region)) in ordered {
-            values.push(value);
-            regions.push(region);
-        }
-        Ok(AdmittedExpectationInput {
-            partition: EventPartition::on(
-                &self.given,
-                &regions,
-                PartitionLimits::default(),
-                control,
-            )?,
-            values,
-        })
-    }
+/// The payoff carrier remains explicit in native observations.
+#[derive(Debug, Clone, Copy)]
+pub enum ExpectationFunction<'a> {
+    Finite(&'a crate::event::FiniteFunction),
+    Family(&'a crate::event::FamilyFunction),
 }
 
 /// An owned conditional expectation, including its complete evidence-relative
-/// payoff. Construction is native and requires structural partition admission.
+/// payoff. Construction requires structural partition or function-cover admission.
 #[derive(Debug, Clone)]
 pub struct ExpectationAnswer {
-    input: AdmittedExpectationInput,
+    input: ExpectationPayoff,
     value: ExpectationValue,
+    function_identity: Box<[u8]>,
 }
 
 impl ExpectationAnswer {
-    pub(crate) fn new(
-        input: AdmittedExpectationInput,
-        work: &mut ExactArithmetic<'_>,
-    ) -> Result<Self> {
-        let given = input.partition.parent();
-        let mut pieces = Vec::new();
-        pieces
-            .try_reserve_exact(input.values.len())
-            .map_err(crate::event::Error::from)?;
-        pieces.extend(
-            input
-                .partition
-                .cells()
-                .iter()
-                .zip(&input.values)
-                .map(|(region, value)| crate::event::FunctionPiece {
-                    region: region.clone(),
-                    value: value.clone(),
-                }),
-        );
-        let function = crate::event::FiniteFunction::new(
-            &given.space(),
-            &pieces,
-            crate::event::FunctionLimits::default(),
+    pub(crate) fn new(input: ExpectationPayoff, work: &mut ExactArithmetic<'_>) -> Result<Self> {
+        let given = input.given();
+        let (value, original) = if let ExpectationPayoff::Family(cover) = &input {
+            let function = cover.function();
+            (
+                ExpectationValue::Family(function.expectation(
+                    given,
+                    ParameterSourceLimits::default(),
+                    work,
+                )?),
+                crate::ImportedPayoff::Family(function.clone()),
+            )
+        } else {
+            let function = input.finite_function(work)?;
+            let value = if given.space().parameter_domain().is_some() {
+                ExpectationValue::Parameter(function.parameter_expectation(
+                    given,
+                    ParameterSourceLimits::default(),
+                    work,
+                )?)
+            } else {
+                let observation = function.expectation(given, work)?;
+                let value = observation.value(work)?;
+                ExpectationValue::Fixed { observation, value }
+            };
+            (value, crate::ImportedPayoff::Finite(function))
+        };
+        let identity = crate::PayoffImport::capture(
+            original,
+            crate::event::SourceDescriptorLimits::default(),
             work,
         )?;
-        let value = if given.space().parameter_domain().is_some() {
-            ExpectationValue::Parameter(function.parameter_expectation(
-                given,
-                ParameterSourceLimits::default(),
-                work,
-            )?)
-        } else {
-            let observation = function.expectation(given, work)?;
-            let value = observation.value(work)?;
-            ExpectationValue::Fixed { observation, value }
-        };
-        Ok(Self { input, value })
+        Ok(Self {
+            input,
+            value,
+            function_identity: identity.bytes().into(),
+        })
     }
 
     #[must_use]
     pub fn given(&self) -> &Event {
-        self.input.partition.parent()
+        self.input.given()
     }
 
-    /// The partition and corresponding exact values include zero payoffs.
+    /// Scalar rosters retain their partition and zero payoffs. Function covers
+    /// return `None`; inspect `payoff()` for their checked patches.
     #[must_use]
-    pub fn partition(&self) -> &crate::event::EventPartition {
-        &self.input.partition
+    pub fn partition(&self) -> Option<&crate::event::EventPartition> {
+        match &self.input {
+            ExpectationPayoff::Scalar { partition, .. } => Some(partition),
+            _ => None,
+        }
     }
 
     #[must_use]
-    pub fn values(&self) -> &[ExactRational] {
-        &self.input.values
+    pub fn values(&self) -> Option<&[ExactRational]> {
+        match &self.input {
+            ExpectationPayoff::Scalar { values, .. } => Some(values),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn payoff(&self) -> &ExpectationPayoff {
+        &self.input
     }
 
     #[must_use]
@@ -223,10 +176,17 @@ impl ExpectationAnswer {
     }
 
     #[must_use]
-    pub fn function(&self) -> &crate::event::FiniteFunction {
+    pub fn function(&self) -> ExpectationFunction<'_> {
         match &self.value {
-            ExpectationValue::Fixed { observation, .. } => observation.function(),
-            ExpectationValue::Parameter(observation) => observation.function(),
+            ExpectationValue::Fixed { observation, .. } => {
+                ExpectationFunction::Finite(observation.function())
+            }
+            ExpectationValue::Parameter(observation) => {
+                ExpectationFunction::Finite(observation.function())
+            }
+            ExpectationValue::Family(observation) => {
+                ExpectationFunction::Family(observation.function())
+            }
         }
     }
 
@@ -235,15 +195,18 @@ impl ExpectationAnswer {
         match &self.value {
             ExpectationValue::Fixed { observation, .. } => observation.is_impossible(),
             ExpectationValue::Parameter(observation) => observation.is_impossible(),
+            ExpectationValue::Family(observation) => observation.is_impossible(),
         }
     }
 }
 
 /// Equality retains source and payoff identity; equal means are insufficient.
-/// Canonical functions ignore empty buckets and retain every nonzero region.
+/// Finite functions ignore empty buckets and retain every nonzero region.
+/// Family identity uses the encoded presentation, not solver-checked numerical
+/// equivalence. Use `FamilyFunction::equivalent` for the latter.
 impl PartialEq for ExpectationAnswer {
     fn eq(&self, other: &Self) -> bool {
-        self.given() == other.given() && self.function().pieces().eq(other.function().pieces())
+        self.given() == other.given() && self.function_identity == other.function_identity
     }
 }
 impl Eq for ExpectationAnswer {}
@@ -259,12 +222,18 @@ mod tests {
         let source = Space::new(SpaceId([235; 32]), 0, &control).unwrap();
         let input = ExpectationInput {
             given: source.full(),
-            payoffs: vec![([0, 1, 2], source.full()), ([0, 2, 4], source.full())],
+            payoffs: vec![
+                (PayoffInput::Ratio([0, 1, 2]), source.full()),
+                (PayoffInput::Ratio([0, 2, 4]), source.full()),
+            ],
         };
         let mut work = ExactArithmetic::new(ArithmeticLimits::default(), &control);
         let admitted = input.admit(&control, &mut work).unwrap();
-        assert_eq!(admitted.values.len(), 1);
-        assert_eq!(admitted.values[0].to_string(), "1/2");
+        let ExpectationPayoff::Scalar { values, .. } = admitted else {
+            panic!("scalar")
+        };
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].to_string(), "1/2");
         let mut bounded = ExactArithmetic::new(
             ArithmeticLimits {
                 operations: work.operations(),
@@ -281,7 +250,7 @@ mod tests {
         ));
         let zero = ExpectationInput {
             given: source.empty(),
-            payoffs: vec![([0, 0, u64::MAX], source.empty())],
+            payoffs: vec![(PayoffInput::Ratio([0, 0, u64::MAX]), source.empty())],
         };
         let mut narrow = ExactArithmetic::new(
             ArithmeticLimits {

@@ -14,6 +14,7 @@ import type {
 	ScalarExprIr,
 	TermIr
 } from "#native.ts"
+import { payoffFromBytes } from "#query/payoff.ts"
 import { roundingMode } from "#scalar.ts"
 import { arrayValue as array, bytesValue, recordValue, valueDescriptor } from "#values.ts"
 
@@ -293,6 +294,13 @@ function eventTest(context: string, input: unknown): EventTestIr {
 }
 
 function payoffRatioIr(context: string, input: unknown) {
+	const tag = tagged(context, input)
+	if (tag.kind === "imported") {
+		recordValue(context, tag, ["kind", "bytes"])
+		const bytes = bytesValue(context, tag.bytes, 16 * 1024 * 1024)
+		payoffFromBytes(bytes)
+		return Object.freeze({ kind: "imported" as const, bytes })
+	}
 	const value = recordValue(context, input, ["kind", "numerator", "denominator"])
 	if (value.kind !== "ratio") return fail(context, "unknown exact payoff expression")
 	return Object.freeze({

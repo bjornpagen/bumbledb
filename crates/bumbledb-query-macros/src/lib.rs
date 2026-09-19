@@ -299,12 +299,12 @@ impl AggOp {
 }
 
 mod events;
+mod payoffs;
 
 enum HeadTerm {
     Expectation {
         label: Name,
-        value: Name,
-        denominator: Option<Name>,
+        value: payoffs::Payoff,
         when: Name,
         given: Name,
     },
@@ -759,27 +759,7 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
         if agg_name.text == "Expectation" {
             let (mut args, _) =
                 take_paren_group(tokens, "Expectation's value, region, and evidence")?;
-            let mut value = expect_ident(
-                &mut args,
-                "a payoff variable or Ratio(numerator, denominator)",
-            )?;
-            let denominator =
-                if value.text == "Ratio" && matches!(args.peek(), Some(TokenTree::Group(_))) {
-                    let (mut ratio, _) =
-                        take_paren_group(&mut args, "Ratio's numerator and denominator")?;
-                    value = expect_ident(&mut ratio, "a numerator variable")?;
-                    expect_punct(&mut ratio, ',', "a comma")?;
-                    let denominator = expect_ident(&mut ratio, "a denominator variable")?;
-                    if let Some(extra) = ratio.next() {
-                        return fail(
-                            extra.span(),
-                            "query!: Ratio takes two body-bound integer variables",
-                        );
-                    }
-                    Some(denominator)
-                } else {
-                    None
-                };
+            let value = payoffs::parse(&mut args)?;
             expect_punct(&mut args, ',', "a comma")?;
             let when = expect_ident(&mut args, "an Event variable")?;
             expect_punct(&mut args, ',', "a comma")?;
@@ -793,7 +773,6 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
             return Ok(HeadTerm::Expectation {
                 label: name,
                 value,
-                denominator,
                 when,
                 given,
             });
@@ -1958,24 +1937,9 @@ impl Emitter<'_> {
     fn find(&self, scope: &Scope, term: &HeadTerm) -> Parse<String> {
         Ok(match term {
             HeadTerm::Expectation {
-                value,
-                denominator,
-                when,
-                given,
-                ..
+                value, when, given, ..
             } => {
-                let value = if let Some(denominator) = denominator {
-                    format!(
-                        "::bumbledb::PayoffExpr::Ratio {{ numerator: ::bumbledb::VarId({}), denominator: ::bumbledb::VarId({}) }}",
-                        scope.head_var(value)?,
-                        scope.head_var(denominator)?
-                    )
-                } else {
-                    format!(
-                        "::bumbledb::PayoffExpr::Integer(::bumbledb::VarId({}))",
-                        scope.head_var(value)?
-                    )
-                };
+                let value = value.emit(scope, self.imports)?;
                 format!(
                     "::bumbledb::FindTerm::Expectation {{ value: {value}, when: ::bumbledb::VarId({}), given: ::bumbledb::VarId({}) }}",
                     scope.head_var(when)?,
@@ -2443,6 +2407,7 @@ enum ImportKind {
     Map,
     Faces,
     Product,
+    Payoff,
 }
 
 /// Parses the leading `use <name> = <expr>;` clauses — nonrecursive
@@ -2454,13 +2419,14 @@ fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
     while peek_ident_text(tokens).as_deref() == Some("use") {
         let keyword = expect_ident(tokens, "`use`")?;
         let first = expect_ident(tokens, "the imported template's local name or `map`")?;
-        let (kind, name) = if matches!(first.text.as_str(), "map" | "faces" | "product")
+        let (kind, name) = if matches!(first.text.as_str(), "map" | "faces" | "product" | "payoff")
             && !peek_punct(tokens, '=')
         {
             (
                 match first.text.as_str() {
                     "map" => ImportKind::Map,
                     "faces" => ImportKind::Faces,
+                    "payoff" => ImportKind::Payoff,
                     _ => ImportKind::Product,
                 },
                 expect_ident(tokens, "the imported Event descriptor's local name")?,
@@ -2679,9 +2645,14 @@ fn emit_import_prelude(imports: &[Import]) -> String {
         let name = &import.name.text;
         let expr = &import.expr;
         if import.kind != ImportKind::Template {
+            let ty = if import.kind == ImportKind::Payoff {
+                "PayoffImport"
+            } else {
+                "EventImport"
+            };
             let _ = write!(
                 out,
-                "let __event_import{index}: ::bumbledb::EventImport = {{ let value: &::bumbledb::EventImport = {expr}; value.clone() }}; "
+                "let __event_import{index}: ::bumbledb::{ty} = {{ let value: &::bumbledb::{ty} = {expr}; value.clone() }}; "
             );
             continue;
         }

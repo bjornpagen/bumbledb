@@ -209,7 +209,10 @@ type FindTermIr =
 	| { readonly kind: "probability"; readonly event: EventExprIr; readonly given: EventExprIr }
 	| {
 			readonly kind: "expectation"
-			readonly value: number | { readonly kind: "ratio"; readonly numerator: number; readonly denominator: number }
+			readonly value:
+				| number
+				| { readonly kind: "ratio"; readonly numerator: number; readonly denominator: number }
+				| { readonly kind: "imported"; readonly bytes: Uint8Array }
 			readonly when: number
 			readonly given: number
 	  }

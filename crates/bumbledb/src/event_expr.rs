@@ -23,10 +23,19 @@ pub struct EventOperandFault {
     pub rule: u16,
     pub find: usize,
     pub operand: usize,
-    pub variable: VarId,
+    pub source: EventOperandSource,
     pub category: EventFaultCategory,
+    /// Full source marker in canonical BEVT form.
     pub expected_space: Box<[u8]>,
+    /// BEVT for a variable, BESC for a function payoff import.
     pub offending_value: Box<[u8]>,
+}
+
+/// Imported functions have a written operand position, not a database variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EventOperandSource {
+    Variable(VarId),
+    PayoffImport,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

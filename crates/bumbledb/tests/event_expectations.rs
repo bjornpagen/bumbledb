@@ -122,7 +122,7 @@ fn expectation_groups_union_duplicates_and_compose_with_scalar_aggregates() {
             let AnswerValue::Expectation(answer) = answers.get(n, 1) else {
                 unreachable!()
             };
-            assert!(answer.partition().parent().is_full());
+            assert!(answer.partition().unwrap().parent().is_full());
         }
     }
 }
@@ -162,13 +162,13 @@ fn expectation_clips_before_overlap_checks_and_retains_zero_mass_evidence() {
         };
         if answers.get(n, 0) == AnswerValue::U64(1) {
             assert_eq!(fixed(answers.get(n, 1)), Some(ratio(7, 1)));
-            assert_eq!(answer.partition().cells().len(), 2);
+            assert_eq!(answer.partition().unwrap().cells().len(), 2);
         } else {
             assert!(answer.is_impossible());
             assert_eq!(fixed(answers.get(n, 1)), None);
             if answers.get(n, 0) == AnswerValue::U64(2) {
                 assert!(!answer.given().is_empty());
-                assert_eq!(answer.values(), &[ExactRational::from(i64::MIN)]);
+                assert_eq!(answer.values().unwrap(), &[ExactRational::from(i64::MIN)]);
             }
         }
     }
@@ -263,7 +263,7 @@ fn expectation_union_arms_align_positive_integer_types_and_pack_outputs() {
         let AnswerValue::Expectation(answer) = answers.get(0, 1) else {
             unreachable!()
         };
-        assert_eq!(answer.values().len(), 1);
+        assert_eq!(answer.values().unwrap().len(), 1);
     }
 }
 
@@ -504,11 +504,12 @@ fn rational_expectation_normalizes_presentations_and_retains_owned_exact_values(
         let AnswerValue::Expectation(answer) = pair[0].get(0, 0) else {
             panic!("expectation")
         };
-        assert_eq!(answer.values().len(), 3); // 1/2, -2/3, and supplied zero.
-        assert!(answer.values().contains(&ExactRational::zero()));
+        assert_eq!(answer.values().unwrap().len(), 3); // 1/2, -2/3, and supplied zero.
+        assert!(answer.values().unwrap().contains(&ExactRational::zero()));
         assert_eq!(
             answer
                 .partition()
+                .unwrap()
                 .cells()
                 .iter()
                 .filter(|e| e.is_empty())

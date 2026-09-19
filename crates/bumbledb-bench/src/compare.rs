@@ -16,7 +16,7 @@ pub enum Owned {
     Bytes(Vec<u8>),
     Event(Vec<u8>),
     Probability(Vec<u8>, Vec<u8>),
-    Expectation(Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>),
+    Expectation(Vec<u8>, Vec<u8>),
     IntervalU64(u64, u64),
     IntervalI64(i64, i64),
     /// Canonical binary64 endpoint payloads — bit-exact, like [`Owned::F64`].
@@ -64,15 +64,21 @@ pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
                         );
                         Owned::Expectation(
                             event_bytes(v.given()),
-                            v.function()
-                                .pieces()
-                                .map(|(region, value)| {
-                                    (
-                                        event_bytes(&region),
-                                        value.to_bytes(&mut work).expect("bounded oracle payoff"),
-                                    )
-                                })
-                                .collect(),
+                            bumbledb::PayoffImport::capture(
+                                match v.function() {
+                                    bumbledb::ExpectationFunction::Finite(f) => {
+                                        bumbledb::ImportedPayoff::Finite(f.clone())
+                                    }
+                                    bumbledb::ExpectationFunction::Family(f) => {
+                                        bumbledb::ImportedPayoff::Family(f.clone())
+                                    }
+                                },
+                                bumbledb::event::SourceDescriptorLimits::default(),
+                                &mut work,
+                            )
+                            .expect("bounded oracle payoff")
+                            .bytes()
+                            .to_vec(),
                         )
                     }
                     AnswerValue::Probability(v) => {

@@ -46,7 +46,9 @@ impl<'a> ExactArithmetic<'a> {
         self.operations
     }
 
-    pub(crate) fn control(&self) -> &'a dyn Control {
+    /// The cancellation/work control shared by this arithmetic operation.
+    #[must_use]
+    pub fn control(&self) -> &'a dyn Control {
         self.control
     }
 

@@ -63,8 +63,11 @@ pub mod error;
 mod event_expr;
 mod observation;
 mod payoff;
-pub use observation::{ExpectationAnswer, ExpectationValue, ProbabilityAnswer, ProbabilityValue};
-pub use payoff::PayoffExpr;
+pub use observation::{
+    ExpectationAnswer, ExpectationFunction, ExpectationPayoff, ExpectationValue, ProbabilityAnswer,
+    ProbabilityValue,
+};
+pub use payoff::{ImportedPayoff, PayoffExpr, PayoffImport};
 pub(crate) mod exec;
 pub(crate) mod image;
 mod interval;
@@ -72,8 +75,9 @@ pub mod ir;
 pub(crate) mod plan;
 pub mod scalar;
 pub use event_expr::{
-    EventExpr, EventExprError, EventFaultCategory, EventImport, EventOperandFault, EventScope,
-    EventTest, FixedPointKind, PredicateDepth, RelationExpr, RelationProductOp, RelationViewOp,
+    EventExpr, EventExprError, EventFaultCategory, EventImport, EventOperandFault,
+    EventOperandSource, EventScope, EventTest, FixedPointKind, PredicateDepth, RelationExpr,
+    RelationProductOp, RelationViewOp,
 };
 pub mod schema;
 pub(crate) mod storage;

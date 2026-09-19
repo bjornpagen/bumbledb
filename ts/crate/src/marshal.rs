@@ -1418,20 +1418,27 @@ fn find_term_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<FindTerm> 
         tags::find_term::EXPECTATION => {
             exact_fields(obj, &["kind", "value", "when", "given"])?;
             let value = match req::<Either<f64, Object>>(obj, "value", "payoff expression")? {
-                Either::A(value) => bumbledb::PayoffExpr::Integer(VarId(u16_id(
+                Either::A(value) => crate::ingress::query::Payoff::Integer(VarId(u16_id(
                     ordinal(value, "payoff variable")?,
                     "payoff variable",
                 )?)),
-                Either::B(value) => {
-                    exact_fields(&value, &["kind", "numerator", "denominator"])?;
-                    if req_text(&value, "kind", "payoff expression")? != "ratio" {
-                        return Err(err("unknown exact payoff expression".into()));
+                Either::B(value) => match req_text(&value, "kind", "payoff expression")?.as_str() {
+                    "ratio" => {
+                        exact_fields(&value, &["kind", "numerator", "denominator"])?;
+                        crate::ingress::query::Payoff::Ratio {
+                            numerator: var_in(&value, "numerator", "payoff numerator")?,
+                            denominator: var_in(&value, "denominator", "payoff denominator")?,
+                        }
                     }
-                    bumbledb::PayoffExpr::Ratio {
-                        numerator: var_in(&value, "numerator", "payoff numerator")?,
-                        denominator: var_in(&value, "denominator", "payoff denominator")?,
+                    "imported" => {
+                        exact_fields(&value, &["kind", "bytes"])?;
+                        crate::ingress::query::Payoff::Imported(copy.bytes(
+                            req(&value, "bytes", "payoff import")?,
+                            crate::ingress::MAX_EVENT_BYTES,
+                        )?)
                     }
-                }
+                    _ => return Err(err("unknown exact payoff expression".into())),
+                },
             };
             Ok(FindTerm::Expectation {
                 value,

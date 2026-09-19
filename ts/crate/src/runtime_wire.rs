@@ -179,7 +179,15 @@ fn write_event_faults(
         record.set("rule", u32::from(fault.rule))?;
         record.set("find", ordinal(fault.find)?)?;
         record.set("operand", ordinal(fault.operand)?)?;
-        record.set("variable", u32::from(fault.variable.0))?;
+        match fault.source {
+            bumbledb::EventOperandSource::Variable(variable) => {
+                record.set("source", "variable")?;
+                record.set("variable", u32::from(variable.0))?;
+            }
+            bumbledb::EventOperandSource::PayoffImport => {
+                record.set("source", "payoff")?;
+            }
+        }
         record.set(
             "category",
             match fault.category {

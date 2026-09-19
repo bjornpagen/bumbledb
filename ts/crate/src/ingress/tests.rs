@@ -87,7 +87,7 @@ fn complete_event_faults_move_their_payloads_and_operational_errors_have_no_part
         rule: 3,
         find: 4,
         operand: 5,
-        variable: VarId(6),
+        source: bumbledb::EventOperandSource::Variable(VarId(6)),
         category: EventFaultCategory::SpaceMismatch,
         expected_space: source.full().to_bytes(&()).unwrap().into_boxed_slice(),
         offending_value: value.to_bytes(&()).unwrap().into_boxed_slice(),
@@ -102,7 +102,10 @@ fn complete_event_faults_move_their_payloads_and_operational_errors_have_no_part
     };
     assert_eq!(faults[0].offending_value.as_ptr(), address);
     assert_eq!(faults[0].stage, Some(2));
-    assert_eq!(faults[0].variable, VarId(6));
+    assert_eq!(
+        faults[0].source,
+        bumbledb::EventOperandSource::Variable(VarId(6))
+    );
     assert!(bumbledb::Event::from_bytes(&faults[0].offending_value, &()).is_ok());
     assert!(matches!(
         crate::runtime::session::owned_engine_error(EventError::Cancelled.into()),

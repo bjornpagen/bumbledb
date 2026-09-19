@@ -1093,14 +1093,16 @@ impl fmt::Display for Error {
                 for fault in faults {
                     write!(
                         f,
-                        "; stage {:?}, rule {}, find {}, operand {} (v{}): {:?}",
-                        fault.stage,
-                        fault.rule,
-                        fault.find,
-                        fault.operand,
-                        fault.variable.0,
-                        fault.category
+                        "; stage {:?}, rule {}, find {}, operand {} (",
+                        fault.stage, fault.rule, fault.find, fault.operand
                     )?;
+                    match fault.source {
+                        crate::EventOperandSource::Variable(variable) => {
+                            write!(f, "v{}", variable.0)?;
+                        }
+                        crate::EventOperandSource::PayoffImport => write!(f, "payoff import")?,
+                    }
+                    write!(f, "): {:?}", fault.category)?;
                 }
                 Ok(())
             }

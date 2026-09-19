@@ -6,6 +6,7 @@ import { type Event, encodedEvent, eventByteLength, eventBytes, eventValue } fro
 import type { EventField, I64Field, U64Field } from "#fields.ts"
 import type { EventExprIr, EventTestIr, FindTermIr, RelationExprIr } from "#native.ts"
 import { eventTree, testTree } from "#query/event-tree.ts"
+import { type ImportedPayoff, isPayoff, payoffBytes, payoffFromBytes } from "#query/payoff.ts"
 import { type AnyVar, isTerm, term } from "#query/scope.ts"
 
 type EventVar = AnyVar & { readonly field: EventField }
@@ -22,7 +23,10 @@ interface EventTest {
 }
 type IntegerVar = AnyVar & { readonly field: I64Field | U64Field }
 type RatioNode = { readonly kind: "ratio"; readonly numerator: IntegerVar; readonly denominator: IntegerVar }
-type PayoffNode = { readonly kind: "integer"; readonly value: IntegerVar } | RatioNode
+type PayoffNode =
+	| { readonly kind: "integer"; readonly value: IntegerVar }
+	| RatioNode
+	| { readonly kind: "imported"; readonly value: ImportedPayoff }
 export interface RationalPayoff {
 	readonly kind: "ratio"
 	readonly [expressionTag]: "ratio"
@@ -147,13 +151,19 @@ function payoffRatio(numerator: IntegerVar, denominator: IntegerVar): RationalPa
 }
 export function expectationPayoffVars(input: ExpectationExpr): readonly IntegerVar[] {
 	const value = input.node.value
+	if (value.kind === "imported") return []
 	return value.kind === "integer" ? [value.value] : [value.numerator, value.denominator]
 }
 /** Admit a complete evidence-relative payoff roster before exact contraction. */
-function expectation(value: IntegerVar | RationalPayoff, when: EventVar, given: EventVar): ExpectationExpr {
-	const payoff: PayoffNode = ratios.has(value as RationalPayoff)
-		? (value as RationalPayoff).node
-		: Object.freeze({ kind: "integer", value: integerVar(value as IntegerVar) })
+function expectation(
+	value: IntegerVar | RationalPayoff | ImportedPayoff,
+	when: EventVar,
+	given: EventVar
+): ExpectationExpr {
+	let payoff: PayoffNode
+	if (isPayoff(value)) payoff = Object.freeze({ kind: "imported", value })
+	else if (ratios.has(value as RationalPayoff)) payoff = (value as RationalPayoff).node
+	else payoff = Object.freeze({ kind: "integer", value: integerVar(value as IntegerVar) })
 	const result: ExpectationExpr = Object.freeze({
 		kind: "expectation",
 		[expressionTag]: "expectation" as const,
@@ -411,19 +421,12 @@ function eventFindIr(
 ): Extract<FindTermIr, { kind: "event" | "test" | "probability" | "expectation" }> {
 	if (input.kind === "expectation") {
 		if (!expectations.has(input)) return refused("Expected an owned expectation expression")
-		return {
-			kind: "expectation",
-			value:
-				input.node.value.kind === "integer"
-					? variable(input.node.value.value)
-					: {
-							kind: "ratio",
-							numerator: variable(input.node.value.numerator),
-							denominator: variable(input.node.value.denominator)
-						},
-			when: variable(input.node.when),
-			given: variable(input.node.given)
-		}
+		const payoff = input.node.value
+		let value: Extract<FindTermIr, { kind: "expectation" }>["value"]
+		if (payoff.kind === "imported") value = { kind: "imported", bytes: payoffBytes(payoff.value) }
+		else if (payoff.kind === "integer") value = variable(payoff.value)
+		else value = { kind: "ratio", numerator: variable(payoff.numerator), denominator: variable(payoff.denominator) }
+		return { kind: "expectation", value, when: variable(input.node.when), given: variable(input.node.given) }
 	}
 	const map = { variable, descriptor: EventDescriptor.toBytes, scope: eventBytes, bound: closedPredicate }
 	if (input.kind === "probability") {
@@ -467,14 +470,17 @@ function eventFindFromIr(
 	input: Extract<FindTermIr, { kind: "event" | "test" | "probability" | "expectation" }>,
 	variable: (ordinal: number) => AnyVar
 ): EventFind {
-	if (input.kind === "expectation")
-		return expectation(
-			typeof input.value === "number"
-				? (variable(input.value) as IntegerVar)
-				: payoffRatio(variable(input.value.numerator) as IntegerVar, variable(input.value.denominator) as IntegerVar),
-			eventVar(variable(input.when)),
-			eventVar(variable(input.given))
-		)
+	if (input.kind === "expectation") {
+		let value: IntegerVar | RationalPayoff | ImportedPayoff
+		if (typeof input.value === "number") value = variable(input.value) as IntegerVar
+		else if (input.value.kind === "imported") value = payoffFromBytes(input.value.bytes)
+		else
+			value = payoffRatio(
+				variable(input.value.numerator) as IntegerVar,
+				variable(input.value.denominator) as IntegerVar
+			)
+		return expectation(value, eventVar(variable(input.when)), eventVar(variable(input.given)))
+	}
 	let nodes = 0
 	let depth = 0
 	let bytes = 0

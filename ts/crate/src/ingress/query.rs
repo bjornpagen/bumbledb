@@ -88,10 +88,23 @@ pub(crate) struct Query {
     pub rec: Option<Rec>,
 }
 
+mod payoffs;
+use payoffs::PayoffAdmission;
+
+#[derive(Debug)]
+pub(crate) enum Payoff {
+    Integer(VarId),
+    Ratio {
+        numerator: VarId,
+        denominator: VarId,
+    },
+    Imported(Vec<u8>),
+}
+
 #[derive(Debug)]
 pub(crate) enum FindTerm {
     Expectation {
-        value: bumbledb::PayoffExpr,
+        value: Payoff,
         when: VarId,
         given: VarId,
     },
@@ -315,19 +328,6 @@ impl Admit for Rec {
     }
 }
 
-impl Admit for Query {
-    type Output = bumbledb::Query;
-    fn admit(self, work: &WorkContext) -> Result<Self::Output, RuntimeError> {
-        work.checkpoint()?;
-        Ok(bumbledb::Query {
-            interiors: self.interiors.admit(work)?,
-            head: self.head,
-            rules: self.rules.admit(work)?,
-            rec: self.rec.admit(work)?,
-        })
-    }
-}
-
 impl Admit for Term {
     type Output = bumbledb::Term;
     fn admit(self, work: &WorkContext) -> Result<Self::Output, RuntimeError> {
@@ -365,7 +365,11 @@ impl Admit for FindTerm {
             Self::Compute(v) => O::Compute(v.admit(work)?),
             Self::Event(v) => O::Event(v.admit(work)?),
             Self::Test(v) => O::Test(v.admit(work)?),
-            Self::Expectation { value, when, given } => O::Expectation { value, when, given },
+            Self::Expectation { value, when, given } => O::Expectation {
+                value: PayoffAdmission::new(work).admit(value)?,
+                when,
+                given,
+            },
             Self::Probability { event, given } => O::Probability {
                 event: event.admit(work)?,
                 given: given.admit(work)?,

@@ -372,9 +372,12 @@ fn constant_bodies_admit_every_external_occurrence_once_before_shortcuts() {
         assert_eq!(
             faults
                 .iter()
-                .map(|f| (f.operand, f.variable))
+                .map(|f| (f.operand, f.source))
                 .collect::<Vec<_>>(),
-            vec![(0, VarId(1)), (2, VarId(1))]
+            vec![
+                (0, bumbledb::EventOperandSource::Variable(VarId(1))),
+                (2, bumbledb::EventOperandSource::Variable(VarId(1)))
+            ]
         );
     }
 }
