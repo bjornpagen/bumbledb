@@ -78,6 +78,34 @@ impl ParameterFunction {
         self.defined.is_empty()
     }
 
+    /// Explicitly capture a smaller inhabited ambient domain, preserving every
+    /// piece's original arithmetic and inherited undefined points.
+    /// # Errors
+    /// Domain extension, foreign parameter, capacities or cancellation.
+    pub fn on_domain(
+        &self,
+        domain: &ParameterDomain,
+        parameters: ParameterLimits,
+        functions: FunctionLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let mut budget = Budget::new(functions, work.control())?;
+        budget.cells(self.pieces.len())?;
+        if !domain
+            .region()
+            .included(self.ambient.region(), parameters, work)?
+        {
+            return Err(Error::ParameterDomainMismatch);
+        }
+        let mut pieces = Vec::new();
+        pieces.try_reserve_exact(self.pieces.len())?;
+        for piece in &self.pieces {
+            budget.step(work.control())?;
+            pieces.push(piece.on_domain(domain, parameters, work)?);
+        }
+        Self::new(domain.clone(), &pieces, parameters, functions, work)
+    }
+
     /// # Errors
     /// Input/intermediate capacities or cancellation, including outside points.
     pub fn value_at(

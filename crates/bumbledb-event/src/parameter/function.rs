@@ -80,6 +80,34 @@ impl GuardedRationalFunction {
         op.polynomial(self.ambient.parameter(), &self.denominator)
     }
 
+    /// Capture a smaller inhabited ambient domain without extending the
+    /// function or erasing inherited holes. Unlike `restrict`, this changes
+    /// the retained ambient source domain explicitly.
+    /// # Errors
+    /// Domain extension, foreign parameter, capacities or cancellation.
+    pub fn on_domain(
+        &self,
+        domain: &ParameterDomain,
+        limits: ParameterLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        self.restrict(self.ambient.region(), limits, work)?;
+        if !domain
+            .region()
+            .included(self.ambient.region(), limits, work)?
+        {
+            return Err(Error::ParameterDomainMismatch);
+        }
+        Self::new(
+            domain.clone(),
+            self.numerator.clone(),
+            self.denominator.clone(),
+            limits,
+            work,
+        )?
+        .restrict(&self.defined, limits, work)
+    }
+
     /// Further restrict the function while retaining its ambient domain and
     /// original numerator/denominator. Restriction may exclude every point.
     /// # Errors

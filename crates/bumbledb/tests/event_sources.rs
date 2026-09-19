@@ -1150,3 +1150,176 @@ fn check_refined_partition(answers: &bumbledb::Answers) {
         }
     }
 }
+
+#[test]
+fn family_posterior_translation_persists_and_runs_on_both_free_join_paths() {
+    use bumbledb::{
+        EventImport,
+        event::{AdmittedDescriptor, BoolOp4, DescriptorLimits, ParameterSourceLimits},
+        query,
+    };
+    let dir = common::TempDir::new("event-family-conditioning");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let prior = parameterized_draws();
+    let first = prior.coordinate(0, &()).unwrap();
+    let evidence = first
+        .apply(BoolOp4::XOR, &prior.coordinate(1, &()).unwrap(), &())
+        .unwrap();
+    let receipt = prior
+        .parameter_condition(
+            SpaceId([99; 32]),
+            &evidence,
+            ParameterSourceLimits::default(),
+            &mut arithmetic(),
+        )
+        .unwrap();
+    let posterior = receipt.revised().unwrap();
+    let import = EventImport::capture(
+        &AdmittedDescriptor::Map(posterior.translation().clone()),
+        DescriptorLimits::default(),
+        &(),
+    )
+    .unwrap();
+    db.write(common::work(), |tx| {
+        tx.insert([&Region {
+            id: 1,
+            condition: posterior.restriction().refinement().lift(&first, &())?,
+        }])?;
+        tx.insert([&Observation {
+            id: 1,
+            condition: posterior.pullback(&evidence, &())?,
+        }])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    drop((prior, first, evidence, receipt, db));
+    let db = Db::open(dir.path(), SourceSchema, common::work()).unwrap();
+    let query = query!(SourceSchema {
+        use map revision = &import;
+        (posterior: Event(Pullback(holding, revision)), observed: Event(evidence)) |
+            Region(id: id, condition: holding), Observation(id: id, condition: evidence);
+    });
+    drop(import);
+    let mut results = Vec::new();
+    for cursor in [false, true] {
+        let mut prepared = db.prepare(&query, common::work()).unwrap();
+        prepared.force_cursor_fallback(cursor);
+        results.push(
+            db.read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((query, db));
+    for answers in results {
+        check_family_posterior(&answers);
+    }
+}
+
+fn check_family_posterior(answers: &bumbledb::Answers) {
+    use bumbledb::event::ParameterSourceLimits;
+    let limits = ParameterSourceLimits::default();
+    assert_eq!(answers.len(), 1);
+    let (AnswerValue::Event(head), AnswerValue::Event(observed)) =
+        (answers.get(0, 0), answers.get(0, 1))
+    else {
+        panic!("family posterior")
+    };
+    let probability = head
+        .parameter_probability(observed, limits, &mut arithmetic())
+        .unwrap();
+    for n in 0..=8 {
+        assert_eq!(
+            probability
+                .value_at(&ratio(n, 8), limits, &mut arithmetic())
+                .unwrap(),
+            if n == 0 || n == 8 {
+                None
+            } else {
+                Some(ratio(1, 2))
+            }
+        );
+    }
+    assert!(!observed.complement().is_empty());
+    assert_eq!(
+        observed
+            .complement()
+            .parameter_mass(limits, &mut arithmetic())
+            .unwrap()
+            .value_at(
+                &ratio(1, 2),
+                limits.parameters.region,
+                limits.functions,
+                &mut arithmetic()
+            )
+            .unwrap(),
+        Some(ratio(0, 1))
+    );
+}
+
+#[test]
+fn family_posterior_zero_mass_outcomes_still_require_relational_coverage() {
+    use bumbledb::event::ParameterSourceLimits;
+    let dir = common::TempDir::new("event-family-conditioning-coverage");
+    let db = Db::create(dir.path(), PartitionSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let prior = parameterized_draws();
+    let evidence = prior.coordinate(0, &()).unwrap();
+    let receipt = prior
+        .parameter_condition(
+            SpaceId([100; 32]),
+            &evidence,
+            ParameterSourceLimits::default(),
+            &mut arithmetic(),
+        )
+        .unwrap();
+    let posterior = receipt.revised().unwrap();
+    let parent = Parent {
+        group: 1,
+        condition: posterior.space().full(),
+    };
+    let yes = Child {
+        group: 1,
+        branch: 1,
+        condition: posterior.pullback(&evidence, &()).unwrap(),
+    };
+    let no = Child {
+        group: 1,
+        branch: 2,
+        condition: yes.condition.complement(),
+    };
+    assert!(!no.condition.is_empty());
+    assert!(matches!(
+        db.write(common::work(), |tx| {
+            tx.insert([&parent])?;
+            tx.insert([&yes])?;
+            Ok(())
+        })
+        .unwrap(),
+        Admission::Rejected(_)
+    ));
+    db.write(common::work(), |tx| {
+        tx.insert([&parent])?;
+        tx.insert([&yes, &no])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        db.write(common::work(), |tx| tx.insert([&Child {
+            branch: 3,
+            ..no.clone()
+        }]))
+        .unwrap(),
+        Admission::Rejected(_)
+    ));
+    assert!(matches!(
+        db.write(common::work(), |tx| tx.delete([&no])).unwrap(),
+        Admission::Rejected(_)
+    ));
+}

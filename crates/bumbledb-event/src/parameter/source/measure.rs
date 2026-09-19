@@ -30,6 +30,8 @@ pub(crate) struct Law {
 #[derive(Debug, Clone)]
 pub struct ParameterProbabilityObservation {
     space: Space,
+    event: Event,
+    given: Event,
     numerator: ParameterFunction,
     evidence: ParameterFunction,
     conditional: ParameterFunction,
@@ -38,6 +40,14 @@ impl ParameterProbabilityObservation {
     #[must_use]
     pub fn space(&self) -> &Space {
         &self.space
+    }
+    #[must_use]
+    pub fn event(&self) -> &Event {
+        &self.event
+    }
+    #[must_use]
+    pub fn given(&self) -> &Event {
+        &self.given
     }
     #[must_use]
     pub fn numerator(&self) -> &ParameterFunction {
@@ -252,11 +262,14 @@ impl Event {
     ) -> Result<ParameterProbabilityObservation> {
         let intersection = self.apply(BoolOp4::AND, evidence, work.control())?;
         let numerator = intersection.parameter_mass(limits, work)?;
+        let given = evidence.clone();
         let evidence = evidence.parameter_mass(limits, work)?;
         let conditional =
             numerator.div(&evidence, limits.parameters.region, limits.functions, work)?;
         Ok(ParameterProbabilityObservation {
             space: self.space(),
+            event: self.clone(),
+            given,
             numerator,
             evidence,
             conditional,

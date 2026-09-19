@@ -300,7 +300,7 @@ impl CoordinateMap {
                 );
             }
         }
-        Self::new(source.refined(), target.refined(), &readouts, control)
+        Self::new_with_parameters(source.refined(), target.refined(), &readouts, limits, work)
     }
 }
 

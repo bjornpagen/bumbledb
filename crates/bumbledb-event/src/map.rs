@@ -55,6 +55,29 @@ impl CoordinateMap {
         readouts: &[Event],
         control: &dyn Control,
     ) -> Result<Self> {
+        Self::new_with_parameters(
+            source,
+            target,
+            readouts,
+            crate::ParameterSourceLimits::default(),
+            &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Admit a map with explicit parameter-domain limits and shared arithmetic.
+    /// A parameter-preserving map may include a smaller domain into a larger
+    /// one when each source cell is a whole target cell. Missing target cells
+    /// are unreachable, not silently filled from a different parameter value.
+    /// # Errors
+    /// Has `new`'s contract, plus domain/guard/solver refusal.
+    pub fn new_with_parameters(
+        source: &Space,
+        target: &Space,
+        readouts: &[Event],
+        limits: crate::ParameterSourceLimits,
+        work: &mut crate::ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let control = work.control();
         control.checkpoint()?;
         if readouts.len() != usize::from(target.dimensions()) {
             return Err(Error::MapArity);
@@ -64,7 +87,7 @@ impl CoordinateMap {
         for event in readouts {
             owned.push(event.align_to(source, control)?);
         }
-        source.parameter_map(target, &owned, control)?;
+        source.parameter_map(target, &owned, limits, work)?;
         let replacements = roots(&owned);
         source.with_arena_pair(target, |arena, other| {
             let mut op = Operation::new(arena, control)?;

@@ -250,6 +250,24 @@ impl Space {
     /// # Errors
     /// Refuses mismatched owners, empty support or unavailable resources.
     pub fn restrict(&self, legal: &Event, control: &dyn Control) -> Result<Self> {
+        self.restrict_with_parameters(
+            legal,
+            crate::ParameterSourceLimits::default(),
+            &mut crate::ExactArithmetic::new(crate::ArithmeticLimits::default(), control),
+        )
+    }
+
+    /// Structural restriction with explicit parameter limits and one shared
+    /// arithmetic allowance for the captured domain. The result is unmeasured.
+    /// # Errors
+    /// Has `restrict`'s contract, plus parameter-domain solver capacities.
+    pub fn restrict_with_parameters(
+        &self,
+        legal: &Event,
+        limits: crate::ParameterSourceLimits,
+        work: &mut crate::ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let control = work.control();
         if !Arc::ptr_eq(&self.0, &legal.owner) {
             return Err(Error::SpaceMismatch);
         }
@@ -263,7 +281,7 @@ impl Space {
             .0
             .parameter
             .as_ref()
-            .map(|context| context.restricted(self, support, control))
+            .map(|context| context.restricted(self, support, limits, work))
             .transpose()?;
         control.checkpoint()?;
         Ok(Self(Arc::new(Owner {

@@ -4,16 +4,18 @@ use std::sync::Arc;
 
 use crate::arena::{Operation, Ref};
 use crate::{
-    ArithmeticLimits, BoolOp4, Capacity, Control, Error, Event, ExactArithmetic, FunctionLimits,
-    LawLimits, ParameterCell, ParameterCodecLimits, ParameterDomain, ParameterRegion, RealWitness,
-    Result, Space,
+    BoolOp4, Capacity, Control, Error, Event, ExactArithmetic, FunctionLimits, LawLimits,
+    ParameterCell, ParameterCodecLimits, ParameterDomain, ParameterRegion, RealWitness, Result,
+    Space,
 };
 
 mod measure;
 mod refinement;
+mod revision;
 pub(crate) mod wire;
 pub use measure::{ParameterDensityPiece, ParameterProbabilityObservation};
 pub use refinement::ParameterRefinement;
+pub use revision::{ParameterConditioning, ParameterRestriction, ParameterRevisedSource};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ParameterSourceLimits {
@@ -223,35 +225,46 @@ impl Space {
     }
 
     /// Verify that a finite readout map also preserves the same real parameter.
-    /// Both sealed guard presentations must resolve the same exact partition.
-    /// Different partitions require explicit `ParameterRefinement` first.
+    /// Each source parameter cell must equal one whole target cell. The source
+    /// domain may be a subset; missing target cells are unreachable. Different
+    /// partitions require explicit `ParameterRefinement` first.
     pub(crate) fn parameter_map(
         &self,
         target: &Self,
         readouts: &[Event],
-        control: &dyn Control,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
     ) -> Result<()> {
+        let control = work.control();
         let (a, b) = match (&self.0.parameter, &target.0.parameter) {
             (None, None) => return Ok(()),
             (Some(a), Some(b)) => (a, b),
             _ => return Err(Error::ParameterScopeMismatch),
         };
-        if a.domain_bytes != b.domain_bytes {
-            return Err(Error::ParameterDomainMismatch);
+        let mut budget = Budget::new(limits, control)?;
+        budget.extent(a.fibres.len(), control)?;
+        budget.extent(b.fibres.len(), control)?;
+        if a.domain.parameter() != b.domain.parameter() {
+            return Err(Error::ParameterScopeMismatch);
         }
-        if a.fibres.len() != b.fibres.len() {
-            return Err(Error::ParameterRefinementRequired);
+        if a.domain_bytes != b.domain_bytes
+            && !a
+                .domain
+                .region()
+                .included(b.domain.region(), limits.parameters.region, work)?
+        {
+            return Err(Error::ParameterDomainMismatch);
         }
         let mut by_region = std::collections::HashMap::new();
         by_region.try_reserve(b.fibres.len())?;
         for fibre in b.fibres.iter() {
-            control.checkpoint()?;
+            budget.step(control)?;
             by_region.insert(fibre.canonical.as_ref(), fibre.code);
         }
         let mut matching = Vec::new();
         matching.try_reserve_exact(a.fibres.len())?;
         for fibre in a.fibres.iter() {
-            control.checkpoint()?;
+            budget.step(control)?;
             let target = by_region
                 .get(fibre.canonical.as_ref())
                 .ok_or(Error::ParameterRefinementRequired)?;
@@ -260,7 +273,7 @@ impl Space {
         for guard in b.guards.iter() {
             let mut expected = self.empty();
             for &(source, target) in &matching {
-                control.checkpoint()?;
+                budget.step(control)?;
                 if target & (1u64 << guard.coordinate) != 0 {
                     expected = expected.apply(
                         BoolOp4::OR,
@@ -289,10 +302,10 @@ impl Context {
         &self,
         space: &Space,
         support: Ref,
-        control: &dyn Control,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
     ) -> Result<Arc<Self>> {
-        let limits = ParameterSourceLimits::default();
-        let mut work = ExactArithmetic::new(ArithmeticLimits::default(), control);
+        let control = work.control();
         let mut budget = Budget::new(limits, control)?;
         let mut fibres = Vec::new();
         budget.extent(self.fibres.len(), control)?;
@@ -301,19 +314,15 @@ impl Context {
         for fibre in self.fibres.iter() {
             budget.step(control)?;
             if count_root(space, support, self.mask, fibre.code, control)? != 0 {
-                region = region.apply(
-                    BoolOp4::OR,
-                    &fibre.region,
-                    limits.parameters.region,
-                    &mut work,
-                )?;
+                region =
+                    region.apply(BoolOp4::OR, &fibre.region, limits.parameters.region, work)?;
                 fibres.push(fibre.clone());
             }
         }
         let domain = ParameterDomain::new(region)?;
         Ok(Arc::new(Self {
-            domain_bytes: domain.to_bytes(limits.parameters, &mut work)?.into(),
-            canonical: wire::encode_context(&domain, &self.guards, limits, &mut work)?.into(),
+            domain_bytes: domain.to_bytes(limits.parameters, work)?.into(),
+            canonical: wire::encode_context(&domain, &self.guards, limits, work)?.into(),
             domain,
             fibres: fibres.into(),
             law: None,

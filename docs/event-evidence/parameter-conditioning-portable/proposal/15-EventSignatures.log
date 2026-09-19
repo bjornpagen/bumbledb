@@ -1,0 +1,9 @@
+'EventSignatures.possible_apply_iff' does not depend on any axioms
+'EventSignatures.full_apply_iff' does not depend on any axioms
+'EventSignatures.signature_nonempty' does not depend on any axioms
+'EventSignatures.swap' does not depend on any axioms
+'EventSignatures.complement_left' depends on axioms: [propext]
+'EventSignatures.complement_right' depends on axioms: [propext]
+'EventSignatures.signature_iff_all_binary_tests' depends on axioms: [propext, Quot.sound]
+'EventSignatures.composition_distinguishes_same_signature' depends on axioms: [propext, Quot.sound]
+'EventSignatures.no_signature_factorization' depends on axioms: [propext, Quot.sound]
