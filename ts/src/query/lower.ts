@@ -62,7 +62,13 @@ import type {
 import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
 import type { QueryNode } from "#query/compute.ts"
 import { computeFieldOf, computeVarsOf, isComputeExpr, MAX_COMPUTE_DEPTH } from "#query/compute.ts"
-import { eventFindIr, eventFindVars, isEventFind, snapshotEventExpression } from "#query/event.ts"
+import {
+	eventFindIr,
+	eventFindVars,
+	expectationPayoffVars,
+	isEventFind,
+	snapshotEventExpression
+} from "#query/event.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
 import { count, max, mean, min, pack, sum } from "#query/find.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
@@ -1010,7 +1016,8 @@ function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, colum
 		if ((entry.kind === "probability" || entry.kind === "expectation") && context.kind !== "query")
 			throw new AuthoringError({ message: `${where}: observations currently require a final query head` })
 		for (const ref of eventFindVars(entry)) assertBound(where, bound, ref)
-		if (entry.kind === "expectation") assertNotClosed(where, "the payoff", entry.node.value)
+		if (entry.kind === "expectation")
+			for (const ref of expectationPayoffVars(entry)) assertNotClosed(where, "the payoff", ref)
 		return
 	}
 	if (entry.kind === "segments") {

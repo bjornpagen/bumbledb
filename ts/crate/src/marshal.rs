@@ -1417,8 +1417,24 @@ fn find_term_in(obj: &Object, copy: &CopyContext<'_>) -> napi::Result<FindTerm> 
         }
         tags::find_term::EXPECTATION => {
             exact_fields(obj, &["kind", "value", "when", "given"])?;
+            let value = match req::<Either<f64, Object>>(obj, "value", "payoff expression")? {
+                Either::A(value) => bumbledb::PayoffExpr::Integer(VarId(u16_id(
+                    ordinal(value, "payoff variable")?,
+                    "payoff variable",
+                )?)),
+                Either::B(value) => {
+                    exact_fields(&value, &["kind", "numerator", "denominator"])?;
+                    if req_text(&value, "kind", "payoff expression")? != "ratio" {
+                        return Err(err("unknown exact payoff expression".into()));
+                    }
+                    bumbledb::PayoffExpr::Ratio {
+                        numerator: var_in(&value, "numerator", "payoff numerator")?,
+                        denominator: var_in(&value, "denominator", "payoff denominator")?,
+                    }
+                }
+            };
             Ok(FindTerm::Expectation {
-                value: var_in(obj, "value", "payoff")?,
+                value,
                 when: var_in(obj, "when", "payoff region")?,
                 given: var_in(obj, "given", "payoff evidence")?,
             })

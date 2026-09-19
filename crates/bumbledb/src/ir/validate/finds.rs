@@ -134,19 +134,18 @@ impl Context {
                     }
                 }
                 FindTerm::Expectation { value, when, given } => {
-                    if self.closed_vars.contains_key(value) {
-                        return Err(ValidationError::AggregateOverClosedReference { find });
-                    }
-                    for var in [value, when, given] {
-                        if !self.atom_vars.contains(var) {
-                            return Err(ValidationError::UnboundFindVariable { var: *var });
+                    for var in value.variables().chain([*when, *given]) {
+                        if !self.atom_vars.contains(&var) {
+                            return Err(ValidationError::UnboundFindVariable { var });
                         }
                     }
-                    if !matches!(
-                        self.resolved_var_type(*value),
-                        ValueType::I64 | ValueType::U64
-                    ) {
-                        return Err(ValidationError::AggregateInputType { find });
+                    for var in value.variables() {
+                        if self.closed_vars.contains_key(&var) {
+                            return Err(ValidationError::AggregateOverClosedReference { find });
+                        }
+                        if !matches!(self.resolved_var_type(var), ValueType::I64 | ValueType::U64) {
+                            return Err(ValidationError::AggregateInputType { find });
+                        }
                     }
                     for var in [when, given] {
                         if *self.resolved_var_type(*var) != ValueType::Event {

@@ -190,7 +190,15 @@ export type {
 } from "#query/description.ts"
 export { describeQuery, queryFromDescription } from "#query/description.ts"
 export type { EventFind, EventOperand, EventVar } from "#query/event.ts"
-export { EventExpr, EventTest, expectation, probability, RelationExpr } from "#query/event.ts"
+export {
+	EventExpr,
+	EventTest,
+	expectation,
+	payoffRatio,
+	probability,
+	type RationalPayoff,
+	RelationExpr
+} from "#query/event.ts"
 export type { ExpectationAnswer, ExpectationResult } from "#query/expectation.ts"
 export { expectationResult } from "#query/expectation.ts"
 export type { Agg, HeadRecordOf, RowOfFind } from "#query/find.ts"

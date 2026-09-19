@@ -1,0 +1,26 @@
+'QueryExpectation.union_arms' does not depend on any axioms
+'QueryExpectation.duplicate_witnesses_idempotent' depends on axioms: [propext, Quot.sound]
+'QueryExpectation.enumeration_irrelevant' depends on axioms: [propext, Quot.sound]
+'QueryExpectation.clip_preserves_admission' does not depend on any axioms
+'QueryExpectation.outside_evidence_irrelevant' does not depend on any axioms
+'QueryExpectation.gap_refuses' does not depend on any axioms
+'QueryExpectation.distinct_value_overlap_refuses' does not depend on any axioms
+'QueryExpectation.equal_value_union_is_one_payoff' does not depend on any axioms
+'QueryExpectation.empty_evidence_is_structurally_valid' does not depend on any axioms
+'QueryExpectation.empty_input_has_no_group' depends on axioms: [propext, Quot.sound]
+'QueryExpectation.an_empty_region_still_establishes_group' does not depend on any axioms
+'QueryExpectation.stable_tokens_preserve_grouping' does not depend on any axioms
+'QueryExpectation.selected_is_supplied' depends on axioms: [Classical.choice]
+'QueryExpectation.impossible_exactly_zero_evidence' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryExpectation.zero_mass_gap_is_not_zero_payoff' depends on axioms: [propext, Quot.sound]
+'QueryExpectation.parameter_hole_survives' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryExpectation.parameter_expectation_is_signed_scalar' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryExpectation.shared_parameter_not_prior_averaged' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryExpectation.zero_payoff_impossible_is_not_zero' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryExpectation.signed_value_can_be_negative' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryExpectation.undefined_participant_refuses' does not depend on any axioms
+'QueryExpectation.empty_region_does_not_hide_zero_divisor' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryExpectation.equal_presentations_preserve_cells' depends on axioms: [propext, Quot.sound]
+'QueryExpectation.equivalent_fraction_presentations' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryExpectation.negative_denominator_is_exact' depends on axioms: [propext, Classical.choice, Quot.sound]
+'QueryExpectation.zero_over_zero_is_not_zero_payoff' depends on axioms: [propext, Classical.choice, Quot.sound]

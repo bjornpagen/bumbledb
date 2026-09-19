@@ -187,6 +187,15 @@ impl Answers {
     pub(super) fn finish_observations(&mut self, control: &crate::WorkContext) -> Result<()> {
         let mut work =
             crate::event::ExactArithmetic::new(crate::event::ArithmeticLimits::default(), control);
+        // Normalize and admit all payoff rosters before any measurement. One
+        // arithmetic counter spans these checks and every following contraction.
+        let mut admitted = Vec::new();
+        admitted
+            .try_reserve_exact(self.expectation_inputs.len())
+            .map_err(crate::event::Error::from)?;
+        for input in &self.expectation_inputs {
+            admitted.push(input.admit(control, &mut work)?);
+        }
         self.probabilities
             .try_reserve_exact(self.probability_pairs.len())
             .map_err(crate::event::Error::from)?;
@@ -201,9 +210,9 @@ impl Answers {
         self.expectations
             .try_reserve_exact(self.expectation_inputs.len())
             .map_err(crate::event::Error::from)?;
-        for input in &self.expectation_inputs {
+        for input in admitted {
             self.expectations
-                .push(crate::ExpectationAnswer::new(input.clone(), &mut work)?);
+                .push(crate::ExpectationAnswer::new(input, &mut work)?);
         }
         self.expectation_inputs.clear();
         Ok(())

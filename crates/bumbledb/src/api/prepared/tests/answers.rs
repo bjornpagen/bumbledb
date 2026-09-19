@@ -5,8 +5,7 @@ use crate::ir::FoldOp;
 #[test]
 fn expectation_finalization_preserves_the_initialized_prefix_on_failed_append() {
     use crate::event::{
-        ArithmeticLimits, DensityPiece, EventPartition, ExactArithmetic, ExactRational, LawLimits,
-        PartitionLimits, Space, SpaceId,
+        ArithmeticLimits, DensityPiece, ExactArithmetic, ExactRational, LawLimits, Space, SpaceId,
     };
     use crate::exec::run::{Bindings, Sink};
     use crate::ir::validate::SignatureColumn;
@@ -26,14 +25,11 @@ fn expectation_finalization_preserves_the_initialized_prefix_on_failed_append() 
         )
         .unwrap();
     let input = |source: &Space, value: i64| ExpectationInput {
-        partition: EventPartition::on(
-            &source.full(),
-            &[source.full()],
-            PartitionLimits::default(),
-            &work,
-        )
-        .unwrap(),
-        values: vec![ExactRational::from(value)],
+        given: source.full(),
+        payoffs: vec![(
+            [u64::from(value < 0), value.unsigned_abs(), 1],
+            source.full(),
+        )],
     };
     for spill in [false, true] {
         let append = |inputs: Vec<ExpectationInput>, out: &mut Answers| {
@@ -67,6 +63,17 @@ fn expectation_finalization_preserves_the_initialized_prefix_on_failed_append() 
         assert!(matches!(
             append(vec![input(&source, 9), input(&raw, 0)], &mut out),
             Err(Error::Event(crate::event::Error::MissingLaw))
+        ));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(0, 0), AnswerValue::Expectation(&prior));
+        assert!(out.expectation_inputs.is_empty());
+        let invalid = ExpectationInput {
+            given: source.full(),
+            payoffs: vec![([0, 1, 1], source.full()), ([0, 0, 0], source.empty())],
+        };
+        assert!(matches!(
+            append(vec![input(&source, 9), invalid], &mut out),
+            Err(Error::Event(crate::event::Error::DivisionByZero))
         ));
         assert_eq!(out.len(), 1);
         assert_eq!(out.get(0, 0), AnswerValue::Expectation(&prior));

@@ -91,7 +91,7 @@ pub(crate) struct Query {
 #[derive(Debug)]
 pub(crate) enum FindTerm {
     Expectation {
-        value: VarId,
+        value: bumbledb::PayoffExpr,
         when: VarId,
         given: VarId,
     },

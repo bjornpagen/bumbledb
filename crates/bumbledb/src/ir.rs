@@ -188,7 +188,7 @@ pub enum FindTerm {
 
     /// Complete evidence-relative payoff roster, grouped by nonaggregate heads.
     Expectation {
-        value: VarId,
+        value: crate::PayoffExpr,
         when: VarId,
         given: VarId,
     },

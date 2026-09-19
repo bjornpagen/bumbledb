@@ -81,24 +81,90 @@ pub enum ExpectationValue {
     Parameter(crate::event::ParameterExpectationObservation),
 }
 
-/// A checked roster retains supplied zero payoffs and empty indexed buckets.
-/// The function's zero extension outside evidence is never a coverage claim.
+/// Context-checked claims retain exact fraction presentations until the shared
+/// finalization budget can normalize them. Empty regions still supply a value.
 #[derive(Debug, Clone)]
 pub(crate) struct ExpectationInput {
+    pub given: Event,
+    // sign, numerator magnitude, denominator magnitude; sign is 0 or 1.
+    pub payoffs: Vec<([u64; 3], Event)>,
+}
+
+/// A checked roster retains supplied zero payoffs and empty indexed buckets.
+#[derive(Debug, Clone)]
+pub(crate) struct AdmittedExpectationInput {
     pub partition: crate::event::EventPartition,
     pub values: Vec<ExactRational>,
+}
+
+impl ExpectationInput {
+    pub(crate) fn admit(
+        &self,
+        control: &crate::WorkContext,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<AdmittedExpectationInput> {
+        use crate::event::{BoolOp4, EventPartition, PartitionLimits};
+        let mut merged = std::collections::HashMap::<Vec<u8>, (ExactRational, Event)>::new();
+        for ([sign, numerator, denominator], region) in &self.payoffs {
+            // No empty-region or zero-numerator shortcut may hide an invalid divisor.
+            let value =
+                ExactRational::from(*numerator).div(&ExactRational::from(*denominator), work)?;
+            let value = if *sign == 0 {
+                value
+            } else {
+                ExactRational::zero().sub(&value, work)?
+            };
+            let key = value.to_bytes(work)?;
+            if let Some((_, prior)) = merged.get_mut(&key) {
+                *prior = prior.apply(BoolOp4::OR, region, control)?;
+            } else {
+                merged.try_reserve(1).map_err(crate::event::Error::from)?;
+                merged.insert(key, (value, region.clone()));
+            }
+        }
+        let mut regions = Vec::new();
+        let mut values = Vec::new();
+        regions
+            .try_reserve_exact(merged.len())
+            .map_err(crate::event::Error::from)?;
+        values
+            .try_reserve_exact(merged.len())
+            .map_err(crate::event::Error::from)?;
+        let mut ordered = Vec::new();
+        ordered
+            .try_reserve_exact(merged.len())
+            .map_err(crate::event::Error::from)?;
+        ordered.extend(merged);
+        ordered.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        for (_, (value, region)) in ordered {
+            values.push(value);
+            regions.push(region);
+        }
+        Ok(AdmittedExpectationInput {
+            partition: EventPartition::on(
+                &self.given,
+                &regions,
+                PartitionLimits::default(),
+                control,
+            )?,
+            values,
+        })
+    }
 }
 
 /// An owned conditional expectation, including its complete evidence-relative
 /// payoff. Construction is native and requires structural partition admission.
 #[derive(Debug, Clone)]
 pub struct ExpectationAnswer {
-    input: ExpectationInput,
+    input: AdmittedExpectationInput,
     value: ExpectationValue,
 }
 
 impl ExpectationAnswer {
-    pub(crate) fn new(input: ExpectationInput, work: &mut ExactArithmetic<'_>) -> Result<Self> {
+    pub(crate) fn new(
+        input: AdmittedExpectationInput,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
         let given = input.partition.parent();
         let mut pieces = Vec::new();
         pieces
@@ -181,3 +247,54 @@ impl PartialEq for ExpectationAnswer {
     }
 }
 impl Eq for ExpectationAnswer {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::{ArithmeticLimits, Capacity, Error, Space, SpaceId};
+
+    #[test]
+    fn payoff_admission_shares_exact_work_and_checks_even_empty_zero_values() {
+        let control = crate::WorkContext::new();
+        let source = Space::new(SpaceId([235; 32]), 0, &control).unwrap();
+        let input = ExpectationInput {
+            given: source.full(),
+            payoffs: vec![([0, 1, 2], source.full()), ([0, 2, 4], source.full())],
+        };
+        let mut work = ExactArithmetic::new(ArithmeticLimits::default(), &control);
+        let admitted = input.admit(&control, &mut work).unwrap();
+        assert_eq!(admitted.values.len(), 1);
+        assert_eq!(admitted.values[0].to_string(), "1/2");
+        let mut bounded = ExactArithmetic::new(
+            ArithmeticLimits {
+                operations: work.operations(),
+                ..ArithmeticLimits::default()
+            },
+            &control,
+        );
+        input.admit(&control, &mut bounded).unwrap();
+        assert!(matches!(
+            input.admit(&control, &mut bounded),
+            Err(crate::Error::Event(Error::Capacity(
+                Capacity::ArithmeticSteps
+            )))
+        ));
+        let zero = ExpectationInput {
+            given: source.empty(),
+            payoffs: vec![([0, 0, u64::MAX], source.empty())],
+        };
+        let mut narrow = ExactArithmetic::new(
+            ArithmeticLimits {
+                bits: 16,
+                ..ArithmeticLimits::default()
+            },
+            &control,
+        );
+        assert!(matches!(
+            zero.admit(&control, &mut narrow),
+            Err(crate::Error::Event(Error::Capacity(
+                Capacity::ArithmeticBits
+            )))
+        ));
+    }
+}

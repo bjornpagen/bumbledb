@@ -21,10 +21,17 @@ interface EventTest {
 	readonly node: TestNode
 }
 type IntegerVar = AnyVar & { readonly field: I64Field | U64Field }
+type RatioNode = { readonly kind: "ratio"; readonly numerator: IntegerVar; readonly denominator: IntegerVar }
+type PayoffNode = { readonly kind: "integer"; readonly value: IntegerVar } | RatioNode
+export interface RationalPayoff {
+	readonly kind: "ratio"
+	readonly [expressionTag]: "ratio"
+	readonly node: RatioNode
+}
 interface ExpectationExpr {
 	readonly kind: "expectation"
 	readonly [expressionTag]: "expectation"
-	readonly node: { readonly value: IntegerVar; readonly when: EventVar; readonly given: EventVar }
+	readonly node: { readonly value: PayoffNode; readonly when: EventVar; readonly given: EventVar }
 }
 interface ProbabilityExpr {
 	readonly kind: "probability"
@@ -53,6 +60,7 @@ interface Owned<N> {
 const events = new WeakMap<EventExpr, Owned<EventNode>>()
 const tests = new WeakMap<EventTest, Owned<TestNode>>()
 const expectations = new WeakSet<ExpectationExpr>()
+const ratios = new WeakSet<RationalPayoff>()
 const probabilities = new WeakMap<ProbabilityExpr, Owned<ProbabilityExpr["node"]>>()
 const relations = new WeakMap<RelationExpr, Owned<RelationNode>>()
 
@@ -122,14 +130,34 @@ function ownProbability(node: ProbabilityExpr["node"], size: Extent): Probabilit
 	probabilities.set(value, { node: value.node, extent: size })
 	return value
 }
-/** Admit a complete evidence-relative payoff roster before exact contraction. */
-function expectation(value: IntegerVar, when: EventVar, given: EventVar): ExpectationExpr {
+function integerVar(value: IntegerVar): IntegerVar {
 	if (!isTerm(value) || value[term] !== "var" || (value.field.kind !== "i64" && value.field.kind !== "u64"))
 		return refused("Expectation requires an exact integer variable")
+	return value
+}
+/** Exact fraction of relational integer columns; no rounding or calculation in JS. */
+function payoffRatio(numerator: IntegerVar, denominator: IntegerVar): RationalPayoff {
+	const result: RationalPayoff = Object.freeze({
+		kind: "ratio",
+		[expressionTag]: "ratio" as const,
+		node: Object.freeze({ kind: "ratio", numerator: integerVar(numerator), denominator: integerVar(denominator) })
+	})
+	ratios.add(result)
+	return result
+}
+export function expectationPayoffVars(input: ExpectationExpr): readonly IntegerVar[] {
+	const value = input.node.value
+	return value.kind === "integer" ? [value.value] : [value.numerator, value.denominator]
+}
+/** Admit a complete evidence-relative payoff roster before exact contraction. */
+function expectation(value: IntegerVar | RationalPayoff, when: EventVar, given: EventVar): ExpectationExpr {
+	const payoff: PayoffNode = ratios.has(value as RationalPayoff)
+		? (value as RationalPayoff).node
+		: Object.freeze({ kind: "integer", value: integerVar(value as IntegerVar) })
 	const result: ExpectationExpr = Object.freeze({
 		kind: "expectation",
 		[expressionTag]: "expectation" as const,
-		node: Object.freeze({ value, when: eventVar(when), given: eventVar(given) })
+		node: Object.freeze({ value: payoff, when: eventVar(when), given: eventVar(given) })
 	})
 	expectations.add(result)
 	return result
@@ -385,7 +413,14 @@ function eventFindIr(
 		if (!expectations.has(input)) return refused("Expected an owned expectation expression")
 		return {
 			kind: "expectation",
-			value: variable(input.node.value),
+			value:
+				input.node.value.kind === "integer"
+					? variable(input.node.value.value)
+					: {
+							kind: "ratio",
+							numerator: variable(input.node.value.numerator),
+							denominator: variable(input.node.value.denominator)
+						},
 			when: variable(input.node.when),
 			given: variable(input.node.given)
 		}
@@ -405,7 +440,7 @@ function eventFindIr(
 function eventFindVars(input: EventFind): readonly AnyVar[] {
 	if (input.kind === "expectation") {
 		if (!expectations.has(input)) return refused("Expected an owned expectation expression")
-		return [input.node.value, input.node.when, input.node.given]
+		return [...expectationPayoffVars(input), input.node.when, input.node.given]
 	}
 	const variables = new Set<EventVar>()
 	const map = {
@@ -434,7 +469,9 @@ function eventFindFromIr(
 ): EventFind {
 	if (input.kind === "expectation")
 		return expectation(
-			variable(input.value) as IntegerVar,
+			typeof input.value === "number"
+				? (variable(input.value) as IntegerVar)
+				: payoffRatio(variable(input.value.numerator) as IntegerVar, variable(input.value.denominator) as IntegerVar),
 			eventVar(variable(input.when)),
 			eventVar(variable(input.given))
 		)
@@ -480,6 +517,7 @@ export {
 	eventFindVars,
 	expectation,
 	isEventFind,
+	payoffRatio,
 	probability,
 	RelationExpr,
 	snapshotEventExpression

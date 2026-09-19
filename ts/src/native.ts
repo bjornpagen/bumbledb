@@ -207,7 +207,12 @@ type FindTermIr =
 	| { readonly kind: "event"; readonly expr: EventExprIr }
 	| { readonly kind: "test"; readonly expr: EventTestIr }
 	| { readonly kind: "probability"; readonly event: EventExprIr; readonly given: EventExprIr }
-	| { readonly kind: "expectation"; readonly value: number; readonly when: number; readonly given: number }
+	| {
+			readonly kind: "expectation"
+			readonly value: number | { readonly kind: "ratio"; readonly numerator: number; readonly denominator: number }
+			readonly when: number
+			readonly given: number
+	  }
 	| { readonly kind: "count" }
 	| { readonly kind: "aggregate"; readonly op: FoldOpIr; readonly over: number }
 	| { readonly kind: "pack"; readonly over: number }

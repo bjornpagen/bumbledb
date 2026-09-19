@@ -1,8 +1,9 @@
 //! Scratch-backed payoff rosters. A stable token per logical group lets the
 //! existing projection/scalar aggregate sinks compose with multiple expectations.
-//! Context admission is a complete first pass; partition admission follows it.
+//! Context admission is a complete first pass. Exact payoff normalization and
+//! partition admission run later under the shared observation arithmetic budget.
 use super::{Bindings, OutputProgram, events::Faults};
-use crate::event::{BoolOp4, EventPartition, ExactRational, FunctionLimits, PartitionLimits};
+use crate::event::{BoolOp4, FunctionLimits};
 use crate::exec::scratch::{ScratchMapId, ScratchRelation, ScratchWordKey};
 use crate::exec::sink::FindSpec;
 use crate::image::intern::InternerHandle;
@@ -12,8 +13,9 @@ use crate::{
     Event, EventFaultCategory, EventOperandFault, FindIndex, FindTerm, Result, Value, VarId,
 };
 
-// token, integer sign/magnitude, when key, given key, rule, when/given vars, find.
-type Claim = ScratchWordKey<11>;
+// token, payoff sign/numerator/denominator, Event keys and written provenance.
+// Ratios are not normalized here: arithmetic belongs to one finalization budget.
+type Claim = ScratchWordKey<12>;
 const _: () = assert!(Claim::BYTE_LEN <= crate::exec::scratch::MAX_INLINE_KEY);
 
 pub(super) struct Expectations {
@@ -80,13 +82,7 @@ impl Expectations {
         let FindTerm::Expectation { value, when, given } = program.expression else {
             unreachable!("sealed expectation");
         };
-        // All positive i64/u64 values have one key, including across rule arms.
-        let (sign, magnitude) =
-            match super::read_value(bindings, program, value).expect("typed integer") {
-                Value::I64(n) => (u64::from(n < 0), n.unsigned_abs()),
-                Value::U64(n) => (0, n),
-                _ => unreachable!("validated exact integer"),
-            };
+        let [sign, magnitude, denominator] = payoff_ratio(bindings, program, value);
         let key = |var| {
             let (_, slot, _) = program
                 .inputs
@@ -152,6 +148,7 @@ impl Expectations {
                 token,
                 sign,
                 magnitude,
+                denominator,
                 when_key[0],
                 when_key[1],
                 given_key[0],
@@ -190,6 +187,29 @@ impl Expectations {
     }
 }
 
+// Capture full signed magnitudes, including u64::MAX / -1. Exact reduction is
+// deferred until all contexts have been checked; a zero divisor stays visible.
+fn payoff_ratio(
+    bindings: &Bindings,
+    program: &OutputProgram,
+    value: crate::PayoffExpr,
+) -> [u64; 3] {
+    let integer = |var| match super::read_value(bindings, program, var).expect("typed integer") {
+        Value::I64(n) => (n < 0, n.unsigned_abs()),
+        Value::U64(n) => (false, n),
+        _ => unreachable!("validated exact integer"),
+    };
+    let ((negative, magnitude), (divisor_negative, denominator)) = match value {
+        crate::PayoffExpr::Integer(var) => (integer(var), (false, 1)),
+        crate::PayoffExpr::Ratio {
+            numerator,
+            denominator,
+        } => (integer(numerator), integer(denominator)),
+    };
+    let sign = u64::from(magnitude != 0 && (negative ^ divisor_negative));
+    [sign, magnitude, denominator]
+}
+
 fn admit_contexts(
     table: &mut ScratchRelation,
     interner: &InternerHandle<'_>,
@@ -202,7 +222,7 @@ fn admit_contexts(
     let mut space = None;
     // Validate every written occurrence, including zero and empty inputs.
     table.visit_with_lookup(ScratchMapId::Default, &mut |lookup, key, _| {
-        let [token, _, _, a, b, c, d, rule, when_var, given_var, find] =
+        let [token, _, _, _, a, b, c, d, rule, when_var, given_var, find] =
             Claim::decode(key).ok_or_else(corrupt)?.words();
         if current != Some(token) {
             if !lookup.get(
@@ -252,12 +272,24 @@ fn collect_rosters(
     let mut inputs = Vec::new();
     let mut group: Option<Group> = None;
     table.visit_with_lookup(ScratchMapId::Default, &mut |_, key, _| {
-        let [token, sign, magnitude, a, b, c, d, _, _, _, find] =
-            Claim::decode(key).ok_or_else(corrupt)?.words();
+        let [
+            token,
+            sign,
+            magnitude,
+            denominator,
+            a,
+            b,
+            c,
+            d,
+            _,
+            _,
+            _,
+            find,
+        ] = Claim::decode(key).ok_or_else(corrupt)?.words();
         if group.as_ref().is_none_or(|g| g.token != token) {
             if let Some(prior) = group.take() {
                 inputs.try_reserve(1).map_err(crate::event::Error::from)?;
-                inputs.push(prior.finish(work)?);
+                inputs.push(prior.finish());
             }
             group = Some(Group {
                 token,
@@ -277,7 +309,7 @@ fn collect_rosters(
         if let Some((_, prior)) = group
             .values
             .last_mut()
-            .filter(|(value, _)| *value == [sign, magnitude])
+            .filter(|(value, _)| *value == [sign, magnitude, denominator])
         {
             *prior = prior.apply(BoolOp4::OR, &when, work)?;
         } else {
@@ -290,13 +322,13 @@ fn collect_rosters(
                 .values
                 .try_reserve(1)
                 .map_err(crate::event::Error::from)?;
-            group.values.push(([sign, magnitude], when));
+            group.values.push(([sign, magnitude, denominator], when));
         }
         Ok(true)
     })?;
     if let Some(group) = group {
         inputs.try_reserve(1).map_err(crate::event::Error::from)?;
-        inputs.push(group.finish(work)?);
+        inputs.push(group.finish());
     }
     Ok(inputs)
 }
@@ -304,33 +336,16 @@ fn collect_rosters(
 struct Group {
     token: u64,
     given: Event,
-    // Inline scratch keys order claims by token and then exact integer value.
-    values: Vec<([u64; 2], Event)>,
+    // Inline keys group identical presentations. Equal ratios merge at admission.
+    values: Vec<([u64; 3], Event)>,
 }
 
 impl Group {
-    fn finish(self, work: &WorkContext) -> Result<ExpectationInput> {
-        let mut values = Vec::new();
-        let mut regions = Vec::new();
-        values
-            .try_reserve_exact(self.values.len())
-            .map_err(crate::event::Error::from)?;
-        regions
-            .try_reserve_exact(self.values.len())
-            .map_err(crate::event::Error::from)?;
-        for ([sign, magnitude], region) in self.values {
-            let value = if sign == 0 {
-                ExactRational::from(magnitude)
-            } else {
-                // Includes i64::MIN without a signed negation overflow.
-                ExactRational::from(magnitude.wrapping_neg().cast_signed())
-            };
-            values.push(value);
-            regions.push(region);
+    fn finish(self) -> ExpectationInput {
+        ExpectationInput {
+            given: self.given,
+            payoffs: self.values,
         }
-        let partition =
-            EventPartition::on(&self.given, &regions, PartitionLimits::default(), work)?;
-        Ok(ExpectationInput { partition, values })
     }
 }
 
@@ -353,7 +368,7 @@ mod tests {
             find: 1,
             rules: vec![0, 2],
             expression: FindTerm::Expectation {
-                value: VarId(0),
+                value: VarId(0).into(),
                 when: VarId(1),
                 given: VarId(2),
             },
@@ -436,7 +451,16 @@ mod tests {
                     faults.finish().unwrap();
                     assert_eq!(inputs.len(), 2);
                     for input in inputs {
-                        assert_eq!(input.values, [ExactRational::zero()]);
+                        let input = input
+                            .admit(
+                                &work,
+                                &mut crate::event::ExactArithmetic::new(
+                                    crate::event::ArithmeticLimits::default(),
+                                    &work,
+                                ),
+                            )
+                            .unwrap();
+                        assert_eq!(input.values, [crate::event::ExactRational::zero()]);
                         assert!(input.partition.cells()[0].is_full());
                     }
                 }

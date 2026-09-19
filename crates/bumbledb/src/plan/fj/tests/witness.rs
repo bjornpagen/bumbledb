@@ -111,7 +111,7 @@ fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedP
                 sink_vars.extend(f.event_variables().unwrap());
             }
             FindTerm::Expectation { value, when, given } => {
-                sink_vars.extend([*value, *when, *given]);
+                sink_vars.extend(value.variables().chain([*when, *given]));
             }
             FindTerm::Count | FindTerm::Pack { .. } | FindTerm::Aggregate { .. } => {}
         }

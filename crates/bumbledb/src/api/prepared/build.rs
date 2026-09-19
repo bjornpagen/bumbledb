@@ -974,8 +974,9 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                     find: find_idx,
                     rules: rule.minted().to_vec(),
                     expression: term.clone(),
-                    inputs: [*value, *when, *given]
-                        .into_iter()
+                    inputs: value
+                        .variables()
+                        .chain([*when, *given])
                         .map(|var| (var, layout.slot_of(var), *rule.var_type(var)))
                         .collect(),
                 }))

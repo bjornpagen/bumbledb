@@ -419,7 +419,9 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
             FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => {
                 vars.insert(*over);
             }
-            FindTerm::Expectation { value, when, given } => vars.extend([*value, *when, *given]),
+            FindTerm::Expectation { value, when, given } => {
+                vars.extend(value.variables().chain([*when, *given]));
+            }
             FindTerm::Count => {}
             FindTerm::Compute(expr) => vars.extend(expr.variables()),
             FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {

@@ -311,9 +311,9 @@ fn expectation_matches_independent_four_world_oracle_for_all_regions_and_evidenc
                 let given = source.table(3, &[evidence], &())?;
                 let when = source.table(3, &[region], &())?;
                 tx.insert([
-                    &row(group * 3, group, -3, 0, when.clone(), given.clone()),
-                    &row(group * 3 + 1, group, -3, 0, when.clone(), given.clone()),
-                    &row(group * 3 + 2, group, 7, 0, when.complement(), given),
+                    &row(group * 3, group, -3, 2, when.clone(), given.clone()),
+                    &row(group * 3 + 1, group, -3, 2, when.clone(), given.clone()),
+                    &row(group * 3 + 2, group, 7, 3, when.complement(), given),
                 ])?;
             }
         }
@@ -321,7 +321,7 @@ fn expectation_matches_independent_four_world_oracle_for_all_regions_and_evidenc
     })
     .unwrap()
     .unwrap();
-    let template = query!(Payoffs { (group, expected: Expectation(value, region, evidence)) | Payoff(group, value, region, evidence); });
+    let template = query!(Payoffs { (group, expected: Expectation(value, region, evidence), fractional: Expectation(Ratio(value, second), region, evidence)) | Payoff(group, value, second, region, evidence); });
     for fallback in [false, true] {
         let mut prepared = db.prepare(&template, common::work()).unwrap();
         prepared.force_cursor_fallback(fallback);
@@ -337,13 +337,23 @@ fn expectation_matches_independent_four_world_oracle_for_all_regions_and_evidenc
             };
             let (evidence, region) = (group / 16, group % 16);
             let mut numerator = 0;
+            let mut fractional = 0;
             let mut mass = 0;
             for (world, weight) in [3, 2, 1, 0].into_iter().enumerate() {
                 if evidence & (1 << world) != 0 {
                     mass += weight;
                     numerator += weight * if region & (1 << world) != 0 { -3 } else { 7 };
+                    fractional += weight * if region & (1 << world) != 0 { -9 } else { 14 };
                 }
             }
+            assert_eq!(
+                fixed(answers.get(n, 2)),
+                if mass == 0 {
+                    None
+                } else {
+                    Some(ratio(fractional, u64::try_from(mass * 6).unwrap()))
+                }
+            );
             assert_eq!(
                 fixed(answers.get(n, 1)),
                 if mass == 0 {
@@ -375,6 +385,25 @@ fn expectation_checks_types_on_empty_inputs_and_refuses_observation_interiors() 
         db.prepare(&wrong_event, common::work()),
         Err(Error::Validation(
             bumbledb::ValidationError::EventExpression { .. }
+        ))
+    ));
+    let wrong_divisor = query!(Payoffs {
+        (expected: Expectation(Ratio(value, region), region, region)) | Payoff(value, region);
+    });
+    assert!(matches!(
+        db.prepare(&wrong_divisor, common::work()),
+        Err(Error::Validation(
+            bumbledb::ValidationError::AggregateInputType { .. }
+        ))
+    ));
+    let closed_divisor = query!(Payoffs {
+        (expected: Expectation(Ratio(utility, utility), region, evidence)) |
+            CategoricalPayoff(utility, region, evidence);
+    });
+    assert!(matches!(
+        db.prepare(&closed_divisor, common::work()),
+        Err(Error::Validation(
+            bumbledb::ValidationError::AggregateOverClosedReference { .. }
         ))
     ));
     let staged = query!(Payoffs {
@@ -420,4 +449,135 @@ fn expectation_requires_explicit_utility_mapping_for_closed_references() {
         })
         .unwrap();
     assert_eq!(fixed(answers.get(0, 0)), Some(ratio(7, 1)));
+}
+
+#[test]
+fn rational_expectation_normalizes_presentations_and_retains_owned_exact_values() {
+    let dir = common::TempDir::new("expectation-ratios");
+    let db = Db::create(dir.path(), Payoffs, common::work())
+        .unwrap()
+        .unwrap();
+    let source = source(false);
+    let head = source.coordinate(0, &()).unwrap();
+    db.write(common::work(), |tx| {
+        tx.insert([
+            &row(0, 1, 1, 2, head.clone(), source.full()),
+            &row(1, 1, 2, 4, head.clone(), source.full()),
+            &row(2, 1, -2, 3, head.complement(), source.full()),
+            &row(3, 1, 0, 17, source.empty(), source.full()),
+            &row(4, 2, -1, u64::MAX, source.full(), source.full()),
+            &row(5, 3, i64::MIN, 1, source.full(), source.full()),
+        ])
+    })
+    .unwrap()
+    .unwrap();
+    drop(db);
+    let db = Db::open(dir.path(), Payoffs, common::work()).unwrap();
+    let normal = query!(Payoffs {
+        (mean: Expectation(Ratio(value, second), region, evidence), witnesses: Count) |
+            Payoff(group, value, second, region, evidence), group == 1;
+    });
+    let signed_divisor = query!(Payoffs {
+        (group, mean: Expectation(Ratio(second, value), region, evidence)) |
+            Payoff(group, value, second, region, evidence), group >= 2;
+    });
+    let mut retained = Vec::new();
+    for fallback in [false, true] {
+        for mut prepared in [
+            db.prepare(&normal, common::work()).unwrap(),
+            db.prepare(&signed_divisor, common::work()).unwrap(),
+        ] {
+            prepared.force_cursor_fallback(fallback);
+            retained.push(
+                db.read(common::work(), |snapshot| {
+                    snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+                })
+                .unwrap(),
+            );
+        }
+    }
+    drop((db, normal, signed_divisor, source));
+    for pair in retained.as_chunks::<2>().0 {
+        assert_eq!(pair[0].len(), 1);
+        assert_eq!(fixed(pair[0].get(0, 0)), Some(ratio(-1, 12)));
+        assert_eq!(pair[0].get(0, 1), AnswerValue::U64(4));
+        let AnswerValue::Expectation(answer) = pair[0].get(0, 0) else {
+            panic!("expectation")
+        };
+        assert_eq!(answer.values().len(), 3); // 1/2, -2/3, and supplied zero.
+        assert!(answer.values().contains(&ExactRational::zero()));
+        assert_eq!(
+            answer
+                .partition()
+                .cells()
+                .iter()
+                .filter(|e| e.is_empty())
+                .count(),
+            1
+        );
+        for n in 0..pair[1].len() {
+            let expected = if pair[1].get(n, 0) == AnswerValue::U64(2) {
+                ExactRational::zero()
+                    .sub(&u64::MAX.into(), &mut arithmetic())
+                    .unwrap()
+            } else {
+                ratio(-1, 1u64 << 63)
+            };
+            assert_eq!(fixed(pair[1].get(n, 1)), Some(expected));
+        }
+    }
+}
+
+#[test]
+fn rational_expectation_validates_empty_divisors_after_complete_context_admission() {
+    let source = source(false);
+    let foreign = Space::new(SpaceId([234; 32]), 1, &()).unwrap();
+    for foreign_empty in [false, true] {
+        let dir = common::TempDir::new("expectation-invalid-ratio");
+        let db = Db::create(dir.path(), Payoffs, common::work())
+            .unwrap()
+            .unwrap();
+        db.write(common::work(), |tx| {
+            tx.insert([
+                &row(0, 1, 1, 2, source.full(), source.full()),
+                // This invalid division cannot hide behind a complete prior patch.
+                &row(1, 1, 0, 0, source.empty(), source.full()),
+                &row(
+                    2,
+                    1,
+                    1,
+                    2,
+                    if foreign_empty {
+                        foreign.empty()
+                    } else {
+                        source.empty()
+                    },
+                    source.full(),
+                ),
+            ])
+        })
+        .unwrap()
+        .unwrap();
+        let query = query!(Payoffs {
+            (mean: Expectation(Ratio(value, second), region, evidence)) |
+                Payoff(value, second, region, evidence);
+        });
+        for fallback in [false, true] {
+            let mut prepared = db.prepare(&query, common::work()).unwrap();
+            prepared.force_cursor_fallback(fallback);
+            let error = db
+                .read(common::work(), |s| {
+                    s.execute_collect(&mut prepared, &[] as &[BindValue])
+                })
+                .unwrap_err();
+            if foreign_empty {
+                assert!(matches!(error, Error::EventFaults(_)));
+            } else {
+                assert!(matches!(
+                    error,
+                    Error::Event(bumbledb::event::Error::DivisionByZero)
+                ));
+            }
+        }
+    }
 }

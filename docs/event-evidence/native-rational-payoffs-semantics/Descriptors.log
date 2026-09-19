@@ -1,0 +1,11 @@
+'Descriptors.readouts_reconstruct_the_legal_map' does not depend on any axioms
+'Descriptors.reconstruction_preserves_onto' does not depend on any axioms
+'Descriptors.reconstruction_preserves_pullback' does not depend on any axioms
+'Descriptors.reconstruction_preserves_image' does not depend on any axioms
+'Descriptors.target_support_check_cannot_be_replaced_by_code_equality' does not depend on any axioms
+'Descriptors.original_support_and_environment_determine_product' does not depend on any axioms
+'Descriptors.converse_preserves_full_product' does not depend on any axioms
+'Descriptors.forgetting_orientation_changes_meaning' does not depend on any axioms
+'Descriptors.individual_onto_maps_do_not_certify_a_joint_square' does not depend on any axioms
+'Descriptors.onto_environment_maps_can_still_disagree' does not depend on any axioms
+'Descriptors.changed_environment_can_change_product_support' depends on axioms: [propext]

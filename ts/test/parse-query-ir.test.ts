@@ -458,3 +458,29 @@ test("fixed-point wire parsing owns scopes and shares imported-byte limits", () 
 	// Shape parsing deliberately leaves mathematical/lexical admission to the worker.
 	assert.doesNotThrow(() => parseQueryIr(query(bound)))
 })
+
+test("exact payoff ratios own their operands and reject malformed presentations", () => {
+	const query = (value: unknown) => ({
+		...plainIr(),
+		head: [{ kind: "aggregate", op: "expectation" }],
+		rules: [{ ...plainIr().rules[0], finds: [{ kind: "expectation", value, when: 1, given: 2 }] }]
+	})
+	const value = { kind: "ratio", numerator: 0, denominator: 3 }
+	const parsed = parseQueryIr(query(value))
+	value.denominator = 7
+	const find = parsed.rules[0]?.finds[0]
+	assert.ok(find?.kind === "expectation")
+	assert.deepEqual(find.value, { kind: "ratio", numerator: 0, denominator: 3 })
+	assert.ok(Object.isFrozen(find.value))
+	for (const bad of [
+		null,
+		{},
+		{ kind: "ratio", numerator: 0 },
+		{ kind: "ratio", numerator: 0, denominator: -1 },
+		{ kind: "ratio", numerator: 0.5, denominator: 1 },
+		{ kind: "ratio", numerator: 0, denominator: 65536 },
+		{ kind: "wrong", numerator: 0, denominator: 1 },
+		{ kind: "ratio", numerator: 0, denominator: 1, ignored: true }
+	])
+		assert.throws(() => parseQueryIr(query(bad)), { name: "AuthoringError" })
+})

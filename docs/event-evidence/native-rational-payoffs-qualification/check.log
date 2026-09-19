@@ -1,0 +1,6 @@
+   Compiling bumbledb-query-macros v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-query-macros)
+    Checking bumbledb v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb)
+    Checking bumbledb-bench v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-bench)
+    Checking bumbledb-log v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-log)
+    Checking bumbledb-query v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-query)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.19s

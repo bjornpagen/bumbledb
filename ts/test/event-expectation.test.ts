@@ -24,6 +24,7 @@ import {
 	ParameterFunction,
 	ParameterRegion,
 	PolynomialSigns,
+	payoffRatio,
 	ExactRational as Q,
 	type QueryRow,
 	query,
@@ -58,6 +59,8 @@ function typePins(answer: QueryRow<typeof observed>) {
 	const row = v(relation("Float", { value: f64, region: event }))
 	// @ts-expect-error Binary64 does not silently become an exact payoff.
 	expectation(row.value, row.region, row.region)
+	// @ts-expect-error A divisor must be an ordinary exact integer column.
+	payoffRatio(row.value, row.value)
 }
 void typePins
 async function run<A, E>(program: Effect.Effect<A, E, NativeRuntime>) {
@@ -120,6 +123,27 @@ test("expectation authoring and description imports preserve aggregate identity 
 		/not a find entry/
 	)
 	assert.equal(nativeBindingIsLoaded(), false)
+})
+
+test("fraction payoffs remain owned pure query expressions across description import", () => {
+	const authored = query(Theory).rule((r) => {
+		const row = v(Payoff)
+		return r.match(Payoff, row).find({ mean: expectation(payoffRatio(row.value, row.second), row.region, row.given) })
+	})
+	const description = describeQuery(authored)
+	const restored = queryFromDescription(Theory, description, { mean: expectationResult })
+	assert.deepEqual(describeQuery(restored), description)
+	const row = v(Payoff)
+	assert.throws(() => expectation({ ...payoffRatio(row.value, row.second) }, row.region, row.given), /integer variable/)
+	assert.throws(
+		() =>
+			query(Theory).rule((r) =>
+				r
+					.match(Payoff, { value: row.value, region: row.region, given: row.given })
+					.find({ mean: expectation(payoffRatio(row.value, row.second), row.region, row.given) })
+			),
+		/bound/
+	)
 })
 
 test("query expectations own complete payoff rosters and survive collection, paging, and closed owners", async () => {
@@ -217,12 +241,25 @@ test("family expectations transport signed payoff functions and preserve impossi
 				const db = yield* Db.create(storeDir("query-expectation-family"), Theory)
 				const changes = yield* ChangeSet.builder(Theory)
 				yield* changes.insert(Payoff, [
-					{ id: 0n, group: 1n, value: -2n, second: 0n, region: yield* Event.complement(second), given: first },
-					{ id: 1n, group: 1n, value: 7n, second: 0n, region: second, given: first }
+					{ id: 0n, group: 1n, value: -2n, second: 2n, region: yield* Event.complement(second), given: first },
+					{ id: 1n, group: 1n, value: 7n, second: 2n, region: second, given: first }
 				])
 				assert.equal((yield* db.apply(yield* changes.finish(), { expected: { kind: "any" } })).kind, "accepted")
 				const snapshot = yield* db.snapshot()
 				const rows = yield* (yield* snapshot.execute(observed, {})).collect()
+				const fractional = query(Theory).rule((r) => {
+					const row = v(Payoff)
+					return r
+						.match(Payoff, row)
+						.find({ mean: expectation(payoffRatio(row.value, row.second), row.region, row.given) })
+				})
+				const fractionRows = yield* (yield* snapshot.execute(fractional, {})).collect()
+				const fraction = fractionRows[0]?.mean
+				assert.ok(fraction?.law === "parameter")
+				assert.equal(yield* ParameterFunction.at(fraction.value, yield* Q.fraction(0n)), null)
+				const half = yield* ParameterFunction.at(fraction.value, yield* Q.fraction(1n, 3n))
+				assert.ok(half !== null)
+				assert.equal(yield* Q.toString(half), "1/2")
 				const answer = rows[0]?.mean
 				assert.ok(answer?.law === "parameter")
 				assert.equal(yield* ParameterFunction.at(answer.value, yield* Q.fraction(0n)), null)
@@ -238,6 +275,56 @@ test("family expectations transport signed payoff functions and preserve impossi
 				// The returned finite function is the admitted payoff, not the mean.
 				const payoff = yield* FiniteFunction.describe(answer.function)
 				assert.equal(payoff.pieces.length, 2)
+			})
+		)
+	)
+})
+
+test("fraction queries normalize equal presentations and reject hidden zero divisors", async () => {
+	await run(
+		Effect.scoped(
+			Effect.gen(function* () {
+				const raw = yield* Event.space(new Uint8Array(32).fill(236), 1n)
+				const source = yield* FiniteFunction.designate(yield* FiniteFunction.constant(raw, yield* Q.fraction(1n, 2n)))
+				const head = yield* Event.coordinate(source, 0n)
+				const db = yield* Db.create(storeDir("query-expectation-ratios"), Theory)
+				const changes = yield* ChangeSet.builder(Theory)
+				yield* changes.insert(Payoff, [
+					{ id: 0n, group: 1n, value: 1n, second: 2n, region: head, given: source },
+					{ id: 1n, group: 1n, value: 2n, second: 4n, region: head, given: source },
+					{ id: 2n, group: 1n, value: -2n, second: 3n, region: yield* Event.complement(head), given: source },
+					{ id: 3n, group: 1n, value: 0n, second: 7n, region: yield* Event.empty(source), given: source }
+				])
+				assert.equal((yield* db.apply(yield* changes.finish(), { expected: { kind: "any" } })).kind, "accepted")
+				const authored = query(Theory).rule((r) => {
+					const row = v(Payoff)
+					return r
+						.match(Payoff, row)
+						.find({ mean: expectation(payoffRatio(row.value, row.second), row.region, row.given), paths: r.count() })
+				})
+				const restored = queryFromDescription(Theory, describeQuery(authored), { mean: expectationResult, paths: u64 })
+				const snapshot = yield* db.snapshot()
+				const result = yield* snapshot.execute(restored, {})
+				yield* snapshot.close()
+				const rows = yield* result.collect()
+				assert.equal(rows.length, 1)
+				const row = rows[0]
+				assert.ok(row && row.mean.law === "fixed" && row.mean.value !== null)
+				assert.equal(yield* Q.toString(row.mean.value), "-1/12")
+				assert.equal(row.paths, 4n)
+				assert.equal(row.mean.payoffs.length, 3)
+				const invalid = yield* ChangeSet.builder(Theory)
+				yield* invalid.insert(Payoff, [
+					{ id: 4n, group: 1n, value: 0n, second: 0n, region: yield* Event.empty(source), given: source }
+				])
+				yield* db.apply(yield* invalid.finish(), { expected: { kind: "any" } })
+				const after = yield* db.snapshot()
+				const error = yield* Effect.flip(Effect.flatMap(after.execute(restored, {}), (value) => value.collect()))
+				assert.ok(error.reason._tag === "Engine")
+				assert.match(error.reason.message, /division by zero/)
+				yield* after.close()
+				yield* db.close()
+				assert.equal(yield* Q.toString(row.mean.value), "-1/12")
 			})
 		)
 	)

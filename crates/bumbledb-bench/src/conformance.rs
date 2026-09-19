@@ -528,8 +528,8 @@ fn count_vars(rule: &Rule) -> u16 {
                 }
             }
             FindTerm::Expectation { value, when, given } => {
-                for var in [value, when, given] {
-                    see(&mut count, *var);
+                for var in value.variables().chain([*when, *given]) {
+                    see(&mut count, var);
                 }
             }
             FindTerm::Probability { event, given } => {

@@ -292,6 +292,16 @@ function eventTest(context: string, input: unknown): EventTestIr {
 	}
 }
 
+function payoffRatioIr(context: string, input: unknown) {
+	const value = recordValue(context, input, ["kind", "numerator", "denominator"])
+	if (value.kind !== "ratio") return fail(context, "unknown exact payoff expression")
+	return Object.freeze({
+		kind: "ratio" as const,
+		numerator: ordinal(context, value.numerator),
+		denominator: ordinal(context, value.denominator)
+	})
+}
+
 function find(context: string, input: unknown): FindTermIr {
 	const raw = tagged(context, input)
 	if (raw.kind === "segments") {
@@ -319,7 +329,7 @@ function find(context: string, input: unknown): FindTermIr {
 			recordValue(context, raw, ["kind", "value", "when", "given"])
 			return Object.freeze({
 				kind: raw.kind,
-				value: ordinal(context, raw.value),
+				value: typeof raw.value === "number" ? ordinal(context, raw.value) : payoffRatioIr(context, raw.value),
 				when: ordinal(context, raw.when),
 				given: ordinal(context, raw.given)
 			})

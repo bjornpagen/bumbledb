@@ -304,6 +304,7 @@ enum HeadTerm {
     Expectation {
         label: Name,
         value: Name,
+        denominator: Option<Name>,
         when: Name,
         given: Name,
     },
@@ -758,7 +759,27 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
         if agg_name.text == "Expectation" {
             let (mut args, _) =
                 take_paren_group(tokens, "Expectation's value, region, and evidence")?;
-            let value = expect_ident(&mut args, "a payoff variable")?;
+            let mut value = expect_ident(
+                &mut args,
+                "a payoff variable or Ratio(numerator, denominator)",
+            )?;
+            let denominator =
+                if value.text == "Ratio" && matches!(args.peek(), Some(TokenTree::Group(_))) {
+                    let (mut ratio, _) =
+                        take_paren_group(&mut args, "Ratio's numerator and denominator")?;
+                    value = expect_ident(&mut ratio, "a numerator variable")?;
+                    expect_punct(&mut ratio, ',', "a comma")?;
+                    let denominator = expect_ident(&mut ratio, "a denominator variable")?;
+                    if let Some(extra) = ratio.next() {
+                        return fail(
+                            extra.span(),
+                            "query!: Ratio takes two body-bound integer variables",
+                        );
+                    }
+                    Some(denominator)
+                } else {
+                    None
+                };
             expect_punct(&mut args, ',', "a comma")?;
             let when = expect_ident(&mut args, "an Event variable")?;
             expect_punct(&mut args, ',', "a comma")?;
@@ -766,12 +787,13 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
             if let Some(extra) = args.next() {
                 return fail(
                     extra.span(),
-                    "query!: Expectation takes three body-bound variables",
+                    "query!: Expectation takes a payoff, an Event variable, and an evidence variable",
                 );
             }
             return Ok(HeadTerm::Expectation {
                 label: name,
                 value,
+                denominator,
                 when,
                 given,
             });
@@ -1936,13 +1958,30 @@ impl Emitter<'_> {
     fn find(&self, scope: &Scope, term: &HeadTerm) -> Parse<String> {
         Ok(match term {
             HeadTerm::Expectation {
-                value, when, given, ..
-            } => format!(
-                "::bumbledb::FindTerm::Expectation {{ value: ::bumbledb::VarId({}), when: ::bumbledb::VarId({}), given: ::bumbledb::VarId({}) }}",
-                scope.head_var(value)?,
-                scope.head_var(when)?,
-                scope.head_var(given)?
-            ),
+                value,
+                denominator,
+                when,
+                given,
+                ..
+            } => {
+                let value = if let Some(denominator) = denominator {
+                    format!(
+                        "::bumbledb::PayoffExpr::Ratio {{ numerator: ::bumbledb::VarId({}), denominator: ::bumbledb::VarId({}) }}",
+                        scope.head_var(value)?,
+                        scope.head_var(denominator)?
+                    )
+                } else {
+                    format!(
+                        "::bumbledb::PayoffExpr::Integer(::bumbledb::VarId({}))",
+                        scope.head_var(value)?
+                    )
+                };
+                format!(
+                    "::bumbledb::FindTerm::Expectation {{ value: {value}, when: ::bumbledb::VarId({}), given: ::bumbledb::VarId({}) }}",
+                    scope.head_var(when)?,
+                    scope.head_var(given)?
+                )
+            }
             HeadTerm::Probability { event, given, .. } => format!(
                 "::bumbledb::FindTerm::Probability {{ event: {}, given: {} }}",
                 event.emit(scope, self.imports, 0)?,

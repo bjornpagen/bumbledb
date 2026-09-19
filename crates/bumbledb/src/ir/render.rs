@@ -200,8 +200,16 @@ fn find_term(out: &mut String, term: &FindTerm) {
             write!(out, "Test({test:?})").expect("writing to String");
         }
         FindTerm::Expectation { value, when, given } => {
-            write!(out, "Expectation(v{}, v{}, v{})", value.0, when.0, given.0)
-                .expect("writing to String");
+            out.push_str("Expectation(");
+            match value {
+                crate::PayoffExpr::Integer(value) => write!(out, "v{}", value.0),
+                crate::PayoffExpr::Ratio {
+                    numerator,
+                    denominator,
+                } => write!(out, "Ratio(v{}, v{})", numerator.0, denominator.0),
+            }
+            .expect("writing to String");
+            write!(out, ", v{}, v{})", when.0, given.0).expect("writing to String");
         }
         FindTerm::Probability { event, given } => {
             write!(out, "Probability({event:?}, {given:?})").expect("writing to String");
