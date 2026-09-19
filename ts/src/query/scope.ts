@@ -1,12 +1,13 @@
 import type { AnyClosed } from "#closed.ts"
 import { memberDescriptor, sealedFieldsOf } from "#closed.ts"
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
-import type { AnyField, Infer, SignatureOf } from "#fields.ts"
-import { rosterOf, signaturesAgree } from "#fields.ts"
+import type { AnyField, Infer } from "#fields.ts"
 import type { Same, SameLen } from "#judgment.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type { QueryParam } from "#native.ts"
 import type { FindColumn } from "#query/atom.ts"
+import type { QuerySignature, QueryValue } from "#query/value.ts"
+import { queryRosterOf as rosterOf, queryValuesAgree as signaturesAgree } from "#query/value.ts"
 import type { AnyRelation } from "#relation.ts"
 import type { FieldsOf } from "#selection.ts"
 
@@ -18,15 +19,15 @@ type MatchOwner = AnyRelation | AnyClosed
 
 type MatchFields<R extends MatchOwner> = FieldsOf<R>
 
-interface Var<F extends AnyField, RN extends string, K extends string> {
+interface Var<F extends QueryValue, RN extends string, K extends string> {
 	readonly [term]: "var"
-	readonly owner: MatchOwner & { readonly name: RN }
+	readonly owner: (MatchOwner | ImportOwner) & { readonly name: RN }
 	readonly column: K
 	readonly field: F
 	readonly label: string
 }
 
-type AnyVar = Var<AnyField, string, string>
+type AnyVar = Var<QueryValue, string, string>
 
 interface Param<Name extends string> {
 	readonly [term]: "param"
@@ -134,15 +135,20 @@ interface ImportedFieldVar<S extends ClassedField, K extends string> extends Var
 type ImportedVar<Q, K extends string> =
 	HeadOfImport<Q> extends Readonly<Record<K, infer S extends ClassedField>>
 		? ImportedFieldVar<S, K>
-		: Var<AnyField, string, K>
+		: Var<QueryValue, string, K>
 
 type ImportVars<Q> = [RowOfImport<Q>] extends [never]
-	? Readonly<Record<string, Var<AnyField, string, string>>>
+	? Readonly<Record<string, Var<QueryValue, string, string>>>
 	: { readonly [K in keyof RowOfImport<Q> & string]: ImportedVar<Q, K> }
 
+interface ImportOwner {
+	readonly kind: "query"
+	readonly name: string
+}
+
 interface ImportFacade {
-	/** The pseudo-owner every import var carries (structurally an owner). */
-	readonly owner: MatchOwner & { readonly name: string }
+	/** Query identity is separate from stored relation declarations. */
+	readonly owner: ImportOwner
 	readonly source: ImportedSource
 	/** Column name → the imported head column (field + carrier class). */
 	readonly columns: ReadonlyMap<string, FindColumn>
@@ -168,7 +174,6 @@ function importFacadeOf(source: ImportedSource): ImportFacade {
 	importOrdinal += 1
 	const name = importLabels.get(source) ?? `\u0000import:${importOrdinal}`
 	const columns = new Map<string, FindColumn>()
-	const fields: Array<readonly [string, AnyField]> = []
 	for (const column of source.data.finds) {
 		if (column.slot === undefined) {
 			throw new AuthoringError({
@@ -176,12 +181,10 @@ function importFacadeOf(source: ImportedSource): ImportFacade {
 			})
 		}
 		columns.set(column.name, column)
-		fields.push([column.name, column.slot.field])
 	}
 	const owner = Object.freeze({
-		kind: "relation" as const,
-		name,
-		fields: Object.freeze(Object.fromEntries(fields))
+		kind: "query" as const,
+		name
 	})
 	const facade: ImportFacade = Object.freeze({ owner, source, columns })
 	facadeBySource.set(source, facade)
@@ -246,7 +249,7 @@ function makeSetParam<const Name extends string>(name: Name): SetParam<Name> {
 }
 
 interface ClassedField {
-	readonly field: AnyField
+	readonly field: QueryValue
 	readonly class: string | undefined
 }
 
@@ -285,19 +288,19 @@ type JoinOk<A extends ClassedField, B extends ClassedField> =
 		? true
 		: WidenedSlot<B> extends true
 			? true
-			: Same<SignatureOf<A["field"]>, SignatureOf<B["field"]>> extends true
+			: Same<QuerySignature<A["field"]>, QuerySignature<B["field"]>> extends true
 				? string extends A["class"] | B["class"]
 					? true
 					: Same<A["class"], B["class"]>
 				: false
 
-type U64Wire<F extends AnyField> = F extends { readonly kind: "u64" }
+type U64Wire<F extends QueryValue> = F extends { readonly kind: "u64" }
 	? F extends { readonly closed: unknown }
 		? false
 		: true
 	: false
 
-type ClosedHandles<F extends AnyField> = F extends {
+type ClosedHandles<F extends QueryValue> = F extends {
 	readonly closed: { readonly handles: infer H extends readonly string[] }
 }
 	? H
@@ -308,7 +311,7 @@ type ClosedHandles<F extends AnyField> = F extends {
  * length ({@link SameLen}: zero equals zero, successor recurses on
  * successor). A bare field has no vector and proves nothing.
  */
-type ClosedIdOk<A extends AnyField, B extends AnyField> = [ClosedHandles<A>] extends [never]
+type ClosedIdOk<A extends QueryValue, B extends QueryValue> = [ClosedHandles<A>] extends [never]
 	? false
 	: [ClosedHandles<B>] extends [never]
 		? false
@@ -339,11 +342,11 @@ function fieldJoins(a: ClassedField, b: ClassedField): boolean {
 	return a.class === b.class && signaturesAgree(a.field, b.field)
 }
 
-function u64Wire(field: AnyField): boolean {
+function u64Wire(field: QueryValue): boolean {
 	return field.kind === "u64" && rosterOf(field) === undefined
 }
 
-function closedIdAntiJoins(a: AnyField, b: AnyField): boolean {
+function closedIdAntiJoins(a: QueryValue, b: QueryValue): boolean {
 	const rosterA = rosterOf(a)
 	const rosterB = rosterOf(b)
 	return rosterA !== undefined && rosterB !== undefined && rosterA.handles.length === rosterB.handles.length

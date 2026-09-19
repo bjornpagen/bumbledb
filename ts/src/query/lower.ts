@@ -11,7 +11,6 @@ import {
 	isFloatIntervalValue,
 	isIntervalValue,
 	literalShapeError,
-	rosterOf,
 	rostersAgree,
 	u64 as u64Field
 } from "#fields.ts"
@@ -69,15 +68,19 @@ import {
 	isEventFind,
 	snapshotEventExpression
 } from "#query/event.ts"
+import { expectationResult } from "#query/expectation.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
 import { count, max, mean, min, pack, sum } from "#query/find.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
+import { probabilityResult } from "#query/probability.ts"
 import type {
 	AnyVar,
 	ClassedField,
 	ExactVars,
 	Flatten,
 	InferredOf,
+	JoinOk,
+	MintSlotOf,
 	ParamEntry,
 	ParamsRecord,
 	ShapeOf,
@@ -99,6 +102,8 @@ import {
 	term
 } from "#query/scope.ts"
 import { difference, intersection, isSegments, segmentField } from "#query/segments.ts"
+import type { QueryValue } from "#query/value.ts"
+import { isObservation, queryRosterOf as rosterOf, storedValue } from "#query/value.ts"
 import { scalarWire } from "#scalar.ts"
 import type { AnySchema, Schema, SchemaRelations } from "#schema.ts"
 import { schemaDescriptor, schemasAgree } from "#schema.ts"
@@ -114,7 +119,7 @@ type HeadShape = Readonly<Record<string, ClassedField>> | undefined
 
 type HeadOf<T> = InferredOf<T> extends { readonly head: infer H extends HeadShape } ? H : HeadShape
 
-type HeadFieldMeet<A extends AnyField, B extends AnyField> = A extends IntervalField
+type HeadFieldMeet<A extends QueryValue, B extends QueryValue> = A extends IntervalField
 	? B extends IntervalField
 		? IntervalField<A["element"], Same<A["width"], B["width"]> extends true ? A["width"] : undefined>
 		: A
@@ -212,7 +217,7 @@ interface QueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaCla
 	 */
 	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
 		imported: Q,
-		bindings: B
+		bindings: B & CheckImportBindings<Classes, Q, B>
 	): QueryRuleChain<Rels, Record<never, never>, Classes>
 
 	interior<const B extends Readonly<Record<string, AnyVar>>>(
@@ -222,6 +227,17 @@ interface QueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaCla
 }
 
 type ImportMatchShape<Q extends AnyQuery> = Readonly<Record<keyof RowOf<Q> & string, AnyVar>>
+
+/** Exact imported descriptors judge bindings just as stored relation slots do. */
+type CheckImportBindings<Classes extends SchemaClasses, Q extends AnyQuery, B> = {
+	readonly [K in keyof B]: B[K] extends AnyVar
+		? HeadOf<Q> extends Readonly<Record<K, infer S extends ClassedField>>
+			? JoinOk<MintSlotOf<Classes, B[K]>, S> extends true
+				? B[K]
+				: never
+			: B[K]
+		: never
+}
 
 interface QueryRuleChain<
 	Rels extends SchemaRelations,
@@ -248,7 +264,7 @@ interface QueryRuleChain<
 
 	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
 		imported: Q,
-		bindings: B
+		bindings: B & CheckImportBindings<Classes, Q, B>
 	): QueryRuleChain<Rels, P, Classes>
 
 	where<const C extends AnyCond>(
@@ -288,7 +304,7 @@ interface InteriorRuleScope<Rels extends SchemaRelations, Classes extends Schema
 	): InteriorRuleChain<Rels, BindParamsShape<MatchFields<R>, B>, Classes>
 	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
 		imported: Q,
-		bindings: B
+		bindings: B & CheckImportBindings<Classes, Q, B>
 	): InteriorRuleChain<Rels, Record<never, never>, Classes>
 	interior<const B extends Readonly<Record<string, AnyVar>>>(
 		name: string,
@@ -319,7 +335,7 @@ interface InteriorRuleChain<
 	): InteriorRuleChain<Rels, Flatten<P & BindParamsShape<MatchFields<R>, B>>, Classes>
 	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
 		imported: Q,
-		bindings: B
+		bindings: B & CheckImportBindings<Classes, Q, B>
 	): InteriorRuleChain<Rels, P, Classes>
 	where<const C extends AnyCond>(
 		cond: CheckCond<Classes, C> & C
@@ -358,7 +374,7 @@ interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClass
 	/** Frozen finite nonrecursive imports may feed base/step (chapter 34). */
 	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
 		imported: Q,
-		bindings: B
+		bindings: B & CheckImportBindings<Classes, Q, B>
 	): RecRuleChain<Rels, Record<never, never>, Classes>
 	interior<const B extends Readonly<Record<string, AnyVar>>>(
 		name: string,
@@ -389,7 +405,7 @@ interface RecRuleChain<
 	): RecRuleChain<Rels, Flatten<P & BindParamsShape<MatchFields<R>, B>>, Classes>
 	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
 		imported: Q,
-		bindings: B
+		bindings: B & CheckImportBindings<Classes, Q, B>
 	): RecRuleChain<Rels, P, Classes>
 	where<const C extends AnyCond>(
 		cond: CheckCond<Classes, C> & C
@@ -555,7 +571,7 @@ function mintSlotOf(context: ChainContext, ref: AnyVar): ClassedField {
 		}
 		return column.slot ?? { field: ref.field, class: undefined }
 	}
-	if (!membersAgree(context.theory.relations[ref.owner.name], ref.owner)) {
+	if (ref.owner.kind === "query" || !membersAgree(context.theory.relations[ref.owner.name], ref.owner)) {
 		throw new AuthoringError({
 			message: `the variable ${ref.label} was minted from a relation schema ${context.theory.name} does not declare — use an equivalent ordered declaration`
 		})
@@ -734,7 +750,7 @@ function sideUses(op: CmpKind, side: CmpTermData, sibling: CmpTermData, uses: Pa
 	if (side.kind !== "param" && side.kind !== "setParam") {
 		return
 	}
-	const anchor = sibling.kind === "var" ? sibling.ref.field : undefined
+	const anchor = sibling.kind === "var" ? storedValue("comparison parameter", sibling.ref.field) : undefined
 	uses.push(
 		Object.freeze({
 			name: side.name,
@@ -754,13 +770,13 @@ function condDataOf(cond: AnyCond, uses: ParamUse[]): CondData {
 		if (lhs.kind === "literal" && rhs.kind === "var") {
 			lhs = Object.freeze({
 				kind: "literal",
-				value: ownLiteral("comparison literal", rhs.ref.field, lhs.value, cond.op)
+				value: ownLiteral("comparison literal", storedValue("comparison literal", rhs.ref.field), lhs.value, cond.op)
 			})
 		}
 		if (rhs.kind === "literal" && lhs.kind === "var") {
 			rhs = Object.freeze({
 				kind: "literal",
-				value: ownLiteral("comparison literal", lhs.ref.field, rhs.value, cond.op)
+				value: ownLiteral("comparison literal", storedValue("comparison literal", lhs.ref.field), rhs.value, cond.op)
 			})
 		}
 		sideUses(cond.op, lhs, rhs, uses)
@@ -978,7 +994,8 @@ function assertNumeric(where: string, position: string, ref: AnyVar): void {
  */
 function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedField | undefined {
 	const entry = column.entry
-	if (entry.kind === "probability" || entry.kind === "expectation") return undefined
+	if (entry.kind === "probability") return { field: probabilityResult, class: undefined }
+	if (entry.kind === "expectation") return { field: expectationResult, class: undefined }
 	if (entry.kind === "event") return { field: eventField, class: undefined }
 	if (entry.kind === "test") return { field: boolField, class: undefined }
 	if (entry.kind === "segments") return { field: segmentField(entry), class: undefined }
@@ -1013,8 +1030,11 @@ function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, colum
 	const where = `${contextLabel(context)} find ${column.name}`
 	const entry = column.entry
 	if (entry.kind === "event" || entry.kind === "test" || entry.kind === "probability" || entry.kind === "expectation") {
-		if ((entry.kind === "probability" || entry.kind === "expectation") && context.kind !== "query")
-			throw new AuthoringError({ message: `${where}: observations currently require a final query head` })
+		if (
+			(entry.kind === "probability" || entry.kind === "expectation") &&
+			(context.kind === "rec-base" || context.kind === "rec-arm")
+		)
+			throw new AuthoringError({ message: `${where}: produce observations in a nonrecursive query stage` })
 		for (const ref of eventFindVars(entry)) assertBound(where, bound, ref)
 		if (entry.kind === "expectation")
 			for (const ref of expectationPayoffVars(entry)) assertNotClosed(where, "the payoff", ref)
@@ -1065,6 +1085,13 @@ function validateCond(context: ChainContext, bound: ReadonlySet<AnyVar>, cond: C
 			if (side.kind === "var") {
 				assertBound(label, bound, side.ref)
 				const roster = rosterOf(side.ref.field)
+				if (isObservation(side.ref.field)) {
+					const sibling = side === cond.lhs ? cond.rhs : cond.lhs
+					if ((cond.op.kind !== "eq" && cond.op.kind !== "ne") || sibling.kind !== "var")
+						throw new AuthoringError({
+							message: `${label}: observations require same-kind variable identity comparisons`
+						})
+				}
 				if (side.ref.field.kind === "event" && cond.op.kind !== "eq" && cond.op.kind !== "ne") {
 					throw new AuthoringError({
 						message: `${label}: Event values support equality comparisons, not ${cond.op.kind}`
@@ -2232,7 +2259,7 @@ function lowerCmpTerm(ctx: LowerContext, side: CmpTermData, sibling: CmpTermData
 
 function cmpAnchorOf(ctx: LowerContext, sibling: CmpTermData): AnyField | undefined {
 	if (sibling.kind === "var") {
-		return sibling.ref.field
+		return storedValue("comparison literal", sibling.ref.field)
 	}
 	if (sibling.kind === "param" || sibling.kind === "setParam") {
 		return ctx.params.get(sibling.name)?.anchor

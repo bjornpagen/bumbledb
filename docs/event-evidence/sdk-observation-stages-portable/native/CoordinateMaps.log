@@ -1,0 +1,26 @@
+'CoordinateMaps.support_check_exact' depends on axioms: [propext, Classical.choice, Quot.sound]
+'CoordinateMaps.pull_boolean' does not depend on any axioms
+'CoordinateMaps.pull_complement' does not depend on any axioms
+'CoordinateMaps.pull_composition' does not depend on any axioms
+'CoordinateMaps.image_left_adjoint' does not depend on any axioms
+'CoordinateMaps.universal_right_adjoint' does not depend on any axioms
+'CoordinateMaps.image_union' does not depend on any axioms
+'CoordinateMaps.image_composition' does not depend on any axioms
+'CoordinateMaps.image_pull_intersection' does not depend on any axioms
+'CoordinateMaps.universal_duality' depends on axioms: [propext, Classical.choice, Quot.sound]
+'CoordinateMaps.must_is_range_and_all' depends on axioms: [propext, Quot.sound]
+'CoordinateMaps.full_image_iff_onto' depends on axioms: [propext, Quot.sound]
+'CoordinateMaps.onto_reflects_inclusion' does not depend on any axioms
+'CoordinateMaps.inclusion_reflection_requires_onto' does not depend on any axioms
+'CoordinateMaps.onto_preserves_occupancy' does not depend on any axioms
+'CoordinateMaps.substitution_exact' depends on axioms: [propext]
+'CoordinateMaps.early_abstraction_preserves_image' does not depend on any axioms
+'CoordinateMaps.abstraction_moves_past_future_readout' does not depend on any axioms
+'CoordinateMaps.recursive_image_exact' depends on axioms: [propext, Quot.sound]
+'CoordinateMaps.recursive_image_early_abstraction' depends on axioms: [propext, Quot.sound]
+'CoordinateMaps.image_does_not_preserve_intersection' does not depend on any axioms
+'CoordinateMaps.unreachable_fibres_separate_all_and_must' depends on axioms: [propext, Quot.sound]
+'CoordinateMaps.restriction_can_erase_possibility' depends on axioms: [propext, Quot.sound]
+'CoordinateMaps.completed_target_full_cannot_check_support' depends on axioms: [propext, Quot.sound]
+'CoordinateMaps.aliases_cannot_supply_legal_image_witnesses' depends on axioms: [propext, Quot.sound]
+'CoordinateMaps.forgetting_a_future_readout_changes_image' depends on axioms: [propext, Quot.sound]

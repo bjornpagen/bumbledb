@@ -1,0 +1,18 @@
+'ParameterSources.world_has_cell' does not depend on any axioms
+'ParameterSources.every_cell_has_world' does not depend on any axioms
+'ParameterSources.possible_iff_cell' does not depend on any axioms
+'ParameterSources.inclusion_iff_cell' does not depend on any axioms
+'ParameterSources.equality_iff_cell' does not depend on any axioms
+'ParameterSources.restricted_domain_has_fibre' does not depend on any axioms
+'ParameterSources.map_keeps_parameter' does not depend on any axioms
+'ParameterSources.readout_commutes' does not depend on any axioms
+'ParameterSources.image_preserves_actual_parameter' does not depend on any axioms
+'ParameterSources.guard_pattern_is_not_parameter_identity' does not depend on any axioms
+'ParameterSources.one_logical_cell_can_have_arbitrarily_many_worlds' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+'ParameterSources.guard_selects_one' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterSources.skipped_outcome_doubles' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterSources.shared_bias_zero_evidence' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterSources.shared_bias_fair_when_defined' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ParameterSources.zero_mass_does_not_erase_outcome' depends on axioms: [propext, Classical.choice, Quot.sound]

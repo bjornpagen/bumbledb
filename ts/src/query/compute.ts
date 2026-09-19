@@ -2,9 +2,10 @@
  * Distinct i64 and u64 kinds survive TypeScript's shared bigint carrier. */
 import { AuthoringError } from "#errors.ts"
 import type { AnyField } from "#fields.ts"
-import { bool as boolField, f64 as f64Field, i64 as i64Field, rosterOf, u64 as u64Field } from "#fields.ts"
+import { bool as boolField, f64 as f64Field, i64 as i64Field, u64 as u64Field } from "#fields.ts"
 import type { AnyVar } from "#query/scope.ts"
 import { isTerm, term } from "#query/scope.ts"
+import { queryRosterOf as rosterOf } from "#query/value.ts"
 import type { Rounding, ScalarKind, ScalarLiteral, ScalarNode } from "#scalar.ts"
 import {
 	checkBool,

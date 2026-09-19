@@ -114,7 +114,7 @@ test("expectation authoring and description imports preserve aggregate identity 
 			}),
 		/field domains/
 	)
-	assert.throws(() => v(observed), /not a mintable relation/)
+	assert.equal(v(observed).mean.field.kind, "expectation")
 	const row = v(Payoff)
 	assert.throws(
 		() =>
@@ -285,7 +285,12 @@ test("family expectations transport signed payoff functions and preserve impossi
 				])
 				assert.equal((yield* db.apply(yield* changes.finish(), { expected: { kind: "any" } })).kind, "accepted")
 				const snapshot = yield* db.snapshot()
-				const rows = yield* (yield* snapshot.execute(observed, {})).collect()
+				const forwarded = query(Theory).rule((r) => {
+					const row = v(observed)
+					return r.match(observed, row).find(row)
+				})
+				const rows = yield* (yield* snapshot.execute(forwarded, {})).collect()
+				assert.deepEqual(rows, yield* (yield* snapshot.execute(observed, {})).collect())
 				const fractional = query(Theory).rule((r) => {
 					const row = v(Payoff)
 					return r
@@ -507,7 +512,13 @@ test("family payoff queries glue at exact boundaries and promote finite patches"
 					})
 				const restored = queryFromDescription(Theory, describeQuery(authored), { mean: expectationResult })
 				const snapshot = yield* db.snapshot()
-				const rows = yield* (yield* snapshot.execute(restored, {})).collect()
+				const forwarded = query(Theory).rule((r) => {
+					const row = v(restored)
+					return r.match(restored, row).find(row)
+				})
+				const imported = queryFromDescription(Theory, describeQuery(forwarded), { mean: expectationResult })
+				const rows = yield* (yield* snapshot.execute(imported, {})).collect()
+				assert.deepEqual(rows, yield* (yield* snapshot.execute(restored, {})).collect())
 				const mean = rows[0]?.mean
 				assert.ok(mean?.payoffKind === "family" && mean.law === "parameter")
 				assert.equal(mean.patches.length, 3)

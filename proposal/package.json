@@ -35289,8 +35289,8 @@
       "sha256": "10ce0cb12eb4ec2812e5bf5e52a8b971f0291e42db1494233af017332345f96d"
     },
     "proposal/implementation-plan.md": {
-      "bytes": 42981,
-      "sha256": "03aa396f9dfcd027eac6a2fa6d95db0c16ee4bafb24136bff8eac3d4a90595f9"
+      "bytes": 43426,
+      "sha256": "7b283a45771ed8cc74fe6b14fdef5aba7268f43b1d2e0c9f7dc49b041c88554c"
     },
     "proposal/kernels/arm64-probe.c": {
       "bytes": 2880,
@@ -35361,8 +35361,8 @@
       "sha256": "42dc08a8f43b5c365ae791ebb6a1b2d7c910e36c9ee1749d14a76e71e473f82e"
     },
     "proposal/query-algebra.md": {
-      "bytes": 37123,
-      "sha256": "3b7f65c3fe3df8500b4974a7c78d50d16878471508149b5d4fd9f188852ddf89"
+      "bytes": 37386,
+      "sha256": "30ca89255e8e61fbc5b8264c7d8c264779b8bf693d92a274d9e7721b69735b1a"
     },
     "proposal/question.md": {
       "bytes": 183,

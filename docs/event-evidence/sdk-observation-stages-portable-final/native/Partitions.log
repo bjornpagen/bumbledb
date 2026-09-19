@@ -1,0 +1,13 @@
+'Partitions.clipped_admission_exact' does not depend on any axioms
+'Partitions.empty_parent_retains_only_empty_cells' does not depend on any axioms
+'Partitions.empty_roster_iff_empty_parent' does not depend on any axioms
+'Partitions.value_grouping_preserves_partition' does not depend on any axioms
+'Partitions.constant_grouping_is_certain_on_parent' does not depend on any axioms
+'Partitions.pullback_preserves_partition' does not depend on any axioms
+'Partitions.refinement_preserves_shared_world_partition' does not depend on any axioms
+'Partitions.readout_bits_exact' does not depend on any axioms
+'Partitions.full_partition_readout_is_total_and_legal' does not depend on any axioms
+'Partitions.collapsing_image_can_overlap' does not depend on any axioms
+'Partitions.bucket_exact' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Partitions.count_roster_forms_full_partition' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Partitions.duplicate_positions_count_twice' depends on axioms: [propext]

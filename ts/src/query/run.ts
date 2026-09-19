@@ -58,8 +58,10 @@ function isAnswerRow<Row>(
  * every row and page (stable row shape). A column carrying its mint slot
  * decodes through the full value roster (uuid bytes lift to canonical
  * hex, closed ids lift to handle names, float intervals stay owned plain
- * objects); an aggregate column without a slot passes the engine's owned
- * scalar through, with the closed lift when the column is closed-typed.
+ * objects). Completed observations decode from their query domain regardless
+ * of whether this head produces or forwards them. A column without a slot
+ * passes the engine's owned scalar through, with the closed lift when the
+ * column is closed-typed.
  */
 function decodeAnswers<Row>(finds: readonly FindColumn[], rows: readonly (readonly AnswerCell[])[]): Row[] {
 	return rows.map(function decodeRow(row) {
@@ -74,11 +76,11 @@ function decodeAnswers<Row>(finds: readonly FindColumn[], rows: readonly (readon
 			if (cell === undefined) {
 				throw new SdkInvariantError({ message: `query answer cell ${ordinal} (${column.name}) is absent` })
 			}
-			if (column.entry.kind === "expectation") {
+			if (column.slot?.field.kind === "expectation") {
 				setOwnField(decoded, column.name, decodeExpectation(cell))
 				return
 			}
-			if (column.entry.kind === "probability") {
+			if (column.slot?.field.kind === "probability") {
 				setOwnField(decoded, column.name, decodeProbability(cell))
 				return
 			}

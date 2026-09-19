@@ -486,11 +486,13 @@ type EqOk<Classes extends SchemaClasses, L, R> = L extends AnyVar
 		? JoinOk<MintSlotOf<Classes, L>, MintSlotOf<Classes, R>> extends true
 			? true
 			: false
-		: R extends Param<string> | SetParam<string>
-			? true
-			: [R] extends [Infer<L["field"]>]
+		: L["field"] extends AnyField
+			? R extends Param<string> | SetParam<string>
 				? true
-				: false
+				: [R] extends [Infer<Extract<L["field"], AnyField>>]
+					? true
+					: false
+			: false
 	: false
 
 type NotBindingOk<Classes extends SchemaClasses, S extends ClassedField, T> = T extends AnyVar
@@ -545,15 +547,15 @@ type CheckCond<Classes extends SchemaClasses, C> = CondOkBool<Classes, C> extend
 
 type EqParams<L, R> = L extends AnyVar
 	? R extends Param<infer P extends string>
-		? { readonly [Q in P]: Infer<L["field"]> }
+		? { readonly [Q in P]: Infer<Extract<L["field"], AnyField>> }
 		: R extends SetParam<infer P extends string>
-			? { readonly [Q in P]: readonly Infer<L["field"]>[] }
+			? { readonly [Q in P]: readonly Infer<Extract<L["field"], AnyField>>[] }
 			: never
 	: never
 
 type OrderSideParams<T, Sib> =
 	T extends Param<infer P extends string>
-		? { readonly [Q in P]: Sib extends AnyVar ? Infer<Sib["field"]> : bigint }
+		? { readonly [Q in P]: Sib extends AnyVar ? Infer<Extract<Sib["field"], AnyField>> : bigint }
 		: never
 
 type PointParams<T> = T extends Param<infer P extends string> ? { readonly [Q in P]: bigint } : never

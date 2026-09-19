@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util"
 import { sealedFieldsOf } from "#closed.ts"
 import { AuthoringError } from "#errors.ts"
 import { encodedEvent } from "#event-value.ts"
-import { type AnyField, fieldDescriptor, type Infer, rosterOf, signaturesAgree } from "#fields.ts"
+import { type AnyField, fieldDescriptor, type Infer } from "#fields.ts"
 import type { SchemaClasses } from "#law.ts"
 import type { AtomIr, ConditionTreeIr, QueryIr, RuleIr, ScalarExprIr, TaggedValue, TermIr } from "#native.ts"
 import type { AnyTreeChild, DerivedTable, FindColumn, InteriorData, RecData, RuleData } from "#query/atom.ts"
@@ -15,6 +15,8 @@ import { parseQueryIr } from "#query/parse-ir.ts"
 import { type ProbabilityAnswer, type ProbabilityResult, probabilityResult } from "#query/probability.ts"
 import { type AnyVar, type MatchOwner, makeParam, makeSetParam, type ParamsRecord, v } from "#query/scope.ts"
 import { difference, type IntervalVar, intersection } from "#query/segments.ts"
+import type { QueryValue } from "#query/value.ts"
+import { queryValuesAgree, queryRosterOf as rosterOf, storedValue } from "#query/value.ts"
 import { handleOf } from "#rows.ts"
 import {
 	queryVarLeaf,
@@ -50,7 +52,7 @@ interface DescriptionParameter {
 	readonly members: readonly TaggedValue[] | undefined
 }
 
-type ResultShape = Readonly<Record<string, AnyField | ProbabilityResult | ExpectationResult>>
+type ResultShape = Readonly<Record<string, QueryValue>>
 type DescriptionRow<F extends ResultShape> = {
 	readonly [K in keyof F]: F[K] extends ExpectationResult
 		? ExpectationAnswer
@@ -64,7 +66,10 @@ type DescriptionRow<F extends ResultShape> = {
 /** Checked result fields remain exact through v(imported), just as at runtime.
  * Carrier classes come from the replayed head and remain runtime-checked. */
 type DescriptionHead<F extends ResultShape> = {
-	readonly [K in keyof F]: F[K] extends AnyField ? { readonly field: F[K]; readonly class: string | undefined } : never
+	readonly [K in keyof F]: {
+		readonly field: F[K]
+		readonly class: F[K] extends AnyField ? string | undefined : undefined
+	}
 }
 
 function refused(context: string, expected: string): never {
@@ -177,7 +182,7 @@ function replayRule(
 		derived[ordinal] ?? refused("query atom", `unavailable interior ordinal ${ordinal}`)
 	const variableAt = (ordinal: number): AnyVar =>
 		variables.get(ordinal) ?? refused("query variable", `variable ${ordinal} has no positive binding`)
-	const fieldsAt = (atom: AtomIr): readonly { readonly name: string; readonly field: AnyField }[] => {
+	const fieldsAt = (atom: AtomIr): readonly { readonly name: string; readonly field: QueryValue }[] => {
 		if (atom.source.kind === "edb") return sealedFieldsOf(relationAt(atom.source.relation))
 		return derivedAt(atom.source.interior).finds.map((column) => ({
 			name: column.name,
@@ -201,15 +206,15 @@ function replayRule(
 		}
 	}
 	let chain = makeRawChain(context, EMPTY_RULE)
-	const termValue = (term: TermIr, field: AnyField, op: Parameters<typeof hostLiteral>[2]): unknown => {
+	const termValue = (term: TermIr, field: QueryValue, op: Parameters<typeof hostLiteral>[2]): unknown => {
 		if (term.kind === "var") return variableAt(term.var)
-		if (term.kind === "literal") return hostLiteral(field, term.value, op)
+		if (term.kind === "literal") return hostLiteral(storedValue("query literal", field), term.value, op)
 		const parameter = parameters[term.param] ?? refused("query parameter", `unknown parameter ordinal ${term.param}`)
 		usedParameters.add(term.param)
 		if (parameter.members !== undefined) {
 			if (term.kind !== "paramSet" || op !== "binding")
 				refused("query parameter", "fixed membership belongs in a set binding")
-			return parameter.members.map((value) => hostLiteral(field, value, "binding"))
+			return parameter.members.map((value) => hostLiteral(storedValue("query literal", field), value, "binding"))
 		}
 		return term.kind === "param" ? makeParam(parameter.name) : makeSetParam(parameter.name)
 	}
@@ -248,7 +253,7 @@ function replayRule(
 			}
 		}
 		const { lhs, rhs, op } = input.cmp
-		let anchor: AnyField
+		let anchor: QueryValue
 		if (lhs.kind === "var") anchor = variableAt(lhs.var).field
 		else if (rhs.kind === "var") anchor = variableAt(rhs.var).field
 		else return refused("query comparison", "requires a variable operand")
@@ -435,8 +440,7 @@ function queryFromDescription<Rels extends SchemaRelations, Classes extends Sche
 		expected.some(([name, field], ordinal) => {
 			const column = value.data.finds[ordinal]
 			if (column?.name !== name) return true
-			if (field.kind === "probability" || field.kind === "expectation") return column.entry.kind !== field.kind
-			return column.slot === undefined || !signaturesAgree(column.slot.field, field)
+			return column.slot === undefined || !queryValuesAgree(column.slot.field, field)
 		})
 	)
 		refused("query result", "result names and field domains must match the derived query head in order")

@@ -71,7 +71,7 @@ test("probability authoring and description imports stay pure, owned and query-o
 	const restored = queryFromDescription(Theory, description, { chance: probabilityResult })
 	assert.deepEqual(describeQuery(restored), description)
 	assert.throws(() => queryFromDescription(Theory, description, { chance: event }), /field domains/)
-	assert.throws(() => v(observed), /not a mintable relation/)
+	assert.equal(v(observed).chance.field.kind, "probability")
 	const row = v(Claim)
 	assert.throws(
 		() =>
@@ -198,7 +198,12 @@ test("parameter probability queries retain p squared over p and its excluded zer
 				yield* original.close()
 				const db = yield* Db.open(path, Theory)
 				const snapshot = yield* db.snapshot()
-				const rows = yield* (yield* snapshot.execute(observed, {})).collect()
+				const forwarded = query(Theory).rule((r) => {
+					const row = v(observed)
+					return r.match(observed, row).find(row)
+				})
+				const rows = yield* (yield* snapshot.execute(forwarded, {})).collect()
+				assert.deepEqual(rows, yield* (yield* snapshot.execute(observed, {})).collect())
 				assert.equal(rows.length, 1)
 				const chance = rows[0]?.chance
 				assert.ok(chance?.law === "parameter")

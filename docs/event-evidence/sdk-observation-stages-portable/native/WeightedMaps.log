@@ -1,0 +1,18 @@
+'WeightedMaps.sum_congr' depends on axioms: [propext]
+'WeightedMaps.sum_zero' depends on axioms: [propext]
+'WeightedMaps.sum_add' depends on axioms: [propext, Quot.sound]
+'WeightedMaps.sum_scale' depends on axioms: [propext]
+'WeightedMaps.sum_swap' depends on axioms: [propext, Quot.sound]
+'WeightedMaps.sum_pick' depends on axioms: [propext]
+'WeightedMaps.push_add' depends on axioms: [propext, Quot.sound]
+'WeightedMaps.fibre_factor' depends on axioms: [propext]
+'WeightedMaps.weighted_pairing' depends on axioms: [propext, Quot.sound]
+'WeightedMaps.total_mass_preserved' depends on axioms: [propext, Quot.sound]
+'WeightedMaps.channel_preserves_prior' depends on axioms: [propext]
+'WeightedMaps.closed_channel_normalized' depends on axioms: [propext, Quot.sound]
+'WeightedMaps.early_elimination' depends on axioms: [propext, Quot.sound]
+'WeightedMaps.skipped_outcome_doubles' depends on axioms: [propext, Quot.sound]
+'WeightedMaps.repeated_sum_is_wrong' does not depend on any axioms
+'WeightedMaps.existential_image_loses_multiplicity' does not depend on any axioms
+'WeightedMaps.closed_normalization_is_too_weak' does not depend on any axioms
+'WeightedMaps.copy_is_not_resample' does not depend on any axioms

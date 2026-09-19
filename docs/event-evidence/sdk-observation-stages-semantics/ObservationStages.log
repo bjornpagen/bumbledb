@@ -1,0 +1,18 @@
+'ObservationStages.registry_equality_iff' does not depend on any axioms
+'ObservationStages.registry_inequality_iff' does not depend on any axioms
+'ObservationStages.equality_join_preserved' depends on axioms: [propext]
+'ObservationStages.antijoin_preserved' depends on axioms: [propext, Quot.sound]
+'ObservationStages.projection_preserved' depends on axioms: [propext, Quot.sound]
+'ObservationStages.projection_composition' depends on axioms: [propext, Quot.sound]
+'ObservationStages.projected_duplicates_coalesce' depends on axioms: [propext, Quot.sound]
+'ObservationStages.stage_union' does not depend on any axioms
+'ObservationStages.grouping_preserves_binding_membership' depends on axioms: [propext, Quot.sound]
+'ObservationStages.probability_identity_retains_evidence' depends on axioms: [propext]
+'ObservationStages.expectation_identity_retains_function' depends on axioms: [propext]
+'ObservationStages.observation_kinds_disjoint' does not depend on any axioms
+'ObservationStages.decoded_observation_preserves_partial_value' does not depend on any axioms
+'ObservationStages.equal_numbers_insufficient' depends on axioms: [propext, Quot.sound]
+'ObservationStages.producer_error_survives_filter' does not depend on any axioms
+'ObservationStages.admitted_values_pass_unchanged' does not depend on any axioms
+'ObservationStages.stage_pipeline_associates' does not depend on any axioms
+'ObservationStages.cumulative_budget_refuses_next' does not depend on any axioms
