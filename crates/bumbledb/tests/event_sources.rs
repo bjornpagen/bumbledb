@@ -29,6 +29,121 @@ bumbledb::schema! {
 fn arithmetic() -> ExactArithmetic<'static> {
     ExactArithmetic::new(ArithmeticLimits::default(), &())
 }
+
+fn integrated_two_draws(shared: bool) -> Space {
+    use bumbledb::event::{ExactPolynomial, ParameterId, PolynomialLimits};
+    let limits = PolynomialLimits::default();
+    let mut work = arithmetic();
+    let first = ParameterId([1; 32]);
+    let second = if shared { first } else { ParameterId([2; 32]) };
+    let p = ExactPolynomial::parameter(first);
+    let q = ExactPolynomial::parameter(second);
+    let one = ExactPolynomial::one();
+    let p_tail = one.sub(&p, limits, &mut work).unwrap();
+    let q_tail = one.sub(&q, limits, &mut work).unwrap();
+    let base = Space::new(SpaceId([93; 32]), 2, &()).unwrap();
+    let mut pieces = Vec::new();
+    for (world, (a, b)) in [(&p_tail, &q_tail), (&p, &q_tail), (&p_tail, &q), (&p, &q)]
+        .into_iter()
+        .enumerate()
+    {
+        let density = a.mul(b, limits, &mut work).unwrap();
+        let density = density
+            .integrate_beta(first, &ratio(1, 1), &ratio(1, 1), limits, &mut work)
+            .unwrap();
+        let density = if shared {
+            density
+        } else {
+            density
+                .integrate_beta(second, &ratio(1, 1), &ratio(1, 1), limits, &mut work)
+                .unwrap()
+        };
+        // This fixture explicitly supplies the full, unconstrained prior cube.
+        // Once every parameter is integrated, the existing finite constructor
+        // still checks the complete joint distribution rather than trusting it.
+        pieces.push(DensityPiece {
+            region: base.table(3, &[1 << world], &()).unwrap(),
+            density: density.evaluate(&[], limits, &mut work).unwrap(),
+        });
+    }
+    base.with_density(&pieces, LawLimits::default(), &mut work)
+        .unwrap()
+}
+
+#[test]
+fn explicit_shared_prior_survives_stored_free_join_and_owner_release() {
+    use bumbledb::query;
+    let dir = common::TempDir::new("event-polynomial-prior");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    db.write(common::work(), |tx| {
+        for (id, shared) in [(1, true), (2, false)] {
+            let source = integrated_two_draws(shared);
+            tx.insert([&Region {
+                id,
+                condition: source.coordinate(0, &())?,
+            }])?;
+            tx.insert([&Observation {
+                id,
+                condition: source.coordinate(1, &())?,
+            }])?;
+        }
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    drop(db);
+    let db = Db::open(dir.path(), SourceSchema, common::work()).unwrap();
+    let query = query!(SourceSchema {
+        (source_id, both: Event(a & b), first: Event(a), differ: Event(a ^ b)) |
+            Region(id: source_id, condition: a), Observation(id: source_id, condition: b);
+    });
+    let mut retained = Vec::new();
+    for cursor in [false, true] {
+        let mut prepared = db.prepare(&query, common::work()).unwrap();
+        prepared.force_cursor_fallback(cursor);
+        retained.push(
+            db.read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((db, query));
+    for answers in retained {
+        assert_eq!(answers.len(), 2);
+        for row in 0..answers.len() {
+            let AnswerValue::U64(id) = answers.get(row, 0) else {
+                panic!("id")
+            };
+            let (AnswerValue::Event(both), AnswerValue::Event(first), AnswerValue::Event(differ)) = (
+                answers.get(row, 1),
+                answers.get(row, 2),
+                answers.get(row, 3),
+            ) else {
+                panic!("owned Events")
+            };
+            assert_eq!(
+                both.mass(&mut arithmetic()).unwrap(),
+                ratio(1, if id == 1 { 3 } else { 4 })
+            );
+            assert_eq!(first.mass(&mut arithmetic()).unwrap(), ratio(1, 2));
+            assert_eq!(
+                differ.mass(&mut arithmetic()).unwrap(),
+                ratio(1, if id == 1 { 3 } else { 2 })
+            );
+            assert_eq!(
+                first
+                    .probability(differ, &mut arithmetic())
+                    .unwrap()
+                    .value(&mut arithmetic())
+                    .unwrap(),
+                Some(ratio(1, 2))
+            );
+        }
+    }
+}
 fn ratio(n: u64, d: u64) -> ExactRational {
     ExactRational::fraction(&n.to_string(), &d.to_string(), &mut arithmetic()).unwrap()
 }

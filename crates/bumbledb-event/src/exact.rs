@@ -50,6 +50,10 @@ impl<'a> ExactArithmetic<'a> {
         self.control
     }
 
+    pub(crate) fn validate(&mut self, value: &ExactRational) -> Result<()> {
+        self.step(value.bits())
+    }
+
     fn step(&mut self, bits: u64) -> Result<()> {
         self.control.checkpoint()?;
         if bits > u64::try_from(self.limits.bits).unwrap_or(u64::MAX) {
@@ -257,6 +261,27 @@ impl ExactRational {
     /// Zero divisor, intermediate-bit/work limits or cancellation.
     pub fn div(&self, other: &Self, work: &mut ExactArithmetic<'_>) -> Result<Self> {
         self.binary(other, ArithmeticOp::Divide, work)
+    }
+
+    /// Natural power by repeated squaring. The zero power is one, including
+    /// for a zero base; the supplied base is still checked against the budget.
+    /// # Errors
+    /// Arithmetic resource limits or cancellation.
+    pub fn pow(&self, mut exponent: u32, work: &mut ExactArithmetic<'_>) -> Result<Self> {
+        work.validate(self)?;
+        let mut result = Self::one();
+        let mut base = self.clone();
+        while exponent != 0 {
+            if exponent & 1 != 0 {
+                result = result.mul(&base, work)?;
+            }
+            exponent >>= 1;
+            if exponent != 0 {
+                base = base.mul(&base, work)?;
+            }
+        }
+        work.finish()?;
+        Ok(result)
     }
 
     fn binary(

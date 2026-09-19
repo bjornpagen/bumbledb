@@ -26,6 +26,10 @@ pub enum Capacity {
     FunctionCells,
     FunctionSteps,
     FunctionMemo,
+    PolynomialTerms,
+    PolynomialFactors,
+    PolynomialDegree,
+    PolynomialSteps,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +74,9 @@ pub enum Error {
     FunctionInvariant,
     KernelNotNormalized,
     DescriptorClaimMismatch,
+    InvalidPolynomial,
+    ParameterBinding,
+    InvalidBetaPrior,
 }
 
 impl fmt::Display for Error {
@@ -133,6 +140,13 @@ impl fmt::Display for Error {
             }
             Self::DescriptorClaimMismatch => {
                 f.write_str("source descriptor claim disagrees with its recomputed result")
+            }
+            Self::InvalidPolynomial => f.write_str("invalid or noncanonical exact polynomial"),
+            Self::ParameterBinding => {
+                f.write_str("parameter bindings contain a duplicate or omit a required parameter")
+            }
+            Self::InvalidBetaPrior => {
+                f.write_str("Beta prior shapes must both be strictly positive")
             }
             Self::MissingLaw => f.write_str("the Event space has no designated probability law"),
         }

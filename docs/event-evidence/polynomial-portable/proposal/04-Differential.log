@@ -1,0 +1,11 @@
+'Differential.decomposition' does not depend on any axioms
+'Differential.unique_coefficients' does not depend on any axioms
+'Differential.complement_preserves_difference' does not depend on any axioms
+'Differential.xor_coefficients' does not depend on any axioms
+'Differential.product_coefficients' does not depend on any axioms
+'Differential.exists_root' does not depend on any axioms
+'Differential.forall_root' does not depend on any axioms
+'Differential.coefficient_projection_obstruction' does not depend on any axioms
+'Differential.cofactor_population' does not depend on any axioms
+'Differential.tree_roundtrip' depends on axioms: [propext]
+'Differential.tree_injective' depends on axioms: [propext]

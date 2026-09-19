@@ -23,6 +23,7 @@ mod kernel;
 mod map;
 mod measure;
 mod partition;
+mod polynomial;
 mod product;
 mod program;
 mod registry;
@@ -51,6 +52,7 @@ pub use kernel::{FiniteKernel, SourceExtension};
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use measure::{DensityPiece, LawLimits, ProbabilityObservation};
 pub use partition::{EventPartition, PartitionLimits};
+pub use polynomial::{ExactPolynomial, ParameterId, PolynomialLimits, PolynomialTerm};
 pub use product::{CompleteFibreSquare, FaceProduct, FibreProduct};
 pub use program::{
     EventProgram, EventProgramBuilder, MapOp, ModalOp, ProgramInstruction, ProgramOp, ProgramValue,
@@ -104,3 +106,6 @@ mod revision_tests;
 
 #[cfg(test)]
 mod source_descriptor_tests;
+
+#[cfg(test)]
+mod polynomial_tests;

@@ -1,0 +1,7 @@
+'BaseChange.automatic_inclusion' does not depend on any axioms
+'BaseChange.relational_certificate_iff' does not depend on any axioms
+'BaseChange.exact_iff_complete_fibres' depends on axioms: [propext, Classical.choice, Quot.sound]
+'BaseChange.universal_base_change' does not depend on any axioms
+'BaseChange.nonvacuous_base_change' does not depend on any axioms
+'BaseChange.copied_bit_counterexample' does not depend on any axioms
+'BaseChange.complete_fibres_need_not_have_unique_lifts' does not depend on any axioms

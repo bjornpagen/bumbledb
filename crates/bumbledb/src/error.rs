@@ -221,7 +221,7 @@ pub enum CorruptionError {
 pub enum SchemaError {
     /// Canonical schema literal admission failed; never a false match.
     EventLiteral(crate::event::Error),
-    /// This Event position (capacity or closed roster) has not
+    /// This Event position in a capacity projection has not
     /// passed its native contract gate. Pointwise field dependencies are supported.
     EventContractPending {
         relation: RelationId,

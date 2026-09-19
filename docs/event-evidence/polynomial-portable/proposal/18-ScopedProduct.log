@@ -1,0 +1,5 @@
+'ScopedProduct.guarded_equals_staged' depends on axioms: [Quot.sound]
+'ScopedProduct.full_support_specialization' depends on axioms: [propext, Quot.sound]
+'ScopedProduct.support_certificates_remove_gates' does not depend on any axioms
+'ScopedProduct.output_support_is_necessary' does not depend on any axioms
+'ScopedProduct.witness_support_is_necessary' does not depend on any axioms
