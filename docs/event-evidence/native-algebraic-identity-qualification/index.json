@@ -1,0 +1,6 @@
+{
+  "passed": true,
+  "qualification_sha256": "ed34ec9d79076a11843411ff677cb4101a3526dc8398251710369f99f607a3b0",
+  "staged_sources_verified": 1204,
+  "method": "SHA256 of git cat-file --batch index blobs; exact equality with qualification source manifest"
+}

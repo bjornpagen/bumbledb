@@ -9,7 +9,9 @@ use crate::{
 };
 
 mod function;
+mod wire;
 pub use function::GuardedRationalFunction;
+pub use wire::ParameterCodecLimits;
 
 /// A subset of the three exact polynomial signs: negative, zero, positive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

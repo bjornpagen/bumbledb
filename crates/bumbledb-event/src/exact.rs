@@ -117,6 +117,14 @@ impl ExactRational {
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
+    pub(crate) fn is_integer(&self) -> bool {
+        self.0.denom().is_one()
+    }
+
+    pub(crate) fn denominator_value(&self, work: &mut ExactArithmetic<'_>) -> Result<Self> {
+        work.validate(self)?;
+        Ok(Self(BigRational::from_integer(self.0.denom().clone())))
+    }
     #[must_use]
     pub fn is_negative(&self) -> bool {
         self.0.is_negative()

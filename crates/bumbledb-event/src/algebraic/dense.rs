@@ -8,13 +8,13 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub(super) struct Dense(Vec<Rat>);
+pub(super) struct Dense(pub(super) Vec<Rat>);
 
 impl Dense {
     pub(super) fn is_zero(&self) -> bool {
         self.0.is_empty()
     }
-    fn trim(&mut self) {
+    pub(super) fn trim(&mut self) {
         while self.0.last().is_some_and(Rat::is_zero) {
             self.0.pop();
         }
@@ -166,7 +166,7 @@ impl<'a, 'b> Operation<'a, 'b> {
         Ok(Dense(result))
     }
 
-    fn divide(&mut self, dividend: &Dense, divisor: &Dense) -> Result<(Dense, Dense)> {
+    pub(super) fn divide(&mut self, dividend: &Dense, divisor: &Dense) -> Result<(Dense, Dense)> {
         self.step()?;
         let leading = divisor.0.last().ok_or(Error::AlgebraicInvariant)?;
         let mut remainder = dividend.clone();
@@ -193,7 +193,11 @@ impl<'a, 'b> Operation<'a, 'b> {
         Ok((quotient, remainder))
     }
 
-    fn normalize(&mut self, mut polynomial: Dense, positive_only: bool) -> Result<Dense> {
+    pub(super) fn normalize(
+        &mut self,
+        mut polynomial: Dense,
+        positive_only: bool,
+    ) -> Result<Dense> {
         self.step()?;
         if let Some(leading) = polynomial.0.last() {
             let factor = if positive_only && leading.is_negative() {

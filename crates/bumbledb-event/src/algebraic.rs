@@ -9,7 +9,9 @@ use crate::{
     Capacity, Error, ExactArithmetic, ExactPolynomial, ExactRational, ParameterId, Result,
 };
 
+mod canonical;
 mod dense;
+pub use canonical::AlgebraicLimits;
 use dense::{Dense, Operation};
 
 /// Polynomial degree, retained roots and visited solver operations. Bigint

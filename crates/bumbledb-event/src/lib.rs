@@ -34,7 +34,7 @@ mod revision;
 mod space;
 
 pub use action::{ActionArena, ReachStrategy, SafetyStrategy};
-pub use algebraic::{AlgebraicRoot, RootLimits};
+pub use algebraic::{AlgebraicLimits, AlgebraicRoot, RootLimits};
 pub use boolean::{BoolOp4, Signature};
 pub use descriptor::{
     AdmittedDescriptor, AdmittedSourceDescriptor, Descriptor, DescriptorLimits, FibreDescriptor,
@@ -55,8 +55,8 @@ pub use kernel::{FiniteKernel, SourceExtension};
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use measure::{DensityPiece, LawLimits, ProbabilityObservation};
 pub use parameter::{
-    GuardedRationalFunction, ParameterCell, ParameterDomain, ParameterLimits, ParameterRegion,
-    PolynomialSigns, RealWitness,
+    GuardedRationalFunction, ParameterCell, ParameterCodecLimits, ParameterDomain, ParameterLimits,
+    ParameterRegion, PolynomialSigns, RealWitness,
 };
 pub use partition::{EventPartition, PartitionLimits};
 pub use polynomial::{ExactPolynomial, ParameterId, PolynomialLimits, PolynomialTerm};
@@ -122,3 +122,6 @@ mod algebraic_tests;
 
 #[cfg(test)]
 mod parameter_tests;
+
+#[cfg(test)]
+mod algebraic_identity_tests;

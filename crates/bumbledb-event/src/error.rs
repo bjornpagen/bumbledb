@@ -35,6 +35,8 @@ pub enum Capacity {
     AlgebraicSteps,
     ParameterCells,
     ParameterSteps,
+    AlgebraicCandidates,
+    AlgebraicIdentitySteps,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
