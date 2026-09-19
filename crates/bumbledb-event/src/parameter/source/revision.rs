@@ -7,7 +7,9 @@ use crate::{
     ParameterFunction, ParameterRegion, PolynomialSigns, Result, Space, SpaceId,
 };
 
+mod jeffrey;
 mod likelihood;
+pub use jeffrey::ParameterJeffrey;
 pub use likelihood::ParameterLikelihood;
 
 /// A captured smaller parameter domain, with the original outcome fibres and
@@ -31,6 +33,22 @@ impl ParameterRestriction {
         limits: ParameterSourceLimits,
         work: &mut ExactArithmetic<'_>,
     ) -> Result<Self> {
+        Self::with_predicates(identity, source, predicate, &[], limits, work)
+    }
+
+    /// Capture a restriction and additional arithmetic piece boundaries in one
+    /// retained refinement of the original source. Existing expressible and
+    /// duplicate additional predicates do not consume new coordinates.
+    /// # Errors
+    /// As `new`; all additional predicates are checked, including inactive ones.
+    pub fn with_predicates(
+        identity: SpaceId,
+        source: &Space,
+        predicate: &ParameterRegion,
+        additional: &[ParameterRegion],
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
         let control = work.control();
         let mut budget = Budget::new(limits, control)?;
         let domain = source.parameter_domain().ok_or(Error::MissingParameter)?;
@@ -40,13 +58,45 @@ impl ParameterRestriction {
             limits.parameters.region,
             work,
         )?)?;
-        let refinement = ParameterRefinement::new(
-            identity,
-            source,
-            std::slice::from_ref(predicate),
-            limits,
-            work,
-        )?;
+        budget.extent(additional.len(), control)?;
+        let mut predicates = Vec::new();
+        predicates.try_reserve_exact(1)?;
+        predicates.push(predicate.clone());
+        let mut seen = std::collections::HashSet::new();
+        seen.try_reserve(1)?;
+        seen.insert(
+            predicate
+                .apply(
+                    BoolOp4::AND,
+                    domain.region(),
+                    limits.parameters.region,
+                    work,
+                )?
+                .to_bytes(limits.parameters, work)?,
+        );
+        for region in additional {
+            budget.step(control)?;
+            match source.parameter_event(region, limits, work) {
+                Ok(_) => continue,
+                Err(Error::ParameterRefinementRequired) => {}
+                Err(error) => return Err(error),
+            }
+            let region = region.apply(
+                BoolOp4::AND,
+                domain.region(),
+                limits.parameters.region,
+                work,
+            )?;
+            let bytes = region.to_bytes(limits.parameters, work)?;
+            if !seen.contains(&bytes) {
+                seen.try_reserve(1)?;
+                seen.insert(bytes);
+                budget.extent(predicates.len() + 1, control)?;
+                predicates.try_reserve(1)?;
+                predicates.push(region);
+            }
+        }
+        let refinement = ParameterRefinement::new(identity, source, &predicates, limits, work)?;
         let prior = refinement.refined();
         let guard = prior.parameter_event(predicate, limits, work)?;
         let restricted = prior.restrict_with_parameters(&guard, limits, work)?;

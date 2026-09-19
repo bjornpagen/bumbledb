@@ -1390,3 +1390,209 @@ fn family_posterior_zero_mass_outcomes_still_require_relational_coverage() {
         Admission::Rejected(_)
     ));
 }
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn family_channel_and_jeffrey_maps_keep_owned_probabilities_through_free_join() {
+    use bumbledb::event::{
+        CoordinateMap, EventPartition, ExactPolynomial, FamilyFunction, FamilyFunctionPiece,
+        FamilyKernel, GuardedRationalFunction, ParameterFunction, ParameterSourceLimits,
+        PartitionLimits,
+    };
+    let limits = ParameterSourceLimits::default();
+    let prior = parameterized_draws();
+    let raw = Space::new(SpaceId([104; 32]), 4, &())
+        .unwrap()
+        .with_parameters(
+            prior.parameter_domain().unwrap().clone(),
+            prior.parameter_guards().unwrap(),
+            limits,
+            &mut arithmetic(),
+        )
+        .unwrap();
+    let domain = raw.parameter_domain().unwrap();
+    let p = ExactPolynomial::parameter(domain.parameter());
+    let q = ExactPolynomial::one()
+        .sub(&p, limits.parameters.region.polynomial, &mut arithmetic())
+        .unwrap();
+    let value = |n, d| {
+        GuardedRationalFunction::new(
+            domain.clone(),
+            n,
+            d,
+            limits.parameters.region,
+            &mut arithmetic(),
+        )
+        .unwrap()
+    };
+    let next = raw.coordinate(3, &()).unwrap();
+    let density = FamilyFunction::new(
+        &raw,
+        &[
+            FamilyFunctionPiece {
+                region: next.clone(),
+                value: value(p, ExactPolynomial::one()),
+            },
+            FamilyFunctionPiece {
+                region: next.complement(),
+                value: value(q, ExactPolynomial::one()),
+            },
+        ],
+        limits,
+        &mut arithmetic(),
+    )
+    .unwrap();
+    let parent = CoordinateMap::coordinates(&raw, &prior, &[0, 1, 2], &()).unwrap();
+    let kernel = FamilyKernel::new(&parent, &density, limits, &mut arithmetic()).unwrap();
+    let joint = kernel.close(&prior, limits, &mut arithmetic()).unwrap();
+    let first = joint.space().coordinate(0, &()).unwrap();
+    let next = joint.space().coordinate(3, &()).unwrap();
+    let partition = EventPartition::on(
+        &joint.space().full(),
+        &[first.clone(), first.complement()],
+        PartitionLimits::default(),
+        &(),
+    )
+    .unwrap();
+    let half = ParameterFunction::new(
+        domain.clone(),
+        &[value(
+            ExactPolynomial::one(),
+            ExactPolynomial::constant(2u64.into()),
+        )],
+        limits.parameters.region,
+        limits.functions,
+        &mut arithmetic(),
+    )
+    .unwrap();
+    let receipt = joint
+        .space()
+        .parameter_jeffrey(
+            SpaceId([105; 32]),
+            &partition,
+            &[half.clone(), half],
+            limits,
+            &mut arithmetic(),
+        )
+        .unwrap();
+    let revised = receipt.revised().unwrap();
+    let cases = [
+        (
+            joint.parent().clone(),
+            prior.coordinate(0, &()).unwrap(),
+            next.clone(),
+            false,
+        ),
+        (
+            revised.translation().clone(),
+            revised
+                .restriction()
+                .refinement()
+                .lift(&first, &())
+                .unwrap(),
+            revised.pullback(&next, &()).unwrap(),
+            true,
+        ),
+    ];
+    drop((
+        prior, raw, density, parent, kernel, joint, first, next, partition, receipt,
+    ));
+    for (map, old, next, replaced) in cases {
+        check_family_dynamics_map(map, old, next, replaced);
+    }
+}
+
+fn check_family_dynamics_map(
+    map: bumbledb::event::CoordinateMap,
+    old: bumbledb::Event,
+    next: bumbledb::Event,
+    replaced: bool,
+) {
+    use bumbledb::{
+        EventImport,
+        event::{AdmittedDescriptor, DescriptorLimits, ParameterSourceLimits},
+        query,
+    };
+    let limits = ParameterSourceLimits::default();
+    let dir = common::TempDir::new("event-family-dynamics");
+    let db = Db::create(dir.path(), SourceSchema, common::work())
+        .unwrap()
+        .unwrap();
+    let import = EventImport::capture(
+        &AdmittedDescriptor::Map(map),
+        DescriptorLimits::default(),
+        &(),
+    )
+    .unwrap();
+    db.write(common::work(), |tx| {
+        tx.insert([&Region {
+            id: 1,
+            condition: old.clone(),
+        }])?;
+        tx.insert([&Observation {
+            id: 1,
+            condition: next.clone(),
+        }])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    drop((old, next, db));
+    let db = Db::open(dir.path(), SourceSchema, common::work()).unwrap();
+    let query = query!(SourceSchema {
+        use map transition = &import;
+        (old: Event(Pullback(old, transition)), both: Event(Pullback(old, transition) & next)) |
+            Region(id: id, condition: old), Observation(id: id, condition: next);
+    });
+    drop(import);
+    let mut results = Vec::new();
+    for cursor in [false, true] {
+        let mut prepared = db.prepare(&query, common::work()).unwrap();
+        prepared.force_cursor_fallback(cursor);
+        results.push(
+            db.read(common::work(), |snapshot| {
+                snapshot.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+    }
+    drop((query, db));
+    for answers in results {
+        assert_eq!(answers.len(), 1);
+        let (AnswerValue::Event(old), AnswerValue::Event(both)) =
+            (answers.get(0, 0), answers.get(0, 1))
+        else {
+            panic!("owned dynamics");
+        };
+        assert!(!old.complement().is_empty());
+        for n in 0..=4 {
+            let expected = if replaced {
+                if n == 0 || n == 4 {
+                    None
+                } else {
+                    Some((ratio(1, 2), ratio(n, 8)))
+                }
+            } else {
+                Some((ratio(n, 4), ratio(n * n, 16)))
+            };
+            for (event, value) in [
+                (old, expected.as_ref().map(|v| v.0.clone())),
+                (both, expected.as_ref().map(|v| v.1.clone())),
+            ] {
+                assert_eq!(
+                    event
+                        .parameter_mass(limits, &mut arithmetic())
+                        .unwrap()
+                        .value_at(
+                            &ratio(n, 4),
+                            limits.parameters.region,
+                            limits.functions,
+                            &mut arithmetic()
+                        )
+                        .unwrap(),
+                    value
+                );
+            }
+        }
+    }
+}

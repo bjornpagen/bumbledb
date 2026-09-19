@@ -51,16 +51,16 @@ pub use fixed_point::{
 };
 pub use function::{FiniteFunction, FunctionLimits, FunctionPiece};
 pub use information::InformationCases;
-pub use kernel::{FiniteKernel, SourceExtension};
+pub use kernel::{FamilyKernel, FiniteKernel, SourceExtension};
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use measure::{DensityPiece, LawLimits, ProbabilityObservation};
 pub use parameter::{
     FamilyFunction, FamilyFunctionPiece, GuardedRationalFunction, ParameterCell,
     ParameterCodecLimits, ParameterConditioning, ParameterDensityPiece, ParameterDomain,
-    ParameterExpectationObservation, ParameterFunction, ParameterGuard, ParameterLikelihood,
-    ParameterLimits, ParameterProbabilityObservation, ParameterRefinement, ParameterRegion,
-    ParameterRestriction, ParameterRevisedSource, ParameterSourceLimits, ParameterWorld,
-    PolynomialSigns, RealWitness, WorldCardinality,
+    ParameterExpectationObservation, ParameterFunction, ParameterGuard, ParameterJeffrey,
+    ParameterLikelihood, ParameterLimits, ParameterProbabilityObservation, ParameterRefinement,
+    ParameterRegion, ParameterRestriction, ParameterRevisedSource, ParameterSourceLimits,
+    ParameterWorld, PolynomialSigns, RealWitness, WorldCardinality,
 };
 pub use partition::{EventPartition, PartitionLimits};
 pub use polynomial::{ExactPolynomial, ParameterId, PolynomialLimits, PolynomialTerm};
@@ -147,3 +147,9 @@ mod family_function_tests;
 
 #[cfg(test)]
 mod parameter_likelihood_tests;
+
+#[cfg(test)]
+mod family_kernel_tests;
+
+#[cfg(test)]
+mod parameter_jeffrey_tests;

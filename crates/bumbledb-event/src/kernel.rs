@@ -2,8 +2,8 @@
 //! extension map. Row normalization is checked on every structurally possible
 //! parent world, including those with zero mass in a particular prior.
 use crate::{
-    Control, CoordinateMap, Error, ExactArithmetic, ExactRational, FiniteFunction, FunctionLimits,
-    LawLimits, Result, Space, SurjectiveMap,
+    Control, CoordinateMap, Error, ExactArithmetic, ExactRational, FamilyFunction, FiniteFunction,
+    FunctionLimits, LawLimits, ParameterSourceLimits, Result, Space, SurjectiveMap,
 };
 
 /// A normalized nonnegative conditional law on fibres of `parent`. Distinct
@@ -136,5 +136,112 @@ impl FiniteKernel {
             }
         }
         Ok(true)
+    }
+}
+
+/// A conditional law on finite outcome fibres at the same shared parameter.
+/// Every possible parent world has unit row sum, including zero-prior worlds.
+/// Parameter guards are logical distinctions, never extra random draws.
+#[derive(Debug, Clone)]
+pub struct FamilyKernel {
+    parent: SurjectiveMap,
+    density: FamilyFunction,
+}
+
+impl FamilyKernel {
+    /// Admit a nonnegative, normalized conditional family on a checked map.
+    /// # Errors
+    /// Foreign context, negative/non-unit rows, capacities or cancellation.
+    pub fn new(
+        parent: &CoordinateMap,
+        density: &FamilyFunction,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let density = density.align_to(parent.source(), limits, work)?;
+        if !density.is_nonnegative(limits, work)? {
+            return Err(Error::NegativeMass);
+        }
+        let rows = density.pushforward(parent, limits, work)?;
+        let one = FamilyFunction::from_finite(
+            &FiniteFunction::constant(
+                parent.target(),
+                ExactRational::one(),
+                limits.functions,
+                work,
+            )?,
+            limits,
+            work,
+        )?;
+        if !rows.equivalent(&one, limits, work)? {
+            return Err(Error::KernelNotNormalized);
+        }
+        let parent = parent.certify_surjective(work.control())?;
+        Ok(Self { parent, density })
+    }
+
+    #[must_use]
+    pub fn parent(&self) -> &SurjectiveMap {
+        &self.parent
+    }
+    #[must_use]
+    pub fn density(&self) -> &FamilyFunction {
+        &self.density
+    }
+
+    /// Close under an explicitly designated prior with the same named structural
+    /// context. A different prior law may be supplied. The result retains every
+    /// old world and its exact marginal, with no prior over the parameter.
+    /// # Errors
+    /// Missing law, context mismatch, capacities or cancellation.
+    pub fn close(
+        &self,
+        prior: &Space,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<SourceExtension> {
+        let control = work.control();
+        prior
+            .unmeasured(control)?
+            .full()
+            .align_to(&self.parent.map().target().unmeasured(control)?, control)?;
+        let rebound = CoordinateMap::new_with_parameters(
+            self.parent.map().source(),
+            prior,
+            self.parent.map().readouts(),
+            limits,
+            work,
+        )?;
+        let prior_density =
+            FamilyFunction::density(prior, limits, work)?.pullback(&rebound, limits, work)?;
+        let space = self
+            .density
+            .multiply(&prior_density, limits, work)?
+            .designate(limits, work)?;
+        let mut readouts = Vec::new();
+        readouts.try_reserve_exact(rebound.readouts().len())?;
+        for readout in rebound.readouts() {
+            readouts.push(readout.in_space(&space, control)?);
+        }
+        let parent = CoordinateMap::new_with_parameters(&space, prior, &readouts, limits, work)?
+            .certify_surjective(control)?;
+        Ok(SourceExtension { space, parent })
+    }
+
+    /// Check an information FD on numerical values, not authored piece syntax.
+    /// The readout should include available parent information and new outcome.
+    /// # Errors
+    /// Foreign context, capacities or cancellation.
+    pub fn factors_through(
+        &self,
+        observation: &SurjectiveMap,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<bool> {
+        match self.density.descend(observation, limits, work) {
+            Ok(_) => Ok(true),
+            Err(Error::RoleMismatch) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 }

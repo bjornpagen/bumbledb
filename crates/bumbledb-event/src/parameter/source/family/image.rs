@@ -1,10 +1,41 @@
 use super::{Budget, FamilyFunction, FamilyFunctionPiece, ParameterSourceLimits, constant};
 use crate::{
     CoordinateMap, Error, ExactArithmetic, ExactRational, FiniteFunction, FunctionPiece,
-    GuardedRationalFunction, Result,
+    GuardedRationalFunction, Result, SurjectiveMap,
 };
 
 impl FamilyFunction {
+    /// Descend exactly when the function is constant on every readout fibre.
+    /// The fibre mean is only a candidate: its pullback must equal the original
+    /// at every actual world. This introduces no probability law or prior.
+    /// Equivalent coefficient formulas and different cell decompositions are
+    /// accepted. Surjectivity ensures a positive finite divisor everywhere.
+    /// # Errors
+    /// `RoleMismatch` for a nonconstant fibre; foreign context, capacities or cancellation.
+    pub fn descend(
+        &self,
+        map: &SurjectiveMap,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        let map = map.map();
+        let checked = self.align_to(map.source(), limits, work)?;
+        let one =
+            FiniteFunction::constant(map.source(), ExactRational::one(), limits.functions, work)?;
+        let counts =
+            Self::from_finite(&one.pushforward(map, limits.functions, work)?, limits, work)?;
+        let candidate = checked
+            .pushforward(map, limits, work)?
+            .divide(&counts, limits, work)?;
+        if !candidate
+            .pullback(map, limits, work)?
+            .equivalent(&checked, limits, work)?
+        {
+            return Err(Error::RoleMismatch);
+        }
+        Ok(candidate)
+    }
+
     /// Substitute a checked same-parameter map, including a smaller source domain.
     /// # Errors
     /// Foreign context, parameter-domain mismatch, capacities or cancellation.

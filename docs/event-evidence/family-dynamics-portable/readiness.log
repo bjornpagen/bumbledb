@@ -1,0 +1,54 @@
+{
+  "revision": "0.9",
+  "passed": true,
+  "scope": "Current proposal, exact Lean evidence and retained semantic references; no Rust or performance qualification",
+  "proposal_proof": {
+    "files": 30,
+    "reports": 246,
+    "manifest_sha256": "f932e4c56f7b0c0f36993b3d5b335997800314cf3dbce8e36f321274d34782c4"
+  },
+  "native_proof": {
+    "files": 31,
+    "reports": 513,
+    "manifest_sha256": "b6406f53423edde880775aa565ed0f7117b87998190eee785b018881da3a77a1"
+  },
+  "references": {
+    "suites": 7,
+    "scope": "exact finite reference examples and historical source subtheories"
+  },
+  "native_documents_sha256": {
+    "docs/event-implementation.md": "2a41b4d5efa86061341c26eef09ea4959902d87949fe1ad8e421244dc67d969b",
+    "docs/event-value-format.md": "2f6bf9b53ff189506331b0e4c1027e8c76a5890d7ba4b02b67c394e45fd4d67c",
+    "docs/event-projections.md": "4dea69e2df06fcb0b4a7d564cc9e0651a9be72677d4bee82f032f272dc9dadf4",
+    "docs/event-maps.md": "f9855320a5015fb8c0bc35a78f19f18a6c356fb9385bf0e7ee966255450af860",
+    "docs/event-relations.md": "be31753272177fe6a539e7328b530e4dc70d79ae30eb63c321fd473be68a6566",
+    "docs/event-inspection.md": "033bb08b7e1a91e776967ef99fcdd2560e4f6b0a398ef8883d6af3c37bdf40d3",
+    "docs/event-information.md": "fa9a355dee86e2850feeae98f68676aaed8e7786e6772e46ccc752ca02be8db0",
+    "docs/event-fixed-points.md": "e9c343821a06c69bd5a5953b11af6321992a49ec5d99c51c41113247b2b169f6",
+    "docs/event-partitions.md": "ae0d8473ba4aa9f89d53f496b4f46c5aa2cb60266d5272524f1135deed34f377",
+    "docs/event-actions.md": "22ce4b4220911ed5db1c059600cbdbc786da1151efab332e21953e28ce592f4b",
+    "docs/event-queries.md": "a8b6763a4e37da8efbf712cad1e55388e32dd746acd17bff2254005fedfcfbdf",
+    "docs/event-descriptors.md": "7b28ffc35de20fe2f0c20d38218c4d4e4fcf5a75268ff255d212d271ab1bc7b6",
+    "docs/event-sources.md": "2597b18f0d8e061392c07ab1af78c8c3c52ff9d50ce1ded2c0d890e9a3af24f6",
+    "docs/event-functions.md": "ee8bf8691a417723ab502a70a0c1312516b2627df1ad7262d213445f8db8e0df",
+    "docs/event-revisions.md": "b626f418f2416cfa2fc54ea99430642fb71f0c2f01abbcc68228ab0b9b2a106e",
+    "docs/event-source-descriptors.md": "d5ba37614b87501309837d967fa6880edf0f0b589694051c16751e28eb8c7717",
+    "docs/event-sdk.md": "8281dde8563278d0571ddcddbb569816f286123507576d17b6ccea11d8cf3c89",
+    "docs/event-selections.md": "6272ad067113afebfa2409959e25d4d0685226e2e7e57900a4e950dcd2514a76",
+    "docs/event-ground.md": "a97fa6a507801495bea51b801edcbdd9ac3e78c3932fb23d869bfd93dcfe591c",
+    "docs/event-polynomials.md": "5bca4318c41f88acd947e63c055c4100bdcd157d42f2150a5e2a50ee4113b831",
+    "docs/event-algebraic-roots.md": "62942d8a1125ab69a5b83ba2d4aa1e5abaa0cfbdb6b070c5a30196ec966cdf2b",
+    "docs/event-parameter-domains.md": "3db8fe0ec7c9b641dee4dfcec19855a4d607fc9e0fca82dbe2434c98c1f0fd9b",
+    "docs/event-algebraic-identity.md": "c63090ef45b1f100fb05b104a29fac006a60dff4f373fbc9bb607e03b147d724",
+    "docs/event-parameter-sources.md": "2dbc39fae56dd91367ad58ba4afd356aa334084903a32418e6649259e73eb8e1",
+    "docs/event-parameter-refinement.md": "64873fbf147185313035af8d7c59ae12b154794b14a55f24eee47fdad9da29f8",
+    "docs/event-parameter-conditioning.md": "cdd1eed7af74498d3d40d5fc70702255b1aba23f231a150146e468a6d21ad602",
+    "docs/event-parameter-expectations.md": "e45d1efe7d669644869c38e5c5dbf42d053fd4b9ff1b66b4450d8b5a8e5df65a",
+    "docs/event-family-functions.md": "c729a26fa60ad6b4509f742beba61af483f72eed538501ab7ae17e37e1a8ecab",
+    "docs/event-family-dynamics.md": "8ffc08b78cfe8cd51409086ac5a272dcdc5ad3c9b2081c7ebbb749419a7060dd"
+  },
+  "baseline_archive_verified": true,
+  "historical_production_isolation_reasserted": false,
+  "implementation_complete": false,
+  "checker_sha256": "2bf0316fb0f03747586ad2c44a1d3cc9f81380d0169edf3186260a893eb4c8be"
+}

@@ -20,7 +20,8 @@ pub use family::{FamilyFunction, FamilyFunctionPiece};
 pub use measure::{ParameterDensityPiece, ParameterProbabilityObservation};
 pub use refinement::ParameterRefinement;
 pub use revision::{
-    ParameterConditioning, ParameterLikelihood, ParameterRestriction, ParameterRevisedSource,
+    ParameterConditioning, ParameterJeffrey, ParameterLikelihood, ParameterRestriction,
+    ParameterRevisedSource,
 };
 
 #[derive(Debug, Clone, Copy)]

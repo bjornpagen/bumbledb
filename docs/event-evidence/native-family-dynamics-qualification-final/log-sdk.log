@@ -1,0 +1,80 @@
+▶ admin certainty
+  ✔ checkpoint completes with its report and the pre-dispatch ref (1.563083ms)
+  ✔ registration refusal is not-started and E stays never (1.459833ms)
+  ✔ a lost completion is outcome-unknown with the retained ref (0.373708ms)
+  ✔ erase reports residual copies honestly (0.209167ms)
+  ✔ verifyBackup is read-only with typed E (0.359166ms)
+  ✔ interrupting admin joins cancellation and retains the caller's operationId (2.163042ms)
+✔ admin certainty (6.783959ms)
+✔ same-schema cross-origin caches refuse before serving or mutating anything (568.307959ms)
+✔ a retained command ref resolves after reopen and receipts outlive their scope (138.189833ms)
+✔ closed and foreign capabilities refuse typed without dispatching (221.80175ms)
+✔ open never creates: a missing configured database is a typed refusal, not genesis (6.260417ms)
+✔ a hosted binding under the local constructor refuses typed with no genesis (9.155667ms)
+▶ borrow lifecycle
+  ✔ two acquires of one binding are DISTINCT borrows; releasing one leaves the other live (2.540959ms)
+  ✔ a stale borrow refuses with ClosedHandle and dispatches nothing (1.534541ms)
+  ✔ double release is harmless and joins the native transition (0.24575ms)
+  ✔ scope close releases the borrow exactly once (idempotent with explicit release) (0.260792ms)
+✔ borrow lifecycle (5.16875ms)
+▶ cache surface
+  ✔ evicting a borrowed slot refuses instead of revoking the borrow (0.647417ms)
+  ✔ same-schema cross-origin bindings acquire isolated capabilities (0.330708ms)
+  ✔ cache close is the owner decision; a released cache refuses new acquires (0.222083ms)
+  ✔ inspection decodes the bounded native report (0.247375ms)
+✔ cache surface (1.5935ms)
+✔ native command boundaries retain exact sizes and distinguish caller misuse (683.076458ms)
+✔ Event-selected log schemas survive command recovery, runtime release, cache, backup and restore (911.104459ms)
+✔ Event selections participate in transition admission, replay, activation and abort (293.421125ms)
+▶ LocalHistory.open
+  ✔ open dispatches mode=open and never a create (2.061791ms)
+  ✔ a missing database is a typed refusal, never an empty replacement (1.497125ms)
+  ✔ create requires the creation artifact and dispatches mode=create (0.366333ms)
+  ✔ create refuses existing authority with the native refusal, unchanged (0.347833ms)
+  ✔ a hosted binding refuses at the local constructor before dispatch (0.446208ms)
+✔ LocalHistory.open (5.327167ms)
+▶ HostedHistory.open
+  ✔ credentials default to the supported provider chain (0.218291ms)
+✔ HostedHistory.open (0.276584ms)
+▶ bounded inspect
+  ✔ inspect decodes the bounded health snapshot (OPS-TEST-01 fixture shape) (0.744291ms)
+✔ bounded inspect (0.826459ms)
+▶ closed capabilities
+  ✔ resolve and inspect on a closed history refuse with ClosedHandle before dispatch (0.364333ms)
+✔ closed capabilities (0.435292ms)
+▶ returned certainty without duplicate phase
+  ✔ submit decided retains its receipt without a phase field (2.622334ms)
+  ✔ post-dispatch admin decode retains outcome-unknown (1.689916ms)
+  ✔ native proved nonpublication stays not-started (0.293959ms)
+✔ returned certainty without duplicate phase (5.179958ms)
+✔ native command recovery and independent backup → verify → writable restore (1084.573667ms)
+▶ submit certainty arms
+  ✔ a decided receipt round-trips with local health; the ref exists before dispatch (2.791833ms)
+  ✔ pre-dispatch refusal is not-submitted with the authentic ref; E stays never (1.688375ms)
+  ✔ post-dispatch decode loss is outcome-unknown, never a fabricated rejection (0.440583ms)
+  ✔ submit on a closed history refuses as not-submitted without dispatch (0.30075ms)
+  ✔ a forged command capability is a defect, never a forged receipt or arm (0.536833ms)
+  ✔ invalid submit options refuse pre-dispatch as not-submitted, not as E (0.294208ms)
+✔ submit certainty arms (6.669416ms)
+▶ interruption after publication
+  ✔ interrupt after dispatch preserves Cause and joins the native drain (2.641333ms)
+  ✔ the retained original ref resolves after reopen; retry never seals a new id (0.299792ms)
+  ✔ resolve also reports the closed/expired epochs as data, not errors (0.214584ms)
+✔ interruption after publication (3.31425ms)
+✔ the retained source and target declarations are independently generated exact native bindings (403.899458ms)
+✔ ordinary imperative transition, comparison, activation and replay (children first: false) (503.500792ms)
+✔ ordinary imperative transition, comparison, activation and replay (children first: true) (281.355334ms)
+✔ native admission rejects a missing proof; unconstrained document loss requires application comparison (163.476833ms)
+✔ complete native judgment refuses wrong-arm across ordinary population batches (125.097ms)
+✔ complete native judgment refuses orphan across ordinary population batches (119.818875ms)
+✔ complete native judgment refuses key-conflict across ordinary population batches (111.588125ms)
+✔ complete native judgment refuses missing-parent across ordinary population batches (125.581542ms)
+ℹ tests 51
+ℹ suites 10
+ℹ pass 51
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2109.923916
+{"node":"v26.4.0","platform":"bumbledb-darwin-arm64","tests":["event-selections","real-bridge-roundtrip","transition","command-boundaries","history-open","admin","borrows","adversarial-capabilities","submit-certainty","outcome-certainty"],"version":"1.3.1","addon_sha256":"2575c32289e408dbcf746c4aec17cdbf640adba2c2395ce099a2ad0d4b009522"}
