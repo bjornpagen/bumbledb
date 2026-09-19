@@ -2,6 +2,16 @@ import { Effect, Result } from "effect"
 import { dbNative } from "#db-native.ts"
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
 import { type Event as EventValue, encodedEvent, eventBytes, eventValue, isEvent } from "#event-value.ts"
+import {
+	containsParameter,
+	describeParameters,
+	parameterEvent,
+	parameterMass,
+	parameterProbability,
+	parameterWitness,
+	withParameters,
+	worldCardinality
+} from "#parameter-source.ts"
 import { nativeOperationWith, runtimeHandle } from "#runtime.ts"
 import { argumentError, type DbError } from "#runtime-errors.ts"
 import { mass, probability } from "#source-operation.ts"
@@ -176,7 +186,15 @@ const Event = Object.freeze({
 	disjoint,
 	contains,
 	mass,
-	probability
+	probability,
+	withParameters,
+	describeParameters,
+	parameterEvent,
+	parameterMass,
+	parameterProbability,
+	containsParameter,
+	parameterWitness,
+	worldCardinality
 })
 
 export { Event }

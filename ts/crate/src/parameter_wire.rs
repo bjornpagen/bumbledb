@@ -16,10 +16,13 @@ use bumbledb::work::WorkContext;
 use napi::bindgen_prelude::{Array, BigInt, Env, External, Function};
 use napi_derive::napi;
 
+mod family;
 mod function;
 mod output;
+mod refinement;
 mod region;
 mod root;
+mod source;
 pub use output::{ParameterOutput, runtime_event_parameter_take};
 type Result<T> = bumbledb::event::Result<T>;
 
@@ -28,6 +31,9 @@ enum Op {
     Region(region::Op),
     Root(root::Op),
     Function(function::Op),
+    Family(family::Op),
+    Source(source::Op),
+    Refinement(refinement::Op),
 }
 impl Op {
     fn parse(name: &str) -> Option<Self> {
@@ -40,6 +46,15 @@ impl Op {
         if let Some(name) = name.strip_prefix("function.") {
             return function::Op::parse(name).map(Self::Function);
         }
+        if let Some(name) = name.strip_prefix("family.") {
+            return family::Op::parse(name).map(Self::Family);
+        }
+        if let Some(name) = name.strip_prefix("source.") {
+            return source::Op::parse(name).map(Self::Source);
+        }
+        if let Some(name) = name.strip_prefix("refinement.") {
+            return refinement::Op::parse(name).map(Self::Refinement);
+        }
         None
     }
     fn valid(self, count: usize, argument: u8) -> bool {
@@ -47,6 +62,9 @@ impl Op {
             Self::Region(op) => op.valid(count, argument),
             Self::Root(op) => op.valid(count, argument),
             Self::Function(op) => op.valid(count, argument),
+            Self::Family(op) => op.valid(count, argument),
+            Self::Source(op) => op.valid(count, argument),
+            Self::Refinement(op) => op.valid(count, argument),
         }
     }
 }
@@ -117,6 +135,9 @@ fn execute(
         Op::Region(op) => region::execute(op, inputs, argument, work),
         Op::Root(op) => root::execute(op, inputs, work),
         Op::Function(op) => function::execute(op, inputs, argument, control, work),
+        Op::Family(op) => family::execute(op, inputs, argument, control, work),
+        Op::Source(op) => source::execute(op, inputs, control, work),
+        Op::Refinement(op) => refinement::execute(op, inputs, control, work),
     }
 }
 

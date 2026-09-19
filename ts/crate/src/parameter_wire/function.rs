@@ -71,7 +71,7 @@ impl Op {
             }
     }
 }
-fn function(bytes: &[u8], work: &mut ExactArithmetic<'_>) -> Result<ParameterFunction> {
+pub(super) fn function(bytes: &[u8], work: &mut ExactArithmetic<'_>) -> Result<ParameterFunction> {
     if let AdmittedSourceDescriptor::Family(value) =
         SourceDescriptor::import(bytes, limits(), work)?
         && let AdmittedFamilyDescriptor::Parameter(value) = *value
@@ -80,17 +80,24 @@ fn function(bytes: &[u8], work: &mut ExactArithmetic<'_>) -> Result<ParameterFun
     }
     Err(Error::RoleMismatch)
 }
-fn encode(
+pub(super) fn encoded(
     value: ParameterFunction,
     control: &WorkContext,
     work: &mut ExactArithmetic<'_>,
-) -> Result<Output> {
+) -> Result<Vec<u8>> {
     let data = SourceDescriptor::capture(
         &AdmittedSourceDescriptor::Family(Box::new(AdmittedFamilyDescriptor::Parameter(value))),
         limits(),
         work,
     )?;
-    bytes(data.to_bytes(limits(), control)?)
+    data.to_bytes(limits(), control)
+}
+pub(super) fn encode(
+    value: ParameterFunction,
+    control: &WorkContext,
+    work: &mut ExactArithmetic<'_>,
+) -> Result<Output> {
+    bytes(encoded(value, control, work)?)
 }
 pub(super) fn execute(
     op: Op,

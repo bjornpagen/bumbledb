@@ -4,6 +4,7 @@ import { AuthoringError } from "#errors.ts"
 import { EventDescriptor } from "#event-descriptor.ts"
 import { type Event, encodedEvent, eventBytes, eventValue } from "#event-value.ts"
 import { type ExactRational, encodedRational, rationalBytes } from "#exact-value.ts"
+import { parameterExpectation } from "#parameter-source.ts"
 import { argumentError, type DbError } from "#runtime-errors.ts"
 import { expectation, sourceBoolean, sourceOperation, sourceResult } from "#source-operation.ts"
 import { encodedSource, isSource, type SourceValue, sourceBytes } from "#source-value.ts"
@@ -129,7 +130,8 @@ const FiniteFunction = Object.freeze({
 	equivalent,
 	at,
 	designate,
-	expectation
+	expectation,
+	parameterExpectation
 })
 
 export { FiniteFunction }

@@ -1,0 +1,4 @@
+'SupportedDependence.product_support_rectangular' depends on axioms: [propext]
+'SupportedDependence.intersection_when_rectangular' depends on axioms: [propext]
+'SupportedDependence.copied_has_incomparable_dependencies' does not depend on any axioms
+'SupportedDependence.no_least_supported_dependency' does not depend on any axioms

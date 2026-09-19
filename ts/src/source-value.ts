@@ -3,12 +3,25 @@ import { AuthoringError } from "#errors.ts"
 import { bytesValue } from "#values.ts"
 
 const sourceTag: unique symbol = Symbol("bumbledb.Source")
-export type SourceKind = "function" | "kernel" | "revision" | "parameterFunction"
+export type SourceKind =
+	| "function"
+	| "kernel"
+	| "revision"
+	| "parameterFunction"
+	| "familyFunction"
+	| "parameterRefinement"
 export interface SourceValue<K extends SourceKind> {
 	readonly [sourceTag]: K
 }
 const encodings = new WeakMap<SourceValue<SourceKind>, Uint8Array>()
-const kinds = { function: [1, 0], kernel: [1, 1], revision: [1, 2], parameterFunction: [2, 0] } as const
+const kinds = {
+	function: [1, 0],
+	kernel: [1, 1],
+	revision: [1, 2],
+	parameterFunction: [2, 0],
+	familyFunction: [2, 1],
+	parameterRefinement: [2, 3]
+} as const
 export function isSource<K extends SourceKind>(kind: K, input: unknown): input is SourceValue<K> {
 	if (typeof input !== "object" || input === null) return false
 	const bytes = encodings.get(input as SourceValue<K>)

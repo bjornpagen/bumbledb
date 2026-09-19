@@ -1,0 +1,20 @@
+'FiniteDensity.sum_congr' depends on axioms: [propext]
+'FiniteDensity.sum_add' depends on axioms: [propext, Quot.sound]
+'FiniteDensity.sum_zero' depends on axioms: [propext]
+'FiniteDensity.sum_scale' depends on axioms: [propext]
+'FiniteDensity.sum_swap' depends on axioms: [propext, Quot.sound]
+'FiniteDensity.contraction_exact' depends on axioms: [propext, Quot.sound]
+'FiniteDensity.disjoint_union_counts' depends on axioms: [propext, Quot.sound]
+'FiniteDensity.merge_equal_density' depends on axioms: [propext, Quot.sound]
+'FiniteDensity.omit_zero_density' does not depend on any axioms
+'FiniteDensity.conditional_complement' depends on axioms: [propext, Quot.sound]
+'FiniteDensity.full_mass' depends on axioms: [propext, Quot.sound]
+'FiniteDensity.zero_evidence' depends on axioms: [propext]
+'FiniteDensity.positive_evidence' depends on axioms: [propext]
+'FiniteDensity.repeated_evidence' depends on axioms: [Quot.sound]
+'FiniteDensity.skipped_outcome_multiplicity' depends on axioms: [propext, Quot.sound]
+'FiniteDensity.zero_mass_nonempty' does not depend on any axioms
+'FiniteDensity.equal_marginals_different_joint' does not depend on any axioms
+'FiniteDensity.unnormalized_refused' does not depend on any axioms
+'FiniteDensity.changed_measurement_distinct' does not depend on any axioms
+'FiniteDensity.missing_not_impossible' does not depend on any axioms

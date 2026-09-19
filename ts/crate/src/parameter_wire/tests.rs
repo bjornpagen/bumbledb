@@ -166,3 +166,94 @@ fn parameter_structured_payloads_refuse_combined_output_overflow() {
         Err(Error::Capacity(Capacity::DescriptorBytes))
     ));
 }
+
+#[test]
+fn family_observations_share_nested_admission_work_and_keep_owned_inputs() {
+    use bumbledb::event::{
+        FamilyFunction, GuardedRationalFunction, ParameterDomain, Space, SpaceId,
+    };
+    let control = WorkContext::new();
+    let mut work = ExactArithmetic::new(ArithmeticLimits::default(), &control);
+    let domain = ParameterDomain::new(ParameterRegion::full(ParameterId([27; 32]))).unwrap();
+    let source = Space::new(SpaceId([28; 32]), 1, &control)
+        .unwrap()
+        .with_parameters(domain.clone(), &[], limits().parameters, &mut work)
+        .unwrap();
+    let half = GuardedRationalFunction::new(
+        domain,
+        ExactPolynomial::constant(ExactRational::fraction("1", "2", &mut work).unwrap()),
+        ExactPolynomial::one(),
+        limits().parameters.parameters.region,
+        &mut work,
+    )
+    .unwrap();
+    let source = FamilyFunction::constant(&source, half, limits().parameters, &mut work)
+        .unwrap()
+        .designate(limits().parameters, &mut work)
+        .unwrap();
+    let event = source
+        .coordinate(0, &control)
+        .unwrap()
+        .to_bytes(&control)
+        .unwrap();
+    let given = source.full().to_bytes(&control).unwrap();
+    let mut probe = ExactArithmetic::new(ArithmeticLimits::default(), &control);
+    super::source::event(&event, &mut probe).unwrap();
+    let mut bounded = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: probe.operations(),
+            ..ArithmeticLimits::default()
+        },
+        &control,
+    );
+    assert!(matches!(
+        run(
+            "source.probability",
+            &[event.clone(), given.clone()],
+            &control,
+            &mut bounded
+        ),
+        Err(Error::Capacity(Capacity::ArithmeticSteps))
+    ));
+    let Output::Parameter(ParameterOutput::Observation {
+        kind,
+        input,
+        given: retained,
+        numerator,
+        mass,
+        value,
+        defined,
+    }) = run(
+        "source.probability",
+        &[event.clone(), given.clone()],
+        &control,
+        &mut work,
+    )
+    .unwrap()
+    else {
+        panic!("observation expected")
+    };
+    assert_eq!(kind, "probability");
+    assert_eq!(input, event);
+    assert_eq!(retained, given);
+    assert!(region(&defined, &mut work).unwrap().is_full());
+    drop(source);
+    for (encoded, expected) in [(numerator, "1/2"), (mass, "1"), (value, "1/2")] {
+        let value = function::function(&encoded, &mut work)
+            .unwrap()
+            .value_at(
+                &ExactRational::zero(),
+                limits().parameters.parameters.region,
+                limits().parameters.functions,
+                &mut work,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(value.to_string(), expected);
+    }
+    control.cancel();
+    assert!(matches!(
+        run("source.probability", &[event, given], &control, &mut work),
+        Err(Error::Cancelled)
+    ));
+}

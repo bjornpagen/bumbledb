@@ -1,0 +1,6 @@
+{
+  "passed": true,
+  "qualification_sha256": "5744f4b51993ad4233f9795686d486099ed50b5ff705596e691bb66df428a6e2",
+  "source_files": 1262,
+  "scope": "All qualification source hashes match the staged Git blobs."
+}

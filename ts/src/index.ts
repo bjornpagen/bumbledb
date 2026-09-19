@@ -2,14 +2,26 @@ export type { AlgebraicRootDescription } from "#algebraic-root.ts"
 export { AlgebraicRoot } from "#algebraic-root.ts"
 export { Event } from "#event.ts"
 export { ExactRational } from "#exact.ts"
+export type { FamilyFunctionDescription, FamilyFunctionPiece } from "#family-function.ts"
+export { FamilyFunction } from "#family-function.ts"
 export type { FiniteFunctionDescription, FunctionPiece } from "#finite-function.ts"
 export { FiniteFunction } from "#finite-function.ts"
 export type { FiniteKernelDescription, SourceExtension } from "#finite-kernel.ts"
 export { FiniteKernel } from "#finite-kernel.ts"
 export type { ParameterFunctionDescription, ParameterFunctionPiece } from "#parameter-function.ts"
 export { ParameterFunction } from "#parameter-function.ts"
+export type { ParameterRefinementDescription } from "#parameter-refinement.ts"
+export { ParameterRefinement } from "#parameter-refinement.ts"
 export type { ParameterRegionDescription, RealWitness } from "#parameter-region.ts"
 export { ParameterDomain, ParameterRegion, PolynomialSigns } from "#parameter-region.ts"
+export type {
+	ParameterExpectationObservation,
+	ParameterGuard,
+	ParameterProbabilityObservation,
+	ParameterSourceDescription,
+	ParameterWorld,
+	WorldCardinality
+} from "#parameter-source.ts"
 export type { ParameterBinding, PolynomialPower, PolynomialTerm } from "#polynomial.ts"
 export { ExactPolynomial } from "#polynomial.ts"
 export type { ExpectationObservation, ProbabilityObservation } from "#source-operation.ts"
