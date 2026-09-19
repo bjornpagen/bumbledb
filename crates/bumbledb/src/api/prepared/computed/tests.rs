@@ -488,6 +488,10 @@ fn guard_sink_retains_empty_events_through_spill_and_shares_execution_work() {
         inputs: vec![(VarId(0), 0, ValueType::U64.into())],
         expression: FindTerm::Guard(crate::GuardExpr {
             plan,
+            companions: vec![crate::PredicateExpr::Sign {
+                number: crate::NumberExpr::Integer(VarId(0)),
+                signs: PolynomialSigns::POSITIVE,
+            }],
             predicate: crate::PredicateExpr::Sign {
                 number: crate::NumberExpr::Integer(VarId(0)),
                 signs: PolynomialSigns::POSITIVE,

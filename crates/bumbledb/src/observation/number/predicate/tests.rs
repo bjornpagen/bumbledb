@@ -141,6 +141,126 @@ fn measured(source: &Space) -> N {
     )
     .unwrap()
 }
+
+#[test]
+fn common_predicate_refinement_preserves_roster_origins_and_one_joint_presentation() {
+    let source = source();
+    let p = measured(&source);
+    let half = N::literal(q(1, 2), limits(), &mut work()).unwrap();
+    let low = p
+        .compare(&half, PolynomialSigns::NEGATIVE, limits(), &mut work())
+        .unwrap();
+    let high = p
+        .compare(&half, PolynomialSigns::POSITIVE, limits(), &mut work())
+        .unwrap();
+    let partial = p
+        .apply(NumberOp::Divide, &p, limits(), &mut work())
+        .unwrap()
+        .where_sign(PolynomialSigns::POSITIVE, limits(), &mut work())
+        .unwrap();
+    let roster = [low.clone(), high.clone(), partial.clone()];
+    let id = SpaceId([230; 32]);
+    let source_limits = ParameterSourceLimits::default();
+    let common = |roster: &[P], limits, work: &mut ExactArithmetic<'_>| {
+        PredicateRefinement::common(id, &source, roster, Limits::default(), limits, work)
+    };
+    let first = common(&roster, source_limits, &mut work()).unwrap();
+    let reordered = common(
+        &[partial, high, low.clone(), low],
+        source_limits,
+        &mut work(),
+    )
+    .unwrap();
+    let bytes = first[0]
+        .refinement()
+        .refined()
+        .full()
+        .to_bytes(&())
+        .unwrap();
+    for value in first.iter().chain(&reordered) {
+        assert_eq!(
+            value.refinement().refined().full().to_bytes(&()).unwrap(),
+            bytes
+        );
+    }
+    for (input, result) in roster.iter().zip(&first) {
+        assert_eq!(roundtrip(input), roundtrip(result.events().predicate()));
+    }
+    let cases: Vec<_> = first.iter().map(PredicateRefinement::events).collect();
+    assert!(
+        cases[0]
+            .holds()
+            .apply(BoolOp4::AND, cases[1].holds(), &())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!cases[2].undefined().is_empty());
+    for n in 0..=4 {
+        for outcomes in 0..2 {
+            let world = ParameterWorld {
+                parameter: RealWitness::Rational(q(n, 4)),
+                outcomes,
+            };
+            for (index, case) in cases.iter().enumerate() {
+                let expected = [
+                    Some(n < 2),
+                    Some(n > 2),
+                    if n == 0 { None } else { Some(true) },
+                ][index];
+                for (event, truth) in [
+                    (case.holds(), Some(true)),
+                    (case.fails(), Some(false)),
+                    (case.undefined(), None),
+                ] {
+                    assert_eq!(
+                        event
+                            .contains_parameter(&world, source_limits, &mut work())
+                            .unwrap(),
+                        expected == truth
+                    );
+                }
+            }
+        }
+    }
+    let claim = source.coordinate(0, &()).unwrap();
+    let lifted = first[0].refinement().lift(&claim, &()).unwrap();
+    assert_eq!(first[0].refinement().descend(&lifted, &()).unwrap(), claim);
+    assert!(
+        first[0]
+            .refinement()
+            .descend(cases[0].holds(), &())
+            .is_err()
+    );
+    assert!(common(&[], source_limits, &mut work()).is_err());
+    assert!(
+        common(
+            &roster,
+            ParameterSourceLimits {
+                steps: 1,
+                ..source_limits
+            },
+            &mut work()
+        )
+        .is_err()
+    );
+    let mut small = source_limits;
+    small.parameters.bytes = 1;
+    assert!(common(&roster, small, &mut work()).is_err());
+    let foreign = truth(Some(true))
+        .on_domain(&domain(ParameterId([231; 32])), limits(), &mut work())
+        .unwrap();
+    assert!(common(&[truth(Some(true)), foreign], source_limits, &mut work()).is_err());
+    let control = crate::WorkContext::new();
+    control.cancel();
+    assert!(
+        common(
+            &roster,
+            source_limits,
+            &mut ExactArithmetic::new(ArithmeticLimits::default(), &control)
+        )
+        .is_err()
+    );
+}
 fn value_at(value: &P, point: &Rat) -> Option<bool> {
     let NumberPredicateView::Parameter {
         holds,

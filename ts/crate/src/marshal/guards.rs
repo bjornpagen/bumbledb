@@ -1,5 +1,8 @@
 //! Copy bounded captured source plans and combined guard/predicate programs.
-use super::{EventBudget, Object, err, exact_fields, numbers, predicates, req, req_text, var_in};
+use super::{
+    Array, EventBudget, Object, err, exact_fields, numbers, predicates, req, req_at, req_text,
+    var_in,
+};
 use crate::ingress::query::GuardExpr;
 use bumbledb::{GuardOp, event::SpaceId};
 
@@ -18,11 +21,15 @@ pub(super) fn parse(obj: &Object, budget: &mut EventBudget<'_, '_>) -> napi::Res
         "descend" => GuardOp::Descend(var_in(obj, "input", "guard transport input")?),
         _ => return Err(err("unknown guard operation".into())),
     };
+    let common = Object::keys(obj)?.iter().any(|key| key == "resolve");
+    let mut fields = vec!["kind", "predicate", "plan"];
     if matches!(operation, GuardOp::Lift(_) | GuardOp::Descend(_)) {
-        exact_fields(obj, &["kind", "predicate", "plan", "input"])?;
-    } else {
-        exact_fields(obj, &["kind", "predicate", "plan"])?;
+        fields.push("input");
     }
+    if common {
+        fields.push("resolve");
+    }
+    exact_fields(obj, &fields)?;
     let plan = req::<Object>(obj, "plan", "guard plan")?;
     let mode = req_text(&plan, "kind", "guard plan mode")?;
     let refinement = match mode.as_str() {
@@ -45,10 +52,29 @@ pub(super) fn parse(obj: &Object, budget: &mut EventBudget<'_, '_>) -> napi::Res
         2,
         budget,
     )?;
+    let mut companions = Vec::new();
+    if common {
+        let roster: Array = req(obj, "resolve", "common guard predicates")?;
+        let len = roster.len() as usize;
+        if len == 0 || len > budget.nodes {
+            return Err(err("invalid common guard roster or shape budget".into()));
+        }
+        companions
+            .try_reserve_exact(len)
+            .map_err(|_| err("guard roster allocation failed".into()))?;
+        for i in 0..roster.len() {
+            companions.push(predicates::parse(
+                &req_at(&roster, i, "common guard predicate")?,
+                2,
+                budget,
+            )?);
+        }
+    }
     Ok(GuardExpr {
         source,
         refinement,
         predicate,
+        companions,
         operation,
     })
 }

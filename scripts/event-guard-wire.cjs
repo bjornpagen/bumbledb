@@ -27,6 +27,9 @@ module.exports = async ({ native, runtime, snapshot, operation, close, collect, 
     evaluations++;
   }
   const base = {kind:'holds',predicate:truth,plan};
+  // Resolving an undefined companion does not make a defined primary undefined.
+  const resolved=await collect(query({kind:'guard',expr:{...base,resolve:[hole,truth]}}));
+  assert.deepEqual(Buffer.from(resolved[0][0]),full);evaluations++;
   const malformed = [
     {...base,kind:'maybe'}, {...base,ignored:true}, {...base,input:0},
     {...base,predicate:{kind:'var',var:0}},
@@ -39,6 +42,10 @@ module.exports = async ({ native, runtime, snapshot, operation, close, collect, 
     {...base,plan:{...plan,source:new Uint8Array(new SharedArrayBuffer(full.length))}},
     {...base,kind:'lift'}, {...base,kind:'descend',input:-1},
     {...base,kind:'lift',input:1},
+    {...base,resolve:[]}, {...base,resolve:new Array(1)}, {...base,resolve:[{}]},
+    {...base,resolve:[{kind:'var',var:0}]},
+    {...base,resolve:[{kind:'imported',bytes:Buffer.from('BENP\x01')}]},
+    {...base,resolve:Array(2048).fill(truth)},
   ];
   let deep=one;
   for(let i=1;i<127;i++)deep={kind:'abs',value:deep};

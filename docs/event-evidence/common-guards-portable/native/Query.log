@@ -1,0 +1,22 @@
+'Query.anchor_participates' depends on axioms: [propext]
+'Query.compatible_iff_no_fault' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Query.truth_function_preserves_participation' does not depend on any axioms
+'Query.truth_function_preserves_faults' does not depend on any axioms
+'Query.constant_false_still_checks_other_operand' depends on axioms: [propext]
+'Query.constant_true_still_checks_other_operand' depends on axioms: [propext]
+'Query.unselected_ite_branch_participates' depends on axioms: [propext]
+'Query.empty_is_a_constructed_value' does not depend on any axioms
+'Query.complement_of_empty_is_full' does not depend on any axioms
+'Query.contradiction_is_empty' depends on axioms: [propext, Quot.sound]
+'Query.excluded_middle_is_full' depends on axioms: [propext, Quot.sound]
+'Query.cardinality_exact' depends on axioms: [propext]
+'Query.equal_roster_positions_are_counted_separately' does not depend on any axioms
+'Query.cardinality_counts_same_world' does not depend on any axioms
+'Query.collect_exact' depends on axioms: [propext, Quot.sound]
+'Query.traversal_invariant' depends on axioms: [propext, Quot.sound]
+'Query.duplicate_binding_is_idempotent' depends on axioms: [propext]
+'Query.unmatched_operand_is_not_a_fault' depends on axioms: [propext, Quot.sound]
+'Query.later_fault_survives_earlier_saturation' does not depend on any axioms
+'Query.program_schedule_invariant' does not depend on any axioms
+'Query.no_answer_with_participating_fault' does not depend on any axioms
+'Query.partial_collection_cannot_claim_completion' does not depend on any axioms

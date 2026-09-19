@@ -2,7 +2,7 @@ import { AuthoringError } from "#errors.ts"
 import { encodedEvent } from "#event-value.ts"
 import type { GuardExprIr, GuardPlanIr } from "#native.ts"
 import { parsePredicateIr } from "#query/predicate-ir.ts"
-import { bytesValue, recordValue } from "#values.ts"
+import { arrayValue, bytesValue, recordValue } from "#values.ts"
 
 function fail(context: string): never {
 	throw new AuthoringError({ message: `${context}: invalid guard expression` })
@@ -19,7 +19,14 @@ export function parseGuardIr(context: string, input: unknown): GuardExprIr {
 	)
 		return fail(context)
 	const transport = raw.kind === "lift" || raw.kind === "descend"
-	recordValue(context, raw, transport ? ["kind", "predicate", "plan", "input"] : ["kind", "predicate", "plan"])
+	const common = Object.hasOwn(raw, "resolve")
+	recordValue(context, raw, [
+		"kind",
+		"predicate",
+		"plan",
+		...(transport ? ["input"] : []),
+		...(common ? ["resolve"] : [])
+	])
 	const p = recordValue(context, raw.plan, [
 		"kind",
 		"source",
@@ -40,10 +47,15 @@ export function parseGuardIr(context: string, input: unknown): GuardExprIr {
 		plan = Object.freeze({ kind: p.kind, source, identity })
 	} else plan = Object.freeze({ kind: p.kind, source })
 	const predicate = parsePredicateIr(`${context}.predicate`, raw.predicate, 2, budget)
+	if (common && (!Array.isArray(raw.resolve) || raw.resolve.length === 0 || raw.resolve.length > budget.nodes))
+		return fail(`${context}: invalid common roster or shape budget`)
+	const resolve = common
+		? { resolve: arrayValue(`${context}.resolve`, raw.resolve, (label, p) => parsePredicateIr(label, p, 2, budget)) }
+		: {}
 	if (raw.kind === "lift" || raw.kind === "descend") {
 		if (typeof raw.input !== "number" || !Number.isInteger(raw.input) || raw.input < 0 || raw.input > 0xffff)
 			return fail(context)
-		return Object.freeze({ kind: raw.kind, predicate, plan, input: raw.input })
+		return Object.freeze({ kind: raw.kind, predicate, plan, ...resolve, input: raw.input })
 	}
-	return Object.freeze({ kind: raw.kind, predicate, plan })
+	return Object.freeze({ kind: raw.kind, predicate, plan, ...resolve })
 }

@@ -93,19 +93,43 @@ impl PredicateGuardPlan {
     pub(crate) fn interpret(
         &self,
         predicate: &ObservationPredicate,
+        companions: &[ObservationPredicate],
         limits: &ObservationNumberCodecLimits,
         work: &mut ExactArithmetic<'_>,
     ) -> Result<Interpretation> {
         let (cases, refinement) = if let Some(identity) = self.0.refinement {
-            let value = predicate.refine(
-                identity,
-                &self.0.source,
-                limits.sources.descriptors.events,
-                limits.sources.parameters,
-                work,
-            )?;
+            let value = if companions.is_empty() {
+                predicate.refine(
+                    identity,
+                    &self.0.source,
+                    limits.sources.descriptors.events,
+                    limits.sources.parameters,
+                    work,
+                )?
+            } else {
+                let mut roster = Vec::new();
+                roster
+                    .try_reserve_exact(companions.len() + 1)
+                    .map_err(Error::from)?;
+                roster.push(predicate.clone());
+                roster.extend_from_slice(companions);
+                crate::PredicateRefinement::common(
+                    identity,
+                    &self.0.source,
+                    &roster,
+                    limits.sources.descriptors.events,
+                    limits.sources.parameters,
+                    work,
+                )?
+                .into_iter()
+                .next()
+                .ok_or(Error::NoParameterSources)?
+            };
             (value.events().clone(), Some(value.refinement().clone()))
         } else {
+            for companion in companions {
+                companion.events(&self.0.source, limits.sources.parameters, work)?;
+            }
             (
                 predicate.events(&self.0.source, limits.sources.parameters, work)?,
                 None,
@@ -137,17 +161,27 @@ impl GuardOp {
 pub struct GuardExpr {
     pub plan: PredicateGuardPlan,
     pub predicate: PredicateExpr,
+    /// Additional predicates resolved in the same named presentation. A
+    /// nonempty roster requests canonical common refinement, even if repeated.
+    pub companions: Vec<PredicateExpr>,
     pub operation: GuardOp,
 }
 impl GuardExpr {
     pub fn variables(&self) -> impl Iterator<Item = VarId> {
-        self.predicate.variables().chain(self.operation.input())
+        self.predicate
+            .variables()
+            .chain(self.companions.iter().flat_map(PredicateExpr::variables))
+            .chain(self.operation.input())
     }
     pub(crate) fn inputs(
         &self,
     ) -> std::result::Result<Vec<(VarId, ObservationInputKind)>, NumberExprError> {
         let mut inputs = Vec::new();
-        self.predicate.collect_inputs(2, &mut 1, &mut inputs)?;
+        let mut nodes = 1;
+        self.predicate.collect_inputs(2, &mut nodes, &mut inputs)?;
+        for companion in &self.companions {
+            companion.collect_inputs(2, &mut nodes, &mut inputs)?;
+        }
         if let Some(var) = self.operation.input() {
             inputs.push((var, ObservationInputKind::Event));
         }
@@ -242,6 +276,7 @@ mod tests {
         let guard = |predicate| GuardExpr {
             plan: plan.clone(),
             predicate,
+            companions: Vec::new(),
             operation: GuardOp::Holds,
         };
         let mut number = crate::NumberExpr::Integer(VarId(0));
@@ -274,5 +309,10 @@ mod tests {
             guard(predicate).inputs().unwrap_err(),
             NumberExprError::TooLarge
         );
+        let mut common = guard(PredicateExpr::Var(VarId(0)));
+        common.companions = vec![PredicateExpr::Var(VarId(1)); 65_534];
+        assert_eq!(common.inputs().unwrap().len(), 65_535);
+        common.companions.push(PredicateExpr::Var(VarId(2)));
+        assert_eq!(common.inputs().unwrap_err(), NumberExprError::TooLarge);
     }
 }

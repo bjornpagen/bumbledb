@@ -226,10 +226,11 @@ type PredicateQuantifier = "possibly" | "always" | "isTotal"
 type GuardPlanIr =
 	| { readonly kind: "existing"; readonly source: Uint8Array }
 	| { readonly kind: "refine"; readonly source: Uint8Array; readonly identity: Uint8Array }
-type GuardExprIr<V = number, P = PredicateExprIr, G = GuardPlanIr> = { readonly predicate: P; readonly plan: G } & (
-	| { readonly kind: "holds" | "fails" | "undefined" }
-	| { readonly kind: "lift" | "descend"; readonly input: V }
-)
+type GuardExprIr<V = number, P = PredicateExprIr, G = GuardPlanIr> = {
+	readonly predicate: P
+	readonly plan: G
+	readonly resolve?: readonly P[]
+} & ({ readonly kind: "holds" | "fails" | "undefined" } | { readonly kind: "lift" | "descend"; readonly input: V })
 type FindTermIr =
 	| { readonly kind: "guard"; readonly expr: GuardExprIr }
 	| { readonly kind: "predicate"; readonly expr: PredicateExprIr }

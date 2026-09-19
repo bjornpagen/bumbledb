@@ -9,6 +9,7 @@ pub(crate) struct GuardExpr {
     pub(crate) source: Vec<u8>,
     pub(crate) refinement: Option<SpaceId>,
     pub(crate) predicate: PredicateExpr,
+    pub(crate) companions: Vec<PredicateExpr>,
     pub(crate) operation: GuardOp,
 }
 impl PayoffAdmission<'_> {
@@ -28,9 +29,15 @@ impl PayoffAdmission<'_> {
             &mut self.arithmetic,
         )
         .map_err(|e| crate::db_wire::engine_error(&e))?;
+        let predicate = self.predicate(value.predicate, 2)?;
+        let mut companions = crate::marshal::output_vec(value.companions.len())?;
+        for companion in value.companions {
+            companions.push(self.predicate(companion, 2)?);
+        }
         Ok(bumbledb::GuardExpr {
             plan,
-            predicate: self.predicate(value.predicate, 2)?,
+            predicate,
+            companions,
             operation: value.operation,
         })
     }
@@ -59,6 +66,10 @@ mod tests {
         let input = |source| GuardExpr {
             source,
             refinement: None,
+            companions: vec![PredicateExpr::Sign {
+                number: NumberExpr::Literal(scalar.clone()),
+                signs: PolynomialSigns::POSITIVE,
+            }],
             operation: GuardOp::Holds,
             predicate: PredicateExpr::Sign {
                 number: NumberExpr::Literal(scalar.clone()),
@@ -80,7 +91,7 @@ mod tests {
         bounded.guard(input(bytes.clone())).unwrap();
         assert!(bounded.admit(Payoff::Imported(scalar.clone())).is_err());
         let mut bounded = PayoffAdmission::new(&work);
-        bounded.remaining = bytes.len() + scalar.len();
+        bounded.remaining = bytes.len() + 2 * scalar.len();
         bounded.guard(input(bytes.clone())).unwrap();
         assert!(bounded.guard(input(bytes.clone())).is_err());
         let rule = |guard| Rule {

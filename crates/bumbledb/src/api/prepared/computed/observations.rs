@@ -113,9 +113,21 @@ impl ComputedSink {
             &limits,
             &mut arithmetic,
         )?;
-        let interpretation = expression
-            .plan
-            .interpret(&predicate, &limits, &mut arithmetic)?;
+        let mut companions = Vec::new();
+        companions
+            .try_reserve_exact(expression.companions.len())
+            .map_err(crate::event::Error::from)?;
+        for companion in &expression.companions {
+            companions.push(companion.evaluate(
+                |var| program.operand(var, &self.bindings, &self.observations),
+                &limits,
+                &mut arithmetic,
+            )?);
+        }
+        let interpretation =
+            expression
+                .plan
+                .interpret(&predicate, &companions, &limits, &mut arithmetic)?;
         let interner = crate::image::intern::InternerHandle::new(
             self.generation
                 .as_ref()

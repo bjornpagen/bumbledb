@@ -645,3 +645,98 @@ fn existing_guard_plans_accept_constants_and_resolved_regions_but_enforce_input_
     let bad = query!(PredicateGuards {use guard g = &fixed; (bad: Guard(Lift(Sign(1,4),g,game))) | Trial(game,claim,given);});
     assert!(db.prepare(&bad, common::work()).is_err());
 }
+
+#[test]
+fn common_query_guards_compose_on_one_parameter_and_retain_holes_and_origins() {
+    use bumbledb::PredicateGuardPlan;
+    let path = common::TempDir::new("common-query-guards");
+    let db = Db::create(path.path(), PredicateGuards, common::work())
+        .unwrap()
+        .unwrap();
+    let source = source();
+    let claim = source.coordinate(0, &()).unwrap();
+    db.write(common::work(), |tx| {
+        tx.insert([&Trial {
+            game: 1,
+            claim: claim.clone(),
+            given: source.full(),
+        }])
+    })
+    .unwrap()
+    .unwrap();
+    let plan = PredicateGuardPlan::capture(
+        &source,
+        Some(SpaceId([232; 32])),
+        ObservationNumberCodecLimits::default(),
+        &mut work(),
+    )
+    .unwrap();
+    let program = query!(PredicateGuards {
+        use guard g = &plan;
+        interior observed(game,claim,p: Probability(claim,given)) | Trial(game,claim,given);
+        interior truth(game,claim,low: Predicate(Value(p)<1/2),high: Predicate(Value(p)>1/2),known: Predicate(Value(p)/Value(p)>0)) | observed(game,claim,p);
+        interior cases(game,low,high,known,
+            a: Guard(Holds(low,Common(g,high,known))),
+            b: Guard(Holds(high,Common(g,known,low,low))),
+            hole: Guard(Undefined(known,Common(g,low,high))),
+            held: Guard(Lift(low,Common(g,high,known),claim))) | truth(game,claim,low,high,known);
+        (game,a,b,hole,both: Event(a & b),middle: Event(!(a | b)),
+            original: Guard(Descend(known,Common(g,high,low),held)),
+            zero: Event(hole & held)) | cases(game,low,high,known,a,b,hole,held);
+    });
+    let mut retained = Vec::new();
+    for fallback in [false, true] {
+        let mut prepared = db.prepare(&program, common::work()).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        retained.push(
+            db.read(common::work(), |tx| {
+                tx.execute_collect(&mut prepared, &[] as &[BindValue])
+            })
+            .unwrap(),
+        );
+        prepared.release_memory();
+    }
+    drop((db, program, plan, source));
+    for answers in retained {
+        assert_eq!(answers.len(), 1);
+        for column in 1..8 {
+            let AnswerValue::Event(event) = answers.get(0, column) else {
+                panic!("event")
+            };
+            if column == 6 {
+                assert_eq!(event.to_bytes(&()).unwrap(), claim.to_bytes(&()).unwrap());
+                continue;
+            }
+            for n in 0..=4 {
+                for outcomes in 0..2 {
+                    let world = ParameterWorld {
+                        parameter: RealWitness::Rational(q(n, 4)),
+                        outcomes,
+                    };
+                    let expected = match column {
+                        1 => n < 2,
+                        2 => n > 2,
+                        3 => n == 0,
+                        4 => false,
+                        5 => n == 2,
+                        7 => n == 0 && outcomes == 1,
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(
+                        event
+                            .contains_parameter(
+                                &world,
+                                ParameterSourceLimits::default(),
+                                &mut work()
+                            )
+                            .unwrap(),
+                        expected
+                    );
+                }
+            }
+            if column == 7 {
+                assert!(!event.is_empty());
+            }
+        }
+    }
+}

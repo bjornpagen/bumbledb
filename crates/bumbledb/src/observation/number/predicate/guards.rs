@@ -57,6 +57,79 @@ impl PredicateRefinement {
     pub fn events(&self) -> &PredicateEvents {
         &self.events
     }
+
+    /// Resolve a nonempty roster in one named presentation, in input order.
+    /// Canonical guard ordering makes the presentation invariant under roster
+    /// permutation and duplication. All written predicates are checked before
+    /// duplicate regions are removed; the returned cases retain each origin.
+    /// # Errors
+    /// Empty roster, domain/source mismatch, source/byte/work limits or cancellation.
+    pub fn common(
+        identity: SpaceId,
+        source: &Space,
+        predicates: &[ObservationPredicate],
+        events: Limits,
+        limits: ParameterSourceLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<Vec<Self>> {
+        work.control().checkpoint()?;
+        if predicates.is_empty() {
+            return Err(Error::NoParameterSources.into());
+        }
+        if predicates.len() > limits.steps / 3 {
+            return Err(Error::Capacity(crate::event::Capacity::ParameterSourceSteps).into());
+        }
+        source.parameter_domain().ok_or(Error::MissingParameter)?;
+        let mut guards = Vec::new();
+        let mut bytes_left = limits.parameters.bytes;
+        for predicate in predicates {
+            predicate.check_source(source, limits, work)?;
+            if let NumberPredicateView::Parameter { holds, fails, .. } =
+                predicate.predicate().view()
+            {
+                let regions = [holds, fails];
+                let count = if predicate.predicate().is_total() {
+                    1
+                } else {
+                    2
+                };
+                for region in &regions[..count] {
+                    let bytes = region.to_bytes(limits.parameters, work)?;
+                    bytes_left = bytes_left
+                        .checked_sub(bytes.len())
+                        .ok_or(Error::Capacity(crate::event::Capacity::DescriptorBytes))?;
+                    guards.try_reserve(1).map_err(Error::from)?;
+                    guards.push((bytes, (*region).clone()));
+                }
+            }
+        }
+        guards.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        guards.dedup_by(|a, b| a.0 == b.0);
+        let mut additional = Vec::new();
+        for (_, region) in guards {
+            match source.parameter_event(&region, limits, work) {
+                Ok(_) => {}
+                Err(Error::ParameterRefinementRequired) => {
+                    additional.try_reserve(1).map_err(Error::from)?;
+                    additional.push(region);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let refinement =
+            ParameterRefinement::with_limits(identity, source, &additional, events, limits, work)?;
+        let mut result = Vec::new();
+        result
+            .try_reserve_exact(predicates.len())
+            .map_err(Error::from)?;
+        for predicate in predicates {
+            result.push(Self {
+                events: predicate.events(refinement.refined(), limits, work)?,
+                refinement: refinement.clone(),
+            });
+        }
+        Ok(result)
+    }
 }
 
 impl ObservationPredicate {

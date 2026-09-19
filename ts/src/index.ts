@@ -204,7 +204,7 @@ export {
 export type { ExpectationAnswer, ExpectationResult } from "#query/expectation.ts"
 export { expectationResult } from "#query/expectation.ts"
 export type { Agg, HeadRecordOf, RowOfFind } from "#query/find.ts"
-export { Guard, type GuardExpr, GuardPlan } from "#query/guard.ts"
+export { Guard, type GuardContext, type GuardExpr, GuardPlan } from "#query/guard.ts"
 export type {
 	AnyQuery,
 	AnyRuleValue,
