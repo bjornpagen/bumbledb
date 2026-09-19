@@ -246,6 +246,8 @@ pub enum Output {
     Log(crate::log::LogOutput),
     /// A sealed detached schema descriptor.
     Descriptor(crate::marshal::DescriptorWire),
+    /// Owned structural Event data/inspection, encoded on the worker.
+    EventDescriptor(crate::event_descriptor_wire::DescriptorOutput),
     /// One compiled query with its own worker route and snapshot share.
     Prepared(session::SnapshotSession),
     /// One sealed completed query result, owned and independent.

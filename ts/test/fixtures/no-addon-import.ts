@@ -7,6 +7,7 @@ import { Result } from "effect"
 import { alternatives } from "#alternatives.ts"
 import { closed, closedId } from "#closed.ts"
 import { Event } from "#event.ts"
+import { EventDescriptor } from "#event-descriptor.ts"
 import { bool, event, i64, interval, str, u64, uuid } from "#fields.ts"
 import { loadNativeBinding, nativeBindingIsLoaded } from "#native.ts"
 import { Compute } from "#query/compute.ts"
@@ -45,6 +46,11 @@ assert.equal(
 	"event"
 )
 assert.equal(nativeBindingIsLoaded(), false, "Event authoring must not load the addon")
+const descriptor = Result.getOrThrow(EventDescriptor.fromBytes(Buffer.from("BEDC\x01")))
+EventDescriptor.describe(descriptor)
+EventDescriptor.inspect(descriptor)
+EventDescriptor.admit({ kind: "map", map: { source: value, target: value, readouts: [] } })
+assert.equal(nativeBindingIsLoaded(), false, "descriptor Effects must be lazy without the addon")
 
 assert.throws(
 	() => loadNativeBinding(process.platform, process.arch),

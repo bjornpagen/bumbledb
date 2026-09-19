@@ -8,6 +8,7 @@
  */
 
 import type { ChangeCounts } from "#changes.ts"
+import type { EventDescriptorInspectionWire, EventDescriptorWire } from "#event-descriptor-data.ts"
 import type { DbHandle, ParsedQuery, QueryParam, SealedDescriptor, Violation } from "#native.ts"
 import { native } from "#native.ts"
 import type { CellValue } from "#rows.ts"
@@ -93,6 +94,13 @@ export interface MutationReportWire {
 }
 
 interface DbBridge {
+	runtimeEventDescriptor(
+		runtime: RuntimeHandle,
+		operation: "admit" | "describe" | "inspect",
+		input: EventDescriptorWire | Uint8Array,
+		callback: () => void
+	): OperationHandle
+	runtimeEventDescriptorTake(operation: OperationHandle): EventDescriptorWire | EventDescriptorInspectionWire
 	runtimeEvent(
 		runtime: RuntimeHandle,
 		operation: string,

@@ -42,7 +42,7 @@ impl<'a> CopyContext<'a> {
     pub fn finish<T>(&self, result: napi::Result<T>) -> Result<T, RuntimeError> {
         result.map_err(|_| self.error.take().unwrap_or(RuntimeError::InvalidArgument))
     }
-    fn checked<T>(&self, result: Result<T, RuntimeError>) -> napi::Result<T> {
+    pub(crate) fn checked<T>(&self, result: Result<T, RuntimeError>) -> napi::Result<T> {
         result.map_err(|error| {
             self.error.set(Some(error));
             marshal::err("wire input copy refused".into())

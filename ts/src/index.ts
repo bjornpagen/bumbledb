@@ -65,6 +65,12 @@ export {
 } from "#errors.ts"
 export { EventDescriptor } from "#event-descriptor.ts"
 export type {
+	EventDescriptorDescription,
+	EventDescriptorInspection,
+	EventFibreDescription,
+	EventMapDescription
+} from "#event-descriptor-data.ts"
+export type {
 	AnyFace,
 	Arity,
 	Face,

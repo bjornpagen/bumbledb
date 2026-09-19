@@ -21,6 +21,7 @@ use napi::bindgen_prelude::{Buffer, Env, Object};
 use napi_derive::napi;
 
 pub mod db_wire;
+pub mod event_descriptor_wire;
 pub mod event_wire;
 #[cfg(test)]
 mod fingerprint_lock;
