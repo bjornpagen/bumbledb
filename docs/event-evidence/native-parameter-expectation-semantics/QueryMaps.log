@@ -1,0 +1,18 @@
+'QueryMaps.evaluation_depends_only_on_demands' depends on axioms: [propext, Quot.sound]
+'QueryMaps.constant_results_retain_demands' does not depend on any axioms
+'QueryMaps.conjunction_checks_both' depends on axioms: [propext, Quot.sound]
+'QueryMaps.choice_checks_every_branch' depends on axioms: [propext, Quot.sound]
+'QueryMaps.image_keeps_input_scope' does not depend on any axioms
+'QueryMaps.pullback_keeps_target_scope' does not depend on any axioms
+'QueryMaps.typed_boundaries_cannot_retag_a_shared_variable' depends on axioms: [propext]
+'QueryMaps.repeated_variables_retain_distinct_expected_contexts' depends on axioms: [propext, Quot.sound]
+'QueryMaps.no_faults_iff_every_occurrence_is_admitted' depends on axioms: [propext, Quot.sound]
+'QueryMaps.image_query_exact' does not depend on any axioms
+'QueryMaps.universal_query_exact' does not depend on any axioms
+'QueryMaps.inhabited_query_keeps_nonvacuity' does not depend on any axioms
+'QueryMaps.possible_is_image_then_pullback' does not depend on any axioms
+'QueryMaps.guaranteed_is_universal_then_pullback' does not depend on any axioms
+'QueryMaps.possible_contains_the_input' does not depend on any axioms
+'QueryMaps.guaranteed_is_inside_the_input' does not depend on any axioms
+'QueryMaps.pullback_preserves_conditional' does not depend on any axioms
+'QueryMaps.unreachable_image_distinguishes_universal_and_nonvacuous' depends on axioms: [propext, Quot.sound]

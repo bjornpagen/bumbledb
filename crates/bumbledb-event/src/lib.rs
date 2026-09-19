@@ -56,10 +56,10 @@ pub use map::{CoordinateMap, SurjectiveMap};
 pub use measure::{DensityPiece, LawLimits, ProbabilityObservation};
 pub use parameter::{
     GuardedRationalFunction, ParameterCell, ParameterCodecLimits, ParameterConditioning,
-    ParameterDensityPiece, ParameterDomain, ParameterFunction, ParameterGuard, ParameterLimits,
-    ParameterProbabilityObservation, ParameterRefinement, ParameterRegion, ParameterRestriction,
-    ParameterRevisedSource, ParameterSourceLimits, ParameterWorld, PolynomialSigns, RealWitness,
-    WorldCardinality,
+    ParameterDensityPiece, ParameterDomain, ParameterExpectationObservation, ParameterFunction,
+    ParameterGuard, ParameterLimits, ParameterProbabilityObservation, ParameterRefinement,
+    ParameterRegion, ParameterRestriction, ParameterRevisedSource, ParameterSourceLimits,
+    ParameterWorld, PolynomialSigns, RealWitness, WorldCardinality,
 };
 pub use partition::{EventPartition, PartitionLimits};
 pub use polynomial::{ExactPolynomial, ParameterId, PolynomialLimits, PolynomialTerm};
@@ -137,3 +137,6 @@ mod parameter_refinement_tests;
 
 #[cfg(test)]
 mod parameter_revision_tests;
+
+#[cfg(test)]
+mod parameter_expectation_tests;

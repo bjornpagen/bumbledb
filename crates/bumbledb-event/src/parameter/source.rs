@@ -9,10 +9,12 @@ use crate::{
     Space,
 };
 
+mod expectation;
 mod measure;
 mod refinement;
 mod revision;
 pub(crate) mod wire;
+pub use expectation::ParameterExpectationObservation;
 pub use measure::{ParameterDensityPiece, ParameterProbabilityObservation};
 pub use refinement::ParameterRefinement;
 pub use revision::{ParameterConditioning, ParameterRestriction, ParameterRevisedSource};

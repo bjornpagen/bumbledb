@@ -1,0 +1,11 @@
+'Ground.retain_empty' does not depend on any axioms
+'Ground.retain_full' does not depend on any axioms
+'Ground.same_context' depends on axioms: [propext]
+'Ground.foreign_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Ground.empty_still_remembers' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Ground.full_still_remembers' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Ground.empty_needs_no_target' depends on axioms: [propext, Quot.sound]
+'Ground.full_covers_every_event' depends on axioms: [propext, Quot.sound]
+'Ground.nonempty_requires_witness' does not depend on any axioms
+'Ground.binding_preserves_coverage' does not depend on any axioms
+'Ground.portable_identity' does not depend on any axioms

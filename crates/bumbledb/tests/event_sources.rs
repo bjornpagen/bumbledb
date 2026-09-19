@@ -1229,6 +1229,7 @@ fn check_family_posterior(answers: &bumbledb::Answers) {
     else {
         panic!("family posterior")
     };
+    check_family_query_payoff(head, observed);
     let probability = head
         .parameter_probability(observed, limits, &mut arithmetic())
         .unwrap();
@@ -1259,6 +1260,37 @@ fn check_family_posterior(answers: &bumbledb::Answers) {
             .unwrap(),
         Some(ratio(0, 1))
     );
+}
+
+fn check_family_query_payoff(head: &bumbledb::Event, observed: &bumbledb::Event) {
+    use bumbledb::event::{FiniteFunction, FunctionPiece, ParameterSourceLimits};
+    let limits = ParameterSourceLimits::default();
+    let function = FiniteFunction::new(
+        &head.space(),
+        &[FunctionPiece {
+            region: head.clone(),
+            value: 4u64.into(),
+        }],
+        limits.functions,
+        &mut arithmetic(),
+    )
+    .unwrap();
+    let observation = function
+        .parameter_expectation(observed, limits, &mut arithmetic())
+        .unwrap();
+    drop(function);
+    for n in 0..=8 {
+        assert_eq!(
+            observation
+                .value_at(&ratio(n, 8), limits, &mut arithmetic())
+                .unwrap(),
+            if n == 0 || n == 8 {
+                None
+            } else {
+                Some(2u64.into())
+            }
+        );
+    }
 }
 
 #[test]
