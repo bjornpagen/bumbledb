@@ -362,7 +362,7 @@ fn static_shape_and_type_refusals_precede_query_normalization() {
 }
 
 #[test]
-fn probability_refuses_interior_results_and_combined_oversized_operands() {
+fn probability_admits_interiors_and_refuses_combined_oversized_operands() {
     let directory = common::TempDir::new("probability-validation");
     let db = Db::create(directory.path(), EventQueries, common::work())
         .unwrap()
@@ -371,12 +371,7 @@ fn probability_refuses_interior_results_and_combined_oversized_operands() {
         interior observed(chance: Probability(a, Full(a))) | Region(region: a);
         (id) | Region(id);
     });
-    assert!(matches!(
-        db.prepare(&interior, common::work()),
-        Err(Error::Validation(
-            bumbledb::ValidationError::ObservationInterior { .. }
-        ))
-    ));
+    assert!(db.prepare(&interior, common::work()).is_ok());
     let template = query!(EventQueries { (chance: Probability(a, Full(a))) | Region(region: a); });
     let mut ir = (*template).clone();
     let mut wide = EventExpr::Var(VarId(0));

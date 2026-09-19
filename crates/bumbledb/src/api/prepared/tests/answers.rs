@@ -48,10 +48,18 @@ fn expectation_finalization_preserves_the_initialized_prefix_on_failed_append() 
                 &mut EitherSink::Projection(sink),
                 &mut Vec::new(),
                 &mut ResolveMemo::new(),
-                &interner,
+                crate::api::prepared::finalize::AnswerSources {
+                    interner: &interner,
+                    observations: &crate::api::prepared::observations::ObservationRegistry::default(
+                    ),
+                    work: &work,
+                },
                 &[SignatureColumn::Expectation],
                 out,
-                &work,
+                &mut crate::event::ExactArithmetic::new(
+                    crate::event::ArithmeticLimits::default(),
+                    &(),
+                ),
             )
         };
         let mut out = Answers::new();
@@ -173,10 +181,18 @@ fn probability_finalization_rolls_back_only_failed_appends_in_ram_and_spill() {
                 &mut EitherSink::Projection(sink),
                 &mut Vec::new(),
                 &mut ResolveMemo::new(),
-                &interner,
+                crate::api::prepared::finalize::AnswerSources {
+                    interner: &interner,
+                    observations: &crate::api::prepared::observations::ObservationRegistry::default(
+                    ),
+                    work: &work,
+                },
                 &[SignatureColumn::Probability],
                 out,
-                &work,
+                &mut crate::event::ExactArithmetic::new(
+                    crate::event::ArithmeticLimits::default(),
+                    &(),
+                ),
             )
         };
         let mut out = Answers::new();
@@ -244,10 +260,14 @@ fn event_results_resolve_spilled_keys_and_reject_stale_keys() {
         &mut EitherSink::Projection(sink),
         &mut Vec::new(),
         &mut ResolveMemo::new(),
-        &interner,
+        crate::api::prepared::finalize::AnswerSources {
+            interner: &interner,
+            observations: &crate::api::prepared::observations::ObservationRegistry::default(),
+            work: &work,
+        },
         &columns,
         &mut out,
-        &work,
+        &mut crate::event::ExactArithmetic::new(crate::event::ArithmeticLimits::default(), &()),
     )
     .unwrap();
     drop(generation);
@@ -275,10 +295,14 @@ fn event_results_resolve_spilled_keys_and_reject_stale_keys() {
             &mut EitherSink::Projection(sink),
             &mut Vec::new(),
             &mut ResolveMemo::new(),
-            &interner,
+            crate::api::prepared::finalize::AnswerSources {
+                interner: &interner,
+                observations: &crate::api::prepared::observations::ObservationRegistry::default(),
+                work: &work
+            },
             &columns,
             &mut refused,
-            &work,
+            &mut crate::event::ExactArithmetic::new(crate::event::ArithmeticLimits::default(), &())
         ),
         Err(crate::Error::Event(crate::event::Error::UnknownKey))
     ));
@@ -316,10 +340,14 @@ fn finalize_mixed_test_rows(
         &mut EitherSink::Projection(projection),
         &mut Vec::new(),
         &mut ResolveMemo::new(),
-        &interner,
+        crate::api::prepared::finalize::AnswerSources {
+            interner: &interner,
+            observations: &crate::api::prepared::observations::ObservationRegistry::default(),
+            work: &work,
+        },
         &columns,
         out,
-        &work,
+        &mut crate::event::ExactArithmetic::new(crate::event::ArithmeticLimits::default(), &()),
     )
 }
 
@@ -628,4 +656,71 @@ fn text_compare_refusal_fails_the_query() {
     let mut out = Answers::new();
     let err = prepared.execute_source(&source, &[BindValue::U64(7), BindValue::I64(0)], &mut out);
     assert!(err.is_err(), "refusal must fail the query");
+}
+
+#[test]
+fn staged_observation_copy_rolls_back_failed_appends_in_both_representations() {
+    use crate::event::{
+        ArithmeticLimits, DensityPiece, ExactArithmetic, ExactRational, LawLimits, Space, SpaceId,
+    };
+    use crate::ir::validate::{ObservationKind, SignatureColumn};
+    let work = crate::WorkContext::new();
+    let generation = crate::image::test_generation();
+    let interner = crate::image::intern::InternerHandle::new(&generation, &work);
+    let mut arithmetic = ExactArithmetic::new(ArithmeticLimits::default(), &work);
+    let raw = Space::new(SpaceId([247; 32]), 0, &work).unwrap();
+    let source = raw
+        .with_density(
+            &[DensityPiece {
+                region: raw.full(),
+                density: ExactRational::one(),
+            }],
+            LawLimits::default(),
+            &mut arithmetic,
+        )
+        .unwrap();
+    let observation =
+        crate::ProbabilityAnswer::new(source.full(), source.full(), &mut arithmetic).unwrap();
+    let mut owners = super::super::observations::ObservationRegistry::default();
+    assert_eq!(
+        owners.copy(AnswerValue::Probability(&observation)).unwrap(),
+        0
+    );
+    for spill in [false, true] {
+        let mut out = Answers::new();
+        out.begin(1);
+        let mut append = |tokens: &[u64], out: &mut Answers| {
+            let mut sink = ProjectionSink::new(vec![0]);
+            sink.begin(Some(work.clone()));
+            for token in tokens {
+                sink.insert_row(&[*token]).unwrap();
+            }
+            if spill {
+                sink.force_spill().unwrap();
+            }
+            super::super::finalize::finalize(
+                &mut EitherSink::Projection(sink),
+                &mut Vec::new(),
+                &mut ResolveMemo::new(),
+                super::super::finalize::AnswerSources {
+                    interner: &interner,
+                    observations: &owners,
+                    work: &work,
+                },
+                &[SignatureColumn::ProjectObservation(
+                    ObservationKind::Probability,
+                )],
+                out,
+                &mut arithmetic,
+            )
+        };
+        append(&[0], &mut out).unwrap();
+        assert!(append(&[0, 99], &mut out).is_err());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.observed.checkpoint(), (1, 0));
+        assert_eq!(out.get(0, 0), AnswerValue::Probability(&observation));
+        append(&[0], &mut out).unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out.get(1, 0), AnswerValue::Probability(&observation));
+    }
 }

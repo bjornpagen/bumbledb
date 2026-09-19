@@ -367,7 +367,7 @@ fn expectation_matches_independent_four_world_oracle_for_all_regions_and_evidenc
 }
 
 #[test]
-fn expectation_checks_types_on_empty_inputs_and_refuses_observation_interiors() {
+fn expectation_checks_types_on_empty_inputs_and_admits_observation_interiors() {
     let dir = common::TempDir::new("expectation-static-validation");
     let db = Db::create(dir.path(), Payoffs, common::work())
         .unwrap()
@@ -410,12 +410,7 @@ fn expectation_checks_types_on_empty_inputs_and_refuses_observation_interiors() 
         interior observed(expected: Expectation(value, region, evidence)) | Payoff(value, region, evidence);
         (expected) | observed(expected);
     });
-    assert!(matches!(
-        db.prepare(&staged, common::work()),
-        Err(Error::Validation(
-            bumbledb::ValidationError::ObservationInterior { .. }
-        ))
-    ));
+    assert!(db.prepare(&staged, common::work()).is_ok());
 }
 
 #[test]

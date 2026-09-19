@@ -99,7 +99,7 @@ pub enum ExpectationFunction<'a> {
 pub struct ExpectationAnswer {
     input: ExpectationPayoff,
     value: ExpectationValue,
-    function_identity: Box<[u8]>,
+    pub(crate) function_identity: Box<[u8]>,
 }
 
 impl ExpectationAnswer {

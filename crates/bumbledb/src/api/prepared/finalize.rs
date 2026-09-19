@@ -2,6 +2,7 @@ use std::mem::MaybeUninit;
 
 use super::{Answers, Cell, EitherSink, ResolveMemo, ValueType};
 
+use super::observations::ObservationRegistry;
 use super::source::work_error;
 use crate::error::Result;
 use crate::exec::sink::{ProjectionSink, ResidentRows};
@@ -9,20 +10,30 @@ use crate::image::intern::InternerHandle;
 use crate::ir::validate::SignatureColumn;
 use crate::work::WorkContext;
 
+/// Every decoded row resolves against the same execution owners and control.
+#[derive(Clone, Copy)]
+pub(super) struct AnswerSources<'a, 'b> {
+    pub(super) interner: &'a InternerHandle<'b>,
+    pub(super) observations: &'a ObservationRegistry,
+    pub(super) work: &'a WorkContext,
+}
+
 pub(super) fn finalize(
     sink: &mut EitherSink,
     answer_scratch: &mut Vec<u64>,
     memo: &mut ResolveMemo,
-    interner: &InternerHandle<'_>,
+    sources: AnswerSources<'_, '_>,
     columns: &[SignatureColumn],
     out: &mut Answers,
-    work: &WorkContext,
+    arithmetic: &mut crate::event::ExactArithmetic<'_>,
 ) -> Result<()> {
+    let work = sources.work;
     let base = out.cells.len();
     let probabilities = out.probabilities.len();
     let expectations = out.expectations.len();
-    let result = finalize_rows(sink, answer_scratch, memo, interner, columns, out, work)
-        .and_then(|()| out.finish_observations(work));
+    let observed = out.observed.checkpoint();
+    let result = finalize_rows(sink, answer_scratch, memo, sources, columns, out)
+        .and_then(|()| out.finish_observations(work, arithmetic));
     if result.is_err() {
         if base == 0 {
             out.clear();
@@ -32,6 +43,7 @@ pub(super) fn finalize(
             out.cells.truncate(base);
             out.probabilities.truncate(probabilities);
             out.expectations.truncate(expectations);
+            out.observed.rollback(observed);
             out.expectation_inputs.clear();
             out.probability_pairs.clear();
             out.probability_indices
@@ -48,26 +60,18 @@ fn finalize_rows(
     sink: &mut EitherSink,
     answer_scratch: &mut Vec<u64>,
     memo: &mut ResolveMemo,
-    interner: &InternerHandle<'_>,
+    sources: AnswerSources<'_, '_>,
     columns: &[SignatureColumn],
     out: &mut Answers,
-    work: &WorkContext,
 ) -> Result<()> {
+    let work = sources.work;
     work.checkpoint().map_err(work_error)?;
     memo.clear();
     match sink {
         EitherSink::Computed(sink) => {
             sink.finish_events()?;
             out.expectation_inputs = std::mem::take(&mut sink.expectation_inputs);
-            finalize_rows(
-                &mut sink.inner,
-                answer_scratch,
-                memo,
-                interner,
-                columns,
-                out,
-                work,
-            )
+            finalize_rows(&mut sink.inner, answer_scratch, memo, sources, columns, out)
         }
         EitherSink::Projection(sink) => {
             let base = out.cells.len();
@@ -77,9 +81,9 @@ fn finalize_rows(
                 Err(error)
             } else if sink.spilled() {
                 // The spilled drain is row-major across both tiers.
-                drain_spilled_answers(out, interner, memo, columns, sink, work)
+                drain_spilled_answers(out, sources, memo, columns, sink)
             } else {
-                fill_resolved_answers(out, interner, memo, columns, sink, work)
+                fill_resolved_answers(out, sources, memo, columns, sink)
             };
             if result.is_err() {
                 // The fills pre-size/append rows: drop the partial carrier
@@ -96,7 +100,7 @@ fn finalize_rows(
             );
             sink.finalize_into(answer_scratch, |answer| {
                 work.checkpoint().map_err(work_error)?;
-                push_resolved_answer(out, interner, memo, columns, answer)?;
+                push_resolved_answer(out, sources, memo, columns, answer)?;
                 Ok(())
             })
         }
@@ -105,35 +109,34 @@ fn finalize_rows(
 
 fn drain_spilled_answers(
     out: &mut Answers,
-    interner: &InternerHandle<'_>,
+    sources: AnswerSources<'_, '_>,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     sink: &mut ProjectionSink,
-    work: &WorkContext,
 ) -> Result<()> {
+    let work = sources.work;
     sink.for_each_answer(&mut |answer| {
         work.checkpoint().map_err(work_error)?;
-        push_resolved_answer(out, interner, memo, columns, answer)
+        push_resolved_answer(out, sources, memo, columns, answer)
     })
 }
 
 fn fill_resolved_answers(
     out: &mut Answers,
-    interner: &InternerHandle<'_>,
+    sources: AnswerSources<'_, '_>,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     sink: &ProjectionSink,
-    work: &WorkContext,
 ) -> Result<()> {
     // Dense results must remain a linear walk. Select the representation
     // once, not on every `next()` of every output column. Hash-backed rows
     // keep their insertion order and exact-key deduplication unchanged.
     match sink.answers() {
         ResidentRows::Dense(answers) => {
-            fill_resident_rows(out, interner, memo, columns, sink.len(), &answers, work)
+            fill_resident_rows(out, sources, memo, columns, sink.len(), &answers)
         }
         ResidentRows::Hashed(answers) => {
-            fill_resident_rows(out, interner, memo, columns, sink.len(), &answers, work)
+            fill_resident_rows(out, sources, memo, columns, sink.len(), &answers)
         }
     }
 }
@@ -144,13 +147,17 @@ fn fill_resolved_answers(
 )]
 fn fill_resident_rows<'a>(
     out: &mut Answers,
-    interner: &InternerHandle<'_>,
+    sources: AnswerSources<'_, '_>,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     rows: usize,
     answers: &(impl Iterator<Item = &'a [u64]> + Clone),
-    work: &WorkContext,
 ) -> Result<()> {
+    let AnswerSources {
+        interner,
+        observations,
+        work,
+    } = sources;
     let arity = columns.len();
     let base = out.cells.len();
     let additional = rows
@@ -160,6 +167,17 @@ fn fill_resident_rows<'a>(
     let mut offset = 0;
     for (col, column) in columns.iter().enumerate() {
         work.checkpoint().map_err(work_error)?;
+        if let SignatureColumn::ProjectObservation(kind) = column {
+            let mut answers = answers.clone();
+            for row in 0..rows {
+                work.checkpoint().map_err(work_error)?;
+                let answer = answers.next().expect("resident sink length");
+                let cell = out.observed_cell(observations, *kind, answer[offset])?;
+                out.cells.spare_capacity_mut()[row * arity + col].write(cell);
+            }
+            offset += 1;
+            continue;
+        }
         if matches!(column, SignatureColumn::Expectation) {
             let mut answers = answers.clone();
             for row in 0..rows {
@@ -338,13 +356,24 @@ fn fill_fixed_chunk<'a>(
 
 fn push_resolved_answer(
     out: &mut Answers,
-    interner: &InternerHandle<'_>,
+    sources: AnswerSources<'_, '_>,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     answer: &[u64],
 ) -> Result<()> {
+    let AnswerSources {
+        interner,
+        observations,
+        ..
+    } = sources;
     let mut word = 0;
     for column in columns {
+        if let SignatureColumn::ProjectObservation(kind) = column {
+            let cell = out.observed_cell(observations, *kind, answer[word])?;
+            out.cells.push(cell);
+            word += 1;
+            continue;
+        }
         if matches!(column, SignatureColumn::Expectation) {
             out.cells.push(out.expectation_cell(answer[word])?);
             word += 1;

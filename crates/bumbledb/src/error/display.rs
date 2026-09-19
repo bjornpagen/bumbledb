@@ -726,9 +726,13 @@ impl fmt::Display for ValidationError {
         match self {
             Self::EmptyRuleSet => write!(f, "the rule set is empty — the empty union is no query"),
             Self::ScalarExpression { find, source } => write!(f, "find {find}: {source}"),
-            Self::ObservationInterior { interior, find } => write!(
+            Self::ObservationBinding { atom, field } => write!(
                 f,
-                "interior {interior:?} find {find}: observation results require a final query head"
+                "Observation at atom {atom:?}, field {field:?} requires a query variable"
+            ),
+            Self::ObservationOperand { find, var } => write!(
+                f,
+                "Observation variable {var:?} is not a stored scalar or Event operand at {find:?}"
             ),
             Self::EventExpression { find, source } => write!(f, "find {find}: {source}"),
             Self::TooManyRules { count } => {

@@ -1,0 +1,6 @@
+{
+  "passed": true,
+  "scope": "Qualified native source hashes compared with exact staged Git blobs",
+  "source_files": 1313,
+  "qualification_sha256": "2e839361b5ff82a4351bab50ff379cd060efcccbbe9f5e170d4dbfb3eeffc80e"
+}

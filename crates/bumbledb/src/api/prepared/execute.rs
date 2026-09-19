@@ -161,8 +161,12 @@ impl<S> PreparedQuery<S> {
             None => None,
         };
 
-        let ran = self.run_rules(images, &mut NoopCounters)?;
-        self.finish_sink(images, ran, out)
+        let mut arithmetic = crate::event::ExactArithmetic::new(
+            crate::event::ArithmeticLimits::default(),
+            images.source().work(),
+        );
+        let ran = self.run_rules(images, &mut NoopCounters, &mut arithmetic)?;
+        self.finish_sink(images, ran, out, &mut arithmetic)
     }
 
     /// Route every Free Join rule through the complete cursor fallback —
@@ -179,6 +183,7 @@ impl<S> PreparedQuery<S> {
         images: &SourceImages<'_>,
         ran: bool,
         out: &mut Answers,
+        arithmetic: &mut crate::event::ExactArithmetic<'_>,
     ) -> Result<()> {
         // raised before finalize — never a partial result. Executor-side
 
@@ -190,10 +195,14 @@ impl<S> PreparedQuery<S> {
             &mut self.sink,
             &mut self.answer_scratch,
             &mut self.resolve_memo,
-            &interner,
+            crate::api::prepared::finalize::AnswerSources {
+                interner: &interner,
+                observations: &self.derived.observations,
+                work: images.source().work(),
+            },
             &self.signature.columns,
             out,
-            images.source().work(),
+            arithmetic,
         )
     }
 
@@ -201,9 +210,10 @@ impl<S> PreparedQuery<S> {
         &mut self,
         images: &SourceImages<'_>,
         counters: &mut Cnt,
+        arithmetic: &mut crate::event::ExactArithmetic<'_>,
     ) -> Result<bool> {
         if self.pipeline.has_derived() {
-            let derived_ran = self.run_derived(images, counters)?;
+            let derived_ran = self.run_derived(images, counters, arithmetic)?;
             if self.pipeline.main_rules().is_empty() {
                 return Ok(derived_ran);
             }

@@ -13,6 +13,7 @@ impl Answers {
 
     pub fn clear(&mut self) {
         self.cells.clear();
+        self.observed.clear();
         self.text.clear();
         self.blob.clear();
         self.events.clear();
@@ -54,6 +55,10 @@ impl Answers {
     pub fn get(&self, answer: usize, column: usize) -> AnswerValue<'_> {
         assert!(column < self.arity && answer < self.len());
         match self.cells[answer * self.arity + column] {
+            Cell::Observed { kind, token } => self
+                .observed
+                .get(kind, token)
+                .expect("owned observation token"),
             Cell::Expectation(index) => AnswerValue::Expectation(&self.expectations[index]),
             Cell::Probability(index) => AnswerValue::Probability(&self.probabilities[index]),
             Cell::Event(index) => AnswerValue::Event(&self.events[index]),
@@ -158,6 +163,16 @@ impl Answers {
         Cell::Event(index)
     }
 
+    pub(super) fn observed_cell(
+        &mut self,
+        owners: &super::observations::ObservationRegistry,
+        kind: crate::ir::validate::ObservationKind,
+        token: u64,
+    ) -> Result<Cell> {
+        let token = self.observed.copy(owners.get(kind, token)?)?;
+        Ok(Cell::Observed { kind, token })
+    }
+
     /// Retain the whole source pair; equal masses do not collapse observations.
     pub(super) fn probability_cell(
         &mut self,
@@ -184,9 +199,11 @@ impl Answers {
 
     /// Complete all exact observations before publishing any row. One budget
     /// spans the full result; pair identity allows repeated outputs to share work.
-    pub(super) fn finish_observations(&mut self, control: &crate::WorkContext) -> Result<()> {
-        let mut work =
-            crate::event::ExactArithmetic::new(crate::event::ArithmeticLimits::default(), control);
+    pub(super) fn finish_observations(
+        &mut self,
+        control: &crate::WorkContext,
+        work: &mut crate::event::ExactArithmetic<'_>,
+    ) -> Result<()> {
         // Normalize and admit all payoff rosters before any measurement. One
         // arithmetic counter spans these checks and every following contraction.
         let mut admitted = Vec::new();
@@ -194,7 +211,7 @@ impl Answers {
             .try_reserve_exact(self.expectation_inputs.len())
             .map_err(crate::event::Error::from)?;
         for input in &self.expectation_inputs {
-            admitted.push(input.admit(control, &mut work)?);
+            admitted.push(input.admit(control, work)?);
         }
         self.probabilities
             .try_reserve_exact(self.probability_pairs.len())
@@ -203,7 +220,7 @@ impl Answers {
             self.probabilities.push(crate::ProbabilityAnswer::new(
                 event.clone(),
                 given.clone(),
-                &mut work,
+                work,
             )?);
         }
         self.probability_pairs.clear();
@@ -212,7 +229,7 @@ impl Answers {
             .map_err(crate::event::Error::from)?;
         for input in admitted {
             self.expectations
-                .push(crate::ExpectationAnswer::new(input, &mut work)?);
+                .push(crate::ExpectationAnswer::new(input, work)?);
         }
         self.expectation_inputs.clear();
         Ok(())

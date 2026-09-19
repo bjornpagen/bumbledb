@@ -1,7 +1,7 @@
 //! Find-list rules: Datalog safety and the aggregate roster
 //! query's signature derivation, the ONE place result-column types
 //! come from.
-use super::{AggKind, Context, RuleTyping, Signature, SignatureColumn};
+use super::{AggKind, Context, QueryType, RuleTyping, Signature, SignatureColumn};
 use crate::error::{FindIndex, ValidationError};
 use crate::ir::normalize::LoweredRule;
 use crate::ir::{FindTerm, FoldOp, VarId};
@@ -15,6 +15,12 @@ impl Signature {
         for (position, (left, right)) in self.columns.iter_mut().zip(&other.columns).enumerate() {
             if left.op() != right.op() {
                 return Err(position);
+            }
+            if matches!(
+                (&*left, right),
+                (SignatureColumn::ProjectObservation(_), SignatureColumn::ProjectObservation(_)) if left.binding_type() == right.binding_type()
+            ) {
+                continue;
             }
             if matches!(
                 (&*left, right),
@@ -39,7 +45,9 @@ impl Signature {
             match left {
                 SignatureColumn::Project { ty: current }
                 | SignatureColumn::Fold { ty: current, .. } => *current = ty,
-                SignatureColumn::Probability | SignatureColumn::Expectation => {
+                SignatureColumn::Probability
+                | SignatureColumn::Expectation
+                | SignatureColumn::ProjectObservation(_) => {
                     unreachable!("matched above")
                 }
             }
@@ -48,12 +56,22 @@ impl Signature {
     }
 
     pub(super) fn derive(rule: &LoweredRule, typing: &RuleTyping) -> Self {
-        let var_type = |var: &VarId| typing.var_types.get(var).copied().expect("typed var");
+        let var_type = |var: &VarId| {
+            *typing
+                .var_types
+                .get(var)
+                .expect("typed var")
+                .stored()
+                .expect("validated scalar find")
+        };
         let columns = rule
             .finds
             .iter()
             .map(|term| match term {
-                FindTerm::Var(var) => SignatureColumn::Project { ty: var_type(var) },
+                FindTerm::Var(var) => match typing.var_types[var] {
+                    QueryType::Stored(ty) => SignatureColumn::Project { ty },
+                    QueryType::Observation(kind) => SignatureColumn::ProjectObservation(kind),
+                },
                 FindTerm::Segments { left, .. } => SignatureColumn::Project {
                     ty: ValueType::Interval {
                         element: var_type(left)
@@ -63,7 +81,13 @@ impl Signature {
                 },
                 FindTerm::Compute(expr) => SignatureColumn::Project {
                     ty: expr
-                        .result_type(|var| typing.var_types.get(&var).copied())
+                        .result_type(|var| {
+                            typing
+                                .var_types
+                                .get(&var)
+                                .and_then(QueryType::stored)
+                                .copied()
+                        })
                         .expect("validated output expression"),
                 },
                 FindTerm::Event(_) => SignatureColumn::Project {
@@ -119,6 +143,25 @@ impl Context {
         let mut pack_seen = false;
         for (find_idx, term) in rule.finds.iter().enumerate() {
             let find = FindIndex(find_idx);
+            let required: Vec<VarId> = match term {
+                FindTerm::Var(_) | FindTerm::Count => Vec::new(),
+                FindTerm::Compute(expr) => expr.variables().collect(),
+                FindTerm::Segments { left, right, .. } => vec![*left, *right],
+                FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => vec![*over],
+                FindTerm::Expectation { value, when, given } => {
+                    value.variables().chain([*when, *given]).collect()
+                }
+                _ => term
+                    .event_variables()
+                    .expect("Event find")
+                    .into_iter()
+                    .collect(),
+            };
+            for var in required {
+                if matches!(self.var_types.get(&var), Some(QueryType::Observation(_))) {
+                    return Err(ValidationError::ObservationOperand { find, var });
+                }
+            }
             match term {
                 FindTerm::Event(_) | FindTerm::Test(_) | FindTerm::Probability { .. } => {
                     for var in term.event_variables().expect("Event expression") {
@@ -187,7 +230,12 @@ impl Context {
                 }
                 FindTerm::Compute(expr) => {
                     let ty = expr
-                        .result_type(|var| self.var_types.get(&var).copied())
+                        .result_type(|var| {
+                            self.var_types
+                                .get(&var)
+                                .and_then(QueryType::stored)
+                                .copied()
+                        })
                         .map_err(|source| ValidationError::ScalarExpression { find, source })?;
                     if !matches!(
                         ty,

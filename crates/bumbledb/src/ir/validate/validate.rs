@@ -173,12 +173,6 @@ fn seal_interiors(
         )?;
         let (typings, signature) =
             type_rules(schema, &sigs(&sealed, id), &head, &lowered, params, false)?;
-        if let Some(position) = signature.columns.iter().position(|c| c.ty().is_none()) {
-            return Err(ValidationError::ObservationInterior {
-                interior: id,
-                find: FindIndex(position),
-            });
-        }
         sealed.push(signature.clone());
         interiors_out.push(ValidatedInterior {
             lowered,
@@ -550,7 +544,9 @@ impl ParamTables {
         for (param, slot) in ctx.param_slots {
             let value_type = match slot {
                 TypeSlot::Mono(value_type) => value_type,
-                TypeSlot::Bivalent { .. } => unreachable!("resolve_bivalents ran"),
+                TypeSlot::Bivalent { .. } | TypeSlot::Observation(_) => {
+                    unreachable!("parameters have stored types")
+                }
             };
             match self.param_types.get(&param) {
                 Some(existing) if *existing != value_type => {

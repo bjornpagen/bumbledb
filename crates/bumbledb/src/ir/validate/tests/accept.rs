@@ -19,8 +19,14 @@ fn accepts_the_containment_walk_join_with_conditions() {
         })],
     });
     let witness = validate(&schema(), &query).expect("valid");
-    assert_eq!(witness.rule(0).var_type(VarId(0)), &ValueType::U64);
-    assert_eq!(witness.rule(0).var_type(VarId(2)), &ValueType::I64);
+    assert_eq!(
+        witness.rule(0).var_type(VarId(0)).stored().unwrap(),
+        &ValueType::U64
+    );
+    assert_eq!(
+        witness.rule(0).var_type(VarId(2)).stored().unwrap(),
+        &ValueType::I64
+    );
     assert_eq!(witness.rule(0).group_key().len(), 1);
 }
 
@@ -108,7 +114,10 @@ fn accepts_membership_bound_variable_with_a_scalar_binding_elsewhere() {
         ],
     );
     let witness = validate(&schema(), &query).expect("valid");
-    assert_eq!(witness.rule(0).var_type(VarId(1)), &ValueType::U64);
+    assert_eq!(
+        witness.rule(0).var_type(VarId(1)).stored().unwrap(),
+        &ValueType::U64
+    );
 }
 
 #[test]
@@ -122,7 +131,7 @@ fn accepts_a_variable_joined_across_two_interval_fields() {
     );
     let witness = validate(&schema(), &query).expect("valid");
     assert_eq!(
-        witness.rule(0).var_type(VarId(1)),
+        witness.rule(0).var_type(VarId(1)).stored().unwrap(),
         &ValueType::Interval {
             element: IntervalElement::U64
         }

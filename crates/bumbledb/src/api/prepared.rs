@@ -29,6 +29,7 @@ mod execute;
 mod fallback;
 mod finalize;
 mod introspect;
+mod observations;
 pub(crate) mod reach;
 mod resolve_memo;
 pub(crate) mod result;
@@ -196,6 +197,10 @@ pub enum AnswerValue<'a> {
 /// span collapses at materialization).
 #[derive(Debug, Clone, Copy)]
 enum Cell {
+    Observed {
+        kind: crate::ir::validate::ObservationKind,
+        token: u64,
+    },
     Probability(usize),
     Expectation(usize),
     Event(usize),
@@ -204,8 +209,14 @@ enum Cell {
     I64(i64),
     F64(bumbledb_theory::F64),
     Uuid(bumbledb_theory::Uuid),
-    String { start: usize, len: usize },
-    FixedBytes { start: usize, len: usize },
+    String {
+        start: usize,
+        len: usize,
+    },
+    FixedBytes {
+        start: usize,
+        len: usize,
+    },
     IntervalU64(bumbledb_theory::Interval<u64>),
     IntervalI64(bumbledb_theory::Interval<i64>),
     IntervalF64(bumbledb_theory::Interval<bumbledb_theory::F64>),
@@ -227,6 +238,7 @@ pub struct Answers {
     /// The `bytes<N>` cells' heap: raw payloads, no text contract.
     blob: Vec<u8>,
     events: Vec<crate::Event>,
+    observed: observations::ObservationRegistry,
     probabilities: Vec<crate::ProbabilityAnswer>,
     expectations: Vec<crate::ExpectationAnswer>,
     expectation_inputs: Vec<crate::observation::ExpectationInput>,
@@ -378,7 +390,8 @@ pub struct PreparedQuery<S> {
 pub(crate) struct PreparedInterior {
     pub(super) rules: Vec<PreparedRule>,
     pub(super) sink: EitherSink,
-    pub(super) field_types: Vec<bumbledb_theory::schema::ValueType>,
+    pub(super) field_types: Vec<crate::ir::validate::QueryType>,
+    pub(super) columns: Vec<crate::ir::validate::SignatureColumn>,
     pub(super) units: usize,
 }
 

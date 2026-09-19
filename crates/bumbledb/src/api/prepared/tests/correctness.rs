@@ -781,10 +781,14 @@ fn explicitly_spilled_projection_finalizes_exactly_and_reuses_its_plan() {
             &mut prepared.sink,
             &mut prepared.answer_scratch,
             &mut prepared.resolve_memo,
-            &interner,
+            crate::api::prepared::finalize::AnswerSources {
+                interner: &interner,
+                observations: &crate::api::prepared::observations::ObservationRegistry::default(),
+                work: &work,
+            },
             &prepared.signature.columns,
             &mut actual,
-            &work,
+            &mut crate::event::ExactArithmetic::new(crate::event::ArithmeticLimits::default(), &()),
         )
         .unwrap();
         assert_eq!(answers_of(&actual), answers_of(&expected));

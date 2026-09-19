@@ -411,11 +411,12 @@ fn prepare_interior(
         },
     );
     Ok(PreparedInterior {
+        columns: columns.to_vec(),
         rules,
         sink,
         field_types: columns
             .iter()
-            .map(|c| *c.ty().expect("validated relational interior"))
+            .map(crate::ir::validate::SignatureColumn::binding_type)
             .collect(),
         units,
     })
@@ -494,7 +495,7 @@ fn prepare_reach(
         rec: rec_rules,
         field_types: columns
             .iter()
-            .map(|c| *c.ty().expect("validated relational interior"))
+            .map(crate::ir::validate::SignatureColumn::binding_type)
             .collect(),
         sink,
         units,
@@ -508,7 +509,7 @@ fn has_event_diagnostics(rule: crate::ir::validate::RuleWitness<'_>) -> bool {
         | FindTerm::Test(_)
         | FindTerm::Probability { .. }
         | FindTerm::Expectation { .. } => true,
-        FindTerm::Pack { over } => *rule.var_type(*over) == ValueType::Event,
+        FindTerm::Pack { over } => rule.var_type(*over).stored() == Some(&ValueType::Event),
         _ => false,
     })
 }
@@ -935,6 +936,16 @@ fn seal_dnf_spans(rules: &mut [PreparedRule]) {
 }
 
 fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec> {
+    let input = |var| {
+        (
+            var,
+            layout.slot_of(var),
+            *rule
+                .var_type(var)
+                .stored()
+                .expect("validated stored operand"),
+        )
+    };
     rule.rule()
         .finds
         .iter()
@@ -949,7 +960,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                     .variables()
                     .collect::<std::collections::BTreeSet<_>>()
                     .into_iter()
-                    .map(|var| (var, layout.slot_of(var), *rule.var_type(var)))
+                    .map(input)
                     .collect();
                 FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
                     find: find_idx,
@@ -963,10 +974,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                     find: find_idx,
                     rules: rule.minted().to_vec(),
                     expression: term.clone(),
-                    inputs: [*left, *right]
-                        .into_iter()
-                        .map(|var| (var, layout.slot_of(var), *rule.var_type(var)))
-                        .collect(),
+                    inputs: [*left, *right].into_iter().map(input).collect(),
                 }))
             }
             FindTerm::Expectation { value, when, given } => {
@@ -977,7 +985,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                     inputs: value
                         .variables()
                         .chain([*when, *given])
-                        .map(|var| (var, layout.slot_of(var), *rule.var_type(var)))
+                        .map(input)
                         .collect(),
                 }))
             }
@@ -988,7 +996,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                     .into_iter()
                     .collect::<std::collections::BTreeSet<_>>()
                     .into_iter()
-                    .map(|var| (var, layout.slot_of(var), *rule.var_type(var)))
+                    .map(input)
                     .collect();
                 FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
                     find: find_idx,
@@ -998,7 +1006,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                 }))
             }
             FindTerm::Count => FindSpec::Agg(crate::exec::sink::AggSpec::Count),
-            FindTerm::Pack { over } if *rule.var_type(*over) == ValueType::Event => {
+            FindTerm::Pack { over } if rule.var_type(*over).stored() == Some(&ValueType::Event) => {
                 FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
                     find: find_idx,
                     rules: rule.minted().to_vec(),
@@ -1010,7 +1018,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                 slot: layout.slot_of(*over),
             },
             FindTerm::Aggregate { op, over }
-                if *rule.var_type(*over) == ValueType::F64
+                if rule.var_type(*over).stored() == Some(&ValueType::F64)
                     && matches!(op, crate::ir::FoldOp::Sum | crate::ir::FoldOp::Mean) =>
             {
                 FindSpec::Agg(crate::exec::sink::AggSpec::Float {
@@ -1022,7 +1030,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                 op: *op,
                 slot: layout.slot_of(*over),
                 width: layout.width_of(*over),
-                signed: matches!(rule.var_type(*over), ValueType::I64),
+                signed: matches!(rule.var_type(*over).stored(), Some(ValueType::I64)),
             }),
         })
         .collect()

@@ -1,4 +1,6 @@
-use super::{ClassifiedComparison, Context, ParamKind, SealedConst, TypeSlot};
+use super::{
+    ClassifiedComparison, Context, ObservationKind, ParamKind, QueryType, SealedConst, TypeSlot,
+};
 use crate::error::{AtomIndex, ValidationError};
 use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
@@ -293,6 +295,7 @@ impl Context {
                     Err(ValidationError::VariableTypeConflict { var })
                 }
             }
+            Some(TypeSlot::Observation(_)) => Err(ValidationError::VariableTypeConflict { var }),
             None => {
                 self.var_slots.insert(var, TypeSlot::Mono(*value_type));
                 Ok(())
@@ -320,6 +323,7 @@ impl Context {
                     Err(ValidationError::VariableTypeConflict { var })
                 }
             }
+            Some(TypeSlot::Observation(_)) => Err(ValidationError::VariableTypeConflict { var }),
             None => {
                 self.var_slots.insert(
                     var,
@@ -350,6 +354,7 @@ impl Context {
                     Err(ValidationError::ParamTypeConflict { param })
                 }
             }
+            Some(TypeSlot::Observation(_)) => Err(ValidationError::ParamTypeConflict { param }),
             None => {
                 self.param_slots.insert(param, TypeSlot::Mono(*value_type));
                 Ok(())
@@ -377,6 +382,7 @@ impl Context {
                     Err(ValidationError::ParamTypeConflict { param })
                 }
             }
+            Some(TypeSlot::Observation(_)) => Err(ValidationError::ParamTypeConflict { param }),
             None => {
                 self.param_slots.insert(
                     param,
@@ -406,7 +412,9 @@ impl Context {
     /// On a programmer-invariant violation: an unknown `VarId` (every
     /// comparison variable was checked atom-bound before the typed
     pub(super) fn resolved_var_type(&self, var: VarId) -> &ValueType {
-        &self.var_types[&var]
+        self.var_types[&var]
+            .stored()
+            .expect("scalar use checked before scalar classification")
     }
 
     pub(super) fn check_atoms(
@@ -454,12 +462,17 @@ impl Context {
                                 field: *field,
                             });
                         }
-                        &relation.field(*field).value_type
+                        QueryType::Stored(relation.field(*field).value_type)
                     }
                     crate::ir::AtomSource::Interior(interior) => {
                         interiors.column(occ_idx, interior, *field)?
                     }
                 };
+                if let QueryType::Observation(kind) = field_type {
+                    self.check_observation_binding(occ_idx, negated, *field, kind, term)?;
+                    continue;
+                }
+                let field_type = field_type.stored().expect("stored field");
                 if field_type.is_interval() {
                     self.check_interval_binding(occ_idx, negated, *field, field_type, term)?;
                 } else {
@@ -484,6 +497,36 @@ impl Context {
             if !self.atom_vars.contains(var) {
                 return Err(ValidationError::NegatedVariableUnbound { var: *var });
             }
+        }
+        Ok(())
+    }
+
+    fn check_observation_binding(
+        &mut self,
+        occ_idx: usize,
+        negated: bool,
+        field: FieldId,
+        kind: ObservationKind,
+        term: &Term,
+    ) -> Result<(), ValidationError> {
+        let Term::Var(var) = term else {
+            return Err(ValidationError::ObservationBinding {
+                atom: AtomIndex(occ_idx),
+                field,
+            });
+        };
+        match self.var_slots.get(var) {
+            None => {
+                self.var_slots.insert(*var, TypeSlot::Observation(kind));
+            }
+            Some(TypeSlot::Observation(existing)) if *existing == kind => {}
+            Some(_) => return Err(ValidationError::VariableTypeConflict { var: *var }),
+        }
+        if negated {
+            self.negated_vars.insert(*var);
+        } else {
+            self.atom_vars.insert(*var);
+            self.scalar_bound_vars.insert(*var);
         }
         Ok(())
     }
@@ -754,8 +797,9 @@ impl Context {
             .into_iter()
             .map(|(var, slot)| {
                 let value_type = match slot {
-                    TypeSlot::Mono(value_type) => value_type,
-                    TypeSlot::Bivalent { interval } => interval,
+                    TypeSlot::Mono(value_type) => QueryType::Stored(value_type),
+                    TypeSlot::Bivalent { interval } => QueryType::Stored(interval),
+                    TypeSlot::Observation(kind) => QueryType::Observation(kind),
                 };
                 (var, value_type)
             })
@@ -787,6 +831,35 @@ impl Context {
         index: usize,
         shape: &Shaped<'_>,
     ) -> Result<ClassifiedComparison, ValidationError> {
+        let vars: Vec<VarId> = match shape {
+            Shaped::EqVarVar { lhs, rhs, .. }
+            | Shaped::OrdVarVar { lhs, rhs, .. }
+            | Shaped::AllenVarVar { lhs, rhs, .. }
+            | Shaped::PointInVarVar { lhs, rhs } => vec![*lhs, *rhs],
+            Shaped::EqVarConst { var, .. }
+            | Shaped::EqVarSet { var, .. }
+            | Shaped::OrdVarConst { var, .. }
+            | Shaped::AllenVarConst { var, .. }
+            | Shaped::PointInVarConst { var, .. }
+            | Shaped::PointInConstVar { var, .. } => vec![*var],
+        };
+        if vars
+            .iter()
+            .any(|var| matches!(self.var_types[var], QueryType::Observation(_)))
+        {
+            return match shape {
+                Shaped::EqVarVar { negated, lhs, rhs }
+                    if self.var_types[lhs] == self.var_types[rhs] =>
+                {
+                    Ok(ClassifiedComparison::VarVar {
+                        op: equality_op(*negated),
+                        lhs: *lhs,
+                        rhs: *rhs,
+                    })
+                }
+                _ => Err(ValidationError::IllegalComparison { index }),
+            };
+        }
         match shape {
             Shaped::EqVarVar { negated, lhs, rhs } => {
                 let lhs_type = *self.resolved_var_type(*lhs);

@@ -199,8 +199,14 @@ fn variables_are_rule_scoped_so_one_var_id_may_differ_in_type() {
         rec: None,
     };
     let witness = validate(&schema(), &query).expect("per-rule scopes validate");
-    assert_eq!(witness.rule(0).var_type(VarId(0)), &ValueType::U64);
-    assert_eq!(witness.rule(1).var_type(VarId(0)), &ValueType::I64);
+    assert_eq!(
+        witness.rule(0).var_type(VarId(0)).stored().unwrap(),
+        &ValueType::U64
+    );
+    assert_eq!(
+        witness.rule(1).var_type(VarId(0)).stored().unwrap(),
+        &ValueType::I64
+    );
     let types: Vec<ValueType> = witness
         .signature()
         .columns

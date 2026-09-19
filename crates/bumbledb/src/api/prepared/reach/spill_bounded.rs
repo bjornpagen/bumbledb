@@ -46,7 +46,7 @@ fn sealed_scratch_projection_and_aggregate_own_text_after_producer_drop() {
             derived
                 .stash_aggregate(
                     0,
-                    &[ValueType::U64, ValueType::String],
+                    &[ValueType::U64.into(), ValueType::String.into()],
                     &mut sink,
                     &mut Vec::new(),
                     &work,
@@ -61,7 +61,7 @@ fn sealed_scratch_projection_and_aggregate_own_text_after_producer_drop() {
             derived
                 .stash_finished(
                     0,
-                    &[ValueType::U64, ValueType::String],
+                    &[ValueType::U64.into(), ValueType::String.into()],
                     &mut sink,
                     &work,
                     &generation,
@@ -108,7 +108,7 @@ fn recursive_accumulator_owns_text_after_frontier_refill_in_both_representations
         let mut driver = ReachDriver {
             base: Vec::new(),
             rec: Vec::new(),
-            field_types: vec![ValueType::String],
+            field_types: vec![ValueType::String.into()],
             sink: ProjectionSink::new(vec![0]),
             units: 0,
             frontier: TransientImage::default(),
@@ -253,8 +253,8 @@ fn generation() -> GenerationHandle {
     GenerationHandle::new(GenerationState::new(CacheGeneration::initial()))
 }
 
-fn u64_types(n: usize) -> Vec<ValueType> {
-    vec![ValueType::U64; n]
+fn u64_types(n: usize) -> Vec<crate::ir::validate::QueryType> {
+    vec![ValueType::U64.into(); n]
 }
 
 fn feed_ids(sink: &mut ProjectionSink, values: impl IntoIterator<Item = u64>) {
@@ -413,7 +413,7 @@ fn d09_tiny_aggregate_never_opens_scratch() {
     let count = derived
         .stash_aggregate(
             0,
-            &[ValueType::U64, ValueType::U64],
+            &[ValueType::U64.into(), ValueType::U64.into()],
             &mut small,
             &mut answer,
             &ledger,
@@ -454,7 +454,7 @@ fn partitioned_aggregate_seals_exactly_without_an_intermediate_answer_set() {
     let count = spilled
         .stash_aggregate(
             0,
-            &[ValueType::U64, ValueType::U64],
+            &[ValueType::U64.into(), ValueType::U64.into()],
             &mut large,
             &mut answer,
             &work,
@@ -471,4 +471,202 @@ fn partitioned_aggregate_seals_exactly_without_an_intermediate_answer_set() {
     );
     assert!(stage.rows.scratch_path().is_none());
     assert_eq!(collect_ids(stage), (0..64).collect::<Vec<_>>());
+}
+
+fn observation_source() -> crate::event::Space {
+    use crate::event::{
+        ArithmeticLimits, DensityPiece, ExactArithmetic, ExactRational, LawLimits, Space, SpaceId,
+    };
+    let raw = Space::new(SpaceId([246; 32]), 1, &()).unwrap();
+    let mut arithmetic = ExactArithmetic::new(ArithmeticLimits::default(), &());
+    raw.with_density(
+        &[DensityPiece {
+            region: raw.full(),
+            density: ExactRational::fraction("1", "2", &mut arithmetic).unwrap(),
+        }],
+        LawLimits::default(),
+        &mut arithmetic,
+    )
+    .unwrap()
+}
+fn probability_stage(
+    generation: &GenerationHandle,
+    work: &WorkContext,
+    event: &crate::Event,
+    spill: bool,
+) -> PreparedInterior {
+    use crate::ir::validate::SignatureColumn;
+    let interner = InternerHandle::new(generation, work);
+    let a = interner.intern_event(event).unwrap().key().words();
+    let b = interner
+        .intern_event(&event.space().full())
+        .unwrap()
+        .key()
+        .words();
+    let mut sink = ProjectionSink::new(vec![0, 1, 2, 3]);
+    sink.begin(Some(work.clone()));
+    sink.insert_row(&[a[0], a[1], b[0], b[1]]).unwrap();
+    if spill {
+        sink.force_spill().unwrap();
+    }
+    PreparedInterior {
+        rules: Vec::new(),
+        units: 0,
+        field_types: vec![SignatureColumn::Probability.binding_type()],
+        columns: vec![SignatureColumn::Probability],
+        sink: EitherSink::Projection(sink),
+    }
+}
+
+#[test]
+fn observation_producers_preserve_spill_and_results_outlive_the_stage_registry() {
+    use crate::event::{ArithmeticLimits, ExactArithmetic};
+    use crate::ir::validate::{ObservationKind, SignatureColumn};
+    for spill in [false, true] {
+        let work = work();
+        let generation = generation();
+        let source = observation_source();
+        let event = source.coordinate(0, &()).unwrap();
+        let mut producer = probability_stage(&generation, &work, &event, spill);
+        let mut derived = DerivedImages::default();
+        derived.begin(1);
+        let mut arithmetic = ExactArithmetic::new(ArithmeticLimits::default(), &work);
+        assert_eq!(
+            seal_interior(
+                &mut producer,
+                0,
+                &mut derived,
+                &mut Vec::new(),
+                &work,
+                &generation,
+                &mut arithmetic
+            )
+            .unwrap(),
+            1
+        );
+        let stage = &mut derived.published[0];
+        assert_eq!(stage.is_resident(), !spill);
+        let mut rows = Vec::new();
+        match stage {
+            SealedStage::Resident(image) => {
+                assert_eq!(image.row_count(), 1);
+                rows.push(vec![image.column_words(0)[0]]);
+            }
+            SealedStage::Scratch(stage) => SealedStage::for_each_scratch_row(stage, &work, |row| {
+                rows.push(row.to_vec());
+                Ok(true)
+            })
+            .unwrap(),
+        }
+        let mut projected = ProjectionSink::new(vec![0]);
+        projected.begin(Some(work.clone()));
+        for row in &rows {
+            projected.insert_row(row).unwrap();
+        }
+        if spill {
+            projected.force_spill().unwrap();
+        }
+        let mut answers = super::super::Answers::new();
+        answers.begin(1);
+        let interner = InternerHandle::new(&generation, &work);
+        super::super::finalize::finalize(
+            &mut EitherSink::Projection(projected),
+            &mut Vec::new(),
+            &mut super::super::ResolveMemo::new(),
+            crate::api::prepared::finalize::AnswerSources {
+                interner: &interner,
+                observations: &derived.observations,
+                work: &work,
+            },
+            &[SignatureColumn::ProjectObservation(
+                ObservationKind::Probability,
+            )],
+            &mut answers,
+            &mut arithmetic,
+        )
+        .unwrap();
+        derived.begin(1);
+        drop((derived, producer, generation));
+        let crate::AnswerValue::Probability(answer) = answers.get(0, 0) else {
+            panic!("owned probability")
+        };
+        assert_eq!(answer.event(), &event);
+        assert_eq!(answer.given(), &source.full());
+    }
+}
+
+#[test]
+fn stages_share_exact_work_and_publish_nothing_when_the_next_producer_exhausts_it() {
+    use crate::event::{ArithmeticLimits, Capacity, ExactArithmetic};
+    let work = work();
+    let generation = generation();
+    let source = observation_source();
+    let event = source.coordinate(0, &()).unwrap();
+    let mut derived = DerivedImages::default();
+    derived.begin(2);
+    let mut producer = probability_stage(&generation, &work, &event, false);
+    let mut arithmetic = ExactArithmetic::new(ArithmeticLimits::default(), &work);
+    seal_interior(
+        &mut producer,
+        0,
+        &mut derived,
+        &mut Vec::new(),
+        &work,
+        &generation,
+        &mut arithmetic,
+    )
+    .unwrap();
+    let first_cost = arithmetic.operations();
+    assert!(first_cost > 0);
+    derived.begin(2);
+    let mut arithmetic = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: first_cost,
+            ..ArithmeticLimits::default()
+        },
+        &work,
+    );
+    let mut producer = probability_stage(&generation, &work, &event, false);
+    seal_interior(
+        &mut producer,
+        0,
+        &mut derived,
+        &mut Vec::new(),
+        &work,
+        &generation,
+        &mut arithmetic,
+    )
+    .unwrap();
+    let mut next = probability_stage(&generation, &work, &event.complement(), true);
+    assert!(matches!(
+        seal_interior(
+            &mut next,
+            1,
+            &mut derived,
+            &mut Vec::new(),
+            &work,
+            &generation,
+            &mut arithmetic
+        ),
+        Err(crate::Error::Event(crate::event::Error::Capacity(
+            Capacity::ArithmeticSteps
+        )))
+    ));
+    assert_eq!(derived.published.len(), 1);
+    let cancelled = WorkContext::new();
+    cancelled.cancel();
+    let mut arithmetic = ExactArithmetic::new(ArithmeticLimits::default(), &cancelled);
+    assert!(
+        seal_interior(
+            &mut next,
+            1,
+            &mut derived,
+            &mut Vec::new(),
+            &cancelled,
+            &generation,
+            &mut arithmetic
+        )
+        .is_err()
+    );
+    assert_eq!(derived.published.len(), 1);
 }

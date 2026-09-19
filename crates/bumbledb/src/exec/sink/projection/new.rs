@@ -64,6 +64,16 @@ impl ProjectionSink {
         );
     }
 
+    /// Admit one already projected row through the same distinct/spill policy.
+    pub(crate) fn insert_row(&mut self, row: &[u64]) -> Result<()> {
+        assert_eq!(row.len(), self.scratch.len(), "projected row width");
+        self.seen.insert(row);
+        if let Some(error) = self.seen.take_error() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// RAM-tier answers (the main sink's warm finalize fill). Spilled
     /// sinks drain through [`Self::for_each_answer`]/[`Self::drain_since`],
     /// never this iterator — callers branch on [`Self::spilled`] first.
@@ -145,8 +155,8 @@ impl ProjectionSink {
         self.seen.spilled()
     }
 
-    /// Exercise the disk representation without inventing a resource policy.
-    #[cfg(test)]
+    /// Preserve an already spilled producer through a row transformation.
+    /// Tests also use this to exercise the exact disk representation.
     pub(crate) fn force_spill(&mut self) -> crate::error::Result<()> {
         self.seen.spill()
     }

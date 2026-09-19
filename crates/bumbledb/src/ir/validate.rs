@@ -45,11 +45,16 @@ impl std::fmt::Display for Signature {
                 f.write_str(", ")?;
             }
             let Some(ty) = column.ty() else {
-                f.write_str(if matches!(column, SignatureColumn::Expectation) {
-                    "expectation"
-                } else {
-                    "probability"
-                })?;
+                f.write_str(
+                    if matches!(
+                        column.binding_type(),
+                        QueryType::Observation(ObservationKind::Expectation)
+                    ) {
+                        "expectation"
+                    } else {
+                        "probability"
+                    },
+                )?;
                 continue;
             };
             if let Some(op) = column.op() {
@@ -85,6 +90,54 @@ impl std::fmt::Display for Signature {
     }
 }
 
+/// A value bound by a query. Observations have their own domain; they are not
+/// schema fields, encoded numbers, or aggregate operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryType {
+    Stored(ValueType),
+    Observation(ObservationKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservationKind {
+    Probability,
+    Expectation,
+}
+
+impl QueryType {
+    #[must_use]
+    pub fn stored(&self) -> Option<&ValueType> {
+        match self {
+            Self::Stored(ty) => Some(ty),
+            Self::Observation(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn interval_element(&self) -> Option<IntervalElement> {
+        self.stored().and_then(|ty| ty.interval_element())
+    }
+
+    #[must_use]
+    pub fn is_interval(&self) -> bool {
+        self.interval_element().is_some()
+    }
+
+    #[must_use]
+    pub fn slot_width(&self) -> crate::ir::normalize::SlotWidth {
+        self.stored().map_or(
+            crate::ir::normalize::SlotWidth::ONE,
+            crate::ir::normalize::SlotWidth::of,
+        )
+    }
+}
+
+impl From<ValueType> for QueryType {
+    fn from(ty: ValueType) -> Self {
+        Self::Stored(ty)
+    }
+}
+
 /// One column of the sealed signature: a projection, or a fold. The
 /// two are a sum — `op: Option` would re-admit a fold without a type
 /// or a projection carrying a fold kind.
@@ -96,6 +149,8 @@ pub enum SignatureColumn {
     /// Query-only owned observation; it is not a stored schema field.
     Probability,
     Expectation,
+    /// Projection of an already finalized, source-owned observation.
+    ProjectObservation(ObservationKind),
 
     Fold {
         op: AggKind,
@@ -108,14 +163,24 @@ impl SignatureColumn {
     pub fn ty(&self) -> Option<&ValueType> {
         match self {
             Self::Project { ty } | Self::Fold { ty, .. } => Some(ty),
-            Self::Probability | Self::Expectation => None,
+            Self::Probability | Self::Expectation | Self::ProjectObservation(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn binding_type(&self) -> QueryType {
+        match self {
+            Self::Project { ty } | Self::Fold { ty, .. } => QueryType::Stored(*ty),
+            Self::Probability => QueryType::Observation(ObservationKind::Probability),
+            Self::Expectation => QueryType::Observation(ObservationKind::Expectation),
+            Self::ProjectObservation(kind) => QueryType::Observation(*kind),
         }
     }
 
     #[must_use]
     pub fn op(&self) -> Option<AggKind> {
         match self {
-            Self::Project { .. } | Self::Probability => None,
+            Self::Project { .. } | Self::Probability | Self::ProjectObservation(_) => None,
             Self::Fold { op, .. } => Some(*op),
             Self::Expectation => Some(AggKind::Expectation),
         }
@@ -315,7 +380,7 @@ impl InteriorSignatures<'_> {
         atom: usize,
         interior: InteriorId,
         field: FieldId,
-    ) -> Result<&ValueType, ValidationError> {
+    ) -> Result<QueryType, ValidationError> {
         debug_assert!(
             self.screen(atom, interior).is_ok(),
             "check_atoms screens before column"
@@ -323,7 +388,7 @@ impl InteriorSignatures<'_> {
         self.lookup(interior)
             .columns
             .get(usize::from(field.0))
-            .and_then(SignatureColumn::ty)
+            .map(SignatureColumn::binding_type)
             .ok_or(ValidationError::InteriorColumnOutOfRange {
                 atom: AtomIndex(atom),
                 field,
@@ -496,7 +561,7 @@ pub struct ValidatedQuery {
 
 #[derive(Debug)]
 struct RuleTyping {
-    var_types: BTreeMap<VarId, ValueType>,
+    var_types: BTreeMap<VarId, QueryType>,
 
     group_key: BTreeSet<VarId>,
 
@@ -647,11 +712,11 @@ impl<'a> RuleWitness<'a> {
     /// # Panics
     /// On a programmer-invariant violation: an unknown `VarId` (the witness
     #[must_use]
-    pub fn var_type(&self, var: VarId) -> &ValueType {
+    pub fn var_type(&self, var: VarId) -> &QueryType {
         &self.typing.var_types[&var]
     }
 
-    pub fn var_types(&self) -> impl Iterator<Item = (VarId, &ValueType)> {
+    pub fn var_types(&self) -> impl Iterator<Item = (VarId, &QueryType)> {
         self.typing.var_types.iter().map(|(v, t)| (*v, t))
     }
 
@@ -700,13 +765,14 @@ impl<'a> RuleWitness<'a> {
         if let Some(rows) = self.typing.closed_vars.get(&var) {
             return Some(*rows);
         }
-        matches!(self.var_type(var), ValueType::Bool).then_some(2)
+        matches!(self.var_type(var), QueryType::Stored(ValueType::Bool)).then_some(2)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TypeSlot {
     Mono(ValueType),
+    Observation(ObservationKind),
 
     Bivalent { interval: ValueType },
 }
@@ -721,7 +787,7 @@ enum ParamKind {
 struct Context {
     var_slots: BTreeMap<VarId, TypeSlot>,
 
-    var_types: BTreeMap<VarId, ValueType>,
+    var_types: BTreeMap<VarId, QueryType>,
 
     param_slots: BTreeMap<ParamId, TypeSlot>,
 

@@ -85,39 +85,63 @@ pub struct ColumnSpan {
     pub width: ColumnWidth,
 }
 
+/// Physical column shape, independent of schema-field admissibility. Query
+/// observations use opaque identity words and never impersonate stored scalars.
+pub trait ImageField {
+    fn column_width(&self) -> ColumnWidth;
+    fn is_text(&self) -> bool;
+}
+
+impl ImageField for bumbledb_theory::schema::ValueType {
+    fn column_width(&self) -> ColumnWidth {
+        use bumbledb_theory::schema::ValueType;
+        match self {
+            ValueType::Bool => ColumnWidth::Byte,
+            ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => {
+                ColumnWidth::Word
+            }
+            // Sixteen exact identity bytes: two big-endian word
+            // columns — byte order IS the value's one total order,
+            // so two-word lexicographic comparison is exact.
+            ValueType::Uuid | ValueType::Event => ColumnWidth::Words { count: 2 },
+            ValueType::FixedBytes { len } => {
+                match u16::try_from(crate::encoding::fixed_bytes_words(*len))
+                    .expect("bytes width is at most 8 words")
+                {
+                    1 => ColumnWidth::Word,
+                    count => ColumnWidth::Words { count },
+                }
+            }
+            ValueType::Interval { .. } | ValueType::FixedInterval { .. } => ColumnWidth::WordPair,
+        }
+    }
+    fn is_text(&self) -> bool {
+        matches!(self, Self::String)
+    }
+}
+
+impl ImageField for crate::ir::validate::QueryType {
+    fn column_width(&self) -> ColumnWidth {
+        self.stored()
+            .map_or(ColumnWidth::Word, ImageField::column_width)
+    }
+    fn is_text(&self) -> bool {
+        self.stored().is_some_and(ImageField::is_text)
+    }
+}
+
 /// Builds the per-relation field→column map from the relation's
 /// encoding-level field types, once per image (and once per plan witness):
 /// an interval field spans two consecutive 8-byte columns, a `bytes<N>`
 /// field its `⌈N/8⌉` word columns (one plain word column for N ≤ 8),
 /// every other field one column of its width.
 #[must_use]
-pub fn column_spans(field_types: &[bumbledb_theory::schema::ValueType]) -> Box<[ColumnSpan]> {
-    use bumbledb_theory::schema::ValueType;
+pub fn column_spans(field_types: &[impl ImageField]) -> Box<[ColumnSpan]> {
     let mut next_column = 0u16;
     field_types
         .iter()
         .map(|desc| {
-            let width = match desc {
-                ValueType::Bool => ColumnWidth::Byte,
-                ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => {
-                    ColumnWidth::Word
-                }
-                // Sixteen exact identity bytes: two big-endian word
-                // columns — byte order IS the value's one total order,
-                // so two-word lexicographic comparison is exact.
-                ValueType::Uuid | ValueType::Event => ColumnWidth::Words { count: 2 },
-                ValueType::FixedBytes { len } => {
-                    match u16::try_from(crate::encoding::fixed_bytes_words(*len))
-                        .expect("bytes width is at most 8 words")
-                    {
-                        1 => ColumnWidth::Word,
-                        count => ColumnWidth::Words { count },
-                    }
-                }
-                ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
-                    ColumnWidth::WordPair
-                }
-            };
+            let width = desc.column_width();
             let span = ColumnSpan {
                 first_column: next_column,
                 width,
@@ -229,16 +253,16 @@ impl TextOwners {
     pub(crate) fn pin_row(
         &mut self,
         row: &[u64],
-        types: &[bumbledb_theory::schema::ValueType],
+        types: &[impl ImageField],
         generation: &crate::work::GenerationHandle,
     ) -> crate::error::Result<()> {
         let mut slot = 0;
         for ty in types {
-            if *ty == bumbledb_theory::schema::ValueType::String {
+            if ty.is_text() {
                 let word = row[slot];
                 self.pin(word, || generation.resolver().owned_text(word))?;
             }
-            slot += crate::ir::normalize::SlotWidth::of(ty).slots();
+            slot += usize::from(ty.column_width().column_count());
         }
         Ok(())
     }

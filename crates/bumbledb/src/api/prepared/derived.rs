@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::exec::scratch::ScratchRelation;
 use crate::image::RelationImage;
 use crate::work::WorkContext;
+#[cfg(test)]
 use bumbledb_theory::schema::ValueType;
 
 /// One finished derived stage or rec table: either a shareable resident
@@ -22,7 +23,7 @@ pub(crate) enum SealedStage {
 /// spilled sink without rebuilding a complete image slab.
 pub(crate) struct ScratchStage {
     pub(crate) rows: ScratchRelation,
-    pub(crate) field_types: Vec<ValueType>,
+    pub(crate) field_types: Vec<crate::ir::validate::QueryType>,
     pub(crate) row_words: usize,
     pub(crate) count: u64,
     pub(crate) generation: crate::work::GenerationHandle,
@@ -72,16 +73,13 @@ impl SealedStage {
     /// witness — this never `force_spill`s or opens a second relation.
     pub(crate) fn from_aggregate_dest(
         dest: ScratchRelation,
-        field_types: &[ValueType],
+        field_types: &[crate::ir::validate::QueryType],
         count: u64,
         generation: crate::work::GenerationHandle,
         texts: crate::image::TextOwners,
     ) -> Self {
         debug_assert_eq!(dest.len(), count);
-        let row_words = field_types
-            .iter()
-            .map(|ty| crate::ir::normalize::SlotWidth::of(ty).slots())
-            .sum();
+        let row_words = field_types.iter().map(|ty| ty.slot_width().slots()).sum();
         Self::Scratch(Box::new(ScratchStage {
             rows: dest,
             field_types: field_types.to_vec(),
@@ -166,7 +164,7 @@ mod tests {
         }
         ScratchStage {
             rows,
-            field_types: vec![ValueType::U64],
+            field_types: vec![ValueType::U64.into()],
             row_words: 1,
             count: 1024,
             generation: crate::image::test_generation(),

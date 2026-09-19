@@ -33,7 +33,7 @@ fn scratch_stage(rows: &[[u64; 2]]) -> ScratchStage {
         generation: crate::image::test_generation(),
         texts: crate::image::TextOwners::default(),
         rows: dest,
-        field_types: vec![ValueType::U64, ValueType::U64],
+        field_types: vec![ValueType::U64.into(), ValueType::U64.into()],
         row_words: 2,
         count: rows.len() as u64,
     }

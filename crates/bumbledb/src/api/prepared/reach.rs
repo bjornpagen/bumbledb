@@ -19,7 +19,6 @@ use crate::image::intern::InternerHandle;
 use crate::image::view::Const;
 use crate::image::{RelationImage, TransientImage};
 use crate::schema::Schema;
-use bumbledb_theory::schema::ValueType;
 
 /// The one aim surface the derived rule loop needs: reach's sink stays a
 /// plain projection (the recursive cycle is projection-only by type),
@@ -43,7 +42,7 @@ impl StageSink for EitherSink {
 pub(crate) struct ReachDriver {
     pub(super) base: Vec<PreparedRule>,
     pub(super) rec: Vec<FreeJoinRule>,
-    pub(super) field_types: Vec<ValueType>,
+    pub(super) field_types: Vec<crate::ir::validate::QueryType>,
     pub(super) sink: crate::exec::sink::ProjectionSink,
     pub(super) units: usize,
     pub(super) frontier: TransientImage,
@@ -79,6 +78,7 @@ impl OccImages {
 #[derive(Default)]
 pub(super) struct DerivedImages {
     working: Vec<TransientImage>,
+    pub(super) observations: super::observations::ObservationRegistry,
     pub(super) published: Vec<SealedStage>,
     pub(super) occ_images: OccImages,
     pub(super) retired: Vec<Vec<u32>>,
@@ -88,6 +88,7 @@ impl DerivedImages {
     fn begin(&mut self, derived_count: usize) {
         self.working.resize_with(derived_count, Default::default);
         self.published.clear();
+        self.observations.clear();
         self.occ_images.clear();
         self.retired.clear();
     }
@@ -98,7 +99,7 @@ impl DerivedImages {
     fn stash_finished(
         &mut self,
         id: usize,
-        field_types: &[ValueType],
+        field_types: &[crate::ir::validate::QueryType],
         sink: &mut ProjectionSink,
         work: &crate::work::WorkContext,
         generation: &crate::work::GenerationHandle,
@@ -132,7 +133,7 @@ impl DerivedImages {
     fn stash_aggregate(
         &mut self,
         id: usize,
-        field_types: &[ValueType],
+        field_types: &[crate::ir::validate::QueryType],
         sink: &mut crate::exec::sink::AggregateSink,
         answer_scratch: &mut Vec<u64>,
         work: &crate::work::WorkContext,
@@ -195,11 +196,8 @@ fn write_projection_rows(
 
 /// One stage's row width in image words: the same slot arithmetic the
 /// binding layout uses (interval/Pack and Uuid columns are two words).
-fn stage_row_words(field_types: &[ValueType]) -> usize {
-    field_types
-        .iter()
-        .map(|ty| crate::ir::normalize::SlotWidth::of(ty).slots())
-        .sum()
+fn stage_row_words(field_types: &[crate::ir::validate::QueryType]) -> usize {
+    field_types.iter().map(|ty| ty.slot_width().slots()).sum()
 }
 
 /// Seal one finished interior: a projection stage refills straight from
@@ -215,7 +213,25 @@ fn seal_interior(
 
     work: &crate::work::WorkContext,
     generation: &crate::work::GenerationHandle,
+    arithmetic: &mut crate::event::ExactArithmetic<'_>,
 ) -> Result<u64> {
+    if interior.columns.iter().any(|column| {
+        matches!(
+            column,
+            crate::ir::validate::SignatureColumn::Probability
+                | crate::ir::validate::SignatureColumn::Expectation
+        )
+    }) {
+        return seal_observations(
+            interior,
+            id,
+            derived,
+            answer_scratch,
+            work,
+            generation,
+            arithmetic,
+        );
+    }
     let field_types = &interior.field_types;
     let mut seal_aggregate = |sink: &mut crate::exec::sink::AggregateSink| -> Result<u64> {
         derived.stash_aggregate(id, field_types, sink, answer_scratch, work, generation)
@@ -238,6 +254,69 @@ fn seal_interior(
         }
         EitherSink::Aggregate(sink) => seal_aggregate(sink),
     }
+}
+
+/// Producer observations are checked before publication. Canonical tokens pass
+/// through the ordinary distinct/spill sink, so equal completed rows coalesce.
+fn seal_observations(
+    interior: &mut PreparedInterior,
+    id: usize,
+    derived: &mut DerivedImages,
+    answer_scratch: &mut Vec<u64>,
+    work: &crate::WorkContext,
+    generation: &crate::work::GenerationHandle,
+    arithmetic: &mut crate::event::ExactArithmetic<'_>,
+) -> Result<u64> {
+    let (sink, inputs) = match &mut interior.sink {
+        EitherSink::Computed(computed) => {
+            computed.finish_events()?;
+            (
+                &mut computed.inner,
+                std::mem::take(&mut computed.expectation_inputs),
+            )
+        }
+        sink => (sink, Vec::new()),
+    };
+    if let Some(error) = sink.take_error() {
+        return Err(error);
+    }
+    let expectations = derived
+        .observations
+        .expectations(&inputs, work, arithmetic)?;
+    let width = stage_row_words(&interior.field_types);
+    let finds = (0..width)
+        .map(|slot| FindSpec::Var { slot, width: 1 })
+        .collect::<Vec<_>>();
+    let mut completed = ProjectionSink::with_capacity_hint(&finds, width, 0);
+    completed.begin(Some(work.clone()));
+    let inherited_spill = match sink {
+        EitherSink::Projection(sink) => sink.spilled(),
+        EitherSink::Aggregate(sink) => sink.resident_row_bound().is_none(),
+        EitherSink::Computed(_) => unreachable!("computed adapters never nest"),
+    };
+    if inherited_spill {
+        completed.force_spill()?;
+    }
+    let mut row = Vec::with_capacity(width);
+    let interner = crate::image::intern::InternerHandle::new(generation, work);
+    let mut visit = |raw: &[u64]| -> Result<()> {
+        work.checkpoint().map_err(super::source::work_error)?;
+        derived.observations.row(
+            &interior.columns,
+            raw,
+            &expectations,
+            &interner,
+            arithmetic,
+            &mut row,
+        )?;
+        completed.insert_row(&row)
+    };
+    match sink {
+        EitherSink::Projection(sink) => sink.for_each_answer(&mut visit)?,
+        EitherSink::Aggregate(sink) => sink.finalize_into(answer_scratch, visit)?,
+        EitherSink::Computed(_) => unreachable!("computed adapters never nest"),
+    }
+    derived.stash_finished(id, &interior.field_types, &mut completed, work, generation)
 }
 
 struct RunCtx<'a> {
@@ -276,6 +355,7 @@ impl<S> PreparedQuery<S> {
         &mut self,
         images: &SourceImages<'_>,
         counters: &mut Cnt,
+        arithmetic: &mut crate::event::ExactArithmetic<'_>,
     ) -> Result<bool> {
         let derived_count = match &self.pipeline {
             PreparedPipeline::PointProbe { .. } => 0,
@@ -362,6 +442,7 @@ impl<S> PreparedQuery<S> {
                         &mut self.answer_scratch,
                         images.source().work(),
                         images.generation(),
+                        arithmetic,
                     )?
                 };
             }
@@ -618,7 +699,7 @@ fn next_frontier(
 fn seal_scratch_range(
     sink: &mut ProjectionSink,
     work: &crate::work::WorkContext,
-    field_types: &[ValueType],
+    field_types: &[crate::ir::validate::QueryType],
     generation: &crate::work::GenerationHandle,
     since: usize,
 ) -> Result<SealedStage> {

@@ -54,12 +54,12 @@ struct Frame {
     texts: super::TextOwners,
 }
 
-fn allocate(field_types: &[ValueType], row_count: usize) -> Result<Frame> {
+fn allocate(field_types: &[impl super::ImageField], row_count: usize) -> Result<Frame> {
     allocate_with(field_types, row_count, StridePadder::new())
 }
 
 fn allocate_with(
-    field_types: &[ValueType],
+    field_types: &[impl super::ImageField],
     row_count: usize,
     mut padder: StridePadder,
 ) -> Result<Frame> {
@@ -110,10 +110,7 @@ fn allocate_with(
         columns,
         words,
         bytes,
-        strings: field_types
-            .iter()
-            .map(|ty| matches!(ty, ValueType::String))
-            .collect(),
+        strings: field_types.iter().map(super::ImageField::is_text).collect(),
         texts: super::TextOwners::default(),
     })
 }
@@ -136,7 +133,10 @@ fn seal(row_count: usize, frame: Frame, generation: GenerationHandle) -> Arc<Rel
 
 /// Bytes the image slabs will retain after allocation, excluding text and metadata.
 #[cfg(test)]
-pub(crate) fn estimated_slab_bytes(field_types: &[ValueType], row_count: usize) -> Result<usize> {
+pub(crate) fn estimated_slab_bytes(
+    field_types: &[impl super::ImageField],
+    row_count: usize,
+) -> Result<usize> {
     let spans = column_spans(field_types);
     let byte_cols = spans
         .iter()
@@ -157,7 +157,7 @@ pub(crate) fn estimated_slab_bytes(field_types: &[ValueType], row_count: usize) 
 
 #[cfg(test)]
 pub(super) fn image_with_tolerance(
-    field_types: &[ValueType],
+    field_types: &[impl super::ImageField],
     row_count: usize,
     tolerance: usize,
 ) -> Arc<RelationImage> {
@@ -306,7 +306,7 @@ impl TransientImage {
     )]
     pub fn refill<'r>(
         &mut self,
-        field_types: &[ValueType],
+        field_types: &[impl super::ImageField],
         row_count: usize,
         generation: &GenerationHandle,
         mut rows: impl Iterator<Item = &'r [u64]>,
@@ -338,7 +338,7 @@ impl TransientImage {
     pub fn refill_drained(
         &mut self,
         work: Option<&crate::work::WorkContext>,
-        field_types: &[ValueType],
+        field_types: &[impl super::ImageField],
         row_count: usize,
         generation: &GenerationHandle,
         drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
@@ -359,7 +359,7 @@ impl TransientImage {
     pub(crate) fn refill_bounded(
         &mut self,
         work: &crate::work::WorkContext,
-        field_types: &[ValueType],
+        field_types: &[impl super::ImageField],
         row_bound: usize,
         generation: &GenerationHandle,
         drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
@@ -377,7 +377,7 @@ impl TransientImage {
     fn fill_drained(
         &mut self,
         work: Option<&crate::work::WorkContext>,
-        field_types: &[ValueType],
+        field_types: &[impl super::ImageField],
         row_count: usize,
         generation: &GenerationHandle,
         policy: CapacityPolicy,

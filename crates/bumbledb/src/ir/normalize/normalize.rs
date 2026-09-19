@@ -6,10 +6,10 @@ use super::{
     place_comparisons::place_comparisons,
 };
 use crate::image::view::{Const, FilterPredicate, SetConst, ViewWordSource};
-use crate::ir::validate::RuleWitness;
+use crate::ir::validate::{QueryType, RuleWitness};
 use crate::ir::{Atom, Term, Value, VarId, WordCmp};
 use crate::schema::Schema;
-use bumbledb_theory::schema::{FieldId, ValueType};
+use bumbledb_theory::schema::FieldId;
 
 /// [`normalize_rules`] with the interiors/rec typing surface: `signatures`
 /// holds every derived table's sealed signature in `InteriorId` then rec
@@ -78,7 +78,7 @@ fn normalize_rule_with(
 
     let slot_widths: BTreeMap<VarId, SlotWidth> = rule
         .var_types()
-        .map(|(var, value_type)| (var, SlotWidth::of(value_type)))
+        .map(|(var, value_type)| (var, value_type.slot_width()))
         .collect();
 
     debug_assert!(
@@ -120,7 +120,7 @@ fn normalize_rule_with(
     }
 }
 
-fn is_membership(field_type: &ValueType, term_type: &ValueType) -> bool {
+fn is_membership(field_type: &QueryType, term_type: &QueryType) -> bool {
     field_type.is_interval() && !term_type.is_interval()
 }
 
@@ -138,22 +138,21 @@ fn lower_atom(
 ) -> Occurrence {
     let occ_id = OccId(u16::try_from(idx).expect("validated: occurrence count fits u16"));
 
-    let field_type = |field: FieldId| -> &ValueType {
+    let field_type = |field: FieldId| -> QueryType {
         match atom.source {
             crate::ir::AtomSource::Edb(relation_id) => {
-                &schema.relation(relation_id).field(field).value_type
+                QueryType::Stored(schema.relation(relation_id).field(field).value_type)
             }
-            crate::ir::AtomSource::Interior(pred) => signatures[pred.index()].columns
-                [usize::from(field.0)]
-            .ty()
-            .expect("validated relational interior"),
+            crate::ir::AtomSource::Interior(pred) => {
+                signatures[pred.index()].columns[usize::from(field.0)].binding_type()
+            }
         }
     };
 
     let mut vars: Vec<(FieldId, VarId)> = Vec::new();
     for (field, term) in &atom.bindings {
         if let Term::Var(var) = term {
-            if is_membership(field_type(*field), witness.var_type(*var)) {
+            if is_membership(&field_type(*field), witness.var_type(*var)) {
                 continue;
             }
             if !vars.iter().any(|(_, v)| v == var) {
@@ -175,7 +174,7 @@ fn lower_atom(
         );
         match term {
             Term::Var(var) => {
-                if is_membership(field_type, witness.var_type(*var)) {
+                if is_membership(&field_type, witness.var_type(*var)) {
                     match vars.iter().find(|(_, v)| v == var) {
                         Some((point_field, _)) => filters.push(FilterPredicate::FieldsPointIn {
                             interval: (*field).into(),
@@ -199,7 +198,7 @@ fn lower_atom(
                 }
             }
             Term::Param(param) => {
-                if is_membership(field_type, witness.param_type(*param)) {
+                if is_membership(&field_type, &QueryType::Stored(*witness.param_type(*param))) {
                     filters.push(FilterPredicate::PointIn {
                         field: (*field).into(),
                         point: ViewWordSource::Param(*param),

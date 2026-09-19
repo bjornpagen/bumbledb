@@ -84,7 +84,7 @@ impl FallbackRule {
     pub(super) fn seal(
         normalized: &crate::ir::normalize::NormalizedQuery,
         plan: &crate::plan::fj::ValidatedPlan,
-        var_type: impl Fn(VarId) -> ValueType,
+        var_type: impl Fn(VarId) -> crate::ir::validate::QueryType,
     ) -> Self {
         let mut text_slots = vec![false; plan.slot_count()];
         let slots = plan
@@ -92,14 +92,17 @@ impl FallbackRule {
             .into_iter()
             .map(|(var, slot, width)| {
                 let ty = var_type(var);
-                if matches!(ty, ValueType::String) {
+                let ty = ty.stored();
+                if matches!(ty, Some(ValueType::String)) {
                     text_slots[slot] = true;
                 }
                 let kind = match ty {
-                    ValueType::Interval { .. } | ValueType::FixedInterval { .. } => LoadKind::Pair,
-                    ValueType::Uuid => LoadKind::Block(2),
-                    ValueType::FixedBytes { len } => {
-                        match crate::encoding::fixed_bytes_words(len) {
+                    Some(ValueType::Interval { .. } | ValueType::FixedInterval { .. }) => {
+                        LoadKind::Pair
+                    }
+                    Some(ValueType::Uuid | ValueType::Event) => LoadKind::Block(2),
+                    Some(ValueType::FixedBytes { len }) => {
+                        match crate::encoding::fixed_bytes_words(*len) {
                             1 => LoadKind::Word,
                             count => LoadKind::Block(u8::try_from(count).expect("≤ 8 words")),
                         }
@@ -953,7 +956,7 @@ impl Operands for BindingOps<'_> {
 
 /// Flat column words for one scratch-backed derived row.
 struct ScratchRow<'a> {
-    field_types: &'a [ValueType],
+    field_types: &'a [crate::ir::validate::QueryType],
     words: &'a [u64],
 }
 
@@ -993,7 +996,7 @@ impl Operands for ScratchRow<'_> {
     fn string_field(&self, at: OperandAddr) -> bool {
         self.field_types
             .get(usize::from(at.field().0))
-            .is_some_and(|ty| matches!(ty, ValueType::String))
+            .is_some_and(|ty| ty.stored() == Some(&ValueType::String))
     }
 }
 
@@ -1048,7 +1051,7 @@ mod tests {
     /// String columns take `TextEq`; i64 high-bit words do not.
     #[test]
     fn fallback_operands_mark_string_columns() {
-        let field_types = [ValueType::U64, ValueType::String, ValueType::I64];
+        let field_types = [ValueType::U64, ValueType::String, ValueType::I64].map(Into::into);
         let words = [7u64, 0, 1u64 << 63];
         let row = ScratchRow {
             field_types: &field_types,
