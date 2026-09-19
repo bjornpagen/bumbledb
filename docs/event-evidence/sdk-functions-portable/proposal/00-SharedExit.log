@@ -1,0 +1,10 @@
+'SharedExit.apply_shared' does not depend on any axioms
+'SharedExit.split_selector' does not depend on any axioms
+'SharedExit.complement' does not depend on any axioms
+'SharedExit.normalize' does not depend on any axioms
+'SharedExit.sparse_split' depends on axioms: [propext]
+'SharedExit.exists_hidden' depends on axioms: [propext, Quot.sound]
+'SharedExit.no_hidden_selector' does not depend on any axioms
+'SharedExit.essential_selector' does not depend on any axioms
+'SharedExit.count_selector' depends on axioms: [propext, Quot.sound]
+'SharedExit.unequal_selectors_obstruction' does not depend on any axioms

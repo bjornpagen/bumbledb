@@ -248,6 +248,8 @@ pub enum Output {
     Descriptor(crate::marshal::DescriptorWire),
     /// Owned structural Event data/inspection, encoded on the worker.
     EventDescriptor(crate::event_descriptor_wire::DescriptorOutput),
+    /// Fixed-law descriptions and observations, fully encoded on the worker.
+    EventSource(crate::event_source_wire::SourceOutput),
     /// One compiled query with its own worker route and snapshot share.
     Prepared(session::SnapshotSession),
     /// One sealed completed query result, owned and independent.

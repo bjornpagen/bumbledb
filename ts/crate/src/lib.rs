@@ -22,7 +22,9 @@ use napi_derive::napi;
 
 pub mod db_wire;
 pub mod event_descriptor_wire;
+pub mod event_source_wire;
 pub mod event_wire;
+pub mod exact_wire;
 #[cfg(test)]
 mod fingerprint_lock;
 mod ingress;

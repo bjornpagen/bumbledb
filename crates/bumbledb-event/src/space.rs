@@ -412,6 +412,27 @@ impl Event {
         })
     }
 
+    /// Admit an Event while charging its complete finite law to the caller's
+    /// shared arithmetic budget. Use this when several inputs participate in
+    /// one larger source operation; each input must not reset that budget.
+    /// # Errors
+    /// Has `from_bytes_with_source_limits`'s admission contract, with cumulative
+    /// arithmetic exhaustion across all uses of `work`.
+    pub fn from_bytes_with_arithmetic(
+        bytes: &[u8],
+        order: Option<&[u8]>,
+        limits: Limits,
+        law: crate::LawLimits,
+        work: &mut crate::ExactArithmetic<'_>,
+    ) -> Result<Self> {
+        work.control().checkpoint()?;
+        if bytes.get(..5) == Some(b"BEVT\x02") {
+            crate::measure::wire::decode_with_work(bytes, order, limits, law, work)
+        } else {
+            Self::from_bytes_with_order(bytes, order, limits, work.control())
+        }
+    }
+
     #[must_use]
     pub fn key(&self) -> EventKey {
         EventKey {

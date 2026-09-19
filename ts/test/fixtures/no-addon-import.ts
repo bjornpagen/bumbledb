@@ -8,7 +8,9 @@ import { alternatives } from "#alternatives.ts"
 import { closed, closedId } from "#closed.ts"
 import { Event } from "#event.ts"
 import { EventDescriptor } from "#event-descriptor.ts"
+import { ExactRational } from "#exact.ts"
 import { bool, event, i64, interval, str, u64, uuid } from "#fields.ts"
+import { FiniteFunction } from "#finite-function.ts"
 import { loadNativeBinding, nativeBindingIsLoaded } from "#native.ts"
 import { Compute } from "#query/compute.ts"
 import { query } from "#query/lower.ts"
@@ -51,6 +53,18 @@ EventDescriptor.describe(descriptor)
 EventDescriptor.inspect(descriptor)
 EventDescriptor.admit({ kind: "map", map: { source: value, target: value, readouts: [] } })
 assert.equal(nativeBindingIsLoaded(), false, "descriptor Effects must be lazy without the addon")
+const rational = Result.getOrThrow(ExactRational.fromBytes(Buffer.from("BERA\x01")))
+const fn = Result.getOrThrow(FiniteFunction.fromBytes(Buffer.from("BESC\x01\x00")))
+ExactRational.decimal("0.1")
+ExactRational.add(rational, rational)
+ExactRational.toString(rational)
+FiniteFunction.constant(value, rational)
+FiniteFunction.describe(fn)
+FiniteFunction.isZero(fn)
+FiniteFunction.expectation(fn, value)
+Event.mass(value)
+Event.probability(value, value)
+assert.equal(nativeBindingIsLoaded(), false, "source Effects must be lazy without the addon")
 
 assert.throws(
 	() => loadNativeBinding(process.platform, process.arch),

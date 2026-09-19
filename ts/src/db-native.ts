@@ -94,6 +94,21 @@ export interface MutationReportWire {
 }
 
 interface DbBridge {
+	runtimeExactRational(
+		runtime: RuntimeHandle,
+		operation: string,
+		inputs: readonly Uint8Array[],
+		argument: number,
+		callback: () => void
+	): OperationHandle
+	runtimeEventSource(
+		runtime: RuntimeHandle,
+		operation: string,
+		inputs: readonly Uint8Array[],
+		argument: bigint,
+		callback: () => void
+	): OperationHandle
+	runtimeEventSourceTake(operation: OperationHandle): unknown
 	runtimeEventDescriptor(
 		runtime: RuntimeHandle,
 		operation: "admit" | "describe" | "inspect",

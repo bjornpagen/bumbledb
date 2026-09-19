@@ -4,6 +4,7 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
 import { type Event as EventValue, encodedEvent, eventBytes, eventValue, isEvent } from "#event-value.ts"
 import { nativeOperationWith, runtimeHandle } from "#runtime.ts"
 import { argumentError, type DbError } from "#runtime-errors.ts"
+import { mass, probability } from "#source-operation.ts"
 import { bytesValue } from "#values.ts"
 
 /** Immutable portable Event value. Pure transport parsing does not certify a
@@ -167,7 +168,9 @@ const Event = Object.freeze({
 	subset,
 	equal,
 	disjoint,
-	contains
+	contains,
+	mass,
+	probability
 })
 
 export { Event }

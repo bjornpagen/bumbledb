@@ -5,7 +5,7 @@ use std::cell::Cell;
 use bumbledb::event::{Capacity, Error as EventError};
 use bumbledb::work::{WorkContext, WorkError};
 use bumbledb::{Value, schema::ValueType};
-use napi::bindgen_prelude::{Env, Object, Unknown};
+use napi::bindgen_prelude::{Array, Env, Object, Unknown};
 
 use crate::marshal::{self, output_vec};
 use crate::runtime::{QueuedBytes, RuntimeError};
@@ -62,6 +62,28 @@ impl<'a> CopyContext<'a> {
         Ok(self
             .checked(QueuedBytes::copy_from(self.work, &bytes))?
             .bytes)
+    }
+    /// A bounded operand roster, owned before registration of worker algebra.
+    pub fn blobs(
+        &self,
+        values: &Array,
+        maximum: usize,
+        items: usize,
+    ) -> napi::Result<Vec<Vec<u8>>> {
+        self.checkpoint()?;
+        if values.len() as usize > items {
+            return self.checked(Err(event_error(EventError::Capacity(
+                Capacity::DescriptorItems,
+            ))));
+        }
+        let mut result = self.checked(output_vec(values.len() as usize))?;
+        let mut remaining = maximum;
+        for index in 0..values.len() {
+            let bytes = self.bytes(marshal::req_at(values, index, "Event operands")?, remaining)?;
+            remaining -= bytes.len();
+            result.push(bytes);
+        }
+        Ok(result)
     }
     pub fn schema_value(
         &self,

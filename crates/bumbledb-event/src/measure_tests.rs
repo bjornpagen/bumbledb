@@ -9,6 +9,74 @@ fn work() -> ExactArithmetic<'static> {
 fn ratio(n: u64, d: u64) -> ExactRational {
     ExactRational::fraction(&n.to_string(), &d.to_string(), &mut work()).unwrap()
 }
+
+#[test]
+fn compound_admission_charges_embedded_laws_to_the_callers_arithmetic() {
+    let base = Space::new(SpaceId([199; 32]), 1, &()).unwrap();
+    let source = measured(&base, &[piece(base.full(), 1, 2)]);
+    let bytes = source.full().to_bytes(&()).unwrap();
+    let limits = crate::SourceDescriptorLimits::default();
+    let mut probe = work();
+    let first = Event::from_bytes_with_arithmetic(
+        &bytes,
+        None,
+        Limits::default(),
+        LawLimits::default(),
+        &mut probe,
+    )
+    .unwrap();
+    assert_eq!(first.to_bytes(&()).unwrap(), bytes);
+    let mut bounded = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: probe.operations(),
+            ..ArithmeticLimits::default()
+        },
+        &(),
+    );
+    Event::from_bytes_with_arithmetic(
+        &bytes,
+        None,
+        Limits::default(),
+        LawLimits::default(),
+        &mut bounded,
+    )
+    .unwrap();
+    assert_eq!(
+        Event::from_bytes_with_arithmetic(
+            &bytes,
+            None,
+            Limits::default(),
+            LawLimits::default(),
+            &mut bounded
+        )
+        .err(),
+        Some(Error::Capacity(Capacity::ArithmeticSteps))
+    );
+    let map = crate::MapDescriptor {
+        source: bytes.clone(),
+        target: bytes,
+        readouts: vec![source.coordinate(0, &()).unwrap().to_bytes(&()).unwrap()],
+    };
+    let mut bounded = ExactArithmetic::new(
+        ArithmeticLimits {
+            operations: probe.operations(),
+            ..ArithmeticLimits::default()
+        },
+        &(),
+    );
+    assert_eq!(
+        map.admit_with_arithmetic(limits, &mut bounded).err(),
+        Some(Error::Capacity(Capacity::ArithmeticSteps))
+    );
+    let mut unbounded = work();
+    assert_eq!(
+        map.admit_with_arithmetic(limits, &mut unbounded)
+            .unwrap()
+            .map_world(1)
+            .unwrap(),
+        1
+    );
+}
 fn raw(order: &[u8]) -> Space {
     Space::with_order(SpaceId([47; 32]), order, Limits::default(), &()).unwrap()
 }

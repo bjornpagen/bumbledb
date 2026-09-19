@@ -488,7 +488,7 @@ impl SourceDescriptor {
         let result = match self {
             Self::Function(f) => AdmittedSourceDescriptor::Function(f.admit(limits, work)?),
             Self::Kernel(k) => {
-                let parent = admit_map(&k.parent, limits, work)?;
+                let parent = k.parent.admit_with_arithmetic(limits, work)?;
                 let density = k.density.admit(limits, work)?;
                 AdmittedSourceDescriptor::Kernel(FiniteKernel::new(
                     &parent,
@@ -509,17 +509,13 @@ fn event(
     limits: SourceDescriptorLimits,
     work: &mut ExactArithmetic<'_>,
 ) -> Result<crate::Event> {
-    if bytes.get(..5) == Some(b"BEVT\x02") {
-        crate::measure::wire::decode_with_work(
-            bytes,
-            None,
-            limits.descriptors.events,
-            limits.laws,
-            work,
-        )
-    } else {
-        crate::Event::from_bytes_with_order(bytes, None, limits.descriptors.events, work.control())
-    }
+    crate::Event::from_bytes_with_arithmetic(
+        bytes,
+        None,
+        limits.descriptors.events,
+        limits.laws,
+        work,
+    )
 }
 
 fn full_space(
@@ -534,20 +530,29 @@ fn full_space(
     Ok(value.space())
 }
 
-fn admit_map(
-    value: &MapDescriptor,
-    limits: SourceDescriptorLimits,
-    work: &mut ExactArithmetic<'_>,
-) -> Result<crate::CoordinateMap> {
-    let source = full_space(&value.source, limits, work)?;
-    let target = full_space(&value.target, limits, work)?;
-    if value.readouts.len() != usize::from(target.dimensions()) {
-        return Err(Error::MapArity);
+impl MapDescriptor {
+    /// Reconstruct a total map with every embedded law charged to one caller
+    /// budget. Only the descriptor/event/law limits are used here. This proves
+    /// totality and support preservation, not surjectivity or measure transport.
+    /// # Errors
+    /// Invalid space markers/readouts, contexts, support, cancellation or limits.
+    pub fn admit_with_arithmetic(
+        &self,
+        limits: SourceDescriptorLimits,
+        work: &mut ExactArithmetic<'_>,
+    ) -> Result<crate::CoordinateMap> {
+        // Preserve the ordinary map descriptor shape budget before decoding laws.
+        self.preflight(&mut Budget::new(limits.descriptors), work.control())?;
+        let source = full_space(&self.source, limits, work)?;
+        let target = full_space(&self.target, limits, work)?;
+        if self.readouts.len() != usize::from(target.dimensions()) {
+            return Err(Error::MapArity);
+        }
+        let mut readouts = Vec::new();
+        readouts.try_reserve_exact(self.readouts.len())?;
+        for bytes in &self.readouts {
+            readouts.push(event(bytes, limits, work)?);
+        }
+        crate::CoordinateMap::new(&source, &target, &readouts, work.control())
     }
-    let mut readouts = Vec::new();
-    readouts.try_reserve_exact(value.readouts.len())?;
-    for bytes in &value.readouts {
-        readouts.push(event(bytes, limits, work)?);
-    }
-    crate::CoordinateMap::new(&source, &target, &readouts, work.control())
 }
