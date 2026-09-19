@@ -161,6 +161,9 @@ pub enum RuntimeError {
         message: String,
         diagnostic: Option<Box<SchemaDiagnostic>>,
     },
+    /// A complete failing query stage. The core already owns canonical Event
+    /// bytes and logical occurrence coordinates; delivery performs no algebra.
+    EventFaults(Box<[bumbledb::EventOperandFault]>),
     Work(WorkError),
 }
 

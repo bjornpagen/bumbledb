@@ -17,6 +17,9 @@ use super::{Notify, Operation, Output, Runtime, RuntimeError, WaitTarget, lock};
 
 /// One typed engine refusal crossing the executor as owned data.
 pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
+    if let bumbledb::Error::EventFaults(faults) = error {
+        return RuntimeError::EventFaults(faults.clone());
+    }
     if let bumbledb::Error::Store(store) = error
         && let bumbledb::store::StoreError::Work(work) = store.as_ref()
     {
@@ -26,6 +29,15 @@ pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
         diagnostic: None,
         kind: crate::tags::error_family::tag(&error.family()),
         message: crate::marshal::engine_message(error),
+    }
+}
+
+/// Query errors are owned at this boundary. Move the complete diagnostic set
+/// into the executor instead of cloning its canonical payloads.
+pub(crate) fn owned_engine_error(error: bumbledb::Error) -> RuntimeError {
+    match error {
+        bumbledb::Error::EventFaults(faults) => RuntimeError::EventFaults(faults),
+        error => engine_error(&error),
     }
 }
 
@@ -70,7 +82,7 @@ impl SnapshotAccess<'_> {
         // L07 seam: execute against the owned frame, not a !Send ReadInstance.
         prepared
             .execute_complete_with_work(&self.owned.frame(context), context, args)
-            .map_err(|error| engine_error(&error))
+            .map_err(owned_engine_error)
     }
 
     #[cfg(test)]

@@ -11,11 +11,13 @@ import {
 	EventDescriptor,
 	EventExpr,
 	type EventFind,
+	type EventOperandFault,
 	EventTest,
 	event,
 	key,
 	NativeRuntime,
 	type QueryRow,
+	type QueryRuleScope,
 	query,
 	queryFromDescription,
 	RelationExpr,
@@ -407,4 +409,93 @@ test("captured maps and typed relation programs execute through the public build
 	}
 	assert.ok(retained)
 	assert.ok(Event.toBytes(retained).length > 0)
+})
+
+test("Event errors retain complete logical fault sets across stages, prepared queries and runtime release", async () => {
+	const faultyRule = (r: QueryRuleScope<typeof Theory.relations, typeof Theory.classes>) => {
+		const row = v(Claim)
+		return r.match(Claim, row).find({
+			ignored: EventExpr.apply(0, row.a, row.b),
+			union: EventExpr.or(row.a, row.b)
+		})
+	}
+	const faulty = query(Theory).rule(faultyRule).rule(faultyRule)
+	const staged = query(Theory).rule((r) => {
+		const row = v(faulty)
+		return r.match(faulty, row).find(row)
+	})
+	const signatures = (faults: readonly EventOperandFault[]) =>
+		faults.map((fault) => ({
+			...fault,
+			expectedSpace: Buffer.from(fault.expectedSpace).toString("hex"),
+			offendingValue: Buffer.from(fault.offendingValue).toString("hex")
+		}))
+	let retained: readonly EventOperandFault[] | undefined
+	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	try {
+		await runtime.runPromise(
+			Effect.scoped(
+				Effect.gen(function* () {
+					const db = yield* Db.create(storeDir("event-query-diagnostics"), Theory)
+					const draft = yield* ChangeSet.builder(Theory)
+					yield* draft.insert(Claim, [
+						{ id: 1n, a: value(a), b: value(region(208, 2, 0)) },
+						{ id: 2n, a: value(a), b: value(region(208, 2, 12)) }
+					])
+					yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })
+					const snapshot = yield* db.snapshot()
+					const prepared = yield* snapshot.prepare(faulty)
+					const results = [
+						yield* Effect.result(snapshot.execute(faulty, {})),
+						yield* Effect.result(prepared.execute({})),
+						yield* Effect.result(snapshot.execute(staged, {}))
+					]
+					for (const [index, result] of results.entries()) {
+						assert.ok(Result.isFailure(result))
+						const reason = result.failure.reason
+						assert.equal(reason._tag, "Engine")
+						assert.ok(reason._tag === "Engine" && reason.eventFaults)
+						assert.equal(reason.kind, "event")
+						const faults = reason.eventFaults
+						assert.equal(faults.length, 8, "two written rules, two heads, two distinct offending values")
+						for (const fault of faults) {
+							assert.equal(fault.stage, index === 2 ? 0 : undefined)
+							assert.equal(fault.operand, 1)
+							assert.equal(fault.variable, 2)
+							assert.equal(fault.category, "SpaceMismatch")
+							assert.deepEqual(Buffer.from(fault.expectedSpace), pairFull)
+							assert.ok([0, 12].some((bits) => Buffer.from(fault.offendingValue).equals(region(208, 2, bits))))
+							assert.ok(Result.isSuccess(Event.fromBytes(fault.offendingValue)))
+						}
+						assert.deepEqual(new Set(faults.map((f) => `${f.rule}/${f.find}`)), new Set(["0/0", "0/1", "1/0", "1/1"]))
+						if (index === 0) retained = faults
+						if (index === 1) {
+							assert.ok(retained)
+							assert.deepEqual(signatures(faults), signatures(retained))
+						}
+					}
+					const wellShaped = descriptor(Buffer.from("BEDC\x01"))
+					const row = v(Claim)
+					const badImport = query(Theory).rule((r) =>
+						r.match(Claim, row).find({ value: EventExpr.image(row.a, wellShaped) })
+					)
+					const malformed = yield* Effect.result(snapshot.prepare(badImport))
+					assert.ok(Result.isFailure(malformed))
+					assert.ok(malformed.failure.reason._tag === "Engine")
+					assert.equal(
+						malformed.failure.reason.eventFaults,
+						undefined,
+						"a decoder error never labels a partial stage complete"
+					)
+					const usable = query(Theory).rule((r) => r.match(Claim, row).find({ value: EventExpr.complement(row.a) }))
+					assert.equal((yield* (yield* snapshot.execute(usable, {})).collect()).length, 1)
+				})
+			)
+		)
+	} finally {
+		await Effect.runPromise(runtime.disposeEffect)
+	}
+	assert.ok(retained)
+	assert.equal(retained.length, 8)
+	assert.deepEqual(Buffer.from(retained[0]?.expectedSpace ?? []), pairFull)
 })

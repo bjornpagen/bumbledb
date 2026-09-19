@@ -38,12 +38,27 @@ const SchemaDiagnostic = Schema.Struct({
 	conflict: Schema.optional(StatementDiagnostic)
 })
 
+/** A member of the complete failing Event stage. Omitted stage denotes main;
+ * present stage is the logical interior ordinal. Bytes are owned canonical BEVT. */
+const EventOperandFault = Schema.Struct({
+	stage: Schema.optional(Schema.Number),
+	rule: Schema.Number,
+	find: Schema.Number,
+	operand: Schema.Number,
+	variable: Schema.Number,
+	category: Schema.Literal("SpaceMismatch"),
+	expectedSpace: Schema.Uint8Array,
+	offendingValue: Schema.Uint8Array
+})
+export type EventOperandFault = typeof EventOperandFault.Type
+
 /** A typed engine refusal, including native statement coordinates when known. */
 const Engine = Schema.Struct({
 	_tag: Schema.Literal("Engine"),
 	kind: Schema.String,
 	message: Schema.String,
-	diagnostic: Schema.optional(SchemaDiagnostic)
+	diagnostic: Schema.optional(SchemaDiagnostic),
+	eventFaults: Schema.optional(Schema.Array(EventOperandFault))
 })
 export const DbReason = Schema.Union([ResourceLimit, Io, Engine, InvalidArgument, PlainReason])
 export class DbError extends Schema.TaggedError<DbError>()("DbError", {
@@ -79,7 +94,8 @@ export function dbError(operation: string, cause: unknown): DbError {
 			_tag: "Engine",
 			kind: cause.kind,
 			message: cause.message,
-			diagnostic: "diagnostic" in cause ? cause.diagnostic : undefined
+			diagnostic: "diagnostic" in cause ? cause.diagnostic : undefined,
+			eventFaults: "eventFaults" in cause ? cause.eventFaults : undefined
 		})
 		if (reason._tag === "Some") return new DbError({ operation, reason: reason.value })
 	}

@@ -124,7 +124,7 @@ fn error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::InvalidPath => "InvalidPath",
         RuntimeError::Io { .. } | RuntimeError::Work(WorkError::Allocation) => "Io",
         RuntimeError::ResourceLimit { .. } => "ResourceLimit",
-        RuntimeError::Engine { .. } => "Engine",
+        RuntimeError::Engine { .. } | RuntimeError::EventFaults(_) => "Engine",
         RuntimeError::Work(WorkError::Cancelled) => "Cancelled",
     }
 }
@@ -151,6 +151,55 @@ fn write_schema_diagnostic(
     Ok(())
 }
 
+/// Transfer the already canonical fault payloads. The reason object is only
+/// returned after every record has converted; no partial set is published.
+fn write_event_faults(
+    env: Env,
+    object: &mut Object<'_>,
+    faults: Box<[bumbledb::EventOperandFault]>,
+) -> napi::Result<()> {
+    let ordinal = |value: usize| -> napi::Result<u32> {
+        u32::try_from(value)
+            .map_err(|_| napi::Error::from_reason("Event diagnostic ordinal exceeds wire extent"))
+    };
+    let mut records = Vec::new();
+    records
+        .try_reserve_exact(faults.len())
+        .map_err(|_| napi::Error::from_reason("Event diagnostic output allocation failed"))?;
+    object.set("kind", crate::tags::error_family::EVENT)?;
+    object.set(
+        "message",
+        format!("{} participating Event operand fault(s)", faults.len()),
+    )?;
+    for fault in faults.into_vec() {
+        let mut record = Object::new(&env)?;
+        if let Some(stage) = fault.stage {
+            record.set("stage", ordinal(stage)?)?;
+        }
+        record.set("rule", u32::from(fault.rule))?;
+        record.set("find", ordinal(fault.find)?)?;
+        record.set("operand", ordinal(fault.operand)?)?;
+        record.set("variable", u32::from(fault.variable.0))?;
+        record.set(
+            "category",
+            match fault.category {
+                bumbledb::EventFaultCategory::SpaceMismatch => "SpaceMismatch",
+            },
+        )?;
+        record.set(
+            "expectedSpace",
+            Uint8Array::from(fault.expected_space.into_vec()),
+        )?;
+        record.set(
+            "offendingValue",
+            Uint8Array::from(fault.offending_value.into_vec()),
+        )?;
+        records.push(record);
+    }
+    object.set("eventFaults", records)?;
+    Ok(())
+}
+
 /// The typed reason object a core failure crosses as (`{_tag, ...}` — the
 /// `DbReason` roster in ts/src/runtime-errors.ts). Shared with the log wire,
 /// which nests the same object inside its `{source, reason}` frame.
@@ -171,6 +220,7 @@ pub(crate) fn reason_object(env: &Env, error: RuntimeError) -> napi::Result<Obje
             object.set("message", message)?;
             write_schema_diagnostic(*env, &mut object, diagnostic)?;
         }
+        RuntimeError::EventFaults(faults) => write_event_faults(*env, &mut object, faults)?,
 
         RuntimeError::ResourceLimit {
             dimension,

@@ -76,3 +76,42 @@ fn worker_admits_owned_values_and_keeps_import_certificates_after_input_release(
     };
     query.validate_shape().unwrap();
 }
+
+#[test]
+fn complete_event_faults_move_their_payloads_and_operational_errors_have_no_partial_set() {
+    use bumbledb::{EventFaultCategory, EventOperandFault, VarId};
+    let source = Space::new(SpaceId([200; 32]), 2, &()).unwrap();
+    let value = source.coordinate(0, &()).unwrap();
+    let faults = vec![EventOperandFault {
+        stage: Some(2),
+        rule: 3,
+        find: 4,
+        operand: 5,
+        variable: VarId(6),
+        category: EventFaultCategory::SpaceMismatch,
+        expected_space: source.full().to_bytes(&()).unwrap().into_boxed_slice(),
+        offending_value: value.to_bytes(&()).unwrap().into_boxed_slice(),
+    }]
+    .into_boxed_slice();
+    let address = faults[0].offending_value.as_ptr();
+    let error = crate::runtime::session::owned_engine_error(bumbledb::Error::EventFaults(faults));
+    drop(value);
+    drop(source);
+    let RuntimeError::EventFaults(faults) = error else {
+        panic!("complete Event fault set")
+    };
+    assert_eq!(faults[0].offending_value.as_ptr(), address);
+    assert_eq!(faults[0].stage, Some(2));
+    assert_eq!(faults[0].variable, VarId(6));
+    assert!(bumbledb::Event::from_bytes(&faults[0].offending_value, &()).is_ok());
+    assert!(matches!(
+        crate::runtime::session::owned_engine_error(EventError::Cancelled.into()),
+        RuntimeError::Work(WorkError::Cancelled)
+    ));
+    assert!(matches!(
+        crate::runtime::session::owned_engine_error(
+            EventError::Capacity(Capacity::Diagnostics).into()
+        ),
+        RuntimeError::Engine { kind: "event", .. }
+    ));
+}

@@ -187,7 +187,7 @@ export type { CellValue } from "#rows.ts"
 export { cellOf, factOfCells, flatRowsOf, keyCellsOf } from "#rows.ts"
 export type { NativeRuntimeOptions } from "#runtime.ts"
 export { NativeRuntime } from "#runtime.ts"
-export type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
+export type { CloseReport, EventOperandFault, OutstandingWork } from "#runtime-errors.ts"
 export { CloseFailure, DbError, dbError, runtimeErrorCodes } from "#runtime-errors.ts"
 export type {
 	IntervalKind,

@@ -16,7 +16,7 @@
 use bumbledb::work::WorkContext;
 use bumbledb::{Query, RelationId, StatementId, Value};
 
-use crate::runtime::session::{SnapshotAccess, SnapshotWork};
+use crate::runtime::session::{SnapshotAccess, SnapshotWork, owned_engine_error};
 use crate::runtime::{Output, RuntimeError};
 
 use super::engine_error;
@@ -65,7 +65,7 @@ fn owned_execute_complete(
     let args = crate::param_args(params);
     let result = prepared
         .execute_complete_with_work(&frame, context, args.as_slice())
-        .map_err(|error| engine_error(&error))?;
+        .map_err(owned_engine_error)?;
     Ok(result)
 }
 
