@@ -252,6 +252,7 @@ pub enum Output {
     EventSource(crate::event_source_wire::SourceOutput),
     /// Owned exact polynomial terms, encoded and bounded on the worker.
     Polynomial(crate::polynomial_wire::Description),
+    Parameter(crate::parameter_wire::ParameterOutput),
     /// One compiled query with its own worker route and snapshot share.
     Prepared(session::SnapshotSession),
     /// One sealed completed query result, owned and independent.

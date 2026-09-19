@@ -31,6 +31,7 @@ mod ingress;
 pub mod log;
 pub mod log_wire;
 mod marshal;
+pub mod parameter_wire;
 pub mod polynomial_wire;
 mod runtime;
 pub mod runtime_wire;
