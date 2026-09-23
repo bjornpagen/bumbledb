@@ -1,0 +1,43 @@
+{
+  "documents_checked": 39,
+  "missing_local_links": [],
+  "unbalanced_code_fences": [],
+  "source_hashes": [
+    {
+      "file": "proposal/papers/darwiche-marquis-2002-knowledge-compilation-map.pdf",
+      "matches": true
+    },
+    {
+      "file": "proposal/papers/jacobs-2019-changing-ones-mind.pdf",
+      "matches": true
+    },
+    {
+      "file": "proposal/papers/jacobs-stein-2023-pearl-jeffrey-update.pdf",
+      "matches": true
+    },
+    {
+      "file": "proposal/papers/desharnais-moeller-struth-2003-kleene-algebra-domain.pdf",
+      "matches": true
+    },
+    {
+      "file": "proposal/papers/struth-2015-expressive-power-domain.pdf",
+      "matches": true
+    },
+    {
+      "file": "proposal/research/event-algebra/typesafe-primitives.md",
+      "matches": true
+    },
+    {
+      "file": "proposal/research/event-algebra/typesafe-primitives-noul.md",
+      "matches": true
+    },
+    {
+      "file": "proposal/research/event-algebra/typesafe-primitives-choice.md",
+      "matches": true
+    },
+    {
+      "file": "proposal/research/event-algebra/typesafe-primitives-score.md",
+      "matches": true
+    }
+  ]
+}

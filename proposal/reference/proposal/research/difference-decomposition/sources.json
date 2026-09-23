@@ -1,0 +1,12 @@
+[
+  {
+    "arxiv": "2003.09340v4",
+    "url": "https://arxiv.org/pdf/2003.09340v4",
+    "file": "thibault-ghorbal-2020-ordered-functional.pdf",
+    "sha256": "dd4594e354c87c97e1e74bead65a23d1270bead5421a91b668dd0d2a24898476",
+    "retrieved": "2026-09-18T12:42:52.346163+00:00",
+    "text_file": "thibault-ghorbal-2020-ordered-functional.txt",
+    "text_sha256": "1d2aee0f8a0864a48834b29df0aa4af22a14822d85f2670af74af6d835300ebc",
+    "reading_scope": "Definitions 1\u20135; Theorem 3 and \u00a75.1 conjunction; size-bound qualifications following Theorem 4; \u00a77.1 Davio definition and reduction correspondences; references [3], [10], [12]. No claim to have checked the external Coq project or original 1992 FDD implementation."
+  }
+]

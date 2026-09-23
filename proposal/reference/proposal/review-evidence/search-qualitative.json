@@ -1,0 +1,3638 @@
+{
+  "meta": {
+    "count": 270,
+    "db_response_time_ms": 175,
+    "page": 1,
+    "per_page": 4,
+    "groups_count": null,
+    "x_query": {
+      "oql": "works where full text has (Algebraic properties qualitative spatio temporal calculi)",
+      "oqo": {
+        "get_rows": "works",
+        "filter_rows": [
+          {
+            "column_id": "fulltext.search",
+            "value": "Algebraic properties qualitative spatio temporal calculi",
+            "operator": "has"
+          }
+        ]
+      },
+      "url": "/works?filter=fulltext.search:Algebraic properties qualitative spatio temporal calculi&per_page=4"
+    },
+    "cost_usd": 0.001
+  },
+  "results": [
+    {
+      "id": "https://openalex.org/W1658695185",
+      "doi": "https://doi.org/10.1007/978-3-319-01790-7_28",
+      "title": "Algebraic Properties of Qualitative Spatio-temporal Calculi",
+      "display_name": "Algebraic Properties of Qualitative Spatio-temporal Calculi",
+      "relevance_score": 892.2725,
+      "publication_year": 2013,
+      "publication_date": "2013-01-01",
+      "ids": {
+        "openalex": "https://openalex.org/W1658695185",
+        "doi": "https://doi.org/10.1007/978-3-319-01790-7_28",
+        "mag": "1658695185"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1007/978-3-319-01790-7_28",
+        "is_oa": false,
+        "landing_page_url": "https://doi.org/10.1007/978-3-319-01790-7_28",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S106296714",
+          "display_name": "Lecture notes in computer science",
+          "issn_l": "0302-9743",
+          "issn": [
+            "0302-9743",
+            "1611-3349"
+          ],
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310319900",
+          "host_organization_name": "Springer Science+Business Media",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310319900",
+            "https://openalex.org/P4310319965"
+          ],
+          "host_organization_lineage_names": [
+            "Springer Science+Business Media",
+            "Springer Nature"
+          ],
+          "type": "book series"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Lecture Notes in Computer Science",
+        "raw_type": "book-chapter"
+      },
+      "type": "conference-paper",
+      "indexed_in": [
+        "crossref"
+      ],
+      "open_access": {
+        "is_oa": false,
+        "oa_status": "closed",
+        "oa_url": null,
+        "any_repository_has_fulltext": false
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5057944865",
+            "display_name": "Frank Dylla",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I180437899",
+              "display_name": "University of Bremen",
+              "ror": "https://ror.org/04ers2y35",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Frank Dylla",
+          "raw_affiliation_strings": [
+            "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany",
+            "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany#TAB#"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany#TAB#",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5040001719",
+            "display_name": "Till Mossakowski",
+            "orcid": "https://orcid.org/0000-0002-8938-5204"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I180437899",
+              "display_name": "University of Bremen",
+              "ror": "https://ror.org/04ers2y35",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Till Mossakowski",
+          "raw_affiliation_strings": [
+            "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany",
+            "DFKI GmbH, Bremen, Germany",
+            "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany and DFKI GmbH, Bremen, Germany#TAB#"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            },
+            {
+              "raw_affiliation_string": "DFKI GmbH, Bremen, Germany",
+              "institution_ids": []
+            },
+            {
+              "raw_affiliation_string": "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany and DFKI GmbH, Bremen, Germany#TAB#",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5091510344",
+            "display_name": "Thomas Schneider",
+            "orcid": "https://orcid.org/0000-0001-5592-6183"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I180437899",
+              "display_name": "University of Bremen",
+              "ror": "https://ror.org/04ers2y35",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Thomas Schneider",
+          "raw_affiliation_strings": [
+            "Department of Mathematics and Computer Science, University of Bremen, Germany",
+            "Department of Mathematics and Computer Science, University of Bremen, Germany.#TAB#"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Mathematics and Computer Science, University of Bremen, Germany",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Department of Mathematics and Computer Science, University of Bremen, Germany.#TAB#",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5043993678",
+            "display_name": "Diedrich Wolter",
+            "orcid": "https://orcid.org/0000-0001-9185-0147"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I180437899",
+              "display_name": "University of Bremen",
+              "ror": "https://ror.org/04ers2y35",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Diedrich Wolter",
+          "raw_affiliation_strings": [
+            "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany",
+            "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany#TAB#"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany#TAB#",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 1,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I180437899"
+      ],
+      "apc_list": {
+        "value": 5000,
+        "currency": "EUR",
+        "value_usd": 5392
+      },
+      "apc_paid": null,
+      "fwci": 2.6832,
+      "has_fulltext": false,
+      "cited_by_count": 26,
+      "citation_normalized_percentile": {
+        "value": 0.91157163,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": true
+      },
+      "cited_by_percentile_year": {
+        "min": 89,
+        "max": 99
+      },
+      "biblio": {
+        "volume": null,
+        "issue": null,
+        "first_page": "516",
+        "last_page": "536"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11596",
+        "display_name": "Constraint Satisfaction and Optimization",
+        "score": 0.9997000098228455,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1705",
+          "display_name": "Computer Networks and Communications"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11596",
+          "display_name": "Constraint Satisfaction and Optimization",
+          "score": 0.9997000098228455,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1705",
+            "display_name": "Computer Networks and Communications"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11106",
+          "display_name": "Data Management and Algorithms",
+          "score": 0.9926000237464905,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1711",
+            "display_name": "Signal Processing"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10215",
+          "display_name": "Semantic Web and Ontologies",
+          "score": 0.9908999800682068,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/axiom",
+          "display_name": "Axiom",
+          "score": 0.8053049445152283
+        },
+        {
+          "id": "https://openalex.org/keywords/qualitative-reasoning",
+          "display_name": "Qualitative reasoning",
+          "score": 0.6877014636993408
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.6524747610092163
+        },
+        {
+          "id": "https://openalex.org/keywords/relevance",
+          "display_name": "Relevance (law)",
+          "score": 0.5790210962295532
+        },
+        {
+          "id": "https://openalex.org/keywords/binary-relation",
+          "display_name": "Binary relation",
+          "score": 0.5522176027297974
+        },
+        {
+          "id": "https://openalex.org/keywords/algebraic-number",
+          "display_name": "Algebraic number",
+          "score": 0.5495747327804565
+        },
+        {
+          "id": "https://openalex.org/keywords/representation",
+          "display_name": "Representation (politics)",
+          "score": 0.5201644897460938
+        },
+        {
+          "id": "https://openalex.org/keywords/spatial-intelligence",
+          "display_name": "Spatial intelligence",
+          "score": 0.47412896156311035
+        },
+        {
+          "id": "https://openalex.org/keywords/relation",
+          "display_name": "Relation (database)",
+          "score": 0.46810364723205566
+        },
+        {
+          "id": "https://openalex.org/keywords/algebra-over-a-field",
+          "display_name": "Algebra over a field",
+          "score": 0.4426419138908386
+        },
+        {
+          "id": "https://openalex.org/keywords/relation-algebra",
+          "display_name": "Relation algebra",
+          "score": 0.44220244884490967
+        },
+        {
+          "id": "https://openalex.org/keywords/theoretical-computer-science",
+          "display_name": "Theoretical computer science",
+          "score": 0.3971657156944275
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-intelligence",
+          "display_name": "Artificial intelligence",
+          "score": 0.31296437978744507
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.28051069378852844
+        },
+        {
+          "id": "https://openalex.org/keywords/discrete-mathematics",
+          "display_name": "Discrete mathematics",
+          "score": 0.17089125514030457
+        },
+        {
+          "id": "https://openalex.org/keywords/algebra-representation",
+          "display_name": "Algebra representation",
+          "score": 0.10504627227783203
+        },
+        {
+          "id": "https://openalex.org/keywords/pure-mathematics",
+          "display_name": "Pure mathematics",
+          "score": 0.10102686285972595
+        },
+        {
+          "id": "https://openalex.org/keywords/data-mining",
+          "display_name": "Data mining",
+          "score": 0.08414757251739502
+        },
+        {
+          "id": "https://openalex.org/keywords/two-element-boolean-algebra",
+          "display_name": "Two-element Boolean algebra",
+          "score": 0.07965794205665588
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C167729594",
+          "wikidata": "https://www.wikidata.org/wiki/Q17736",
+          "display_name": "Axiom",
+          "level": 2,
+          "score": 0.8053049445152283
+        },
+        {
+          "id": "https://openalex.org/C83725634",
+          "wikidata": "https://www.wikidata.org/wiki/Q7268699",
+          "display_name": "Qualitative reasoning",
+          "level": 2,
+          "score": 0.6877014636993408
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.6524747610092163
+        },
+        {
+          "id": "https://openalex.org/C158154518",
+          "wikidata": "https://www.wikidata.org/wiki/Q7310970",
+          "display_name": "Relevance (law)",
+          "level": 2,
+          "score": 0.5790210962295532
+        },
+        {
+          "id": "https://openalex.org/C65180967",
+          "wikidata": "https://www.wikidata.org/wiki/Q130901",
+          "display_name": "Binary relation",
+          "level": 2,
+          "score": 0.5522176027297974
+        },
+        {
+          "id": "https://openalex.org/C9376300",
+          "wikidata": "https://www.wikidata.org/wiki/Q168817",
+          "display_name": "Algebraic number",
+          "level": 2,
+          "score": 0.5495747327804565
+        },
+        {
+          "id": "https://openalex.org/C2776359362",
+          "wikidata": "https://www.wikidata.org/wiki/Q2145286",
+          "display_name": "Representation (politics)",
+          "level": 3,
+          "score": 0.5201644897460938
+        },
+        {
+          "id": "https://openalex.org/C155911833",
+          "wikidata": "https://www.wikidata.org/wiki/Q3817354",
+          "display_name": "Spatial intelligence",
+          "level": 2,
+          "score": 0.47412896156311035
+        },
+        {
+          "id": "https://openalex.org/C25343380",
+          "wikidata": "https://www.wikidata.org/wiki/Q277521",
+          "display_name": "Relation (database)",
+          "level": 2,
+          "score": 0.46810364723205566
+        },
+        {
+          "id": "https://openalex.org/C136119220",
+          "wikidata": "https://www.wikidata.org/wiki/Q1000660",
+          "display_name": "Algebra over a field",
+          "level": 2,
+          "score": 0.4426419138908386
+        },
+        {
+          "id": "https://openalex.org/C10282146",
+          "wikidata": "https://www.wikidata.org/wiki/Q5965969",
+          "display_name": "Relation algebra",
+          "level": 5,
+          "score": 0.44220244884490967
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.3971657156944275
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.31296437978744507
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.28051069378852844
+        },
+        {
+          "id": "https://openalex.org/C118615104",
+          "wikidata": "https://www.wikidata.org/wiki/Q121416",
+          "display_name": "Discrete mathematics",
+          "level": 1,
+          "score": 0.17089125514030457
+        },
+        {
+          "id": "https://openalex.org/C14394260",
+          "wikidata": "https://www.wikidata.org/wiki/Q4723980",
+          "display_name": "Algebra representation",
+          "level": 3,
+          "score": 0.10504627227783203
+        },
+        {
+          "id": "https://openalex.org/C202444582",
+          "wikidata": "https://www.wikidata.org/wiki/Q837863",
+          "display_name": "Pure mathematics",
+          "level": 1,
+          "score": 0.10102686285972595
+        },
+        {
+          "id": "https://openalex.org/C124101348",
+          "wikidata": "https://www.wikidata.org/wiki/Q172491",
+          "display_name": "Data mining",
+          "level": 1,
+          "score": 0.08414757251739502
+        },
+        {
+          "id": "https://openalex.org/C207764348",
+          "wikidata": "https://www.wikidata.org/wiki/Q7858706",
+          "display_name": "Two-element Boolean algebra",
+          "level": 4,
+          "score": 0.07965794205665588
+        },
+        {
+          "id": "https://openalex.org/C134306372",
+          "wikidata": "https://www.wikidata.org/wiki/Q7754",
+          "display_name": "Mathematical analysis",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C17744445",
+          "wikidata": "https://www.wikidata.org/wiki/Q36442",
+          "display_name": "Political science",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C2524010",
+          "wikidata": "https://www.wikidata.org/wiki/Q8087",
+          "display_name": "Geometry",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C199539241",
+          "wikidata": "https://www.wikidata.org/wiki/Q7748",
+          "display_name": "Law",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C94625758",
+          "wikidata": "https://www.wikidata.org/wiki/Q7163",
+          "display_name": "Politics",
+          "level": 2,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 1,
+      "locations": [
+        {
+          "id": "doi:10.1007/978-3-319-01790-7_28",
+          "is_oa": false,
+          "landing_page_url": "https://doi.org/10.1007/978-3-319-01790-7_28",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S106296714",
+            "display_name": "Lecture notes in computer science",
+            "issn_l": "0302-9743",
+            "issn": [
+              "0302-9743",
+              "1611-3349"
+            ],
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310319900",
+            "host_organization_name": "Springer Science+Business Media",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310319900",
+              "https://openalex.org/P4310319965"
+            ],
+            "host_organization_lineage_names": [
+              "Springer Science+Business Media",
+              "Springer Nature"
+            ],
+            "type": "book series"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Lecture Notes in Computer Science",
+          "raw_type": "book-chapter"
+        }
+      ],
+      "best_oa_location": null,
+      "sustainable_development_goals": [],
+      "awards": [],
+      "funders": [],
+      "has_content": {
+        "grobid_xml": false,
+        "pdf": false
+      },
+      "content_urls": null,
+      "referenced_works_count": 41,
+      "referenced_works": [
+        "https://openalex.org/W852874",
+        "https://openalex.org/W36588323",
+        "https://openalex.org/W84619527",
+        "https://openalex.org/W152517204",
+        "https://openalex.org/W207131014",
+        "https://openalex.org/W1250501714",
+        "https://openalex.org/W1486682191",
+        "https://openalex.org/W1507926703",
+        "https://openalex.org/W1507949122",
+        "https://openalex.org/W1515857575",
+        "https://openalex.org/W1519739962",
+        "https://openalex.org/W1523893065",
+        "https://openalex.org/W1537166676",
+        "https://openalex.org/W1570319308",
+        "https://openalex.org/W1580101121",
+        "https://openalex.org/W1585469764",
+        "https://openalex.org/W1596930516",
+        "https://openalex.org/W1844476468",
+        "https://openalex.org/W1982175848",
+        "https://openalex.org/W1982276524",
+        "https://openalex.org/W2016627289",
+        "https://openalex.org/W2018756677",
+        "https://openalex.org/W2025364155",
+        "https://openalex.org/W2031514991",
+        "https://openalex.org/W2064724342",
+        "https://openalex.org/W2072965014",
+        "https://openalex.org/W2075193550",
+        "https://openalex.org/W2114565854",
+        "https://openalex.org/W2116537119",
+        "https://openalex.org/W2122442427",
+        "https://openalex.org/W2135432705",
+        "https://openalex.org/W2144057119",
+        "https://openalex.org/W2157916926",
+        "https://openalex.org/W2161484642",
+        "https://openalex.org/W2178398743",
+        "https://openalex.org/W2240909318",
+        "https://openalex.org/W2312681412",
+        "https://openalex.org/W2337098149",
+        "https://openalex.org/W2913012755",
+        "https://openalex.org/W3104311877",
+        "https://openalex.org/W6603338315"
+      ],
+      "related_works": [
+        "https://openalex.org/W1593007803",
+        "https://openalex.org/W2153102768",
+        "https://openalex.org/W1871668702",
+        "https://openalex.org/W2124759987",
+        "https://openalex.org/W2514761403",
+        "https://openalex.org/W254583017",
+        "https://openalex.org/W1517957937",
+        "https://openalex.org/W2560204688",
+        "https://openalex.org/W84619527",
+        "https://openalex.org/W152517204"
+      ],
+      "abstract_inverted_index": null,
+      "counts_by_year": [
+        {
+          "year": 2024,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2023,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2022,
+          "cited_by_count": 3
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 4
+        },
+        {
+          "year": 2017,
+          "cited_by_count": 6
+        },
+        {
+          "year": 2016,
+          "cited_by_count": 4
+        },
+        {
+          "year": 2015,
+          "cited_by_count": 5
+        },
+        {
+          "year": 2014,
+          "cited_by_count": 1
+        }
+      ],
+      "updated_date": "2026-08-04T08:18:43.703281",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2952454731",
+      "doi": "https://doi.org/10.48550/arxiv.1305.7345",
+      "title": "Algebraic Properties of Qualitative Spatio-Temporal Calculi",
+      "display_name": "Algebraic Properties of Qualitative Spatio-Temporal Calculi",
+      "relevance_score": 481.88898,
+      "publication_year": 2013,
+      "publication_date": "2013-05-31",
+      "ids": {
+        "openalex": "https://openalex.org/W2952454731",
+        "doi": "https://doi.org/10.48550/arxiv.1305.7345",
+        "mag": "2952454731"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "pmh:oai:arXiv.org:1305.7345",
+        "is_oa": true,
+        "landing_page_url": "http://arxiv.org/abs/1305.7345",
+        "pdf_url": "https://arxiv.org/pdf/1305.7345",
+        "source": {
+          "id": "https://openalex.org/S4306400194",
+          "display_name": "arXiv (Cornell University)",
+          "issn_l": "2331-8422",
+          "issn": [
+            "2331-8422"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I205783295",
+          "host_organization_name": "Cornell University",
+          "host_organization_lineage": [
+            "https://openalex.org/I205783295"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "text"
+      },
+      "type": "preprint",
+      "indexed_in": [
+        "arxiv",
+        "datacite"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "green",
+        "oa_url": "https://arxiv.org/pdf/1305.7345",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5057944865",
+            "display_name": "Frank Dylla",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I180437899",
+              "display_name": "University of Bremen",
+              "ror": "https://ror.org/04ers2y35",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Dylla, Frank",
+          "raw_affiliation_strings": [
+            "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5040001719",
+            "display_name": "Till Mossakowski",
+            "orcid": "https://orcid.org/0000-0002-8938-5204"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I180437899",
+              "display_name": "University of Bremen",
+              "ror": "https://ror.org/04ers2y35",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Mossakowski, Till",
+          "raw_affiliation_strings": [
+            "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany and DFKI GmbH, Bremen, Germany#TAB#"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany and DFKI GmbH, Bremen, Germany#TAB#",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5091510344",
+            "display_name": "Thomas Schneider",
+            "orcid": "https://orcid.org/0000-0001-5592-6183"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I180437899",
+              "display_name": "University of Bremen",
+              "ror": "https://ror.org/04ers2y35",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Schneider, Thomas",
+          "raw_affiliation_strings": [
+            "Department of Mathematics and Computer Science, University of Bremen, Germany#TAB#"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Mathematics and Computer Science, University of Bremen, Germany#TAB#",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5043993678",
+            "display_name": "Diedrich Wolter",
+            "orcid": "https://orcid.org/0000-0001-9185-0147"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I180437899",
+              "display_name": "University of Bremen",
+              "ror": "https://ror.org/04ers2y35",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Wolter, Diedrich",
+          "raw_affiliation_strings": [
+            "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen, Germany",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 1,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I180437899"
+      ],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": null,
+      "has_fulltext": true,
+      "cited_by_count": 5,
+      "citation_normalized_percentile": null,
+      "cited_by_percentile_year": null,
+      "biblio": {
+        "volume": null,
+        "issue": null,
+        "first_page": null,
+        "last_page": null
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11596",
+        "display_name": "Constraint Satisfaction and Optimization",
+        "score": 0.9998000264167786,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1705",
+          "display_name": "Computer Networks and Communications"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11596",
+          "display_name": "Constraint Satisfaction and Optimization",
+          "score": 0.9998000264167786,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1705",
+            "display_name": "Computer Networks and Communications"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11106",
+          "display_name": "Data Management and Algorithms",
+          "score": 0.9937999844551086,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1711",
+            "display_name": "Signal Processing"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10215",
+          "display_name": "Semantic Web and Ontologies",
+          "score": 0.989799976348877,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/axiom",
+          "display_name": "Axiom",
+          "score": 0.7969164252281189
+        },
+        {
+          "id": "https://openalex.org/keywords/qualitative-reasoning",
+          "display_name": "Qualitative reasoning",
+          "score": 0.6563670635223389
+        },
+        {
+          "id": "https://openalex.org/keywords/algebraic-number",
+          "display_name": "Algebraic number",
+          "score": 0.5840021967887878
+        },
+        {
+          "id": "https://openalex.org/keywords/relevance",
+          "display_name": "Relevance (law)",
+          "score": 0.5671634674072266
+        },
+        {
+          "id": "https://openalex.org/keywords/binary-relation",
+          "display_name": "Binary relation",
+          "score": 0.5610802173614502
+        },
+        {
+          "id": "https://openalex.org/keywords/representation",
+          "display_name": "Representation (politics)",
+          "score": 0.51474928855896
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.4842526614665985
+        },
+        {
+          "id": "https://openalex.org/keywords/algebra-over-a-field",
+          "display_name": "Algebra over a field",
+          "score": 0.4725612998008728
+        },
+        {
+          "id": "https://openalex.org/keywords/relation",
+          "display_name": "Relation (database)",
+          "score": 0.4466648995876312
+        },
+        {
+          "id": "https://openalex.org/keywords/spatial-intelligence",
+          "display_name": "Spatial intelligence",
+          "score": 0.416833758354187
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.415057897567749
+        },
+        {
+          "id": "https://openalex.org/keywords/calculus",
+          "display_name": "Calculus (dental)",
+          "score": 0.36797887086868286
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-intelligence",
+          "display_name": "Artificial intelligence",
+          "score": 0.24703237414360046
+        },
+        {
+          "id": "https://openalex.org/keywords/pure-mathematics",
+          "display_name": "Pure mathematics",
+          "score": 0.1933853030204773
+        },
+        {
+          "id": "https://openalex.org/keywords/discrete-mathematics",
+          "display_name": "Discrete mathematics",
+          "score": 0.16193625330924988
+        },
+        {
+          "id": "https://openalex.org/keywords/data-mining",
+          "display_name": "Data mining",
+          "score": 0.05535396933555603
+        },
+        {
+          "id": "https://openalex.org/keywords/medicine",
+          "display_name": "Medicine",
+          "score": 0.053144633769989014
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C167729594",
+          "wikidata": "https://www.wikidata.org/wiki/Q17736",
+          "display_name": "Axiom",
+          "level": 2,
+          "score": 0.7969164252281189
+        },
+        {
+          "id": "https://openalex.org/C83725634",
+          "wikidata": "https://www.wikidata.org/wiki/Q7268699",
+          "display_name": "Qualitative reasoning",
+          "level": 2,
+          "score": 0.6563670635223389
+        },
+        {
+          "id": "https://openalex.org/C9376300",
+          "wikidata": "https://www.wikidata.org/wiki/Q168817",
+          "display_name": "Algebraic number",
+          "level": 2,
+          "score": 0.5840021967887878
+        },
+        {
+          "id": "https://openalex.org/C158154518",
+          "wikidata": "https://www.wikidata.org/wiki/Q7310970",
+          "display_name": "Relevance (law)",
+          "level": 2,
+          "score": 0.5671634674072266
+        },
+        {
+          "id": "https://openalex.org/C65180967",
+          "wikidata": "https://www.wikidata.org/wiki/Q130901",
+          "display_name": "Binary relation",
+          "level": 2,
+          "score": 0.5610802173614502
+        },
+        {
+          "id": "https://openalex.org/C2776359362",
+          "wikidata": "https://www.wikidata.org/wiki/Q2145286",
+          "display_name": "Representation (politics)",
+          "level": 3,
+          "score": 0.51474928855896
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.4842526614665985
+        },
+        {
+          "id": "https://openalex.org/C136119220",
+          "wikidata": "https://www.wikidata.org/wiki/Q1000660",
+          "display_name": "Algebra over a field",
+          "level": 2,
+          "score": 0.4725612998008728
+        },
+        {
+          "id": "https://openalex.org/C25343380",
+          "wikidata": "https://www.wikidata.org/wiki/Q277521",
+          "display_name": "Relation (database)",
+          "level": 2,
+          "score": 0.4466648995876312
+        },
+        {
+          "id": "https://openalex.org/C155911833",
+          "wikidata": "https://www.wikidata.org/wiki/Q3817354",
+          "display_name": "Spatial intelligence",
+          "level": 2,
+          "score": 0.416833758354187
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.415057897567749
+        },
+        {
+          "id": "https://openalex.org/C2777686260",
+          "wikidata": "https://www.wikidata.org/wiki/Q144037",
+          "display_name": "Calculus (dental)",
+          "level": 2,
+          "score": 0.36797887086868286
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.24703237414360046
+        },
+        {
+          "id": "https://openalex.org/C202444582",
+          "wikidata": "https://www.wikidata.org/wiki/Q837863",
+          "display_name": "Pure mathematics",
+          "level": 1,
+          "score": 0.1933853030204773
+        },
+        {
+          "id": "https://openalex.org/C118615104",
+          "wikidata": "https://www.wikidata.org/wiki/Q121416",
+          "display_name": "Discrete mathematics",
+          "level": 1,
+          "score": 0.16193625330924988
+        },
+        {
+          "id": "https://openalex.org/C124101348",
+          "wikidata": "https://www.wikidata.org/wiki/Q172491",
+          "display_name": "Data mining",
+          "level": 1,
+          "score": 0.05535396933555603
+        },
+        {
+          "id": "https://openalex.org/C71924100",
+          "wikidata": "https://www.wikidata.org/wiki/Q11190",
+          "display_name": "Medicine",
+          "level": 0,
+          "score": 0.053144633769989014
+        },
+        {
+          "id": "https://openalex.org/C94625758",
+          "wikidata": "https://www.wikidata.org/wiki/Q7163",
+          "display_name": "Politics",
+          "level": 2,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C199343813",
+          "wikidata": "https://www.wikidata.org/wiki/Q12128",
+          "display_name": "Dentistry",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C17744445",
+          "wikidata": "https://www.wikidata.org/wiki/Q36442",
+          "display_name": "Political science",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C134306372",
+          "wikidata": "https://www.wikidata.org/wiki/Q7754",
+          "display_name": "Mathematical analysis",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C2524010",
+          "wikidata": "https://www.wikidata.org/wiki/Q8087",
+          "display_name": "Geometry",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C199539241",
+          "wikidata": "https://www.wikidata.org/wiki/Q7748",
+          "display_name": "Law",
+          "level": 1,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 5,
+      "locations": [
+        {
+          "id": "pmh:oai:arXiv.org:1305.7345",
+          "is_oa": true,
+          "landing_page_url": "http://arxiv.org/abs/1305.7345",
+          "pdf_url": "https://arxiv.org/pdf/1305.7345",
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "text"
+        },
+        {
+          "id": "mag:2952454731",
+          "is_oa": true,
+          "landing_page_url": "https://arxiv.org/pdf/1305.7345.pdf",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "arXiv (Cornell University)",
+          "raw_type": null
+        },
+        {
+          "id": "pmh:oai:CiteSeerX.psu:10.1.1.645.3341",
+          "is_oa": false,
+          "landing_page_url": "http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.645.3341",
+          "pdf_url": null,
+          "source": null,
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "http://www.informatik.uni-bremen.de/tdki/research/papers/2013/DMSW-COSIT13.pdf",
+          "raw_type": "text"
+        },
+        {
+          "id": "pmh:oai:CiteSeerX.psu:10.1.1.746.1221",
+          "is_oa": false,
+          "landing_page_url": "http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.746.1221",
+          "pdf_url": null,
+          "source": null,
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "http://arxiv.org/pdf/1305.7345.pdf",
+          "raw_type": "text"
+        },
+        {
+          "id": "doi:10.48550/arxiv.1305.7345",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.48550/arxiv.1305.7345",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Preprint"
+        }
+      ],
+      "best_oa_location": {
+        "id": "pmh:oai:arXiv.org:1305.7345",
+        "is_oa": true,
+        "landing_page_url": "http://arxiv.org/abs/1305.7345",
+        "pdf_url": "https://arxiv.org/pdf/1305.7345",
+        "source": {
+          "id": "https://openalex.org/S4306400194",
+          "display_name": "arXiv (Cornell University)",
+          "issn_l": "2331-8422",
+          "issn": [
+            "2331-8422"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I205783295",
+          "host_organization_name": "Cornell University",
+          "host_organization_lineage": [
+            "https://openalex.org/I205783295"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "text"
+      },
+      "sustainable_development_goals": [],
+      "awards": [
+        {
+          "id": "https://openalex.org/G719518300",
+          "display_name": null,
+          "funder_award_id": "SFB/TR 8",
+          "funder_id": "https://openalex.org/F4320320879",
+          "funder_display_name": "Deutsche Forschungsgemeinschaft"
+        }
+      ],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320320879",
+          "display_name": "Deutsche Forschungsgemeinschaft",
+          "ror": "https://ror.org/018mejw64"
+        }
+      ],
+      "has_content": {
+        "grobid_xml": false,
+        "pdf": false
+      },
+      "content_urls": null,
+      "referenced_works_count": 29,
+      "referenced_works": [
+        "https://openalex.org/W852874",
+        "https://openalex.org/W36588323",
+        "https://openalex.org/W84619527",
+        "https://openalex.org/W152517204",
+        "https://openalex.org/W207131014",
+        "https://openalex.org/W1507926703",
+        "https://openalex.org/W1507949122",
+        "https://openalex.org/W1515857575",
+        "https://openalex.org/W1519739962",
+        "https://openalex.org/W1523893065",
+        "https://openalex.org/W1537166676",
+        "https://openalex.org/W1585469764",
+        "https://openalex.org/W1596930516",
+        "https://openalex.org/W1844476468",
+        "https://openalex.org/W1982276524",
+        "https://openalex.org/W2018756677",
+        "https://openalex.org/W2025364155",
+        "https://openalex.org/W2031514991",
+        "https://openalex.org/W2064724342",
+        "https://openalex.org/W2072965014",
+        "https://openalex.org/W2075193550",
+        "https://openalex.org/W2114565854",
+        "https://openalex.org/W2116537119",
+        "https://openalex.org/W2135432705",
+        "https://openalex.org/W2144057119",
+        "https://openalex.org/W2161484642",
+        "https://openalex.org/W2178398743",
+        "https://openalex.org/W2240909318",
+        "https://openalex.org/W2337098149"
+      ],
+      "related_works": [
+        "https://openalex.org/W2412677651",
+        "https://openalex.org/W2091277455",
+        "https://openalex.org/W2572947519",
+        "https://openalex.org/W1522327251",
+        "https://openalex.org/W3047187362",
+        "https://openalex.org/W2987083847",
+        "https://openalex.org/W2161484642",
+        "https://openalex.org/W2115296005",
+        "https://openalex.org/W2593619415",
+        "https://openalex.org/W2181824726",
+        "https://openalex.org/W2406159044",
+        "https://openalex.org/W1792334198",
+        "https://openalex.org/W2187663843",
+        "https://openalex.org/W2156140220",
+        "https://openalex.org/W2286857154",
+        "https://openalex.org/W170553696",
+        "https://openalex.org/W2155169337",
+        "https://openalex.org/W2185769173",
+        "https://openalex.org/W2397748668",
+        "https://openalex.org/W2177406215"
+      ],
+      "abstract_inverted_index": {
+        "Qualitative": [
+          0
+        ],
+        "spatial": [
+          1
+        ],
+        "and": [
+          2,
+          69,
+          80,
+          88
+        ],
+        "temporal": [
+          3
+        ],
+        "reasoning": [
+          4,
+          20
+        ],
+        "is": [
+          5,
+          25
+        ],
+        "based": [
+          6
+        ],
+        "on": [
+          7,
+          19
+        ],
+        "so-called": [
+          8
+        ],
+        "qualitative": [
+          9,
+          27,
+          35,
+          86
+        ],
+        "calculi.": [
+          10
+        ],
+        "Algebraic": [
+          11
+        ],
+        "properties": [
+          12
+        ],
+        "of": [
+          13,
+          74,
+          95
+        ],
+        "these": [
+          14,
+          39
+        ],
+        "calculi": [
+          15,
+          36,
+          68,
+          87
+        ],
+        "have": [
+          16
+        ],
+        "several": [
+          17
+        ],
+        "implications": [
+          18
+        ],
+        "algorithms.": [
+          21
+        ],
+        "But": [
+          22
+        ],
+        "what": [
+          23
+        ],
+        "exactly": [
+          24
+        ],
+        "a": [
+          26,
+          90,
+          96
+        ],
+        "calculus?": [
+          28
+        ],
+        "And": [
+          29
+        ],
+        "to": [
+          30,
+          46,
+          65
+        ],
+        "which": [
+          31
+        ],
+        "extent": [
+          32
+        ],
+        "do": [
+          33
+        ],
+        "the": [
+          34,
+          47,
+          55,
+          62,
+          72,
+          75
+        ],
+        "proposed": [
+          37
+        ],
+        "meet": [
+          38
+        ],
+        "demands?": [
+          40
+        ],
+        "The": [
+          41
+        ],
+        "literature": [
+          42
+        ],
+        "provides": [
+          43
+        ],
+        "various": [
+          44
+        ],
+        "answers": [
+          45
+        ],
+        "first": [
+          48
+        ],
+        "question": [
+          49
+        ],
+        "but": [
+          50
+        ],
+        "only": [
+          51
+        ],
+        "few": [
+          52
+        ],
+        "facts": [
+          53
+        ],
+        "about": [
+          54
+        ],
+        "second.": [
+          56
+        ],
+        "In": [
+          57
+        ],
+        "this": [
+          58
+        ],
+        "paper": [
+          59
+        ],
+        "we": [
+          60,
+          70
+        ],
+        "identify": [
+          61
+        ],
+        "minimal": [
+          63
+        ],
+        "requirements": [
+          64
+        ],
+        "binary": [
+          66
+        ],
+        "spatio-temporal": [
+          67
+        ],
+        "discuss": [
+          71
+        ],
+        "relevance": [
+          73
+        ],
+        "according": [
+          76
+        ],
+        "axioms": [
+          77
+        ],
+        "for": [
+          78
+        ],
+        "representation": [
+          79
+        ],
+        "reasoning.": [
+          81
+        ],
+        "We": [
+          82
+        ],
+        "also": [
+          83
+        ],
+        "analyze": [
+          84
+        ],
+        "existing": [
+          85
+        ],
+        "provide": [
+          89
+        ],
+        "classification": [
+          91
+        ],
+        "involving": [
+          92
+        ],
+        "different": [
+          93
+        ],
+        "notions": [
+          94
+        ],
+        "relation": [
+          97
+        ],
+        "algebra.": [
+          98
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2021,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2019,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2018,
+          "cited_by_count": 1
+        }
+      ],
+      "updated_date": "2026-08-26T07:47:46.906454",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2032685542",
+      "doi": "https://doi.org/10.1080/13875868.2011.586079",
+      "title": "Analyzing Qualitative Spatio-Temporal Calculi using Algebraic Geometry",
+      "display_name": "Analyzing Qualitative Spatio-Temporal Calculi using Algebraic Geometry",
+      "relevance_score": 163.14981,
+      "publication_year": 2012,
+      "publication_date": "2012-01-01",
+      "ids": {
+        "openalex": "https://openalex.org/W2032685542",
+        "doi": "https://doi.org/10.1080/13875868.2011.586079",
+        "mag": "2032685542"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1080/13875868.2011.586079",
+        "is_oa": false,
+        "landing_page_url": "https://doi.org/10.1080/13875868.2011.586079",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4121042",
+          "display_name": "Spatial Cognition and Computation",
+          "issn_l": "1387-5868",
+          "issn": [
+            "1387-5868",
+            "1542-7633",
+            "1573-9252"
+          ],
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310320547",
+          "host_organization_name": "Taylor & Francis",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310320547",
+            "https://openalex.org/P4310320449"
+          ],
+          "host_organization_lineage_names": [
+            "Taylor & Francis",
+            "Informa"
+          ],
+          "type": "journal"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Spatial Cognition &amp; Computation",
+        "raw_type": "journal-article"
+      },
+      "type": "article",
+      "indexed_in": [
+        "crossref"
+      ],
+      "open_access": {
+        "is_oa": false,
+        "oa_status": "closed",
+        "oa_url": null,
+        "any_repository_has_fulltext": false
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5043993678",
+            "display_name": "Diedrich Wolter",
+            "orcid": "https://orcid.org/0000-0001-9185-0147"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I180437899",
+              "display_name": "University of Bremen",
+              "ror": "https://ror.org/04ers2y35",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": true,
+          "raw_author_name": "Diedrich Wolter",
+          "raw_affiliation_strings": [
+            "SFB/TR 8, Universit\u00e4t Bremen, Bremen, Germany",
+            "SFB/TR 8, Universit\u00e4t Bremen , Bremen , Germany"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "SFB/TR 8, Universit\u00e4t Bremen, Bremen, Germany",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            },
+            {
+              "raw_affiliation_string": "SFB/TR 8, Universit\u00e4t Bremen , Bremen , Germany",
+              "institution_ids": [
+                "https://openalex.org/I180437899"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 1,
+      "corresponding_author_ids": [
+        "https://openalex.org/A5043993678"
+      ],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I180437899"
+      ],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": 1.1967,
+      "has_fulltext": false,
+      "cited_by_count": 7,
+      "citation_normalized_percentile": {
+        "value": 0.82581134,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": false
+      },
+      "cited_by_percentile_year": {
+        "min": 89,
+        "max": 97
+      },
+      "biblio": {
+        "volume": "12",
+        "issue": "1",
+        "first_page": "23",
+        "last_page": "52"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11596",
+        "display_name": "Constraint Satisfaction and Optimization",
+        "score": 0.9995999932289124,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1705",
+          "display_name": "Computer Networks and Communications"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11596",
+          "display_name": "Constraint Satisfaction and Optimization",
+          "score": 0.9995999932289124,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1705",
+            "display_name": "Computer Networks and Communications"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11106",
+          "display_name": "Data Management and Algorithms",
+          "score": 0.9884999990463257,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1711",
+            "display_name": "Signal Processing"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10317",
+          "display_name": "Advanced Database Systems and Queries",
+          "score": 0.9753000140190125,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1705",
+            "display_name": "Computer Networks and Communications"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/spatial-intelligence",
+          "display_name": "Spatial intelligence",
+          "score": 0.7054147720336914
+        },
+        {
+          "id": "https://openalex.org/keywords/toolbox",
+          "display_name": "Toolbox",
+          "score": 0.6817582249641418
+        },
+        {
+          "id": "https://openalex.org/keywords/qualitative-reasoning",
+          "display_name": "Qualitative reasoning",
+          "score": 0.6655498147010803
+        },
+        {
+          "id": "https://openalex.org/keywords/computation",
+          "display_name": "Computation",
+          "score": 0.516913890838623
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.5134738087654114
+        },
+        {
+          "id": "https://openalex.org/keywords/relation",
+          "display_name": "Relation (database)",
+          "score": 0.5023925304412842
+        },
+        {
+          "id": "https://openalex.org/keywords/algebraic-number",
+          "display_name": "Algebraic number",
+          "score": 0.5018336772918701
+        },
+        {
+          "id": "https://openalex.org/keywords/algebra-over-a-field",
+          "display_name": "Algebra over a field",
+          "score": 0.45597565174102783
+        },
+        {
+          "id": "https://openalex.org/keywords/task",
+          "display_name": "Task (project management)",
+          "score": 0.4528839886188507
+        },
+        {
+          "id": "https://openalex.org/keywords/algebraic-geometry",
+          "display_name": "Algebraic geometry",
+          "score": 0.4403233230113983
+        },
+        {
+          "id": "https://openalex.org/keywords/base",
+          "display_name": "Base (topology)",
+          "score": 0.4380582571029663
+        },
+        {
+          "id": "https://openalex.org/keywords/polynomial",
+          "display_name": "Polynomial",
+          "score": 0.425975501537323
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.41783949732780457
+        },
+        {
+          "id": "https://openalex.org/keywords/theoretical-computer-science",
+          "display_name": "Theoretical computer science",
+          "score": 0.3787882626056671
+        },
+        {
+          "id": "https://openalex.org/keywords/algorithm",
+          "display_name": "Algorithm",
+          "score": 0.3150704503059387
+        },
+        {
+          "id": "https://openalex.org/keywords/geometry",
+          "display_name": "Geometry",
+          "score": 0.2686655521392822
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-intelligence",
+          "display_name": "Artificial intelligence",
+          "score": 0.26422595977783203
+        },
+        {
+          "id": "https://openalex.org/keywords/programming-language",
+          "display_name": "Programming language",
+          "score": 0.19548138976097107
+        },
+        {
+          "id": "https://openalex.org/keywords/pure-mathematics",
+          "display_name": "Pure mathematics",
+          "score": 0.1659044623374939
+        },
+        {
+          "id": "https://openalex.org/keywords/data-mining",
+          "display_name": "Data mining",
+          "score": 0.08172997832298279
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C155911833",
+          "wikidata": "https://www.wikidata.org/wiki/Q3817354",
+          "display_name": "Spatial intelligence",
+          "level": 2,
+          "score": 0.7054147720336914
+        },
+        {
+          "id": "https://openalex.org/C2777655017",
+          "wikidata": "https://www.wikidata.org/wiki/Q1501161",
+          "display_name": "Toolbox",
+          "level": 2,
+          "score": 0.6817582249641418
+        },
+        {
+          "id": "https://openalex.org/C83725634",
+          "wikidata": "https://www.wikidata.org/wiki/Q7268699",
+          "display_name": "Qualitative reasoning",
+          "level": 2,
+          "score": 0.6655498147010803
+        },
+        {
+          "id": "https://openalex.org/C45374587",
+          "wikidata": "https://www.wikidata.org/wiki/Q12525525",
+          "display_name": "Computation",
+          "level": 2,
+          "score": 0.516913890838623
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.5134738087654114
+        },
+        {
+          "id": "https://openalex.org/C25343380",
+          "wikidata": "https://www.wikidata.org/wiki/Q277521",
+          "display_name": "Relation (database)",
+          "level": 2,
+          "score": 0.5023925304412842
+        },
+        {
+          "id": "https://openalex.org/C9376300",
+          "wikidata": "https://www.wikidata.org/wiki/Q168817",
+          "display_name": "Algebraic number",
+          "level": 2,
+          "score": 0.5018336772918701
+        },
+        {
+          "id": "https://openalex.org/C136119220",
+          "wikidata": "https://www.wikidata.org/wiki/Q1000660",
+          "display_name": "Algebra over a field",
+          "level": 2,
+          "score": 0.45597565174102783
+        },
+        {
+          "id": "https://openalex.org/C2780451532",
+          "wikidata": "https://www.wikidata.org/wiki/Q759676",
+          "display_name": "Task (project management)",
+          "level": 2,
+          "score": 0.4528839886188507
+        },
+        {
+          "id": "https://openalex.org/C68363185",
+          "wikidata": "https://www.wikidata.org/wiki/Q180969",
+          "display_name": "Algebraic geometry",
+          "level": 2,
+          "score": 0.4403233230113983
+        },
+        {
+          "id": "https://openalex.org/C42058472",
+          "wikidata": "https://www.wikidata.org/wiki/Q810214",
+          "display_name": "Base (topology)",
+          "level": 2,
+          "score": 0.4380582571029663
+        },
+        {
+          "id": "https://openalex.org/C90119067",
+          "wikidata": "https://www.wikidata.org/wiki/Q43260",
+          "display_name": "Polynomial",
+          "level": 2,
+          "score": 0.425975501537323
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.41783949732780457
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.3787882626056671
+        },
+        {
+          "id": "https://openalex.org/C11413529",
+          "wikidata": "https://www.wikidata.org/wiki/Q8366",
+          "display_name": "Algorithm",
+          "level": 1,
+          "score": 0.3150704503059387
+        },
+        {
+          "id": "https://openalex.org/C2524010",
+          "wikidata": "https://www.wikidata.org/wiki/Q8087",
+          "display_name": "Geometry",
+          "level": 1,
+          "score": 0.2686655521392822
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.26422595977783203
+        },
+        {
+          "id": "https://openalex.org/C199360897",
+          "wikidata": "https://www.wikidata.org/wiki/Q9143",
+          "display_name": "Programming language",
+          "level": 1,
+          "score": 0.19548138976097107
+        },
+        {
+          "id": "https://openalex.org/C202444582",
+          "wikidata": "https://www.wikidata.org/wiki/Q837863",
+          "display_name": "Pure mathematics",
+          "level": 1,
+          "score": 0.1659044623374939
+        },
+        {
+          "id": "https://openalex.org/C124101348",
+          "wikidata": "https://www.wikidata.org/wiki/Q172491",
+          "display_name": "Data mining",
+          "level": 1,
+          "score": 0.08172997832298279
+        },
+        {
+          "id": "https://openalex.org/C134306372",
+          "wikidata": "https://www.wikidata.org/wiki/Q7754",
+          "display_name": "Mathematical analysis",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C187736073",
+          "wikidata": "https://www.wikidata.org/wiki/Q2920921",
+          "display_name": "Management",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C162324750",
+          "wikidata": "https://www.wikidata.org/wiki/Q8134",
+          "display_name": "Economics",
+          "level": 0,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 1,
+      "locations": [
+        {
+          "id": "doi:10.1080/13875868.2011.586079",
+          "is_oa": false,
+          "landing_page_url": "https://doi.org/10.1080/13875868.2011.586079",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4121042",
+            "display_name": "Spatial Cognition and Computation",
+            "issn_l": "1387-5868",
+            "issn": [
+              "1387-5868",
+              "1542-7633",
+              "1573-9252"
+            ],
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310320547",
+            "host_organization_name": "Taylor & Francis",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310320547",
+              "https://openalex.org/P4310320449"
+            ],
+            "host_organization_lineage_names": [
+              "Taylor & Francis",
+              "Informa"
+            ],
+            "type": "journal"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Spatial Cognition &amp; Computation",
+          "raw_type": "journal-article"
+        }
+      ],
+      "best_oa_location": null,
+      "sustainable_development_goals": [],
+      "awards": [],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320320879",
+          "display_name": "Deutsche Forschungsgemeinschaft",
+          "ror": "https://ror.org/018mejw64"
+        }
+      ],
+      "has_content": {
+        "grobid_xml": false,
+        "pdf": false
+      },
+      "content_urls": null,
+      "referenced_works_count": 50,
+      "referenced_works": [
+        "https://openalex.org/W852874",
+        "https://openalex.org/W36588323",
+        "https://openalex.org/W53525175",
+        "https://openalex.org/W84619527",
+        "https://openalex.org/W87037992",
+        "https://openalex.org/W124363623",
+        "https://openalex.org/W164169512",
+        "https://openalex.org/W1483218536",
+        "https://openalex.org/W1489545972",
+        "https://openalex.org/W1494184095",
+        "https://openalex.org/W1496725166",
+        "https://openalex.org/W1509722527",
+        "https://openalex.org/W1519739962",
+        "https://openalex.org/W1530375570",
+        "https://openalex.org/W1537166676",
+        "https://openalex.org/W1539343435",
+        "https://openalex.org/W1553142094",
+        "https://openalex.org/W1573460095",
+        "https://openalex.org/W1574151794",
+        "https://openalex.org/W1576002006",
+        "https://openalex.org/W1585469764",
+        "https://openalex.org/W1589068194",
+        "https://openalex.org/W1593007803",
+        "https://openalex.org/W1597095978",
+        "https://openalex.org/W1784944639",
+        "https://openalex.org/W1836049508",
+        "https://openalex.org/W1871668702",
+        "https://openalex.org/W1879819495",
+        "https://openalex.org/W1991813962",
+        "https://openalex.org/W2001255903",
+        "https://openalex.org/W2008680854",
+        "https://openalex.org/W2018756677",
+        "https://openalex.org/W2037189684",
+        "https://openalex.org/W2038345254",
+        "https://openalex.org/W2077725083",
+        "https://openalex.org/W2115136657",
+        "https://openalex.org/W2116509046",
+        "https://openalex.org/W2116537119",
+        "https://openalex.org/W2128687423",
+        "https://openalex.org/W2159296906",
+        "https://openalex.org/W2161484642",
+        "https://openalex.org/W2319466955",
+        "https://openalex.org/W2346933546",
+        "https://openalex.org/W2480995471",
+        "https://openalex.org/W2654102763",
+        "https://openalex.org/W4238858352",
+        "https://openalex.org/W4255213956",
+        "https://openalex.org/W4285719527",
+        "https://openalex.org/W4292096448",
+        "https://openalex.org/W4389011534"
+      ],
+      "related_works": [
+        "https://openalex.org/W1593007803",
+        "https://openalex.org/W2153102768",
+        "https://openalex.org/W1871668702",
+        "https://openalex.org/W2124759987",
+        "https://openalex.org/W254583017",
+        "https://openalex.org/W1517957937",
+        "https://openalex.org/W2560204688",
+        "https://openalex.org/W1541295002",
+        "https://openalex.org/W2367213291",
+        "https://openalex.org/W2394737128"
+      ],
+      "abstract_inverted_index": {
+        "Qualitative": [
+          0
+        ],
+        "spatial": [
+          1,
+          118
+        ],
+        "reasoning": [
+          2,
+          28,
+          86,
+          97,
+          119
+        ],
+        "is": [
+          3,
+          33,
+          42,
+          111
+        ],
+        "based": [
+          4
+        ],
+        "on": [
+          5
+        ],
+        "calculi": [
+          6,
+          54
+        ],
+        "which": [
+          7,
+          110
+        ],
+        "comprise": [
+          8
+        ],
+        "relations": [
+          9,
+          69,
+          89
+        ],
+        "and": [
+          10,
+          26,
+          50,
+          94,
+          106
+        ],
+        "operation": [
+          11,
+          48
+        ],
+        "tables": [
+          12,
+          25,
+          49
+        ],
+        "that": [
+          13,
+          32,
+          73
+        ],
+        "encode": [
+          14
+        ],
+        "operations": [
+          15
+        ],
+        "like": [
+          16,
+          58
+        ],
+        "relation": [
+          17
+        ],
+        "composition.": [
+          18
+        ],
+        "Designing": [
+          19
+        ],
+        "a": [
+          20
+        ],
+        "calculus": [
+          21
+        ],
+        "involves": [
+          22
+        ],
+        "determining": [
+          23
+        ],
+        "these": [
+          24
+        ],
+        "analyzing": [
+          27
+        ],
+        "properties\u2014a": [
+          29
+        ],
+        "demanding": [
+          30
+        ],
+        "task": [
+          31
+        ],
+        "susceptible": [
+          34
+        ],
+        "to": [
+          35,
+          66,
+          79
+        ],
+        "errors": [
+          36
+        ],
+        "if": [
+          37
+        ],
+        "performed": [
+          38
+        ],
+        "manually.": [
+          39
+        ],
+        "This": [
+          40,
+          82
+        ],
+        "paper": [
+          41,
+          83
+        ],
+        "concerned": [
+          43
+        ],
+        "with": [
+          44,
+          87
+        ],
+        "automating": [
+          45
+        ],
+        "computation": [
+          46
+        ],
+        "of": [
+          47,
+          52,
+          116
+        ],
+        "analysis": [
+          51
+        ],
+        "qualitative": [
+          53,
+          68,
+          88
+        ],
+        "over": [
+          55
+        ],
+        "real-valued": [
+          56
+        ],
+        "domains": [
+          57
+        ],
+        "the": [
+          59,
+          117
+        ],
+        "plane": [
+          60
+        ],
+        "2.": [
+          61
+        ],
+        "We": [
+          62,
+          102
+        ],
+        "present": [
+          63
+        ],
+        "an": [
+          64
+        ],
+        "approach": [
+          65,
+          105
+        ],
+        "specify": [
+          67
+        ],
+        "using": [
+          70,
+          98
+        ],
+        "polynomial": [
+          71
+        ],
+        "equations": [
+          72
+        ],
+        "allows": [
+          74
+        ],
+        "methods": [
+          75
+        ],
+        "from": [
+          76
+        ],
+        "algebraic": [
+          77,
+          96
+        ],
+        "geometry": [
+          78
+        ],
+        "be": [
+          80,
+          91
+        ],
+        "applied.": [
+          81
+        ],
+        "shows": [
+          84
+        ],
+        "how": [
+          85
+        ],
+        "can": [
+          90
+        ],
+        "posed": [
+          92
+        ],
+        "algebraically": [
+          93
+        ],
+        "demonstrates": [
+          95
+        ],
+        "Gr\u00f6bner": [
+          99
+        ],
+        "base": [
+          100
+        ],
+        "analysis.": [
+          101
+        ],
+        "evaluate": [
+          103
+        ],
+        "this": [
+          104
+        ],
+        "describe": [
+          107
+        ],
+        "our": [
+          108
+        ],
+        "implementation,": [
+          109
+        ],
+        "freely": [
+          112
+        ],
+        "available": [
+          113
+        ],
+        "as": [
+          114
+        ],
+        "part": [
+          115
+        ],
+        "toolbox": [
+          120
+        ],
+        "SparQ.": [
+          121
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2026,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2019,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2018,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2014,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2013,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2012,
+          "cited_by_count": 1
+        }
+      ],
+      "updated_date": "2026-08-15T07:11:24.734988",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2575463631",
+      "doi": "https://doi.org/10.4230/oasics.iclp.2016.4",
+      "title": "Answer Set Programming for Qualitative Spatio-Temporal Reasoning: Methods and Experiments",
+      "display_name": "Answer Set Programming for Qualitative Spatio-Temporal Reasoning: Methods and Experiments",
+      "relevance_score": 159.85892,
+      "publication_year": 2016,
+      "publication_date": "2016-01-01",
+      "ids": {
+        "openalex": "https://openalex.org/W2575463631",
+        "doi": "https://doi.org/10.4230/oasics.iclp.2016.4",
+        "mag": "2575463631"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "pmh:oai:pure.atira.dk:openaire/d318b817-dfac-4a23-a430-143ed936a243",
+        "is_oa": true,
+        "landing_page_url": "https://pure.hud.ac.uk/en/publications/d318b817-dfac-4a23-a430-143ed936a243",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4306402508",
+          "display_name": "Huddersfield Research Portal (University of Huddersfield)",
+          "issn_l": null,
+          "issn": null,
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I133837150",
+          "host_organization_name": "University of Huddersfield",
+          "host_organization_lineage": [
+            "https://openalex.org/I133837150"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": null,
+        "raw_type": "info:eu-repo/semantics/publishedVersion"
+      },
+      "type": "article",
+      "indexed_in": [
+        "datacite",
+        "doaj"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "green",
+        "oa_url": "https://pure.hud.ac.uk/en/publications/d318b817-dfac-4a23-a430-143ed936a243",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5076244704",
+            "display_name": "Christopher Brenton",
+            "orcid": null
+          },
+          "institutions": [],
+          "countries": [],
+          "is_corresponding": false,
+          "raw_author_name": "Brenton, Christopher",
+          "raw_affiliation_strings": [
+            "School of Computing and Engineering"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "School of Computing and Engineering",
+              "institution_ids": []
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5017101409",
+            "display_name": "Wolfgang Faber",
+            "orcid": "https://orcid.org/0000-0002-0330-5868"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I133837150",
+              "display_name": "University of Huddersfield",
+              "ror": "https://ror.org/05t1h8f27",
+              "country_code": "GB",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I133837150"
+              ]
+            }
+          ],
+          "countries": [
+            "GB"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Faber, Wolfgang",
+          "raw_affiliation_strings": [
+            "University of Huddersfield, Huddersfield, United Kingdom"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "University of Huddersfield, Huddersfield, United Kingdom",
+              "institution_ids": [
+                "https://openalex.org/I133837150"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5067875951",
+            "display_name": "Sotiris Batsakis",
+            "orcid": "https://orcid.org/0000-0001-6023-2311"
+          },
+          "institutions": [],
+          "countries": [],
+          "is_corresponding": false,
+          "raw_author_name": "Batsakis, Sotiris",
+          "raw_affiliation_strings": [
+            "Department of Computer Science"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Computer Science",
+              "institution_ids": []
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 1,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": 5.5673,
+      "has_fulltext": true,
+      "cited_by_count": 22,
+      "citation_normalized_percentile": {
+        "value": 0.95934865,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": true
+      },
+      "cited_by_percentile_year": {
+        "min": 89,
+        "max": 98
+      },
+      "biblio": {
+        "volume": "52",
+        "issue": null,
+        "first_page": "15",
+        "last_page": null
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T10456",
+        "display_name": "Multi-Agent Systems and Negotiation",
+        "score": 0.9987000226974487,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T10456",
+          "display_name": "Multi-Agent Systems and Negotiation",
+          "score": 0.9987000226974487,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11010",
+          "display_name": "Logic, Reasoning, and Knowledge",
+          "score": 0.9986000061035156,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10181",
+          "display_name": "Natural Language Processing Techniques",
+          "score": 0.9896000027656555,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/answer-set-programming",
+          "display_name": "Answer set programming",
+          "score": 0.8339330554008484
+        },
+        {
+          "id": "https://openalex.org/keywords/semantic-reasoner",
+          "display_name": "Semantic reasoner",
+          "score": 0.7297054529190063
+        },
+        {
+          "id": "https://openalex.org/keywords/qualitative-reasoning",
+          "display_name": "Qualitative reasoning",
+          "score": 0.6817116737365723
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.653383731842041
+        },
+        {
+          "id": "https://openalex.org/keywords/set",
+          "display_name": "Set (abstract data type)",
+          "score": 0.6078300476074219
+        },
+        {
+          "id": "https://openalex.org/keywords/consistency",
+          "display_name": "Consistency (knowledge bases)",
+          "score": 0.5257661938667297
+        },
+        {
+          "id": "https://openalex.org/keywords/theoretical-computer-science",
+          "display_name": "Theoretical computer science",
+          "score": 0.43057942390441895
+        },
+        {
+          "id": "https://openalex.org/keywords/programming-language",
+          "display_name": "Programming language",
+          "score": 0.4259776175022125
+        },
+        {
+          "id": "https://openalex.org/keywords/base",
+          "display_name": "Base (topology)",
+          "score": 0.42527979612350464
+        },
+        {
+          "id": "https://openalex.org/keywords/connection",
+          "display_name": "Connection (principal bundle)",
+          "score": 0.42318564653396606
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-intelligence",
+          "display_name": "Artificial intelligence",
+          "score": 0.3702952265739441
+        },
+        {
+          "id": "https://openalex.org/keywords/algebra-over-a-field",
+          "display_name": "Algebra over a field",
+          "score": 0.3577112555503845
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.2639314532279968
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C182620335",
+          "wikidata": "https://www.wikidata.org/wiki/Q2852531",
+          "display_name": "Answer set programming",
+          "level": 3,
+          "score": 0.8339330554008484
+        },
+        {
+          "id": "https://openalex.org/C9616225",
+          "wikidata": "https://www.wikidata.org/wiki/Q3929429",
+          "display_name": "Semantic reasoner",
+          "level": 2,
+          "score": 0.7297054529190063
+        },
+        {
+          "id": "https://openalex.org/C83725634",
+          "wikidata": "https://www.wikidata.org/wiki/Q7268699",
+          "display_name": "Qualitative reasoning",
+          "level": 2,
+          "score": 0.6817116737365723
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.653383731842041
+        },
+        {
+          "id": "https://openalex.org/C177264268",
+          "wikidata": "https://www.wikidata.org/wiki/Q1514741",
+          "display_name": "Set (abstract data type)",
+          "level": 2,
+          "score": 0.6078300476074219
+        },
+        {
+          "id": "https://openalex.org/C2776436953",
+          "wikidata": "https://www.wikidata.org/wiki/Q5163215",
+          "display_name": "Consistency (knowledge bases)",
+          "level": 2,
+          "score": 0.5257661938667297
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.43057942390441895
+        },
+        {
+          "id": "https://openalex.org/C199360897",
+          "wikidata": "https://www.wikidata.org/wiki/Q9143",
+          "display_name": "Programming language",
+          "level": 1,
+          "score": 0.4259776175022125
+        },
+        {
+          "id": "https://openalex.org/C42058472",
+          "wikidata": "https://www.wikidata.org/wiki/Q810214",
+          "display_name": "Base (topology)",
+          "level": 2,
+          "score": 0.42527979612350464
+        },
+        {
+          "id": "https://openalex.org/C13355873",
+          "wikidata": "https://www.wikidata.org/wiki/Q2920850",
+          "display_name": "Connection (principal bundle)",
+          "level": 2,
+          "score": 0.42318564653396606
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.3702952265739441
+        },
+        {
+          "id": "https://openalex.org/C136119220",
+          "wikidata": "https://www.wikidata.org/wiki/Q1000660",
+          "display_name": "Algebra over a field",
+          "level": 2,
+          "score": 0.3577112555503845
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.2639314532279968
+        },
+        {
+          "id": "https://openalex.org/C2524010",
+          "wikidata": "https://www.wikidata.org/wiki/Q8087",
+          "display_name": "Geometry",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C134306372",
+          "wikidata": "https://www.wikidata.org/wiki/Q7754",
+          "display_name": "Mathematical analysis",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C202444582",
+          "wikidata": "https://www.wikidata.org/wiki/Q837863",
+          "display_name": "Pure mathematics",
+          "level": 1,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 5,
+      "locations": [
+        {
+          "id": "pmh:oai:pure.atira.dk:openaire/d318b817-dfac-4a23-a430-143ed936a243",
+          "is_oa": true,
+          "landing_page_url": "https://pure.hud.ac.uk/en/publications/d318b817-dfac-4a23-a430-143ed936a243",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306402508",
+            "display_name": "Huddersfield Research Portal (University of Huddersfield)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I133837150",
+            "host_organization_name": "University of Huddersfield",
+            "host_organization_lineage": [
+              "https://openalex.org/I133837150"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": null,
+          "raw_type": "info:eu-repo/semantics/publishedVersion"
+        },
+        {
+          "id": "pmh:oai:drops-oai.dagstuhl.de:6735",
+          "is_oa": true,
+          "landing_page_url": "https://drops.dagstuhl.de/entities/document/10.4230/OASIcs.ICLP.2016.4",
+          "pdf_url": "https://drops.dagstuhl.de/storage/01oasics/oasics-vol052_iclp2016/OASIcs.ICLP.2016.4/OASIcs.ICLP.2016.4.pdf",
+          "source": {
+            "id": "https://openalex.org/S4377196569",
+            "display_name": "DROPS (Schloss Dagstuhl \u2013 Leibniz Center for Informatics)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I2799853480",
+            "host_organization_name": "Schloss Dagstuhl \u2013 Leibniz Center for Informatics",
+            "host_organization_lineage": [
+              "https://openalex.org/I2799853480"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "InProceedings"
+        },
+        {
+          "id": "pmh:oai:eprints.hud.ac.uk:29805",
+          "is_oa": true,
+          "landing_page_url": "http://eprints.hud.ac.uk/id/eprint/29805/1/brenton.pdf",
+          "pdf_url": "http://eprints.hud.ac.uk/id/eprint/29805/1/brenton.pdf",
+          "source": {
+            "id": "https://openalex.org/S4306401852",
+            "display_name": "University of Huddersfield Repository (University of Huddersfield)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I133837150",
+            "host_organization_name": "University of Huddersfield",
+            "host_organization_lineage": [
+              "https://openalex.org/I133837150"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "",
+          "raw_type": "Book Chapter"
+        },
+        {
+          "id": "doi:10.4230/oasics.iclp.2016.4",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.4230/oasics.iclp.2016.4",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S7407061190",
+            "display_name": "OASIcs : OpenAccess Series in Informatics",
+            "issn_l": "2190-6807",
+            "issn": [
+              "2190-6807"
+            ],
+            "is_oa": true,
+            "is_in_doaj": true,
+            "is_core": false,
+            "host_organization": "https://openalex.org/P4310313770",
+            "host_organization_name": "Schloss Dagstuhl \u2014 Leibniz-Zentrum fuer Informatik",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310313770"
+            ],
+            "host_organization_lineage_names": [
+              "Schloss Dagstuhl \u2014 Leibniz-Zentrum fuer Informatik"
+            ],
+            "type": "journal"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "ConferencePaper"
+        },
+        {
+          "id": "mag:2575463631",
+          "is_oa": false,
+          "landing_page_url": "http://eprints.hud.ac.uk/id/eprint/29805/",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306419642",
+            "display_name": "International Conference on Logic Programming",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": null,
+            "host_organization_name": null,
+            "host_organization_lineage": [],
+            "host_organization_lineage_names": [],
+            "type": "conference"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": "International Conference on Logic Programming",
+          "raw_type": null
+        }
+      ],
+      "best_oa_location": {
+        "id": "pmh:oai:pure.atira.dk:openaire/d318b817-dfac-4a23-a430-143ed936a243",
+        "is_oa": true,
+        "landing_page_url": "https://pure.hud.ac.uk/en/publications/d318b817-dfac-4a23-a430-143ed936a243",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4306402508",
+          "display_name": "Huddersfield Research Portal (University of Huddersfield)",
+          "issn_l": null,
+          "issn": null,
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I133837150",
+          "host_organization_name": "University of Huddersfield",
+          "host_organization_lineage": [
+            "https://openalex.org/I133837150"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": null,
+        "raw_type": "info:eu-repo/semantics/publishedVersion"
+      },
+      "sustainable_development_goals": [],
+      "awards": [],
+      "funders": [],
+      "has_content": {
+        "grobid_xml": false,
+        "pdf": false
+      },
+      "content_urls": null,
+      "referenced_works_count": 0,
+      "referenced_works": [],
+      "related_works": [
+        "https://openalex.org/W2161484642",
+        "https://openalex.org/W3026217075",
+        "https://openalex.org/W2069932362",
+        "https://openalex.org/W852874",
+        "https://openalex.org/W2412677651",
+        "https://openalex.org/W41527172",
+        "https://openalex.org/W2982116916",
+        "https://openalex.org/W2577006551",
+        "https://openalex.org/W1543164767",
+        "https://openalex.org/W2963556801",
+        "https://openalex.org/W1528024792",
+        "https://openalex.org/W2389480516",
+        "https://openalex.org/W3103828537",
+        "https://openalex.org/W2350301628",
+        "https://openalex.org/W1546133522",
+        "https://openalex.org/W1529147315",
+        "https://openalex.org/W1541295002",
+        "https://openalex.org/W1544556260",
+        "https://openalex.org/W3124980277",
+        "https://openalex.org/W1534208801"
+      ],
+      "abstract_inverted_index": {
+        "We": [
+          0,
+          16
+        ],
+        "study": [
+          1
+        ],
+        "the": [
+          2,
+          44,
+          47,
+          71
+        ],
+        "translation": [
+          3
+        ],
+        "of": [
+          4,
+          30,
+          46,
+          62
+        ],
+        "reasoning": [
+          5
+        ],
+        "problems": [
+          6,
+          65
+        ],
+        "involving": [
+          7
+        ],
+        "qualitative": [
+          8,
+          24
+        ],
+        "spatio-temporal": [
+          9
+        ],
+        "calculi": [
+          10
+        ],
+        "into": [
+          11,
+          52
+        ],
+        "answer": [
+          12
+        ],
+        "set": [
+          13
+        ],
+        "programming": [
+          14
+        ],
+        "(ASP).": [
+          15
+        ],
+        "present": [
+          17
+        ],
+        "various": [
+          18
+        ],
+        "alternative": [
+          19
+        ],
+        "transformations": [
+          20,
+          32
+        ],
+        "and": [
+          21,
+          70
+        ],
+        "provide": [
+          22
+        ],
+        "a": [
+          23,
+          36
+        ],
+        "comparison": [
+          25
+        ],
+        "among": [
+          26
+        ],
+        "them.": [
+          27
+        ],
+        "An": [
+          28
+        ],
+        "implementation": [
+          29
+        ],
+        "these": [
+          31
+        ],
+        "is": [
+          33
+        ],
+        "provided": [
+          34
+        ],
+        "by": [
+          35
+        ],
+        "tool": [
+          37
+        ],
+        "that": [
+          38
+        ],
+        "transforms": [
+          39
+        ],
+        "problem": [
+          40
+        ],
+        "instances": [
+          41
+        ],
+        "specified": [
+          42
+        ],
+        "in": [
+          43
+        ],
+        "language": [
+          45
+        ],
+        "Generic": [
+          48
+        ],
+        "Qualitative": [
+          49
+        ],
+        "Reasoner": [
+          50
+        ],
+        "(GQR)": [
+          51
+        ],
+        "ASP": [
+          53
+        ],
+        "problems.": [
+          54
+        ],
+        "Finally,": [
+          55
+        ],
+        "we": [
+          56
+        ],
+        "report": [
+          57
+        ],
+        "on": [
+          58
+        ],
+        "an": [
+          59
+        ],
+        "experimental": [
+          60
+        ],
+        "analysis": [
+          61
+        ],
+        "solving": [
+          63
+        ],
+        "consistency": [
+          64
+        ],
+        "for": [
+          66
+        ],
+        "Allen's": [
+          67
+        ],
+        "Interval": [
+          68
+        ],
+        "Algebra": [
+          69
+        ],
+        "Region": [
+          72
+        ],
+        "Connection": [
+          73
+        ],
+        "Calculus": [
+          74
+        ],
+        "with": [
+          75
+        ],
+        "eight": [
+          76
+        ],
+        "base": [
+          77
+        ],
+        "relations": [
+          78
+        ],
+        "(RCC-8).": [
+          79
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2025,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2023,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2022,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 3
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 6
+        },
+        {
+          "year": 2019,
+          "cited_by_count": 4
+        },
+        {
+          "year": 2018,
+          "cited_by_count": 3
+        },
+        {
+          "year": 2017,
+          "cited_by_count": 3
+        }
+      ],
+      "updated_date": "2026-09-12T09:15:50.089291",
+      "created_date": "2025-10-10T00:00:00"
+    }
+  ],
+  "group_by": []
+}

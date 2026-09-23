@@ -1,0 +1,18 @@
+{
+  "event_triples_checked": 4096,
+  "partitions_including_empty_branches": 81,
+  "law_measures_checked": [
+    "uniform",
+    "nonuniform"
+  ],
+  "groups_passed": [
+    "pointwise_key_and_mirror_iff_exact_partition",
+    "partition_implies_unit_mass",
+    "equal_masses_do_not_determine_events_or_a_partition",
+    "coverage_and_disjointness_are_both_required",
+    "Boolean_event_laws_and_duplicate_paths",
+    "proper_parent_retains_evidence_mass",
+    "fair_marginals_do_not_imply_independence",
+    "shared_parameter_partition_and_fair_extractor_evidence"
+  ]
+}

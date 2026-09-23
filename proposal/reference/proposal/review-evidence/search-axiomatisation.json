@@ -1,0 +1,3953 @@
+{
+  "meta": {
+    "count": 304,
+    "db_response_time_ms": 269,
+    "page": 1,
+    "per_page": 4,
+    "groups_count": null,
+    "x_query": {
+      "oql": "works where full text has (A Complete Axiomatisation of Equivalence for Discrete Probabilistic Programming)",
+      "oqo": {
+        "get_rows": "works",
+        "filter_rows": [
+          {
+            "column_id": "fulltext.search",
+            "value": "A Complete Axiomatisation of Equivalence for Discrete Probabilistic Programming",
+            "operator": "has"
+          }
+        ]
+      },
+      "url": "/works?filter=fulltext.search:A Complete Axiomatisation of Equivalence for Discrete Probabilistic Programming&per_page=4"
+    },
+    "cost_usd": 0.001
+  },
+  "results": [
+    {
+      "id": "https://openalex.org/W4410036978",
+      "doi": "https://doi.org/10.1007/978-3-031-91121-7_9",
+      "title": "A Complete Axiomatisation of Equivalence for Discrete Probabilistic Programming",
+      "display_name": "A Complete Axiomatisation of Equivalence for Discrete Probabilistic Programming",
+      "relevance_score": 640.7476,
+      "publication_year": 2025,
+      "publication_date": "2025-01-01",
+      "ids": {
+        "openalex": "https://openalex.org/W4410036978",
+        "doi": "https://doi.org/10.1007/978-3-031-91121-7_9"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1007/978-3-031-91121-7_9",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1007/978-3-031-91121-7_9",
+        "pdf_url": "https://link.springer.com/content/pdf/10.1007/978-3-031-91121-7_9.pdf",
+        "source": {
+          "id": "https://openalex.org/S106296714",
+          "display_name": "Lecture notes in computer science",
+          "issn_l": "0302-9743",
+          "issn": [
+            "0302-9743",
+            "1611-3349"
+          ],
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310319900",
+          "host_organization_name": "Springer Science+Business Media",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310319900",
+            "https://openalex.org/P4310319965"
+          ],
+          "host_organization_lineage_names": [
+            "Springer Science+Business Media",
+            "Springer Nature"
+          ],
+          "type": "book series"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Lecture Notes in Computer Science",
+        "raw_type": "book-chapter"
+      },
+      "type": "conference-paper",
+      "indexed_in": [
+        "crossref"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "hybrid",
+        "oa_url": "https://link.springer.com/content/pdf/10.1007/978-3-031-91121-7_9.pdf",
+        "any_repository_has_fulltext": false
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5012245406",
+            "display_name": "Robin Piedeleu",
+            "orcid": "https://orcid.org/0000-0002-3945-2704"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I45129253",
+              "display_name": "University College London",
+              "ror": "https://ror.org/02jx3x895",
+              "country_code": "GB",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I124357947",
+                "https://openalex.org/I45129253"
+              ]
+            }
+          ],
+          "countries": [
+            "GB"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Robin Piedeleu",
+          "raw_affiliation_strings": [
+            "University College London, London, UK"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "University College London, London, UK",
+              "institution_ids": [
+                "https://openalex.org/I45129253"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5107490214",
+            "display_name": "Mateo Torres-Ruiz",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I45129253",
+              "display_name": "University College London",
+              "ror": "https://ror.org/02jx3x895",
+              "country_code": "GB",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I124357947",
+                "https://openalex.org/I45129253"
+              ]
+            }
+          ],
+          "countries": [
+            "GB"
+          ],
+          "is_corresponding": true,
+          "raw_author_name": "Mateo Torres-Ruiz",
+          "raw_affiliation_strings": [
+            "University College London, London, UK"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "University College London, London, UK",
+              "institution_ids": [
+                "https://openalex.org/I45129253"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5100658822",
+            "display_name": "Alexandra Silva",
+            "orcid": "https://orcid.org/0000-0001-5014-9784"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I205783295",
+              "display_name": "Cornell University",
+              "ror": "https://ror.org/05bnh6r87",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I205783295"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Alexandra Silva",
+          "raw_affiliation_strings": [
+            "Cornell University, Ithaca, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Cornell University, Ithaca, USA",
+              "institution_ids": [
+                "https://openalex.org/I205783295"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5113224723",
+            "display_name": "Fabio Zanasi",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I45129253",
+              "display_name": "University College London",
+              "ror": "https://ror.org/02jx3x895",
+              "country_code": "GB",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I124357947",
+                "https://openalex.org/I45129253"
+              ]
+            }
+          ],
+          "countries": [
+            "GB"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Fabio Zanasi",
+          "raw_affiliation_strings": [
+            "University College London, London, UK"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "University College London, London, UK",
+              "institution_ids": [
+                "https://openalex.org/I45129253"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 2,
+      "institutions_distinct_count": 2,
+      "corresponding_author_ids": [
+        "https://openalex.org/A5107490214"
+      ],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I45129253"
+      ],
+      "apc_list": {
+        "value": 5000,
+        "currency": "EUR",
+        "value_usd": 5392
+      },
+      "apc_paid": {
+        "value": 5000,
+        "currency": "EUR",
+        "value_usd": 5392
+      },
+      "fwci": 1.4079,
+      "has_fulltext": true,
+      "cited_by_count": 1,
+      "citation_normalized_percentile": {
+        "value": 0.77678738,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": false
+      },
+      "cited_by_percentile_year": {
+        "min": 94,
+        "max": 97
+      },
+      "biblio": {
+        "volume": null,
+        "issue": null,
+        "first_page": "202",
+        "last_page": "229"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11010",
+        "display_name": "Logic, Reasoning, and Knowledge",
+        "score": 0.9986000061035156,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11010",
+          "display_name": "Logic, Reasoning, and Knowledge",
+          "score": 0.9986000061035156,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10142",
+          "display_name": "Formal Methods in Verification",
+          "score": 0.998199999332428,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1703",
+            "display_name": "Computational Theory and Mathematics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T12002",
+          "display_name": "Computability, Logic, AI Algorithms",
+          "score": 0.996399998664856,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1703",
+            "display_name": "Computational Theory and Mathematics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.7697524428367615
+        },
+        {
+          "id": "https://openalex.org/keywords/equivalence",
+          "display_name": "Equivalence (formal languages)",
+          "score": 0.7051998376846313
+        },
+        {
+          "id": "https://openalex.org/keywords/probabilistic-logic",
+          "display_name": "Probabilistic logic",
+          "score": 0.6478238701820374
+        },
+        {
+          "id": "https://openalex.org/keywords/algorithm",
+          "display_name": "Algorithm",
+          "score": 0.45496898889541626
+        },
+        {
+          "id": "https://openalex.org/keywords/theoretical-computer-science",
+          "display_name": "Theoretical computer science",
+          "score": 0.4407029151916504
+        },
+        {
+          "id": "https://openalex.org/keywords/algebra-over-a-field",
+          "display_name": "Algebra over a field",
+          "score": 0.36751633882522583
+        },
+        {
+          "id": "https://openalex.org/keywords/programming-language",
+          "display_name": "Programming language",
+          "score": 0.33912768959999084
+        },
+        {
+          "id": "https://openalex.org/keywords/discrete-mathematics",
+          "display_name": "Discrete mathematics",
+          "score": 0.2828136086463928
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.1825343370437622
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-intelligence",
+          "display_name": "Artificial intelligence",
+          "score": 0.18047112226486206
+        },
+        {
+          "id": "https://openalex.org/keywords/pure-mathematics",
+          "display_name": "Pure mathematics",
+          "score": 0.07697436213493347
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.7697524428367615
+        },
+        {
+          "id": "https://openalex.org/C2780069185",
+          "wikidata": "https://www.wikidata.org/wiki/Q7977945",
+          "display_name": "Equivalence (formal languages)",
+          "level": 2,
+          "score": 0.7051998376846313
+        },
+        {
+          "id": "https://openalex.org/C49937458",
+          "wikidata": "https://www.wikidata.org/wiki/Q2599292",
+          "display_name": "Probabilistic logic",
+          "level": 2,
+          "score": 0.6478238701820374
+        },
+        {
+          "id": "https://openalex.org/C11413529",
+          "wikidata": "https://www.wikidata.org/wiki/Q8366",
+          "display_name": "Algorithm",
+          "level": 1,
+          "score": 0.45496898889541626
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.4407029151916504
+        },
+        {
+          "id": "https://openalex.org/C136119220",
+          "wikidata": "https://www.wikidata.org/wiki/Q1000660",
+          "display_name": "Algebra over a field",
+          "level": 2,
+          "score": 0.36751633882522583
+        },
+        {
+          "id": "https://openalex.org/C199360897",
+          "wikidata": "https://www.wikidata.org/wiki/Q9143",
+          "display_name": "Programming language",
+          "level": 1,
+          "score": 0.33912768959999084
+        },
+        {
+          "id": "https://openalex.org/C118615104",
+          "wikidata": "https://www.wikidata.org/wiki/Q121416",
+          "display_name": "Discrete mathematics",
+          "level": 1,
+          "score": 0.2828136086463928
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.1825343370437622
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.18047112226486206
+        },
+        {
+          "id": "https://openalex.org/C202444582",
+          "wikidata": "https://www.wikidata.org/wiki/Q837863",
+          "display_name": "Pure mathematics",
+          "level": 1,
+          "score": 0.07697436213493347
+        }
+      ],
+      "mesh": [],
+      "locations_count": 1,
+      "locations": [
+        {
+          "id": "doi:10.1007/978-3-031-91121-7_9",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.1007/978-3-031-91121-7_9",
+          "pdf_url": "https://link.springer.com/content/pdf/10.1007/978-3-031-91121-7_9.pdf",
+          "source": {
+            "id": "https://openalex.org/S106296714",
+            "display_name": "Lecture notes in computer science",
+            "issn_l": "0302-9743",
+            "issn": [
+              "0302-9743",
+              "1611-3349"
+            ],
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310319900",
+            "host_organization_name": "Springer Science+Business Media",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310319900",
+              "https://openalex.org/P4310319965"
+            ],
+            "host_organization_lineage_names": [
+              "Springer Science+Business Media",
+              "Springer Nature"
+            ],
+            "type": "book series"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Lecture Notes in Computer Science",
+          "raw_type": "book-chapter"
+        }
+      ],
+      "best_oa_location": {
+        "id": "doi:10.1007/978-3-031-91121-7_9",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1007/978-3-031-91121-7_9",
+        "pdf_url": "https://link.springer.com/content/pdf/10.1007/978-3-031-91121-7_9.pdf",
+        "source": {
+          "id": "https://openalex.org/S106296714",
+          "display_name": "Lecture notes in computer science",
+          "issn_l": "0302-9743",
+          "issn": [
+            "0302-9743",
+            "1611-3349"
+          ],
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310319900",
+          "host_organization_name": "Springer Science+Business Media",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310319900",
+            "https://openalex.org/P4310319965"
+          ],
+          "host_organization_lineage_names": [
+            "Springer Science+Business Media",
+            "Springer Nature"
+          ],
+          "type": "book series"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Lecture Notes in Computer Science",
+        "raw_type": "book-chapter"
+      },
+      "sustainable_development_goals": [],
+      "awards": [],
+      "funders": [],
+      "has_content": {
+        "pdf": true,
+        "grobid_xml": true
+      },
+      "content_urls": {
+        "pdf": "https://content.openalex.org/works/W4410036978.pdf",
+        "grobid_xml": "https://content.openalex.org/works/W4410036978.grobid-xml"
+      },
+      "referenced_works_count": 37,
+      "referenced_works": [
+        "https://openalex.org/W342302233",
+        "https://openalex.org/W1644475622",
+        "https://openalex.org/W1998368317",
+        "https://openalex.org/W2024355065",
+        "https://openalex.org/W2094414831",
+        "https://openalex.org/W2102506621",
+        "https://openalex.org/W2110846749",
+        "https://openalex.org/W2120713972",
+        "https://openalex.org/W2155049725",
+        "https://openalex.org/W2395654200",
+        "https://openalex.org/W2494200839",
+        "https://openalex.org/W2511514052",
+        "https://openalex.org/W2598985404",
+        "https://openalex.org/W2782235253",
+        "https://openalex.org/W2926374695",
+        "https://openalex.org/W2949602009",
+        "https://openalex.org/W2969875089",
+        "https://openalex.org/W3024182785",
+        "https://openalex.org/W3048626531",
+        "https://openalex.org/W3090210910",
+        "https://openalex.org/W3092707305",
+        "https://openalex.org/W3105655952",
+        "https://openalex.org/W3107908039",
+        "https://openalex.org/W3166645774",
+        "https://openalex.org/W3173838504",
+        "https://openalex.org/W3195882006",
+        "https://openalex.org/W4205427800",
+        "https://openalex.org/W4210631930",
+        "https://openalex.org/W4289800069",
+        "https://openalex.org/W4315606058",
+        "https://openalex.org/W4320920266",
+        "https://openalex.org/W4321480225",
+        "https://openalex.org/W4384297654",
+        "https://openalex.org/W4387938212",
+        "https://openalex.org/W4388052666",
+        "https://openalex.org/W6629605324",
+        "https://openalex.org/W6737459336"
+      ],
+      "related_works": [
+        "https://openalex.org/W2943623134",
+        "https://openalex.org/W2494523064",
+        "https://openalex.org/W2215759665",
+        "https://openalex.org/W2030292806",
+        "https://openalex.org/W2960358116",
+        "https://openalex.org/W2938171715",
+        "https://openalex.org/W1971383138",
+        "https://openalex.org/W1497573972",
+        "https://openalex.org/W2071659383",
+        "https://openalex.org/W1846253165"
+      ],
+      "abstract_inverted_index": {
+        "Abstract": [
+          0
+        ],
+        "We": [
+          1,
+          59
+        ],
+        "introduce": [
+          2
+        ],
+        "a": [
+          3,
+          42,
+          62,
+          83,
+          95
+        ],
+        "sound": [
+          4
+        ],
+        "and": [
+          5,
+          24
+        ],
+        "complete": [
+          6,
+          84
+        ],
+        "equational": [
+          7,
+          68,
+          85
+        ],
+        "theory": [
+          8,
+          69,
+          86
+        ],
+        "capturing": [
+          9
+        ],
+        "equivalence": [
+          10
+        ],
+        "of": [
+          11,
+          32,
+          45,
+          55,
+          70,
+          74,
+          97,
+          100,
+          109
+        ],
+        "discrete": [
+          12
+        ],
+        "probabilistic": [
+          13,
+          46
+        ],
+        "programs,": [
+          14
+        ],
+        "that": [
+          15,
+          106
+        ],
+        "is,": [
+          16
+        ],
+        "programs": [
+          17,
+          40
+        ],
+        "extended": [
+          18
+        ],
+        "with": [
+          19
+        ],
+        "primitives": [
+          20
+        ],
+        "for": [
+          21,
+          66,
+          87
+        ],
+        "Bernoulli": [
+          22
+        ],
+        "distributions": [
+          23,
+          28
+        ],
+        "conditioning,": [
+          25
+        ],
+        "to": [
+          26,
+          82,
+          104
+        ],
+        "model": [
+          27
+        ],
+        "over": [
+          29
+        ],
+        "finite": [
+          30
+        ],
+        "sets": [
+          31
+        ],
+        "events.": [
+          33
+        ],
+        "To": [
+          34
+        ],
+        "do": [
+          35
+        ],
+        "so,": [
+          36
+        ],
+        "we": [
+          37,
+          78
+        ],
+        "translate": [
+          38
+        ],
+        "these": [
+          39
+        ],
+        "into": [
+          41
+        ],
+        "graphical": [
+          43
+        ],
+        "syntax": [
+          44,
+          54
+        ],
+        "circuits,": [
+          47
+        ],
+        "formalised": [
+          48
+        ],
+        "as": [
+          49
+        ],
+        "string": [
+          50
+        ],
+        "diagrams,": [
+          51
+        ],
+        "the": [
+          52,
+          67,
+          71,
+          88,
+          98,
+          110
+        ],
+        "two-dimensional": [
+          53
+        ],
+        "symmetric": [
+          56
+        ],
+        "monoidal": [
+          57
+        ],
+        "categories.": [
+          58
+        ],
+        "then": [
+          60
+        ],
+        "prove": [
+          61
+        ],
+        "first": [
+          63,
+          92
+        ],
+        "completeness": [
+          64
+        ],
+        "result": [
+          65,
+          81,
+          93
+        ],
+        "conditioning-free": [
+          72
+        ],
+        "fragment": [
+          73
+        ],
+        "our": [
+          75
+        ],
+        "syntax.": [
+          76
+        ],
+        "Finally,": [
+          77
+        ],
+        "extend": [
+          79
+        ],
+        "this": [
+          80
+        ],
+        "entire": [
+          89
+        ],
+        "language.": [
+          90
+        ],
+        "Our": [
+          91
+        ],
+        "gives": [
+          94
+        ],
+        "presentation": [
+          96
+        ],
+        "category": [
+          99
+        ],
+        "Markov": [
+          101
+        ],
+        "kernels,": [
+          102
+        ],
+        "restricted": [
+          103
+        ],
+        "objects": [
+          105
+        ],
+        "are": [
+          107
+        ],
+        "powers": [
+          108
+        ],
+        "two-elements": [
+          111
+        ],
+        "set.": [
+          112
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2026,
+          "cited_by_count": 1
+        }
+      ],
+      "updated_date": "2026-08-22T07:34:49.880490",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W4402704382",
+      "doi": "https://doi.org/10.48550/arxiv.2408.14701",
+      "title": "A Complete Axiomatisation of Equivalence for Discrete Probabilistic Programming",
+      "display_name": "A Complete Axiomatisation of Equivalence for Discrete Probabilistic Programming",
+      "relevance_score": 162.92406,
+      "publication_year": 2024,
+      "publication_date": "2024-08-27",
+      "ids": {
+        "openalex": "https://openalex.org/W4402704382",
+        "doi": "https://doi.org/10.48550/arxiv.2408.14701"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "pmh:oai:arXiv.org:2408.14701",
+        "is_oa": true,
+        "landing_page_url": "http://arxiv.org/abs/2408.14701",
+        "pdf_url": "https://arxiv.org/pdf/2408.14701",
+        "source": {
+          "id": "https://openalex.org/S4306400194",
+          "display_name": "arXiv (Cornell University)",
+          "issn_l": "2331-8422",
+          "issn": [
+            "2331-8422"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I205783295",
+          "host_organization_name": "Cornell University",
+          "host_organization_lineage": [
+            "https://openalex.org/I205783295"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "text"
+      },
+      "type": "preprint",
+      "indexed_in": [
+        "arxiv",
+        "datacite"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "green",
+        "oa_url": "https://arxiv.org/pdf/2408.14701",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5012245406",
+            "display_name": "Robin Piedeleu",
+            "orcid": "https://orcid.org/0000-0002-3945-2704"
+          },
+          "institutions": [],
+          "countries": [],
+          "is_corresponding": false,
+          "raw_author_name": "Piedeleu, Robin",
+          "raw_affiliation_strings": [],
+          "raw_orcid": null,
+          "affiliations": []
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5107490214",
+            "display_name": "Mateo Torres-Ruiz",
+            "orcid": null
+          },
+          "institutions": [],
+          "countries": [],
+          "is_corresponding": false,
+          "raw_author_name": "Torres-Ruiz, Mateo",
+          "raw_affiliation_strings": [],
+          "raw_orcid": null,
+          "affiliations": []
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5100658822",
+            "display_name": "Alexandra Silva",
+            "orcid": "https://orcid.org/0000-0001-5014-9784"
+          },
+          "institutions": [],
+          "countries": [],
+          "is_corresponding": false,
+          "raw_author_name": "Silva, Alexandra",
+          "raw_affiliation_strings": [],
+          "raw_orcid": null,
+          "affiliations": []
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5016173850",
+            "display_name": "Fabio Zanasi",
+            "orcid": "https://orcid.org/0000-0001-6457-1345"
+          },
+          "institutions": [],
+          "countries": [],
+          "is_corresponding": false,
+          "raw_author_name": "Zanasi, Fabio",
+          "raw_affiliation_strings": [],
+          "raw_orcid": null,
+          "affiliations": []
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 0,
+      "institutions_distinct_count": 0,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": null,
+      "has_fulltext": true,
+      "cited_by_count": 0,
+      "citation_normalized_percentile": null,
+      "cited_by_percentile_year": null,
+      "biblio": {
+        "volume": null,
+        "issue": null,
+        "first_page": null,
+        "last_page": null
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11010",
+        "display_name": "Logic, Reasoning, and Knowledge",
+        "score": 0.986299991607666,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11010",
+          "display_name": "Logic, Reasoning, and Knowledge",
+          "score": 0.986299991607666,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10142",
+          "display_name": "Formal Methods in Verification",
+          "score": 0.9718999862670898,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1703",
+            "display_name": "Computational Theory and Mathematics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11727",
+          "display_name": "Advanced Algebra and Logic",
+          "score": 0.9233999848365784,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1703",
+            "display_name": "Computational Theory and Mathematics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/equivalence",
+          "display_name": "Equivalence (formal languages)",
+          "score": 0.7572197914123535
+        },
+        {
+          "id": "https://openalex.org/keywords/probabilistic-logic",
+          "display_name": "Probabilistic logic",
+          "score": 0.6896029114723206
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.5345221161842346
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.384048193693161
+        },
+        {
+          "id": "https://openalex.org/keywords/applied-mathematics",
+          "display_name": "Applied mathematics",
+          "score": 0.36494332551956177
+        },
+        {
+          "id": "https://openalex.org/keywords/discrete-mathematics",
+          "display_name": "Discrete mathematics",
+          "score": 0.3100394010543823
+        },
+        {
+          "id": "https://openalex.org/keywords/statistics",
+          "display_name": "Statistics",
+          "score": 0.12699249386787415
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C2780069185",
+          "wikidata": "https://www.wikidata.org/wiki/Q7977945",
+          "display_name": "Equivalence (formal languages)",
+          "level": 2,
+          "score": 0.7572197914123535
+        },
+        {
+          "id": "https://openalex.org/C49937458",
+          "wikidata": "https://www.wikidata.org/wiki/Q2599292",
+          "display_name": "Probabilistic logic",
+          "level": 2,
+          "score": 0.6896029114723206
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.5345221161842346
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.384048193693161
+        },
+        {
+          "id": "https://openalex.org/C28826006",
+          "wikidata": "https://www.wikidata.org/wiki/Q33521",
+          "display_name": "Applied mathematics",
+          "level": 1,
+          "score": 0.36494332551956177
+        },
+        {
+          "id": "https://openalex.org/C118615104",
+          "wikidata": "https://www.wikidata.org/wiki/Q121416",
+          "display_name": "Discrete mathematics",
+          "level": 1,
+          "score": 0.3100394010543823
+        },
+        {
+          "id": "https://openalex.org/C105795698",
+          "wikidata": "https://www.wikidata.org/wiki/Q12483",
+          "display_name": "Statistics",
+          "level": 1,
+          "score": 0.12699249386787415
+        }
+      ],
+      "mesh": [],
+      "locations_count": 2,
+      "locations": [
+        {
+          "id": "pmh:oai:arXiv.org:2408.14701",
+          "is_oa": true,
+          "landing_page_url": "http://arxiv.org/abs/2408.14701",
+          "pdf_url": "https://arxiv.org/pdf/2408.14701",
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "text"
+        },
+        {
+          "id": "doi:10.48550/arxiv.2408.14701",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.48550/arxiv.2408.14701",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Preprint"
+        }
+      ],
+      "best_oa_location": {
+        "id": "pmh:oai:arXiv.org:2408.14701",
+        "is_oa": true,
+        "landing_page_url": "http://arxiv.org/abs/2408.14701",
+        "pdf_url": "https://arxiv.org/pdf/2408.14701",
+        "source": {
+          "id": "https://openalex.org/S4306400194",
+          "display_name": "arXiv (Cornell University)",
+          "issn_l": "2331-8422",
+          "issn": [
+            "2331-8422"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I205783295",
+          "host_organization_name": "Cornell University",
+          "host_organization_lineage": [
+            "https://openalex.org/I205783295"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "text"
+      },
+      "sustainable_development_goals": [],
+      "awards": [],
+      "funders": [],
+      "has_content": {
+        "pdf": true,
+        "grobid_xml": true
+      },
+      "content_urls": {
+        "pdf": "https://content.openalex.org/works/W4402704382.pdf",
+        "grobid_xml": "https://content.openalex.org/works/W4402704382.grobid-xml"
+      },
+      "referenced_works_count": 0,
+      "referenced_works": [],
+      "related_works": [
+        "https://openalex.org/W4391375266",
+        "https://openalex.org/W1979597421",
+        "https://openalex.org/W2007980826",
+        "https://openalex.org/W2061531152",
+        "https://openalex.org/W3002753104",
+        "https://openalex.org/W2077600819",
+        "https://openalex.org/W2142036596",
+        "https://openalex.org/W2072657027",
+        "https://openalex.org/W2600246793",
+        "https://openalex.org/W1971383138"
+      ],
+      "abstract_inverted_index": {
+        "We": [
+          0,
+          58
+        ],
+        "introduce": [
+          1
+        ],
+        "a": [
+          2,
+          41,
+          61,
+          82,
+          110
+        ],
+        "sound": [
+          3
+        ],
+        "and": [
+          4,
+          23,
+          114
+        ],
+        "complete": [
+          5,
+          83
+        ],
+        "equational": [
+          6,
+          67,
+          84
+        ],
+        "theory": [
+          7,
+          68,
+          85,
+          102
+        ],
+        "capturing": [
+          8
+        ],
+        "equivalence": [
+          9
+        ],
+        "of": [
+          10,
+          31,
+          44,
+          54,
+          69,
+          73,
+          95,
+          100,
+          116,
+          119,
+          128
+        ],
+        "discrete": [
+          11
+        ],
+        "probabilistic": [
+          12,
+          45
+        ],
+        "programs,": [
+          13
+        ],
+        "that": [
+          14,
+          125
+        ],
+        "is,": [
+          15
+        ],
+        "programs": [
+          16,
+          39
+        ],
+        "extended": [
+          17
+        ],
+        "with": [
+          18
+        ],
+        "primitives": [
+          19
+        ],
+        "for": [
+          20,
+          65,
+          86,
+          97
+        ],
+        "Bernoulli": [
+          21
+        ],
+        "distributions": [
+          22,
+          27
+        ],
+        "conditioning,": [
+          24
+        ],
+        "to": [
+          25,
+          81,
+          123
+        ],
+        "model": [
+          26
+        ],
+        "over": [
+          28
+        ],
+        "finite": [
+          29
+        ],
+        "sets": [
+          30
+        ],
+        "events.": [
+          32
+        ],
+        "To": [
+          33
+        ],
+        "do": [
+          34
+        ],
+        "so,": [
+          35
+        ],
+        "we": [
+          36,
+          77
+        ],
+        "translate": [
+          37
+        ],
+        "these": [
+          38,
+          91
+        ],
+        "into": [
+          40
+        ],
+        "graphical": [
+          42
+        ],
+        "syntax": [
+          43,
+          53
+        ],
+        "circuits,": [
+          46
+        ],
+        "formalised": [
+          47
+        ],
+        "as": [
+          48
+        ],
+        "string": [
+          49
+        ],
+        "diagrams,": [
+          50
+        ],
+        "the": [
+          51,
+          66,
+          70,
+          87,
+          98,
+          117,
+          129
+        ],
+        "two-dimensional": [
+          52
+        ],
+        "symmetric": [
+          55
+        ],
+        "monoidal": [
+          56
+        ],
+        "categories.": [
+          57
+        ],
+        "then": [
+          59
+        ],
+        "prove": [
+          60
+        ],
+        "first": [
+          62,
+          107
+        ],
+        "completeness": [
+          63
+        ],
+        "result": [
+          64,
+          80,
+          108
+        ],
+        "conditioning-free": [
+          71
+        ],
+        "fragment": [
+          72
+        ],
+        "our": [
+          74,
+          106
+        ],
+        "syntax.": [
+          75
+        ],
+        "Finally,": [
+          76
+        ],
+        "extend": [
+          78
+        ],
+        "this": [
+          79
+        ],
+        "entire": [
+          88
+        ],
+        "language.": [
+          89
+        ],
+        "Note": [
+          90
+        ],
+        "developments": [
+          92
+        ],
+        "are": [
+          93,
+          126
+        ],
+        "also": [
+          94
+        ],
+        "interest": [
+          96
+        ],
+        "development": [
+          99
+        ],
+        "probability": [
+          101
+        ],
+        "in": [
+          103
+        ],
+        "Markov": [
+          104,
+          120
+        ],
+        "categories:": [
+          105
+        ],
+        "gives": [
+          109
+        ],
+        "presentation": [
+          111
+        ],
+        "by": [
+          112
+        ],
+        "generators": [
+          113
+        ],
+        "equations": [
+          115
+        ],
+        "category": [
+          118
+        ],
+        "kernels,": [
+          121
+        ],
+        "restricted": [
+          122
+        ],
+        "objects": [
+          124
+        ],
+        "powers": [
+          127
+        ],
+        "two-elements": [
+          130
+        ],
+        "set.": [
+          131
+        ]
+      },
+      "counts_by_year": [],
+      "updated_date": "2026-08-26T07:47:46.906454",
+      "created_date": "2024-09-21T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2153717963",
+      "doi": "https://doi.org/10.2168/lmcs-4(4:4)2008",
+      "title": "Characterising Testing Preorders for Finite Probabilistic Processes",
+      "display_name": "Characterising Testing Preorders for Finite Probabilistic Processes",
+      "relevance_score": 160.88785,
+      "publication_year": 2008,
+      "publication_date": "2008-10-28",
+      "ids": {
+        "openalex": "https://openalex.org/W2153717963",
+        "doi": "https://doi.org/10.2168/lmcs-4(4:4)2008",
+        "mag": "2153717963"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.2168/lmcs-4(4:4)2008",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.2168/lmcs-4(4:4)2008",
+        "pdf_url": "https://lmcs.episciences.org/694/pdf",
+        "source": {
+          "id": "https://openalex.org/S114379355",
+          "display_name": "Logical Methods in Computer Science",
+          "issn_l": "1860-5974",
+          "issn": [
+            "1860-5974"
+          ],
+          "is_oa": true,
+          "is_in_doaj": true,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310313916",
+          "host_organization_name": "Logical Methods in Computer Science e.V.",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310313916"
+          ],
+          "host_organization_lineage_names": [
+            "Logical Methods in Computer Science e.V."
+          ],
+          "type": "journal"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Logical Methods in Computer Science",
+        "raw_type": "journal-article"
+      },
+      "type": "article",
+      "indexed_in": [
+        "arxiv",
+        "crossref",
+        "doaj"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "diamond",
+        "oa_url": "https://lmcs.episciences.org/694/pdf",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5022036342",
+            "display_name": "Yuxin Deng",
+            "orcid": "https://orcid.org/0000-0003-0753-418X"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I183067930",
+              "display_name": "Shanghai Jiao Tong University",
+              "ror": "https://ror.org/0220qvk04",
+              "country_code": "CN",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I183067930"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I31746571",
+              "display_name": "UNSW Sydney",
+              "ror": "https://ror.org/03r8z3t63",
+              "country_code": "AU",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I31746571"
+              ]
+            }
+          ],
+          "countries": [
+            "AU",
+            "CN"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Yuxin Deng",
+          "raw_affiliation_strings": [
+            "Jiao Tong University Shanghai , China School of CSE ,",
+            "Shanghai Jiao Tong University, China, and",
+            "University of New South Wales, Australia"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Jiao Tong University Shanghai , China School of CSE ,",
+              "institution_ids": [
+                "https://openalex.org/I183067930"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Shanghai Jiao Tong University, China, and",
+              "institution_ids": [
+                "https://openalex.org/I183067930"
+              ]
+            },
+            {
+              "raw_affiliation_string": "University of New South Wales, Australia",
+              "institution_ids": [
+                "https://openalex.org/I31746571"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5037151302",
+            "display_name": "Robert van Glabbeek",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I31746571",
+              "display_name": "UNSW Sydney",
+              "ror": "https://ror.org/03r8z3t63",
+              "country_code": "AU",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I31746571"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I42894916",
+              "display_name": "Data61",
+              "ror": "https://ror.org/03q397159",
+              "country_code": "AU",
+              "type": "other",
+              "lineage": [
+                "https://openalex.org/I1292875679",
+                "https://openalex.org/I2801453606",
+                "https://openalex.org/I42894916",
+                "https://openalex.org/I4387156119"
+              ]
+            }
+          ],
+          "countries": [
+            "AU"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Robert van Glabbeek",
+          "raw_affiliation_strings": [
+            "National ICT Australia Sydney , Australia",
+            "University of New South Wales Sydney , Australia",
+            "National ICT Australia, and University of New South Wales, Australia"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "National ICT Australia Sydney , Australia",
+              "institution_ids": [
+                "https://openalex.org/I42894916"
+              ]
+            },
+            {
+              "raw_affiliation_string": "University of New South Wales Sydney , Australia",
+              "institution_ids": [
+                "https://openalex.org/I31746571"
+              ]
+            },
+            {
+              "raw_affiliation_string": "National ICT Australia, and University of New South Wales, Australia",
+              "institution_ids": [
+                "https://openalex.org/I31746571",
+                "https://openalex.org/I42894916"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5036035088",
+            "display_name": "Matthew Hennessy",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I162608824",
+              "display_name": "University of Sussex",
+              "ror": "https://ror.org/00ayhx656",
+              "country_code": "GB",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I162608824"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I205274468",
+              "display_name": "Trinity College Dublin",
+              "ror": "https://ror.org/02tyrky19",
+              "country_code": "IE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I205274468"
+              ]
+            }
+          ],
+          "countries": [
+            "GB",
+            "IE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Matthew Hennessy",
+          "raw_affiliation_strings": [
+            "Department of Informatics University of Sussex Falmer , Brighton , UK",
+            "Trinity College Dublin, Ireland"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Informatics University of Sussex Falmer , Brighton , UK",
+              "institution_ids": [
+                "https://openalex.org/I162608824"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Trinity College Dublin, Ireland",
+              "institution_ids": [
+                "https://openalex.org/I205274468"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5039019347",
+            "display_name": "Carroll Morgan",
+            "orcid": "https://orcid.org/0000-0002-8535-9068"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I205274468",
+              "display_name": "Trinity College Dublin",
+              "ror": "https://ror.org/02tyrky19",
+              "country_code": "IE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I205274468"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I31746571",
+              "display_name": "UNSW Sydney",
+              "ror": "https://ror.org/03r8z3t63",
+              "country_code": "AU",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I31746571"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I42894916",
+              "display_name": "Data61",
+              "ror": "https://ror.org/03q397159",
+              "country_code": "AU",
+              "type": "other",
+              "lineage": [
+                "https://openalex.org/I1292875679",
+                "https://openalex.org/I2801453606",
+                "https://openalex.org/I42894916",
+                "https://openalex.org/I4387156119"
+              ]
+            }
+          ],
+          "countries": [
+            "AU",
+            "IE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Carroll Morgan",
+          "raw_affiliation_strings": [
+            "National ICT Australia School of Computer Science and Engineering The University of New South Wales Sydney , Australia",
+            "Trinity College Dublin, Ireland",
+            "University of New South Wales, Australia"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "National ICT Australia School of Computer Science and Engineering The University of New South Wales Sydney , Australia",
+              "institution_ids": [
+                "https://openalex.org/I42894916"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Trinity College Dublin, Ireland",
+              "institution_ids": [
+                "https://openalex.org/I205274468"
+              ]
+            },
+            {
+              "raw_affiliation_string": "University of New South Wales, Australia",
+              "institution_ids": [
+                "https://openalex.org/I31746571"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 4,
+      "institutions_distinct_count": 5,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": 8.889,
+      "has_fulltext": true,
+      "cited_by_count": 77,
+      "citation_normalized_percentile": {
+        "value": 0.98109855,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": true
+      },
+      "cited_by_percentile_year": {
+        "min": 90,
+        "max": 99
+      },
+      "biblio": {
+        "volume": "4",
+        "issue": "4",
+        "first_page": null,
+        "last_page": null
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T10142",
+        "display_name": "Formal Methods in Verification",
+        "score": 0.9998999834060669,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1703",
+          "display_name": "Computational Theory and Mathematics"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T10142",
+          "display_name": "Formal Methods in Verification",
+          "score": 0.9998999834060669,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1703",
+            "display_name": "Computational Theory and Mathematics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11010",
+          "display_name": "Logic, Reasoning, and Knowledge",
+          "score": 0.9993000030517578,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10126",
+          "display_name": "Logic, programming, and type systems",
+          "score": 0.9987999796867371,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/preorder",
+          "display_name": "Preorder",
+          "score": 0.9801669120788574
+        },
+        {
+          "id": "https://openalex.org/keywords/nondeterministic-algorithm",
+          "display_name": "Nondeterministic algorithm",
+          "score": 0.8906775712966919
+        },
+        {
+          "id": "https://openalex.org/keywords/probabilistic-logic",
+          "display_name": "Probabilistic logic",
+          "score": 0.6499959230422974
+        },
+        {
+          "id": "https://openalex.org/keywords/modal-logic",
+          "display_name": "Modal logic",
+          "score": 0.5827802419662476
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.4449625611305237
+        },
+        {
+          "id": "https://openalex.org/keywords/algebra-over-a-field",
+          "display_name": "Algebra over a field",
+          "score": 0.43101271986961365
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.42277830839157104
+        },
+        {
+          "id": "https://openalex.org/keywords/modal",
+          "display_name": "Modal",
+          "score": 0.36434367299079895
+        },
+        {
+          "id": "https://openalex.org/keywords/discrete-mathematics",
+          "display_name": "Discrete mathematics",
+          "score": 0.34378114342689514
+        },
+        {
+          "id": "https://openalex.org/keywords/pure-mathematics",
+          "display_name": "Pure mathematics",
+          "score": 0.23032161593437195
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C2333172",
+          "wikidata": "https://www.wikidata.org/wiki/Q1425985",
+          "display_name": "Preorder",
+          "level": 2,
+          "score": 0.9801669120788574
+        },
+        {
+          "id": "https://openalex.org/C176181172",
+          "wikidata": "https://www.wikidata.org/wiki/Q3490301",
+          "display_name": "Nondeterministic algorithm",
+          "level": 2,
+          "score": 0.8906775712966919
+        },
+        {
+          "id": "https://openalex.org/C49937458",
+          "wikidata": "https://www.wikidata.org/wiki/Q2599292",
+          "display_name": "Probabilistic logic",
+          "level": 2,
+          "score": 0.6499959230422974
+        },
+        {
+          "id": "https://openalex.org/C27508121",
+          "wikidata": "https://www.wikidata.org/wiki/Q210841",
+          "display_name": "Modal logic",
+          "level": 3,
+          "score": 0.5827802419662476
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.4449625611305237
+        },
+        {
+          "id": "https://openalex.org/C136119220",
+          "wikidata": "https://www.wikidata.org/wiki/Q1000660",
+          "display_name": "Algebra over a field",
+          "level": 2,
+          "score": 0.43101271986961365
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.42277830839157104
+        },
+        {
+          "id": "https://openalex.org/C71139939",
+          "wikidata": "https://www.wikidata.org/wiki/Q910194",
+          "display_name": "Modal",
+          "level": 2,
+          "score": 0.36434367299079895
+        },
+        {
+          "id": "https://openalex.org/C118615104",
+          "wikidata": "https://www.wikidata.org/wiki/Q121416",
+          "display_name": "Discrete mathematics",
+          "level": 1,
+          "score": 0.34378114342689514
+        },
+        {
+          "id": "https://openalex.org/C202444582",
+          "wikidata": "https://www.wikidata.org/wiki/Q837863",
+          "display_name": "Pure mathematics",
+          "level": 1,
+          "score": 0.23032161593437195
+        },
+        {
+          "id": "https://openalex.org/C188027245",
+          "wikidata": "https://www.wikidata.org/wiki/Q750446",
+          "display_name": "Polymer chemistry",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C185592680",
+          "wikidata": "https://www.wikidata.org/wiki/Q2329",
+          "display_name": "Chemistry",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 4,
+      "locations": [
+        {
+          "id": "doi:10.2168/lmcs-4(4:4)2008",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.2168/lmcs-4(4:4)2008",
+          "pdf_url": "https://lmcs.episciences.org/694/pdf",
+          "source": {
+            "id": "https://openalex.org/S114379355",
+            "display_name": "Logical Methods in Computer Science",
+            "issn_l": "1860-5974",
+            "issn": [
+              "1860-5974"
+            ],
+            "is_oa": true,
+            "is_in_doaj": true,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310313916",
+            "host_organization_name": "Logical Methods in Computer Science e.V.",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310313916"
+            ],
+            "host_organization_lineage_names": [
+              "Logical Methods in Computer Science e.V."
+            ],
+            "type": "journal"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Logical Methods in Computer Science",
+          "raw_type": "journal-article"
+        },
+        {
+          "id": "pmh:oai:arXiv.org:0810.3708",
+          "is_oa": true,
+          "landing_page_url": "http://arxiv.org/abs/0810.3708",
+          "pdf_url": "https://arxiv.org/pdf/0810.3708",
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "text"
+        },
+        {
+          "id": "pmh:oai:doaj.org/article:3fe727adaa31480ba390076e62aba1da",
+          "is_oa": true,
+          "landing_page_url": "https://doaj.org/article/3fe727adaa31480ba390076e62aba1da",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306401280",
+            "display_name": "DOAJ (DOAJ: Directory of Open Access Journals)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": null,
+            "host_organization_name": null,
+            "host_organization_lineage": [],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by-sa",
+          "license_id": "https://openalex.org/licenses/cc-by-sa",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "Logical Methods in Computer Science, Vol Volume 4, Issue 4 (2008)",
+          "raw_type": "article"
+        },
+        {
+          "id": "pmh:oai:tara.tcd.ie:2262/16500",
+          "is_oa": false,
+          "landing_page_url": "http://ieeexplore.ieee.org/iel5/4276538/4276539/04276575.pdf?tp=&arnumber=4276575&isnumber=4276539",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400387",
+            "display_name": "Trinity's Access to Research Output (TARA) (Trinity College Dublin)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205274468",
+            "host_organization_name": "Trinity College Dublin",
+            "host_organization_lineage": [
+              "https://openalex.org/I205274468"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "",
+          "raw_type": "Conference Paper"
+        }
+      ],
+      "best_oa_location": {
+        "id": "doi:10.2168/lmcs-4(4:4)2008",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.2168/lmcs-4(4:4)2008",
+        "pdf_url": "https://lmcs.episciences.org/694/pdf",
+        "source": {
+          "id": "https://openalex.org/S114379355",
+          "display_name": "Logical Methods in Computer Science",
+          "issn_l": "1860-5974",
+          "issn": [
+            "1860-5974"
+          ],
+          "is_oa": true,
+          "is_in_doaj": true,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310313916",
+          "host_organization_name": "Logical Methods in Computer Science e.V.",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310313916"
+          ],
+          "host_organization_lineage_names": [
+            "Logical Methods in Computer Science e.V."
+          ],
+          "type": "journal"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Logical Methods in Computer Science",
+        "raw_type": "journal-article"
+      },
+      "sustainable_development_goals": [],
+      "awards": [],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320320006",
+          "display_name": "Royal Society",
+          "ror": "https://ror.org/03wnrjx87"
+        },
+        {
+          "id": "https://openalex.org/F4320320847",
+          "display_name": "Science Foundation Ireland",
+          "ror": "https://ror.org/0271asj38"
+        },
+        {
+          "id": "https://openalex.org/F4320321001",
+          "display_name": "National Natural Science Foundation of China",
+          "ror": "https://ror.org/01h0zpd94"
+        },
+        {
+          "id": "https://openalex.org/F4320334704",
+          "display_name": "Australian Research Council",
+          "ror": "https://ror.org/05mmh0f86"
+        }
+      ],
+      "has_content": {
+        "pdf": true,
+        "grobid_xml": true
+      },
+      "content_urls": {
+        "pdf": "https://content.openalex.org/works/W2153717963.pdf",
+        "grobid_xml": "https://content.openalex.org/works/W2153717963.grobid-xml"
+      },
+      "referenced_works_count": 45,
+      "referenced_works": [
+        "https://openalex.org/W135832138",
+        "https://openalex.org/W258022877",
+        "https://openalex.org/W1482332845",
+        "https://openalex.org/W1492711856",
+        "https://openalex.org/W1503973138",
+        "https://openalex.org/W1533361503",
+        "https://openalex.org/W1548292705",
+        "https://openalex.org/W1561357353",
+        "https://openalex.org/W1580323521",
+        "https://openalex.org/W1736113712",
+        "https://openalex.org/W1793726001",
+        "https://openalex.org/W1805999688",
+        "https://openalex.org/W1850900101",
+        "https://openalex.org/W1935088456",
+        "https://openalex.org/W1976268573",
+        "https://openalex.org/W1978469611",
+        "https://openalex.org/W2024355065",
+        "https://openalex.org/W2030875267",
+        "https://openalex.org/W2034188142",
+        "https://openalex.org/W2038373047",
+        "https://openalex.org/W2039139411",
+        "https://openalex.org/W2044194891",
+        "https://openalex.org/W2052170634",
+        "https://openalex.org/W2067899880",
+        "https://openalex.org/W2072033902",
+        "https://openalex.org/W2078717493",
+        "https://openalex.org/W2102097307",
+        "https://openalex.org/W2102750354",
+        "https://openalex.org/W2110287808",
+        "https://openalex.org/W2119122895",
+        "https://openalex.org/W2125500714",
+        "https://openalex.org/W2130773382",
+        "https://openalex.org/W2135795876",
+        "https://openalex.org/W2136920408",
+        "https://openalex.org/W2144545266",
+        "https://openalex.org/W2152206644",
+        "https://openalex.org/W2152398409",
+        "https://openalex.org/W2155748644",
+        "https://openalex.org/W2157144873",
+        "https://openalex.org/W2334782222",
+        "https://openalex.org/W2589217375",
+        "https://openalex.org/W3000511677",
+        "https://openalex.org/W3144368627",
+        "https://openalex.org/W4212872794",
+        "https://openalex.org/W4300395467"
+      ],
+      "related_works": [
+        "https://openalex.org/W2152206644",
+        "https://openalex.org/W2153717963",
+        "https://openalex.org/W4250946489",
+        "https://openalex.org/W3213784925",
+        "https://openalex.org/W1511744714",
+        "https://openalex.org/W2278329956",
+        "https://openalex.org/W4248627364",
+        "https://openalex.org/W2037507558",
+        "https://openalex.org/W1996880246",
+        "https://openalex.org/W2913266263"
+      ],
+      "abstract_inverted_index": {
+        "In": [
+          0
+        ],
+        "1992": [
+          1
+        ],
+        "Wang": [
+          2
+        ],
+        "&": [
+          3
+        ],
+        "Larsen": [
+          4
+        ],
+        "extended": [
+          5
+        ],
+        "the": [
+          6,
+          35,
+          61,
+          69
+        ],
+        "may-": [
+          7
+        ],
+        "and": [
+          8,
+          14,
+          42,
+          68
+        ],
+        "must": [
+          9,
+          70
+        ],
+        "preorders": [
+          10,
+          84,
+          93
+        ],
+        "of": [
+          11,
+          66,
+          74,
+          82,
+          98
+        ],
+        "De": [
+          12
+        ],
+        "Nicola": [
+          13
+        ],
+        "Hennessy": [
+          15
+        ],
+        "to": [
+          16,
+          38
+        ],
+        "processes": [
+          17,
+          55
+        ],
+        "featuring": [
+          18
+        ],
+        "probabilistic": [
+          19,
+          96
+        ],
+        "as": [
+          20,
+          22
+        ],
+        "well": [
+          21
+        ],
+        "nondeterministic": [
+          23
+        ],
+        "choice.": [
+          24
+        ],
+        "They": [
+          25
+        ],
+        "concluded": [
+          26
+        ],
+        "with": [
+          27,
+          56
+        ],
+        "two": [
+          28
+        ],
+        "problems": [
+          29,
+          52
+        ],
+        "that": [
+          30
+        ],
+        "have": [
+          31
+        ],
+        "remained": [
+          32
+        ],
+        "open": [
+          33
+        ],
+        "throughout": [
+          34
+        ],
+        "years,": [
+          36
+        ],
+        "namely": [
+          37
+        ],
+        "find": [
+          39
+        ],
+        "complete": [
+          40
+        ],
+        "axiomatisations": [
+          41
+        ],
+        "alternative": [
+          43
+        ],
+        "characterisations": [
+          44
+        ],
+        "for": [
+          45,
+          53
+        ],
+        "these": [
+          46
+        ],
+        "preorders.": [
+          47
+        ],
+        "This": [
+          48
+        ],
+        "paper": [
+          49
+        ],
+        "solves": [
+          50
+        ],
+        "both": [
+          51,
+          83,
+          92
+        ],
+        "finite": [
+          54
+        ],
+        "silent": [
+          57
+        ],
+        "moves.": [
+          58
+        ],
+        "It": [
+          59,
+          77
+        ],
+        "characterises": [
+          60
+        ],
+        "may": [
+          62
+        ],
+        "preorder": [
+          63,
+          71
+        ],
+        "in": [
+          64,
+          72
+        ],
+        "terms": [
+          65,
+          73
+        ],
+        "simulation,": [
+          67
+        ],
+        "failure": [
+          75
+        ],
+        "simulation.": [
+          76
+        ],
+        "also": [
+          78
+        ],
+        "gives": [
+          79
+        ],
+        "a": [
+          80,
+          86,
+          95
+        ],
+        "characterisation": [
+          81
+        ],
+        "using": [
+          85
+        ],
+        "modal": [
+          87
+        ],
+        "logic.": [
+          88
+        ],
+        "Finally": [
+          89
+        ],
+        "it": [
+          90
+        ],
+        "axiomatises": [
+          91
+        ],
+        "over": [
+          94
+        ],
+        "version": [
+          97
+        ],
+        "CSP.": [
+          99
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2026,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2025,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2024,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2023,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2022,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 4
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 3
+        },
+        {
+          "year": 2019,
+          "cited_by_count": 6
+        },
+        {
+          "year": 2018,
+          "cited_by_count": 7
+        },
+        {
+          "year": 2017,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2016,
+          "cited_by_count": 5
+        },
+        {
+          "year": 2014,
+          "cited_by_count": 7
+        },
+        {
+          "year": 2013,
+          "cited_by_count": 5
+        },
+        {
+          "year": 2012,
+          "cited_by_count": 9
+        }
+      ],
+      "updated_date": "2026-09-08T07:41:39.490200",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2900404128",
+      "doi": "https://doi.org/10.1145/3290349",
+      "title": "A domain theory for statistical probabilistic programming",
+      "display_name": "A domain theory for statistical probabilistic programming",
+      "relevance_score": 148.28067,
+      "publication_year": 2019,
+      "publication_date": "2019-01-02",
+      "ids": {
+        "openalex": "https://openalex.org/W2900404128",
+        "doi": "https://doi.org/10.1145/3290349",
+        "mag": "2900404128"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1145/3290349",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1145/3290349",
+        "pdf_url": "https://dl.acm.org/doi/pdf/10.1145/3290349",
+        "source": {
+          "id": "https://openalex.org/S4210216081",
+          "display_name": "Proceedings of the ACM on Programming Languages",
+          "issn_l": "2475-1421",
+          "issn": [
+            "2475-1421"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310319798",
+          "host_organization_name": "Association for Computing Machinery",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310319798"
+          ],
+          "host_organization_lineage_names": [
+            "Association for Computing Machinery"
+          ],
+          "type": "journal"
+        },
+        "license": "other-oa",
+        "license_id": "https://openalex.org/licenses/other-oa",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Proceedings of the ACM on Programming Languages",
+        "raw_type": "journal-article"
+      },
+      "type": "article",
+      "indexed_in": [
+        "arxiv",
+        "crossref"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "diamond",
+        "oa_url": "https://dl.acm.org/doi/pdf/10.1145/3290349",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": null,
+            "display_name": "Matthijs V\u00e1k\u00e1r",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I78577930",
+              "display_name": "Columbia University",
+              "ror": "https://ror.org/00hj8s172",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I78577930"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Matthijs V\u00e1k\u00e1r",
+          "raw_affiliation_strings": [
+            "Columbia University, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Columbia University, USA",
+              "institution_ids": [
+                "https://openalex.org/I78577930"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": null,
+            "display_name": "Ohad Kammar",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I40120149",
+              "display_name": "University of Oxford",
+              "ror": "https://ror.org/052gg0110",
+              "country_code": "GB",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I40120149"
+              ]
+            }
+          ],
+          "countries": [
+            "GB"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Ohad Kammar",
+          "raw_affiliation_strings": [
+            "University of Oxford, UK"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "University of Oxford, UK",
+              "institution_ids": [
+                "https://openalex.org/I40120149"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": null,
+            "display_name": "Sam Staton",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I40120149",
+              "display_name": "University of Oxford",
+              "ror": "https://ror.org/052gg0110",
+              "country_code": "GB",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I40120149"
+              ]
+            }
+          ],
+          "countries": [
+            "GB"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Sam Staton",
+          "raw_affiliation_strings": [
+            "University of Oxford, UK"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "University of Oxford, UK",
+              "institution_ids": [
+                "https://openalex.org/I40120149"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 2,
+      "institutions_distinct_count": 2,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": 2.9932,
+      "has_fulltext": true,
+      "cited_by_count": 41,
+      "citation_normalized_percentile": {
+        "value": 0.9231519,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": true
+      },
+      "cited_by_percentile_year": {
+        "min": 89,
+        "max": 99
+      },
+      "biblio": {
+        "volume": "3",
+        "issue": "POPL",
+        "first_page": "1",
+        "last_page": "29"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T10126",
+        "display_name": "Logic, programming, and type systems",
+        "score": 0.3174000084400177,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T10126",
+          "display_name": "Logic, programming, and type systems",
+          "score": 0.3174000084400177,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11010",
+          "display_name": "Logic, Reasoning, and Knowledge",
+          "score": 0.2904999852180481,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11596",
+          "display_name": "Constraint Satisfaction and Optimization",
+          "score": 0.1582999974489212,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1705",
+            "display_name": "Computer Networks and Communications"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/denotational-semantics",
+          "display_name": "Denotational semantics",
+          "score": 0.7706999778747559
+        },
+        {
+          "id": "https://openalex.org/keywords/probabilistic-logic",
+          "display_name": "Probabilistic logic",
+          "score": 0.651199996471405
+        },
+        {
+          "id": "https://openalex.org/keywords/domain-theory",
+          "display_name": "Domain theory",
+          "score": 0.6506999731063843
+        },
+        {
+          "id": "https://openalex.org/keywords/axiom",
+          "display_name": "Axiom",
+          "score": 0.6054999828338623
+        },
+        {
+          "id": "https://openalex.org/keywords/semantics",
+          "display_name": "Semantics (computer science)",
+          "score": 0.5455999970436096
+        },
+        {
+          "id": "https://openalex.org/keywords/probability-measure",
+          "display_name": "Probability measure",
+          "score": 0.46369999647140503
+        },
+        {
+          "id": "https://openalex.org/keywords/well-founded-semantics",
+          "display_name": "Well-founded semantics",
+          "score": 0.4577000141143799
+        },
+        {
+          "id": "https://openalex.org/keywords/operational-semantics",
+          "display_name": "Operational semantics",
+          "score": 0.4375999867916107
+        },
+        {
+          "id": "https://openalex.org/keywords/commutative-property",
+          "display_name": "Commutative property",
+          "score": 0.4291999936103821
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C207648694",
+          "wikidata": "https://www.wikidata.org/wiki/Q1189746",
+          "display_name": "Denotational semantics",
+          "level": 4,
+          "score": 0.7706999778747559
+        },
+        {
+          "id": "https://openalex.org/C49937458",
+          "wikidata": "https://www.wikidata.org/wiki/Q2599292",
+          "display_name": "Probabilistic logic",
+          "level": 2,
+          "score": 0.651199996471405
+        },
+        {
+          "id": "https://openalex.org/C29585364",
+          "wikidata": "https://www.wikidata.org/wiki/Q1079166",
+          "display_name": "Domain theory",
+          "level": 2,
+          "score": 0.6506999731063843
+        },
+        {
+          "id": "https://openalex.org/C167729594",
+          "wikidata": "https://www.wikidata.org/wiki/Q17736",
+          "display_name": "Axiom",
+          "level": 2,
+          "score": 0.6054999828338623
+        },
+        {
+          "id": "https://openalex.org/C184337299",
+          "wikidata": "https://www.wikidata.org/wiki/Q1437428",
+          "display_name": "Semantics (computer science)",
+          "level": 2,
+          "score": 0.5455999970436096
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.4805999994277954
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.47929999232292175
+        },
+        {
+          "id": "https://openalex.org/C21031990",
+          "wikidata": "https://www.wikidata.org/wiki/Q355020",
+          "display_name": "Probability measure",
+          "level": 2,
+          "score": 0.46369999647140503
+        },
+        {
+          "id": "https://openalex.org/C89497691",
+          "wikidata": "https://www.wikidata.org/wiki/Q7981058",
+          "display_name": "Well-founded semantics",
+          "level": 5,
+          "score": 0.4577000141143799
+        },
+        {
+          "id": "https://openalex.org/C156325763",
+          "wikidata": "https://www.wikidata.org/wiki/Q1930895",
+          "display_name": "Operational semantics",
+          "level": 3,
+          "score": 0.4375999867916107
+        },
+        {
+          "id": "https://openalex.org/C183778304",
+          "wikidata": "https://www.wikidata.org/wiki/Q165474",
+          "display_name": "Commutative property",
+          "level": 2,
+          "score": 0.4291999936103821
+        },
+        {
+          "id": "https://openalex.org/C114289077",
+          "wikidata": "https://www.wikidata.org/wiki/Q3284399",
+          "display_name": "Statistical model",
+          "level": 2,
+          "score": 0.41909998655319214
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.4169999957084656
+        },
+        {
+          "id": "https://openalex.org/C2777212361",
+          "wikidata": "https://www.wikidata.org/wiki/Q5127848",
+          "display_name": "Class (philosophy)",
+          "level": 2,
+          "score": 0.40610000491142273
+        },
+        {
+          "id": "https://openalex.org/C36503486",
+          "wikidata": "https://www.wikidata.org/wiki/Q11235244",
+          "display_name": "Domain (mathematical analysis)",
+          "level": 2,
+          "score": 0.4034999907016754
+        },
+        {
+          "id": "https://openalex.org/C143017306",
+          "wikidata": "https://www.wikidata.org/wiki/Q3318133",
+          "display_name": "Probabilistic relevance model",
+          "level": 4,
+          "score": 0.39640000462532043
+        },
+        {
+          "id": "https://openalex.org/C122203268",
+          "wikidata": "https://www.wikidata.org/wiki/Q5862903",
+          "display_name": "Probability theory",
+          "level": 2,
+          "score": 0.37959998846054077
+        },
+        {
+          "id": "https://openalex.org/C136119220",
+          "wikidata": "https://www.wikidata.org/wiki/Q1000660",
+          "display_name": "Algebra over a field",
+          "level": 2,
+          "score": 0.3375999927520752
+        },
+        {
+          "id": "https://openalex.org/C199360897",
+          "wikidata": "https://www.wikidata.org/wiki/Q9143",
+          "display_name": "Programming language",
+          "level": 1,
+          "score": 0.33009999990463257
+        },
+        {
+          "id": "https://openalex.org/C118615104",
+          "wikidata": "https://www.wikidata.org/wiki/Q121416",
+          "display_name": "Discrete mathematics",
+          "level": 1,
+          "score": 0.32839998602867126
+        },
+        {
+          "id": "https://openalex.org/C2780009758",
+          "wikidata": "https://www.wikidata.org/wiki/Q6804172",
+          "display_name": "Measure (data warehouse)",
+          "level": 2,
+          "score": 0.3165000081062317
+        },
+        {
+          "id": "https://openalex.org/C149441793",
+          "wikidata": "https://www.wikidata.org/wiki/Q200726",
+          "display_name": "Probability distribution",
+          "level": 2,
+          "score": 0.31139999628067017
+        },
+        {
+          "id": "https://openalex.org/C89448276",
+          "wikidata": "https://www.wikidata.org/wiki/Q5259284",
+          "display_name": "Denotational semantics of the Actor model",
+          "level": 5,
+          "score": 0.3027999997138977
+        },
+        {
+          "id": "https://openalex.org/C33724603",
+          "wikidata": "https://www.wikidata.org/wiki/Q812540",
+          "display_name": "Bayesian network",
+          "level": 2,
+          "score": 0.2962999939918518
+        },
+        {
+          "id": "https://openalex.org/C125773388",
+          "wikidata": "https://www.wikidata.org/wiki/Q792542",
+          "display_name": "Axiomatic system",
+          "level": 3,
+          "score": 0.2939999997615814
+        },
+        {
+          "id": "https://openalex.org/C47030870",
+          "wikidata": "https://www.wikidata.org/wiki/Q467606",
+          "display_name": "Model theory",
+          "level": 2,
+          "score": 0.28929999470710754
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.2858999967575073
+        },
+        {
+          "id": "https://openalex.org/C128828806",
+          "wikidata": "https://www.wikidata.org/wiki/Q7246848",
+          "display_name": "Probabilistic argumentation",
+          "level": 3,
+          "score": 0.27730000019073486
+        },
+        {
+          "id": "https://openalex.org/C52063229",
+          "wikidata": "https://www.wikidata.org/wiki/Q7246845",
+          "display_name": "Probabilistic CTL",
+          "level": 4,
+          "score": 0.27480000257492065
+        },
+        {
+          "id": "https://openalex.org/C11413529",
+          "wikidata": "https://www.wikidata.org/wiki/Q8366",
+          "display_name": "Algorithm",
+          "level": 1,
+          "score": 0.27160000801086426
+        },
+        {
+          "id": "https://openalex.org/C130648207",
+          "wikidata": "https://www.wikidata.org/wiki/Q6007562",
+          "display_name": "Imprecise probability",
+          "level": 3,
+          "score": 0.2712000012397766
+        },
+        {
+          "id": "https://openalex.org/C135315306",
+          "wikidata": "https://www.wikidata.org/wiki/Q866364",
+          "display_name": "Bisimulation",
+          "level": 2,
+          "score": 0.25699999928474426
+        },
+        {
+          "id": "https://openalex.org/C160234255",
+          "wikidata": "https://www.wikidata.org/wiki/Q812535",
+          "display_name": "Bayesian inference",
+          "level": 3,
+          "score": 0.251800000667572
+        }
+      ],
+      "mesh": [],
+      "locations_count": 3,
+      "locations": [
+        {
+          "id": "doi:10.1145/3290349",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.1145/3290349",
+          "pdf_url": "https://dl.acm.org/doi/pdf/10.1145/3290349",
+          "source": {
+            "id": "https://openalex.org/S4210216081",
+            "display_name": "Proceedings of the ACM on Programming Languages",
+            "issn_l": "2475-1421",
+            "issn": [
+              "2475-1421"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310319798",
+            "host_organization_name": "Association for Computing Machinery",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310319798"
+            ],
+            "host_organization_lineage_names": [
+              "Association for Computing Machinery"
+            ],
+            "type": "journal"
+          },
+          "license": "other-oa",
+          "license_id": "https://openalex.org/licenses/other-oa",
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Proceedings of the ACM on Programming Languages",
+          "raw_type": "journal-article"
+        },
+        {
+          "id": "pmh:oai:pure.ed.ac.uk:openaire/14e541c5-e601-49c2-9f64-e26a647804f5",
+          "is_oa": true,
+          "landing_page_url": "https://www.research.ed.ac.uk/en/publications/14e541c5-e601-49c2-9f64-e26a647804f5",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400321",
+            "display_name": "Edinburgh Research Explorer (University of Edinburgh)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I98677209",
+            "host_organization_name": "University of Edinburgh",
+            "host_organization_lineage": [
+              "https://openalex.org/I98677209"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "V\u00e1k\u00e1r, M, Kammar, O & Staton, S 2019, 'A Domain Theory for Statistical Probabilistic Programming', Proceedings of the ACM on Programming Languages, vol. 3, no. POPL, 36. https://doi.org/10.1145/3290349",
+          "raw_type": "info:eu-repo/semantics/article"
+        },
+        {
+          "id": "pmh:oai:arXiv.org:1811.04196",
+          "is_oa": true,
+          "landing_page_url": "http://arxiv.org/abs/1811.04196",
+          "pdf_url": "https://arxiv.org/pdf/1811.04196",
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "text"
+        }
+      ],
+      "best_oa_location": {
+        "id": "doi:10.1145/3290349",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1145/3290349",
+        "pdf_url": "https://dl.acm.org/doi/pdf/10.1145/3290349",
+        "source": {
+          "id": "https://openalex.org/S4210216081",
+          "display_name": "Proceedings of the ACM on Programming Languages",
+          "issn_l": "2475-1421",
+          "issn": [
+            "2475-1421"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310319798",
+          "host_organization_name": "Association for Computing Machinery",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310319798"
+          ],
+          "host_organization_lineage_names": [
+            "Association for Computing Machinery"
+          ],
+          "type": "journal"
+        },
+        "license": "other-oa",
+        "license_id": "https://openalex.org/licenses/other-oa",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Proceedings of the ACM on Programming Languages",
+        "raw_type": "journal-article"
+      },
+      "sustainable_development_goals": [],
+      "awards": [
+        {
+          "id": "https://openalex.org/G1467636807",
+          "display_name": "Compositional Higher-Order Model Checking: Logics, Models and Algorithms",
+          "funder_award_id": "EP/M023974/1",
+          "funder_id": "https://openalex.org/F4320334627",
+          "funder_display_name": "Engineering and Physical Sciences Research Council"
+        },
+        {
+          "id": "https://openalex.org/G2075818214",
+          "display_name": "RS Fellow - EPSRC grant (2014): Quantum computation as a programming language",
+          "funder_award_id": "EP/N007387/1",
+          "funder_id": "https://openalex.org/F4320334627",
+          "funder_display_name": "Engineering and Physical Sciences Research Council"
+        },
+        {
+          "id": "https://openalex.org/G5325818871",
+          "display_name": null,
+          "funder_award_id": "EP/N007387/1, EP/M023974/1",
+          "funder_id": "https://openalex.org/F4320334627",
+          "funder_display_name": "Engineering and Physical Sciences Research Council"
+        },
+        {
+          "id": "https://openalex.org/G6542465994",
+          "display_name": null,
+          "funder_award_id": "EP/M023974/1",
+          "funder_id": "https://openalex.org/F4320334627",
+          "funder_display_name": "Engineering and Physical Sciences Research Council"
+        },
+        {
+          "id": "https://openalex.org/G8392032001",
+          "display_name": null,
+          "funder_award_id": "EP/N007387/1",
+          "funder_id": "https://openalex.org/F4320334627",
+          "funder_display_name": "Engineering and Physical Sciences Research Council"
+        }
+      ],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320320006",
+          "display_name": "Royal Society",
+          "ror": "https://ror.org/03wnrjx87"
+        },
+        {
+          "id": "https://openalex.org/F4320334627",
+          "display_name": "Engineering and Physical Sciences Research Council",
+          "ror": "https://ror.org/0439y7842"
+        },
+        {
+          "id": "https://openalex.org/F4320335172",
+          "display_name": "Balliol College, University of Oxford",
+          "ror": null
+        },
+        {
+          "id": "https://openalex.org/F4320335369",
+          "display_name": "Marsden Fund",
+          "ror": null
+        }
+      ],
+      "has_content": {
+        "pdf": true,
+        "grobid_xml": true
+      },
+      "content_urls": {
+        "pdf": "https://content.openalex.org/works/W2900404128.pdf",
+        "grobid_xml": "https://content.openalex.org/works/W2900404128.grobid-xml"
+      },
+      "referenced_works_count": 26,
+      "referenced_works": [
+        "https://openalex.org/W1595870841",
+        "https://openalex.org/W1831716037",
+        "https://openalex.org/W2007270285",
+        "https://openalex.org/W2009311190",
+        "https://openalex.org/W2010959827",
+        "https://openalex.org/W2021860025",
+        "https://openalex.org/W2024873396",
+        "https://openalex.org/W2060852846",
+        "https://openalex.org/W2077809881",
+        "https://openalex.org/W2082241908",
+        "https://openalex.org/W2108723183",
+        "https://openalex.org/W2116436934",
+        "https://openalex.org/W2146255646",
+        "https://openalex.org/W2206718322",
+        "https://openalex.org/W2294463722",
+        "https://openalex.org/W2395654200",
+        "https://openalex.org/W2529631934",
+        "https://openalex.org/W2565964471",
+        "https://openalex.org/W2595803793",
+        "https://openalex.org/W2767781532",
+        "https://openalex.org/W2770908033",
+        "https://openalex.org/W2809754822",
+        "https://openalex.org/W2949151551",
+        "https://openalex.org/W3125832933",
+        "https://openalex.org/W3160062581",
+        "https://openalex.org/W6683021380"
+      ],
+      "related_works": [],
+      "abstract_inverted_index": {
+        "We": [
+          0
+        ],
+        "give": [
+          1
+        ],
+        "an": [
+          2
+        ],
+        "adequate": [
+          3
+        ],
+        "denotational": [
+          4
+        ],
+        "semantics": [
+          5,
+          48,
+          54
+        ],
+        "for": [
+          6,
+          22
+        ],
+        "languages": [
+          7,
+          21
+        ],
+        "with": [
+          8,
+          122
+        ],
+        "recursive": [
+          9,
+          50
+        ],
+        "higher-order": [
+          10,
+          138
+        ],
+        "types,": [
+          11
+        ],
+        "continuous": [
+          12
+        ],
+        "probability": [
+          13,
+          89
+        ],
+        "distributions,": [
+          14
+        ],
+        "and": [
+          15,
+          33,
+          44,
+          79,
+          137,
+          154
+        ],
+        "soft": [
+          16
+        ],
+        "constraints.": [
+          17
+        ],
+        "These": [
+          18,
+          70
+        ],
+        "are": [
+          19,
+          38,
+          71,
+          84,
+          111
+        ],
+        "expressive": [
+          20
+        ],
+        "building": [
+          23
+        ],
+        "Bayesian": [
+          24
+        ],
+        "models": [
+          25,
+          105
+        ],
+        "of": [
+          26,
+          74,
+          88,
+          95,
+          120,
+          149,
+          157
+        ],
+        "the": [
+          27
+        ],
+        "kinds": [
+          28
+        ],
+        "used": [
+          29
+        ],
+        "in": [
+          30,
+          103
+        ],
+        "computational": [
+          31
+        ],
+        "statistics": [
+          32
+        ],
+        "machine": [
+          34
+        ],
+        "learning.": [
+          35
+        ],
+        "Among": [
+          36
+        ],
+        "them": [
+          37
+        ],
+        "untyped": [
+          39
+        ],
+        "languages,": [
+          40
+        ],
+        "similar": [
+          41
+        ],
+        "to": [
+          42,
+          114
+        ],
+        "Church": [
+          43
+        ],
+        "WebPPL,": [
+          45
+        ],
+        "because": [
+          46
+        ],
+        "our": [
+          47
+        ],
+        "allows": [
+          49
+        ],
+        "mixed-variance": [
+          51
+        ],
+        "datatypes.": [
+          52
+        ],
+        "Our": [
+          53,
+          61
+        ],
+        "justifies": [
+          55
+        ],
+        "important": [
+          56
+        ],
+        "program": [
+          57
+        ],
+        "equivalences": [
+          58
+        ],
+        "including": [
+          59
+        ],
+        "commutativity.": [
+          60
+        ],
+        "new": [
+          62
+        ],
+        "semantic": [
+          63
+        ],
+        "model": [
+          64,
+          87,
+          148,
+          156
+        ],
+        "is": [
+          65,
+          100
+        ],
+        "based": [
+          66
+        ],
+        "on": [
+          67,
+          93,
+          117
+        ],
+        "`quasi-Borel": [
+          68
+        ],
+        "predomains'.": [
+          69
+        ],
+        "a": [
+          72,
+          85,
+          133,
+          147,
+          155
+        ],
+        "mixture": [
+          73
+        ],
+        "chain-complete": [
+          75
+        ],
+        "partial": [
+          76
+        ],
+        "orders": [
+          77
+        ],
+        "(cpos)": [
+          78
+        ],
+        "quasi-Borel": [
+          80,
+          128,
+          143
+        ],
+        "spaces.": [
+          81
+        ],
+        "Quasi-Borel": [
+          82
+        ],
+        "spaces": [
+          83
+        ],
+        "recent": [
+          86
+        ],
+        "theory": [
+          90,
+          153
+        ],
+        "that": [
+          91
+        ],
+        "focuses": [
+          92
+        ],
+        "sets": [
+          94
+        ],
+        "admissible": [
+          96
+        ],
+        "random": [
+          97
+        ],
+        "elements.": [
+          98
+        ],
+        "Probability": [
+          99
+        ],
+        "traditionally": [
+          101
+        ],
+        "treated": [
+          102
+        ],
+        "cpo": [
+          104
+        ],
+        "using": [
+          106
+        ],
+        "probabilistic": [
+          107,
+          135
+        ],
+        "powerdomains,": [
+          108
+        ],
+        "but": [
+          109
+        ],
+        "these": [
+          110
+        ],
+        "not": [
+          112
+        ],
+        "known": [
+          113
+        ],
+        "be": [
+          115
+        ],
+        "commutative": [
+          116,
+          134
+        ],
+        "any": [
+          118
+        ],
+        "class": [
+          119
+        ],
+        "cpos": [
+          121
+        ],
+        "higher": [
+          123
+        ],
+        "order": [
+          124
+        ],
+        "functions.": [
+          125,
+          139
+        ],
+        "By": [
+          126
+        ],
+        "contrast,": [
+          127
+        ],
+        "predomains": [
+          129,
+          144
+        ],
+        "do": [
+          130
+        ],
+        "support": [
+          131
+        ],
+        "both": [
+          132,
+          146
+        ],
+        "powerdomain": [
+          136
+        ],
+        "As": [
+          140
+        ],
+        "we": [
+          141
+        ],
+        "show,": [
+          142
+        ],
+        "form": [
+          145
+        ],
+        "Fiore's": [
+          150
+        ],
+        "axiomatic": [
+          151
+        ],
+        "domain": [
+          152
+        ],
+        "Kock's": [
+          158
+        ],
+        "synthetic": [
+          159
+        ],
+        "measure": [
+          160
+        ],
+        "theory.": [
+          161
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2026,
+          "cited_by_count": 5
+        },
+        {
+          "year": 2025,
+          "cited_by_count": 3
+        },
+        {
+          "year": 2024,
+          "cited_by_count": 6
+        },
+        {
+          "year": 2023,
+          "cited_by_count": 10
+        },
+        {
+          "year": 2022,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 7
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2019,
+          "cited_by_count": 8
+        }
+      ],
+      "updated_date": "2026-09-12T09:15:50.089291",
+      "created_date": "2018-11-16T00:00:00"
+    }
+  ],
+  "group_by": []
+}

@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "states": [
+    {
+      "audit": "none",
+      "shared": "0.999%",
+      "independent": "0.999%",
+      "sourceFault": "1.00%"
+    },
+    {
+      "audit": "wrong",
+      "shared": "81.09%",
+      "independent": "0.999%",
+      "sourceFault": "90.09%"
+    },
+    {
+      "audit": "right",
+      "shared": "0.191%",
+      "independent": "0.999%",
+      "sourceFault": "0.101%"
+    }
+  ],
+  "check": "Actual inline script, declared element IDs, and all three interaction states; no browser layout assertion."
+}

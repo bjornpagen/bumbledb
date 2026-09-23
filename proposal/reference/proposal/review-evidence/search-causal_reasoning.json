@@ -1,0 +1,3122 @@
+{
+  "meta": {
+    "count": 24537,
+    "db_response_time_ms": 317,
+    "page": 1,
+    "per_page": 3,
+    "groups_count": null,
+    "x_query": {
+      "oql": "works where full text has (Probabilistic Reasoning Across the Causal Hierarchy)",
+      "oqo": {
+        "get_rows": "works",
+        "filter_rows": [
+          {
+            "column_id": "fulltext.search",
+            "value": "Probabilistic Reasoning Across the Causal Hierarchy",
+            "operator": "has"
+          }
+        ]
+      },
+      "url": "/works?filter=fulltext.search:Probabilistic Reasoning Across the Causal Hierarchy&per_page=3"
+    },
+    "cost_usd": 0.001
+  },
+  "results": [
+    {
+      "id": "https://openalex.org/W2998286224",
+      "doi": "https://doi.org/10.1609/aaai.v34i06.6577",
+      "title": "Probabilistic Reasoning Across the Causal Hierarchy",
+      "display_name": "Probabilistic Reasoning Across the Causal Hierarchy",
+      "relevance_score": 1212.9677,
+      "publication_year": 2020,
+      "publication_date": "2020-04-03",
+      "ids": {
+        "openalex": "https://openalex.org/W2998286224",
+        "doi": "https://doi.org/10.1609/aaai.v34i06.6577",
+        "mag": "2998286224"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1609/aaai.v34i06.6577",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1609/aaai.v34i06.6577",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4210191458",
+          "display_name": "Proceedings of the AAAI Conference on Artificial Intelligence",
+          "issn_l": "2159-5399",
+          "issn": [
+            "2159-5399",
+            "2374-3468"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/P4310320058",
+          "host_organization_name": "Association for the Advancement of Artificial Intelligence",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310320058"
+          ],
+          "host_organization_lineage_names": [
+            "Association for the Advancement of Artificial Intelligence"
+          ],
+          "type": "conference"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Proceedings of the AAAI Conference on Artificial Intelligence",
+        "raw_type": "journal-article"
+      },
+      "type": "conference-paper",
+      "indexed_in": [
+        "crossref"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "diamond",
+        "oa_url": "https://doi.org/10.1609/aaai.v34i06.6577",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5055300514",
+            "display_name": "Duligur Ibeling",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I97018004",
+              "display_name": "Stanford University",
+              "ror": "https://ror.org/00f54p054",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I97018004"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Duligur Ibeling",
+          "raw_affiliation_strings": [
+            "Stanford University"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Stanford University",
+              "institution_ids": [
+                "https://openalex.org/I97018004"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5079244248",
+            "display_name": "Thomas Icard",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I97018004",
+              "display_name": "Stanford University",
+              "ror": "https://ror.org/00f54p054",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I97018004"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Thomas Icard",
+          "raw_affiliation_strings": [
+            "Stanford University"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Stanford University",
+              "institution_ids": [
+                "https://openalex.org/I97018004"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 1,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I97018004"
+      ],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": 1.0371,
+      "has_fulltext": true,
+      "cited_by_count": 15,
+      "citation_normalized_percentile": {
+        "value": 0.80017618,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": false
+      },
+      "cited_by_percentile_year": {
+        "min": 89,
+        "max": 98
+      },
+      "biblio": {
+        "volume": "34",
+        "issue": "06",
+        "first_page": "10170",
+        "last_page": "10177"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11303",
+        "display_name": "Bayesian Modeling and Causal Inference",
+        "score": 0.9987999796867371,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11303",
+          "display_name": "Bayesian Modeling and Causal Inference",
+          "score": 0.9987999796867371,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11010",
+          "display_name": "Logic, Reasoning, and Knowledge",
+          "score": 0.9959999918937683,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10215",
+          "display_name": "Semantic Web and Ontologies",
+          "score": 0.9941999912261963,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/probabilistic-logic",
+          "display_name": "Probabilistic logic",
+          "score": 0.6946327090263367
+        },
+        {
+          "id": "https://openalex.org/keywords/counterfactual-conditional",
+          "display_name": "Counterfactual conditional",
+          "score": 0.6365354061126709
+        },
+        {
+          "id": "https://openalex.org/keywords/finitary",
+          "display_name": "Finitary",
+          "score": 0.5745691657066345
+        },
+        {
+          "id": "https://openalex.org/keywords/bayesian-network",
+          "display_name": "Bayesian network",
+          "score": 0.5410574078559875
+        },
+        {
+          "id": "https://openalex.org/keywords/counterfactual-thinking",
+          "display_name": "Counterfactual thinking",
+          "score": 0.5296584963798523
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.5225909948348999
+        },
+        {
+          "id": "https://openalex.org/keywords/decidability",
+          "display_name": "Decidability",
+          "score": 0.4918324947357178
+        },
+        {
+          "id": "https://openalex.org/keywords/hierarchy",
+          "display_name": "Hierarchy",
+          "score": 0.4863000810146332
+        },
+        {
+          "id": "https://openalex.org/keywords/conditional-independence",
+          "display_name": "Conditional independence",
+          "score": 0.48120906949043274
+        },
+        {
+          "id": "https://openalex.org/keywords/theoretical-computer-science",
+          "display_name": "Theoretical computer science",
+          "score": 0.4805772304534912
+        },
+        {
+          "id": "https://openalex.org/keywords/probabilistic-argumentation",
+          "display_name": "Probabilistic argumentation",
+          "score": 0.4797267019748688
+        },
+        {
+          "id": "https://openalex.org/keywords/satisfiability",
+          "display_name": "Satisfiability",
+          "score": 0.4249458312988281
+        },
+        {
+          "id": "https://openalex.org/keywords/situation-calculus",
+          "display_name": "Situation calculus",
+          "score": 0.41095688939094543
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-intelligence",
+          "display_name": "Artificial intelligence",
+          "score": 0.4099175035953522
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.3718525171279907
+        },
+        {
+          "id": "https://openalex.org/keywords/discrete-mathematics",
+          "display_name": "Discrete mathematics",
+          "score": 0.2253829836845398
+        },
+        {
+          "id": "https://openalex.org/keywords/psychology",
+          "display_name": "Psychology",
+          "score": 0.1236216127872467
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C49937458",
+          "wikidata": "https://www.wikidata.org/wiki/Q2599292",
+          "display_name": "Probabilistic logic",
+          "level": 2,
+          "score": 0.6946327090263367
+        },
+        {
+          "id": "https://openalex.org/C71889745",
+          "wikidata": "https://www.wikidata.org/wiki/Q1783264",
+          "display_name": "Counterfactual conditional",
+          "level": 3,
+          "score": 0.6365354061126709
+        },
+        {
+          "id": "https://openalex.org/C2778003309",
+          "wikidata": "https://www.wikidata.org/wiki/Q5450381",
+          "display_name": "Finitary",
+          "level": 2,
+          "score": 0.5745691657066345
+        },
+        {
+          "id": "https://openalex.org/C33724603",
+          "wikidata": "https://www.wikidata.org/wiki/Q812540",
+          "display_name": "Bayesian network",
+          "level": 2,
+          "score": 0.5410574078559875
+        },
+        {
+          "id": "https://openalex.org/C108650721",
+          "wikidata": "https://www.wikidata.org/wiki/Q1783253",
+          "display_name": "Counterfactual thinking",
+          "level": 2,
+          "score": 0.5296584963798523
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.5225909948348999
+        },
+        {
+          "id": "https://openalex.org/C153269930",
+          "wikidata": "https://www.wikidata.org/wiki/Q430001",
+          "display_name": "Decidability",
+          "level": 2,
+          "score": 0.4918324947357178
+        },
+        {
+          "id": "https://openalex.org/C31170391",
+          "wikidata": "https://www.wikidata.org/wiki/Q188619",
+          "display_name": "Hierarchy",
+          "level": 2,
+          "score": 0.4863000810146332
+        },
+        {
+          "id": "https://openalex.org/C79772020",
+          "wikidata": "https://www.wikidata.org/wiki/Q5159264",
+          "display_name": "Conditional independence",
+          "level": 2,
+          "score": 0.48120906949043274
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.4805772304534912
+        },
+        {
+          "id": "https://openalex.org/C128828806",
+          "wikidata": "https://www.wikidata.org/wiki/Q7246848",
+          "display_name": "Probabilistic argumentation",
+          "level": 3,
+          "score": 0.4797267019748688
+        },
+        {
+          "id": "https://openalex.org/C168773769",
+          "wikidata": "https://www.wikidata.org/wiki/Q1350299",
+          "display_name": "Satisfiability",
+          "level": 2,
+          "score": 0.4249458312988281
+        },
+        {
+          "id": "https://openalex.org/C22497172",
+          "wikidata": "https://www.wikidata.org/wiki/Q1559077",
+          "display_name": "Situation calculus",
+          "level": 2,
+          "score": 0.41095688939094543
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.4099175035953522
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.3718525171279907
+        },
+        {
+          "id": "https://openalex.org/C118615104",
+          "wikidata": "https://www.wikidata.org/wiki/Q121416",
+          "display_name": "Discrete mathematics",
+          "level": 1,
+          "score": 0.2253829836845398
+        },
+        {
+          "id": "https://openalex.org/C15744967",
+          "wikidata": "https://www.wikidata.org/wiki/Q9418",
+          "display_name": "Psychology",
+          "level": 0,
+          "score": 0.1236216127872467
+        },
+        {
+          "id": "https://openalex.org/C162324750",
+          "wikidata": "https://www.wikidata.org/wiki/Q8134",
+          "display_name": "Economics",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C77805123",
+          "wikidata": "https://www.wikidata.org/wiki/Q161272",
+          "display_name": "Social psychology",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C34447519",
+          "wikidata": "https://www.wikidata.org/wiki/Q179522",
+          "display_name": "Market economy",
+          "level": 1,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 2,
+      "locations": [
+        {
+          "id": "doi:10.1609/aaai.v34i06.6577",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.1609/aaai.v34i06.6577",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4210191458",
+            "display_name": "Proceedings of the AAAI Conference on Artificial Intelligence",
+            "issn_l": "2159-5399",
+            "issn": [
+              "2159-5399",
+              "2374-3468"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/P4310320058",
+            "host_organization_name": "Association for the Advancement of Artificial Intelligence",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310320058"
+            ],
+            "host_organization_lineage_names": [
+              "Association for the Advancement of Artificial Intelligence"
+            ],
+            "type": "conference"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Proceedings of the AAAI Conference on Artificial Intelligence",
+          "raw_type": "journal-article"
+        },
+        {
+          "id": "pmh:oai:ojs.aaai.org:article/6577",
+          "is_oa": true,
+          "landing_page_url": "https://ojs.aaai.org/index.php/AAAI/article/view/6577",
+          "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/6577/6433",
+          "source": {
+            "id": "https://openalex.org/S4306400155",
+            "display_name": "AAAI Publications (The Association for the Advancement of Artificial Intelligence (AAAI))",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I2801652627",
+            "host_organization_name": "Association for the Advancement of Artificial Intelligence",
+            "host_organization_lineage": [
+              "https://openalex.org/I2801652627"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "2159-5399",
+          "raw_type": "info:eu-repo/semantics/article"
+        }
+      ],
+      "best_oa_location": {
+        "id": "doi:10.1609/aaai.v34i06.6577",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1609/aaai.v34i06.6577",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4210191458",
+          "display_name": "Proceedings of the AAAI Conference on Artificial Intelligence",
+          "issn_l": "2159-5399",
+          "issn": [
+            "2159-5399",
+            "2374-3468"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/P4310320058",
+          "host_organization_name": "Association for the Advancement of Artificial Intelligence",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310320058"
+          ],
+          "host_organization_lineage_names": [
+            "Association for the Advancement of Artificial Intelligence"
+          ],
+          "type": "conference"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Proceedings of the AAAI Conference on Artificial Intelligence",
+        "raw_type": "journal-article"
+      },
+      "sustainable_development_goals": [],
+      "awards": [
+        {
+          "id": "https://openalex.org/G2911450482",
+          "display_name": null,
+          "funder_award_id": "DGE-165651 8",
+          "funder_id": "https://openalex.org/F4320306076",
+          "funder_display_name": "National Science Foundation"
+        },
+        {
+          "id": "https://openalex.org/G5267932457",
+          "display_name": "Graduate Research Fellowship Program (GRFP)",
+          "funder_award_id": "1656518",
+          "funder_id": "https://openalex.org/F4320306076",
+          "funder_display_name": "National Science Foundation"
+        }
+      ],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320306076",
+          "display_name": "National Science Foundation",
+          "ror": "https://ror.org/021nxhr62"
+        }
+      ],
+      "has_content": {
+        "grobid_xml": false,
+        "pdf": false
+      },
+      "content_urls": null,
+      "referenced_works_count": 48,
+      "referenced_works": [
+        "https://openalex.org/W1485840650",
+        "https://openalex.org/W1553142094",
+        "https://openalex.org/W1574274648",
+        "https://openalex.org/W1673419196",
+        "https://openalex.org/W1755347921",
+        "https://openalex.org/W1992691562",
+        "https://openalex.org/W2067754486",
+        "https://openalex.org/W2083689856",
+        "https://openalex.org/W2085352155",
+        "https://openalex.org/W2098952447",
+        "https://openalex.org/W2099925654",
+        "https://openalex.org/W2134067266",
+        "https://openalex.org/W2137819283",
+        "https://openalex.org/W2139032973",
+        "https://openalex.org/W2207421686",
+        "https://openalex.org/W2397185625",
+        "https://openalex.org/W2399384607",
+        "https://openalex.org/W2795329138",
+        "https://openalex.org/W2884555694",
+        "https://openalex.org/W2897613819",
+        "https://openalex.org/W2963305465",
+        "https://openalex.org/W2963711409",
+        "https://openalex.org/W2964675024",
+        "https://openalex.org/W3097981474",
+        "https://openalex.org/W3169451031",
+        "https://openalex.org/W4206038654",
+        "https://openalex.org/W4231570205",
+        "https://openalex.org/W4231712833",
+        "https://openalex.org/W4248145776",
+        "https://openalex.org/W4302423442",
+        "https://openalex.org/W4389011534",
+        "https://openalex.org/W6631500773",
+        "https://openalex.org/W6636922523",
+        "https://openalex.org/W6638057900",
+        "https://openalex.org/W6638421126",
+        "https://openalex.org/W6648599427",
+        "https://openalex.org/W6662852500",
+        "https://openalex.org/W6674842717",
+        "https://openalex.org/W6675106608",
+        "https://openalex.org/W6680458257",
+        "https://openalex.org/W6680885310",
+        "https://openalex.org/W6684989849",
+        "https://openalex.org/W6701573534",
+        "https://openalex.org/W6712938822",
+        "https://openalex.org/W6737131063",
+        "https://openalex.org/W6750672846",
+        "https://openalex.org/W6763547588",
+        "https://openalex.org/W6765450498"
+      ],
+      "related_works": [
+        "https://openalex.org/W3036464658",
+        "https://openalex.org/W4286778590",
+        "https://openalex.org/W3091729022",
+        "https://openalex.org/W2742730910",
+        "https://openalex.org/W2950610425",
+        "https://openalex.org/W4213410596",
+        "https://openalex.org/W2550309733",
+        "https://openalex.org/W4214973018",
+        "https://openalex.org/W2905131472",
+        "https://openalex.org/W1554205565"
+      ],
+      "abstract_inverted_index": {
+        "We": [
+          0,
+          60
+        ],
+        "propose": [
+          1
+        ],
+        "a": [
+          2,
+          15,
+          52,
+          62
+        ],
+        "formalization": [
+          3
+        ],
+        "of": [
+          4,
+          9,
+          17,
+          24,
+          31,
+          65
+        ],
+        "the": [
+          5,
+          28,
+          49
+        ],
+        "three-tier": [
+          6
+        ],
+        "causal": [
+          7,
+          46,
+          72
+        ],
+        "hierarchy": [
+          8
+        ],
+        "association,": [
+          10
+        ],
+        "intervention,": [
+          11
+        ],
+        "and": [
+          12,
+          38,
+          48,
+          74,
+          77,
+          81
+        ],
+        "counterfactuals": [
+          13
+        ],
+        "as": [
+          14
+        ],
+        "series": [
+          16,
+          64
+        ],
+        "probabilistic": [
+          18,
+          34,
+          75
+        ],
+        "logical": [
+          19
+        ],
+        "languages.": [
+          20
+        ],
+        "Our": [
+          21
+        ],
+        "languages": [
+          22
+        ],
+        "are": [
+          23,
+          86
+        ],
+        "strictly": [
+          25
+        ],
+        "increasing": [
+          26
+        ],
+        "expressivity,": [
+          27
+        ],
+        "first": [
+          29
+        ],
+        "capable": [
+          30
+        ],
+        "expressing": [
+          32
+        ],
+        "quantitative": [
+          33
+        ],
+        "reasoning\u2014including": [
+          35
+        ],
+        "conditional": [
+          36
+        ],
+        "independence": [
+          37
+        ],
+        "Bayesian": [
+          39
+        ],
+        "inference\u2014the": [
+          40
+        ],
+        "second": [
+          41
+        ],
+        "encoding": [
+          42
+        ],
+        "do-calculus": [
+          43,
+          55
+        ],
+        "reasoning": [
+          44
+        ],
+        "for": [
+          45,
+          56,
+          83
+        ],
+        "effects,": [
+          47
+        ],
+        "third": [
+          50
+        ],
+        "capturing": [
+          51
+        ],
+        "fully": [
+          53
+        ],
+        "expressive": [
+          54
+        ],
+        "arbitrary": [
+          57
+        ],
+        "counterfactual": [
+          58
+        ],
+        "queries.": [
+          59
+        ],
+        "give": [
+          61
+        ],
+        "corresponding": [
+          63
+        ],
+        "finitary": [
+          66
+        ],
+        "axiomatizations": [
+          67
+        ],
+        "complete": [
+          68
+        ],
+        "over": [
+          69
+        ],
+        "both": [
+          70
+        ],
+        "structural": [
+          71
+        ],
+        "models": [
+          73
+        ],
+        "programs,": [
+          76
+        ],
+        "show": [
+          78
+        ],
+        "that": [
+          79
+        ],
+        "satisfiability": [
+          80
+        ],
+        "validity": [
+          82
+        ],
+        "each": [
+          84
+        ],
+        "language": [
+          85
+        ],
+        "decidable": [
+          87
+        ],
+        "in": [
+          88
+        ],
+        "polynomial": [
+          89
+        ],
+        "space.": [
+          90
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2026,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2025,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2024,
+          "cited_by_count": 3
+        },
+        {
+          "year": 2023,
+          "cited_by_count": 3
+        },
+        {
+          "year": 2022,
+          "cited_by_count": 3
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 1
+        }
+      ],
+      "updated_date": "2026-09-03T10:48:47.769340",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2999279501",
+      "doi": "https://doi.org/10.48550/arxiv.2001.02889",
+      "title": "Probabilistic Reasoning across the Causal Hierarchy",
+      "display_name": "Probabilistic Reasoning across the Causal Hierarchy",
+      "relevance_score": 749.2274,
+      "publication_year": 2020,
+      "publication_date": "2020-01-09",
+      "ids": {
+        "openalex": "https://openalex.org/W2999279501",
+        "doi": "https://doi.org/10.48550/arxiv.2001.02889",
+        "mag": "2999279501"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "pmh:oai:arXiv.org:2001.02889",
+        "is_oa": true,
+        "landing_page_url": "http://arxiv.org/abs/2001.02889",
+        "pdf_url": "https://arxiv.org/pdf/2001.02889",
+        "source": {
+          "id": "https://openalex.org/S4306400194",
+          "display_name": "arXiv (Cornell University)",
+          "issn_l": "2331-8422",
+          "issn": [
+            "2331-8422"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I205783295",
+          "host_organization_name": "Cornell University",
+          "host_organization_lineage": [
+            "https://openalex.org/I205783295"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "text"
+      },
+      "type": "preprint",
+      "indexed_in": [
+        "arxiv",
+        "datacite"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "green",
+        "oa_url": "https://arxiv.org/pdf/2001.02889",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5055300514",
+            "display_name": "Duligur Ibeling",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I97018004",
+              "display_name": "Stanford University",
+              "ror": "https://ror.org/00f54p054",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I97018004"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Ibeling, Duligur",
+          "raw_affiliation_strings": [
+            "Stanford University ()"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Stanford University ()",
+              "institution_ids": [
+                "https://openalex.org/I97018004"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5079244248",
+            "display_name": "Thomas Icard",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I97018004",
+              "display_name": "Stanford University",
+              "ror": "https://ror.org/00f54p054",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I97018004"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Icard, Thomas",
+          "raw_affiliation_strings": [
+            "Stanford University ()"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Stanford University ()",
+              "institution_ids": [
+                "https://openalex.org/I97018004"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 1,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I97018004"
+      ],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": null,
+      "has_fulltext": true,
+      "cited_by_count": 4,
+      "citation_normalized_percentile": null,
+      "cited_by_percentile_year": null,
+      "biblio": {
+        "volume": null,
+        "issue": null,
+        "first_page": null,
+        "last_page": null
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11303",
+        "display_name": "Bayesian Modeling and Causal Inference",
+        "score": 0.9998999834060669,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11303",
+          "display_name": "Bayesian Modeling and Causal Inference",
+          "score": 0.9998999834060669,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11010",
+          "display_name": "Logic, Reasoning, and Knowledge",
+          "score": 0.9983999729156494,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10215",
+          "display_name": "Semantic Web and Ontologies",
+          "score": 0.9912999868392944,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/probabilistic-logic",
+          "display_name": "Probabilistic logic",
+          "score": 0.6830611824989319
+        },
+        {
+          "id": "https://openalex.org/keywords/counterfactual-conditional",
+          "display_name": "Counterfactual conditional",
+          "score": 0.6508151888847351
+        },
+        {
+          "id": "https://openalex.org/keywords/finitary",
+          "display_name": "Finitary",
+          "score": 0.5836476683616638
+        },
+        {
+          "id": "https://openalex.org/keywords/bayesian-network",
+          "display_name": "Bayesian network",
+          "score": 0.5487533211708069
+        },
+        {
+          "id": "https://openalex.org/keywords/counterfactual-thinking",
+          "display_name": "Counterfactual thinking",
+          "score": 0.5340396761894226
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.5140789747238159
+        },
+        {
+          "id": "https://openalex.org/keywords/decidability",
+          "display_name": "Decidability",
+          "score": 0.5029298663139343
+        },
+        {
+          "id": "https://openalex.org/keywords/conditional-independence",
+          "display_name": "Conditional independence",
+          "score": 0.4794946312904358
+        },
+        {
+          "id": "https://openalex.org/keywords/hierarchy",
+          "display_name": "Hierarchy",
+          "score": 0.47881418466567993
+        },
+        {
+          "id": "https://openalex.org/keywords/probabilistic-argumentation",
+          "display_name": "Probabilistic argumentation",
+          "score": 0.4670981764793396
+        },
+        {
+          "id": "https://openalex.org/keywords/theoretical-computer-science",
+          "display_name": "Theoretical computer science",
+          "score": 0.45257797837257385
+        },
+        {
+          "id": "https://openalex.org/keywords/satisfiability",
+          "display_name": "Satisfiability",
+          "score": 0.42855286598205566
+        },
+        {
+          "id": "https://openalex.org/keywords/situation-calculus",
+          "display_name": "Situation calculus",
+          "score": 0.41284382343292236
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-intelligence",
+          "display_name": "Artificial intelligence",
+          "score": 0.39275458455085754
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.38512417674064636
+        },
+        {
+          "id": "https://openalex.org/keywords/discrete-mathematics",
+          "display_name": "Discrete mathematics",
+          "score": 0.25078466534614563
+        },
+        {
+          "id": "https://openalex.org/keywords/psychology",
+          "display_name": "Psychology",
+          "score": 0.1267504096031189
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C49937458",
+          "wikidata": "https://www.wikidata.org/wiki/Q2599292",
+          "display_name": "Probabilistic logic",
+          "level": 2,
+          "score": 0.6830611824989319
+        },
+        {
+          "id": "https://openalex.org/C71889745",
+          "wikidata": "https://www.wikidata.org/wiki/Q1783264",
+          "display_name": "Counterfactual conditional",
+          "level": 3,
+          "score": 0.6508151888847351
+        },
+        {
+          "id": "https://openalex.org/C2778003309",
+          "wikidata": "https://www.wikidata.org/wiki/Q5450381",
+          "display_name": "Finitary",
+          "level": 2,
+          "score": 0.5836476683616638
+        },
+        {
+          "id": "https://openalex.org/C33724603",
+          "wikidata": "https://www.wikidata.org/wiki/Q812540",
+          "display_name": "Bayesian network",
+          "level": 2,
+          "score": 0.5487533211708069
+        },
+        {
+          "id": "https://openalex.org/C108650721",
+          "wikidata": "https://www.wikidata.org/wiki/Q1783253",
+          "display_name": "Counterfactual thinking",
+          "level": 2,
+          "score": 0.5340396761894226
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.5140789747238159
+        },
+        {
+          "id": "https://openalex.org/C153269930",
+          "wikidata": "https://www.wikidata.org/wiki/Q430001",
+          "display_name": "Decidability",
+          "level": 2,
+          "score": 0.5029298663139343
+        },
+        {
+          "id": "https://openalex.org/C79772020",
+          "wikidata": "https://www.wikidata.org/wiki/Q5159264",
+          "display_name": "Conditional independence",
+          "level": 2,
+          "score": 0.4794946312904358
+        },
+        {
+          "id": "https://openalex.org/C31170391",
+          "wikidata": "https://www.wikidata.org/wiki/Q188619",
+          "display_name": "Hierarchy",
+          "level": 2,
+          "score": 0.47881418466567993
+        },
+        {
+          "id": "https://openalex.org/C128828806",
+          "wikidata": "https://www.wikidata.org/wiki/Q7246848",
+          "display_name": "Probabilistic argumentation",
+          "level": 3,
+          "score": 0.4670981764793396
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.45257797837257385
+        },
+        {
+          "id": "https://openalex.org/C168773769",
+          "wikidata": "https://www.wikidata.org/wiki/Q1350299",
+          "display_name": "Satisfiability",
+          "level": 2,
+          "score": 0.42855286598205566
+        },
+        {
+          "id": "https://openalex.org/C22497172",
+          "wikidata": "https://www.wikidata.org/wiki/Q1559077",
+          "display_name": "Situation calculus",
+          "level": 2,
+          "score": 0.41284382343292236
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.39275458455085754
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.38512417674064636
+        },
+        {
+          "id": "https://openalex.org/C118615104",
+          "wikidata": "https://www.wikidata.org/wiki/Q121416",
+          "display_name": "Discrete mathematics",
+          "level": 1,
+          "score": 0.25078466534614563
+        },
+        {
+          "id": "https://openalex.org/C15744967",
+          "wikidata": "https://www.wikidata.org/wiki/Q9418",
+          "display_name": "Psychology",
+          "level": 0,
+          "score": 0.1267504096031189
+        },
+        {
+          "id": "https://openalex.org/C34447519",
+          "wikidata": "https://www.wikidata.org/wiki/Q179522",
+          "display_name": "Market economy",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C77805123",
+          "wikidata": "https://www.wikidata.org/wiki/Q161272",
+          "display_name": "Social psychology",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C162324750",
+          "wikidata": "https://www.wikidata.org/wiki/Q8134",
+          "display_name": "Economics",
+          "level": 0,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 3,
+      "locations": [
+        {
+          "id": "pmh:oai:arXiv.org:2001.02889",
+          "is_oa": true,
+          "landing_page_url": "http://arxiv.org/abs/2001.02889",
+          "pdf_url": "https://arxiv.org/pdf/2001.02889",
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "text"
+        },
+        {
+          "id": "mag:2999279501",
+          "is_oa": true,
+          "landing_page_url": "https://arxiv.org/abs/2001.02889v5",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "arXiv (Cornell University)",
+          "raw_type": null
+        },
+        {
+          "id": "doi:10.48550/arxiv.2001.02889",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.48550/arxiv.2001.02889",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Preprint"
+        }
+      ],
+      "best_oa_location": {
+        "id": "pmh:oai:arXiv.org:2001.02889",
+        "is_oa": true,
+        "landing_page_url": "http://arxiv.org/abs/2001.02889",
+        "pdf_url": "https://arxiv.org/pdf/2001.02889",
+        "source": {
+          "id": "https://openalex.org/S4306400194",
+          "display_name": "arXiv (Cornell University)",
+          "issn_l": "2331-8422",
+          "issn": [
+            "2331-8422"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I205783295",
+          "host_organization_name": "Cornell University",
+          "host_organization_lineage": [
+            "https://openalex.org/I205783295"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "text"
+      },
+      "sustainable_development_goals": [],
+      "awards": [
+        {
+          "id": "https://openalex.org/G2911450482",
+          "display_name": null,
+          "funder_award_id": "DGE-165651 8",
+          "funder_id": "https://openalex.org/F4320306076",
+          "funder_display_name": "National Science Foundation"
+        },
+        {
+          "id": "https://openalex.org/G5267932457",
+          "display_name": "Graduate Research Fellowship Program (GRFP)",
+          "funder_award_id": "1656518",
+          "funder_id": "https://openalex.org/F4320306076",
+          "funder_display_name": "National Science Foundation"
+        }
+      ],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320306076",
+          "display_name": "National Science Foundation",
+          "ror": "https://ror.org/021nxhr62"
+        }
+      ],
+      "has_content": {
+        "grobid_xml": false,
+        "pdf": false
+      },
+      "content_urls": null,
+      "referenced_works_count": 28,
+      "referenced_works": [
+        "https://openalex.org/W1483120523",
+        "https://openalex.org/W1485840650",
+        "https://openalex.org/W1486034241",
+        "https://openalex.org/W1524326598",
+        "https://openalex.org/W1542492454",
+        "https://openalex.org/W1553142094",
+        "https://openalex.org/W1576238869",
+        "https://openalex.org/W1673419196",
+        "https://openalex.org/W1992691562",
+        "https://openalex.org/W2049910836",
+        "https://openalex.org/W2067754486",
+        "https://openalex.org/W2083689856",
+        "https://openalex.org/W2085352155",
+        "https://openalex.org/W2098952447",
+        "https://openalex.org/W2099925654",
+        "https://openalex.org/W2137819283",
+        "https://openalex.org/W2139032973",
+        "https://openalex.org/W2207421686",
+        "https://openalex.org/W2399384607",
+        "https://openalex.org/W2611511037",
+        "https://openalex.org/W2795329138",
+        "https://openalex.org/W2799900373",
+        "https://openalex.org/W2884555694",
+        "https://openalex.org/W2954679205",
+        "https://openalex.org/W2963305465",
+        "https://openalex.org/W2964321317",
+        "https://openalex.org/W3097981474",
+        "https://openalex.org/W3169451031"
+      ],
+      "related_works": [
+        "https://openalex.org/W2128838779",
+        "https://openalex.org/W3004416224",
+        "https://openalex.org/W2161403060",
+        "https://openalex.org/W2162958617",
+        "https://openalex.org/W2168915233",
+        "https://openalex.org/W1499347586",
+        "https://openalex.org/W1489615098",
+        "https://openalex.org/W1971164808",
+        "https://openalex.org/W3208322524",
+        "https://openalex.org/W2724608839",
+        "https://openalex.org/W1990540332",
+        "https://openalex.org/W985109677",
+        "https://openalex.org/W2069932362",
+        "https://openalex.org/W123417488",
+        "https://openalex.org/W1523730659",
+        "https://openalex.org/W2400329479",
+        "https://openalex.org/W2088175080",
+        "https://openalex.org/W1498397876",
+        "https://openalex.org/W3053604889",
+        "https://openalex.org/W2525707692"
+      ],
+      "abstract_inverted_index": {
+        "We": [
+          0,
+          64
+        ],
+        "propose": [
+          1
+        ],
+        "a": [
+          2,
+          15,
+          56,
+          66
+        ],
+        "formalization": [
+          3
+        ],
+        "of": [
+          4,
+          9,
+          17,
+          24,
+          31,
+          69
+        ],
+        "the": [
+          5,
+          28,
+          44,
+          53
+        ],
+        "three-tier": [
+          6
+        ],
+        "causal": [
+          7,
+          50,
+          76
+        ],
+        "hierarchy": [
+          8
+        ],
+        "association,": [
+          10
+        ],
+        "intervention,": [
+          11
+        ],
+        "and": [
+          12,
+          40,
+          52,
+          78,
+          81,
+          85
+        ],
+        "counterfactuals": [
+          13
+        ],
+        "as": [
+          14
+        ],
+        "series": [
+          16,
+          68
+        ],
+        "probabilistic": [
+          18,
+          34,
+          79
+        ],
+        "logical": [
+          19
+        ],
+        "languages.": [
+          20
+        ],
+        "Our": [
+          21
+        ],
+        "languages": [
+          22
+        ],
+        "are": [
+          23,
+          90
+        ],
+        "strictly": [
+          25
+        ],
+        "increasing": [
+          26
+        ],
+        "expressivity,": [
+          27
+        ],
+        "first": [
+          29
+        ],
+        "capable": [
+          30
+        ],
+        "expressing": [
+          32
+        ],
+        "quantitative": [
+          33
+        ],
+        "reasoning": [
+          35,
+          48
+        ],
+        "--": [
+          36,
+          43
+        ],
+        "including": [
+          37
+        ],
+        "conditional": [
+          38
+        ],
+        "independence": [
+          39
+        ],
+        "Bayesian": [
+          41
+        ],
+        "inference": [
+          42
+        ],
+        "second": [
+          45
+        ],
+        "encoding": [
+          46
+        ],
+        "do-calculus": [
+          47,
+          59
+        ],
+        "for": [
+          49,
+          60,
+          87
+        ],
+        "effects,": [
+          51
+        ],
+        "third": [
+          54
+        ],
+        "capturing": [
+          55
+        ],
+        "fully": [
+          57
+        ],
+        "expressive": [
+          58
+        ],
+        "arbitrary": [
+          61
+        ],
+        "counterfactual": [
+          62
+        ],
+        "queries.": [
+          63
+        ],
+        "give": [
+          65
+        ],
+        "corresponding": [
+          67
+        ],
+        "finitary": [
+          70
+        ],
+        "axiomatizations": [
+          71
+        ],
+        "complete": [
+          72
+        ],
+        "over": [
+          73
+        ],
+        "both": [
+          74
+        ],
+        "structural": [
+          75
+        ],
+        "models": [
+          77
+        ],
+        "programs,": [
+          80
+        ],
+        "show": [
+          82
+        ],
+        "that": [
+          83
+        ],
+        "satisfiability": [
+          84
+        ],
+        "validity": [
+          86
+        ],
+        "each": [
+          88
+        ],
+        "language": [
+          89
+        ],
+        "decidable": [
+          91
+        ],
+        "in": [
+          92
+        ],
+        "polynomial": [
+          93
+        ],
+        "space.": [
+          94
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2022,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2019,
+          "cited_by_count": 1
+        }
+      ],
+      "updated_date": "2026-08-26T07:47:46.906454",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2123713131",
+      "doi": "https://doi.org/10.1126/science.1192788",
+      "title": "How to Grow a Mind: Statistics, Structure, and Abstraction",
+      "display_name": "How to Grow a Mind: Statistics, Structure, and Abstraction",
+      "relevance_score": 700.29395,
+      "publication_year": 2011,
+      "publication_date": "2011-03-10",
+      "ids": {
+        "openalex": "https://openalex.org/W2123713131",
+        "doi": "https://doi.org/10.1126/science.1192788",
+        "mag": "2123713131",
+        "pmid": "https://pubmed.ncbi.nlm.nih.gov/21393536"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1126/science.1192788",
+        "is_oa": false,
+        "landing_page_url": "https://doi.org/10.1126/science.1192788",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S3880285",
+          "display_name": "Science",
+          "issn_l": "0036-8075",
+          "issn": [
+            "0036-8075",
+            "0193-4511",
+            "1095-9203"
+          ],
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310315823",
+          "host_organization_name": "American Association for the Advancement of Science",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310315823"
+          ],
+          "host_organization_lineage_names": [
+            "American Association for the Advancement of Science"
+          ],
+          "type": "journal"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Science",
+        "raw_type": "journal-article"
+      },
+      "type": "article",
+      "indexed_in": [
+        "crossref",
+        "pubmed"
+      ],
+      "open_access": {
+        "is_oa": false,
+        "oa_status": "closed",
+        "oa_url": null,
+        "any_repository_has_fulltext": false
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5071093940",
+            "display_name": "Joshua B. Tenenbaum",
+            "orcid": "https://orcid.org/0000-0002-1925-2035"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I63966007",
+              "display_name": "Massachusetts Institute of Technology",
+              "ror": "https://ror.org/042nb2s44",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I63966007"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": true,
+          "raw_author_name": "Joshua B. Tenenbaum",
+          "raw_affiliation_strings": [
+            "Department of Brain and Cognitive Sciences, Computer Science and Artificial Intelligence Laboratory (CSAIL), Massachusetts Institute of Technology, 77 Massachusetts Avenue, Cambridge, MA 02139, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Brain and Cognitive Sciences, Computer Science and Artificial Intelligence Laboratory (CSAIL), Massachusetts Institute of Technology, 77 Massachusetts Avenue, Cambridge, MA 02139, USA",
+              "institution_ids": [
+                "https://openalex.org/I63966007"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5080087902",
+            "display_name": "Charles Kemp",
+            "orcid": "https://orcid.org/0000-0001-9683-8737"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I74973139",
+              "display_name": "Carnegie Mellon University",
+              "ror": "https://ror.org/05x2bcf33",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I74973139"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Charles Kemp",
+          "raw_affiliation_strings": [
+            "Department of Psychology, Carnegie Mellon University, Pittsburgh, PA 15213, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Psychology, Carnegie Mellon University, Pittsburgh, PA 15213, USA",
+              "institution_ids": [
+                "https://openalex.org/I74973139"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5077079119",
+            "display_name": "Thomas L. Griffiths",
+            "orcid": "https://orcid.org/0000-0002-5138-7255"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I95457486",
+              "display_name": "University of California, Berkeley",
+              "ror": "https://ror.org/01an7q238",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I95457486"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Thomas L. Griffiths",
+          "raw_affiliation_strings": [
+            "Department of Psychology, University of California, Berkeley, Berkeley, CA 94720, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Psychology, University of California, Berkeley, Berkeley, CA 94720, USA",
+              "institution_ids": [
+                "https://openalex.org/I95457486"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5001961716",
+            "display_name": "Noah D. Goodman",
+            "orcid": "https://orcid.org/0000-0002-9176-8802"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I97018004",
+              "display_name": "Stanford University",
+              "ror": "https://ror.org/00f54p054",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I97018004"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Noah D. Goodman",
+          "raw_affiliation_strings": [
+            "Department of Psychology, Stanford University, Stanford, CA 94305, USA",
+            "Department of Psychology, Stanford University, Stanford, CA, 94305, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Psychology, Stanford University, Stanford, CA 94305, USA",
+              "institution_ids": [
+                "https://openalex.org/I97018004"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Department of Psychology, Stanford University, Stanford, CA, 94305, USA",
+              "institution_ids": [
+                "https://openalex.org/I97018004"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 4,
+      "corresponding_author_ids": [
+        "https://openalex.org/A5071093940"
+      ],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I63966007"
+      ],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": 127.7465,
+      "has_fulltext": false,
+      "cited_by_count": 1929,
+      "citation_normalized_percentile": {
+        "value": 0.99974461,
+        "is_in_top_1_percent": true,
+        "is_in_top_10_percent": true
+      },
+      "cited_by_percentile_year": {
+        "min": 99,
+        "max": 100
+      },
+      "biblio": {
+        "volume": "331",
+        "issue": "6022",
+        "first_page": "1279",
+        "last_page": "1285"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11303",
+        "display_name": "Bayesian Modeling and Causal Inference",
+        "score": 0.9936000108718872,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11303",
+          "display_name": "Bayesian Modeling and Causal Inference",
+          "score": 0.9936000108718872,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10656",
+          "display_name": "Child and Animal Learning Development",
+          "score": 0.9897000193595886,
+          "subfield": {
+            "id": "https://openalex.org/subfields/3204",
+            "display_name": "Developmental and Educational Psychology"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/32",
+            "display_name": "Psychology"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/2",
+            "display_name": "Social Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10028",
+          "display_name": "Topic Modeling",
+          "score": 0.9811999797821045,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/abstraction",
+          "display_name": "Abstraction",
+          "score": 0.7213571071624756
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.7050637006759644
+        },
+        {
+          "id": "https://openalex.org/keywords/cognitive-science",
+          "display_name": "Cognitive science",
+          "score": 0.627610445022583
+        },
+        {
+          "id": "https://openalex.org/keywords/inference",
+          "display_name": "Inference",
+          "score": 0.6217259764671326
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-intelligence",
+          "display_name": "Artificial intelligence",
+          "score": 0.5637637972831726
+        },
+        {
+          "id": "https://openalex.org/keywords/probabilistic-logic",
+          "display_name": "Probabilistic logic",
+          "score": 0.5174146890640259
+        },
+        {
+          "id": "https://openalex.org/keywords/cognition",
+          "display_name": "Cognition",
+          "score": 0.45858997106552124
+        },
+        {
+          "id": "https://openalex.org/keywords/causal-inference",
+          "display_name": "Causal inference",
+          "score": 0.4210619330406189
+        },
+        {
+          "id": "https://openalex.org/keywords/data-science",
+          "display_name": "Data science",
+          "score": 0.4149782657623291
+        },
+        {
+          "id": "https://openalex.org/keywords/machine-learning",
+          "display_name": "Machine learning",
+          "score": 0.3472921550273895
+        },
+        {
+          "id": "https://openalex.org/keywords/epistemology",
+          "display_name": "Epistemology",
+          "score": 0.2793880105018616
+        },
+        {
+          "id": "https://openalex.org/keywords/psychology",
+          "display_name": "Psychology",
+          "score": 0.22789126634597778
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.094919353723526
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C124304363",
+          "wikidata": "https://www.wikidata.org/wiki/Q673661",
+          "display_name": "Abstraction",
+          "level": 2,
+          "score": 0.7213571071624756
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.7050637006759644
+        },
+        {
+          "id": "https://openalex.org/C188147891",
+          "wikidata": "https://www.wikidata.org/wiki/Q147638",
+          "display_name": "Cognitive science",
+          "level": 1,
+          "score": 0.627610445022583
+        },
+        {
+          "id": "https://openalex.org/C2776214188",
+          "wikidata": "https://www.wikidata.org/wiki/Q408386",
+          "display_name": "Inference",
+          "level": 2,
+          "score": 0.6217259764671326
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.5637637972831726
+        },
+        {
+          "id": "https://openalex.org/C49937458",
+          "wikidata": "https://www.wikidata.org/wiki/Q2599292",
+          "display_name": "Probabilistic logic",
+          "level": 2,
+          "score": 0.5174146890640259
+        },
+        {
+          "id": "https://openalex.org/C169900460",
+          "wikidata": "https://www.wikidata.org/wiki/Q2200417",
+          "display_name": "Cognition",
+          "level": 2,
+          "score": 0.45858997106552124
+        },
+        {
+          "id": "https://openalex.org/C158600405",
+          "wikidata": "https://www.wikidata.org/wiki/Q5054566",
+          "display_name": "Causal inference",
+          "level": 2,
+          "score": 0.4210619330406189
+        },
+        {
+          "id": "https://openalex.org/C2522767166",
+          "wikidata": "https://www.wikidata.org/wiki/Q2374463",
+          "display_name": "Data science",
+          "level": 1,
+          "score": 0.4149782657623291
+        },
+        {
+          "id": "https://openalex.org/C119857082",
+          "wikidata": "https://www.wikidata.org/wiki/Q2539",
+          "display_name": "Machine learning",
+          "level": 1,
+          "score": 0.3472921550273895
+        },
+        {
+          "id": "https://openalex.org/C111472728",
+          "wikidata": "https://www.wikidata.org/wiki/Q9471",
+          "display_name": "Epistemology",
+          "level": 1,
+          "score": 0.2793880105018616
+        },
+        {
+          "id": "https://openalex.org/C15744967",
+          "wikidata": "https://www.wikidata.org/wiki/Q9418",
+          "display_name": "Psychology",
+          "level": 0,
+          "score": 0.22789126634597778
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.094919353723526
+        },
+        {
+          "id": "https://openalex.org/C169760540",
+          "wikidata": "https://www.wikidata.org/wiki/Q207011",
+          "display_name": "Neuroscience",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C138885662",
+          "wikidata": "https://www.wikidata.org/wiki/Q5891",
+          "display_name": "Philosophy",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C149782125",
+          "wikidata": "https://www.wikidata.org/wiki/Q160039",
+          "display_name": "Econometrics",
+          "level": 1,
+          "score": 0.0
+        }
+      ],
+      "mesh": [
+        {
+          "descriptor_ui": "D001185",
+          "descriptor_name": "Artificial Intelligence",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D001185",
+          "descriptor_name": "Artificial Intelligence",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D001185",
+          "descriptor_name": "Artificial Intelligence",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D001499",
+          "descriptor_name": "Bayes Theorem",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D001499",
+          "descriptor_name": "Bayes Theorem",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D001499",
+          "descriptor_name": "Bayes Theorem",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D003071",
+          "descriptor_name": "Cognition",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D003071",
+          "descriptor_name": "Cognition",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D003071",
+          "descriptor_name": "Cognition",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D003210",
+          "descriptor_name": "Concept Formation",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D003210",
+          "descriptor_name": "Concept Formation",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D003210",
+          "descriptor_name": "Concept Formation",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D006801",
+          "descriptor_name": "Humans",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D006801",
+          "descriptor_name": "Humans",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D006801",
+          "descriptor_name": "Humans",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D007858",
+          "descriptor_name": "Learning",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D007858",
+          "descriptor_name": "Learning",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D007858",
+          "descriptor_name": "Learning",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D013850",
+          "descriptor_name": "Thinking",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D013850",
+          "descriptor_name": "Thinking",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D013850",
+          "descriptor_name": "Thinking",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D015233",
+          "descriptor_name": "Models, Statistical",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D015233",
+          "descriptor_name": "Models, Statistical",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D015233",
+          "descriptor_name": "Models, Statistical",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": false
+        },
+        {
+          "descriptor_ui": "D019359",
+          "descriptor_name": "Knowledge",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D019359",
+          "descriptor_name": "Knowledge",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D019359",
+          "descriptor_name": "Knowledge",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D056345",
+          "descriptor_name": "Theory of Mind",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D056345",
+          "descriptor_name": "Theory of Mind",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        },
+        {
+          "descriptor_ui": "D056345",
+          "descriptor_name": "Theory of Mind",
+          "qualifier_ui": null,
+          "qualifier_name": null,
+          "is_major_topic": true
+        }
+      ],
+      "locations_count": 4,
+      "locations": [
+        {
+          "id": "doi:10.1126/science.1192788",
+          "is_oa": false,
+          "landing_page_url": "https://doi.org/10.1126/science.1192788",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S3880285",
+            "display_name": "Science",
+            "issn_l": "0036-8075",
+            "issn": [
+              "0036-8075",
+              "0193-4511",
+              "1095-9203"
+            ],
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310315823",
+            "host_organization_name": "American Association for the Advancement of Science",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310315823"
+            ],
+            "host_organization_lineage_names": [
+              "American Association for the Advancement of Science"
+            ],
+            "type": "journal"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Science",
+          "raw_type": "journal-article"
+        },
+        {
+          "id": "pmid:21393536",
+          "is_oa": false,
+          "landing_page_url": "https://pubmed.ncbi.nlm.nih.gov/21393536",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306525036",
+            "display_name": "PubMed",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I1299303238",
+            "host_organization_name": "National Institutes of Health",
+            "host_organization_lineage": [
+              "https://openalex.org/I1299303238"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Science (New York, N.Y.)",
+          "raw_type": "Journal Article"
+        },
+        {
+          "id": "pmh:oai:CiteSeerX.psu:10.1.1.1000.3496",
+          "is_oa": false,
+          "landing_page_url": "http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.1000.3496",
+          "pdf_url": null,
+          "source": null,
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "http://science.sciencemag.org/content/sci/331/6022/1279.full.pdf",
+          "raw_type": "text"
+        },
+        {
+          "id": "pmh:oai:pure.atira.dk:publications/ae1cb777-6104-455b-a123-b9df9a4f9521",
+          "is_oa": false,
+          "landing_page_url": "https://research-repository.uwa.edu.au/en/publications/ae1cb777-6104-455b-a123-b9df9a4f9521",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306402492",
+            "display_name": "UWA Profiles and Research Repository (UWA)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I177877127",
+            "host_organization_name": "The University of Western Australia",
+            "host_organization_lineage": [
+              "https://openalex.org/I177877127"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "Tenenbaum, J B, Kemp, C, Griffiths, T & Goodman, N D 2011, 'How to grow a mind: Statistics, structure, and abstraction', Science, vol. 331, pp. 1279-1285. https://doi.org/10.1126/science.1192788",
+          "raw_type": "info:eu-repo/semantics/article"
+        }
+      ],
+      "best_oa_location": null,
+      "sustainable_development_goals": [
+        {
+          "display_name": "Quality Education",
+          "score": 0.7699999809265137,
+          "id": "https://metadata.un.org/sdg/4"
+        }
+      ],
+      "awards": [],
+      "funders": [],
+      "has_content": {
+        "grobid_xml": false,
+        "pdf": false
+      },
+      "content_urls": null,
+      "referenced_works_count": 64,
+      "referenced_works": [
+        "https://openalex.org/W158727920",
+        "https://openalex.org/W618190765",
+        "https://openalex.org/W1488309867",
+        "https://openalex.org/W1509562192",
+        "https://openalex.org/W1525726177",
+        "https://openalex.org/W1536009794",
+        "https://openalex.org/W1553508775",
+        "https://openalex.org/W1594369375",
+        "https://openalex.org/W1597333134",
+        "https://openalex.org/W1732736211",
+        "https://openalex.org/W1823077382",
+        "https://openalex.org/W1981578159",
+        "https://openalex.org/W1984251878",
+        "https://openalex.org/W1994114516",
+        "https://openalex.org/W1997236510",
+        "https://openalex.org/W2000020549",
+        "https://openalex.org/W2016429292",
+        "https://openalex.org/W2017470614",
+        "https://openalex.org/W2027796863",
+        "https://openalex.org/W2043187947",
+        "https://openalex.org/W2045656233",
+        "https://openalex.org/W2045693110",
+        "https://openalex.org/W2048269309",
+        "https://openalex.org/W2053555487",
+        "https://openalex.org/W2075359029",
+        "https://openalex.org/W2086220442",
+        "https://openalex.org/W2098036909",
+        "https://openalex.org/W2102630578",
+        "https://openalex.org/W2105361975",
+        "https://openalex.org/W2117126688",
+        "https://openalex.org/W2118354656",
+        "https://openalex.org/W2119017831",
+        "https://openalex.org/W2119991646",
+        "https://openalex.org/W2126119062",
+        "https://openalex.org/W2126377586",
+        "https://openalex.org/W2128152674",
+        "https://openalex.org/W2133735566",
+        "https://openalex.org/W2134560943",
+        "https://openalex.org/W2135547275",
+        "https://openalex.org/W2136445846",
+        "https://openalex.org/W2146722303",
+        "https://openalex.org/W2147231083",
+        "https://openalex.org/W2147336195",
+        "https://openalex.org/W2150286230",
+        "https://openalex.org/W2154164802",
+        "https://openalex.org/W2162693531",
+        "https://openalex.org/W2166603063",
+        "https://openalex.org/W2167956961",
+        "https://openalex.org/W2169281351",
+        "https://openalex.org/W2170085538",
+        "https://openalex.org/W2491030098",
+        "https://openalex.org/W2798390898",
+        "https://openalex.org/W2911823491",
+        "https://openalex.org/W3039210294",
+        "https://openalex.org/W3140968660",
+        "https://openalex.org/W3207342693",
+        "https://openalex.org/W4211148385",
+        "https://openalex.org/W4247690662",
+        "https://openalex.org/W4249882522",
+        "https://openalex.org/W4252743921",
+        "https://openalex.org/W4292157289",
+        "https://openalex.org/W4299551239",
+        "https://openalex.org/W4300402905",
+        "https://openalex.org/W4302454383"
+      ],
+      "related_works": [
+        "https://openalex.org/W2045155990",
+        "https://openalex.org/W4313163053",
+        "https://openalex.org/W3045811229",
+        "https://openalex.org/W4300973204",
+        "https://openalex.org/W1483408780",
+        "https://openalex.org/W4284884309",
+        "https://openalex.org/W2908749798",
+        "https://openalex.org/W4243842598",
+        "https://openalex.org/W2105980483",
+        "https://openalex.org/W2055243143"
+      ],
+      "abstract_inverted_index": {
+        "In": [
+          0
+        ],
+        "coming": [
+          1
+        ],
+        "to": [
+          2,
+          19,
+          36
+        ],
+        "understand": [
+          3
+        ],
+        "the": [
+          4,
+          23,
+          68,
+          72
+        ],
+        "world-in": [
+          5
+        ],
+        "learning": [
+          6,
+          39,
+          50,
+          84
+        ],
+        "concepts,": [
+          7
+        ],
+        "acquiring": [
+          8
+        ],
+        "language,": [
+          9
+        ],
+        "and": [
+          10,
+          40,
+          74,
+          85,
+          99
+        ],
+        "grasping": [
+          11
+        ],
+        "causal": [
+          12
+        ],
+        "relations-our": [
+          13
+        ],
+        "minds": [
+          14
+        ],
+        "make": [
+          15
+        ],
+        "inferences": [
+          16
+        ],
+        "that": [
+          17,
+          54,
+          104
+        ],
+        "appear": [
+          18
+        ],
+        "go": [
+          20
+        ],
+        "far": [
+          21
+        ],
+        "beyond": [
+          22
+        ],
+        "data": [
+          24
+        ],
+        "available.": [
+          25
+        ],
+        "How": [
+          26,
+          79
+        ],
+        "do": [
+          27,
+          29
+        ],
+        "we": [
+          28
+        ],
+        "it?": [
+          30
+        ],
+        "This": [
+          31
+        ],
+        "review": [
+          32
+        ],
+        "describes": [
+          33
+        ],
+        "recent": [
+          34
+        ],
+        "approaches": [
+          35
+        ],
+        "reverse-engineering": [
+          37
+        ],
+        "human": [
+          38,
+          77
+        ],
+        "cognitive": [
+          41
+        ],
+        "development": [
+          42
+        ],
+        "and,": [
+          43
+        ],
+        "in": [
+          44
+        ],
+        "parallel,": [
+          45
+        ],
+        "engineering": [
+          46
+        ],
+        "more": [
+          47
+        ],
+        "humanlike": [
+          48
+        ],
+        "machine": [
+          49
+        ],
+        "systems.": [
+          51
+        ],
+        "Computational": [
+          52
+        ],
+        "models": [
+          53
+        ],
+        "perform": [
+          55
+        ],
+        "probabilistic": [
+          56
+        ],
+        "inference": [
+          57
+        ],
+        "over": [
+          58
+        ],
+        "hierarchies": [
+          59
+        ],
+        "of": [
+          60,
+          67,
+          76
+        ],
+        "flexibly": [
+          61
+        ],
+        "structured": [
+          62
+        ],
+        "representations": [
+          63
+        ],
+        "can": [
+          64
+        ],
+        "address": [
+          65
+        ],
+        "some": [
+          66
+        ],
+        "deepest": [
+          69
+        ],
+        "questions": [
+          70
+        ],
+        "about": [
+          71
+        ],
+        "nature": [
+          73
+        ],
+        "origins": [
+          75
+        ],
+        "thought:": [
+          78
+        ],
+        "does": [
+          80,
+          92
+        ],
+        "abstract": [
+          81,
+          105
+        ],
+        "knowledge": [
+          82,
+          94,
+          106
+        ],
+        "guide": [
+          83
+        ],
+        "reasoning": [
+          86
+        ],
+        "from": [
+          87
+        ],
+        "sparse": [
+          88
+        ],
+        "data?": [
+          89
+        ],
+        "What": [
+          90
+        ],
+        "forms": [
+          91
+        ],
+        "our": [
+          93
+        ],
+        "take,": [
+          95
+        ],
+        "across": [
+          96
+        ],
+        "different": [
+          97
+        ],
+        "domains": [
+          98
+        ],
+        "tasks?": [
+          100
+        ],
+        "And": [
+          101
+        ],
+        "how": [
+          102
+        ],
+        "is": [
+          103
+        ],
+        "itself": [
+          107
+        ],
+        "acquired?": [
+          108
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2026,
+          "cited_by_count": 75
+        },
+        {
+          "year": 2025,
+          "cited_by_count": 129
+        },
+        {
+          "year": 2024,
+          "cited_by_count": 155
+        },
+        {
+          "year": 2023,
+          "cited_by_count": 152
+        },
+        {
+          "year": 2022,
+          "cited_by_count": 201
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 144
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 181
+        },
+        {
+          "year": 2019,
+          "cited_by_count": 126
+        },
+        {
+          "year": 2018,
+          "cited_by_count": 134
+        },
+        {
+          "year": 2017,
+          "cited_by_count": 131
+        },
+        {
+          "year": 2016,
+          "cited_by_count": 123
+        },
+        {
+          "year": 2015,
+          "cited_by_count": 113
+        },
+        {
+          "year": 2014,
+          "cited_by_count": 89
+        },
+        {
+          "year": 2013,
+          "cited_by_count": 90
+        },
+        {
+          "year": 2012,
+          "cited_by_count": 61
+        }
+      ],
+      "updated_date": "2026-09-16T18:09:00.828671",
+      "created_date": "2025-10-10T00:00:00"
+    }
+  ],
+  "group_by": []
+}

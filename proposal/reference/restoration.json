@@ -1,0 +1,3265 @@
+{
+  "source_commit": "79c46299a71edd7a8c0fd9e48bef5369bdec2548",
+  "source_branch": "codex/event-algebra",
+  "scope": "Authored proposal/research Markdown, historical implementation notes and small research/source manifests. No runtime implementation, experiment programs, generated proof snapshots, benchmark logs or large results are restored.",
+  "files": [
+    {
+      "source": "docs/event-actions.md",
+      "restored": "proposal/reference/docs/event-actions.md",
+      "bytes": 20516,
+      "sha256": "df6bfddab6e7b5e50569d9f57af7d41aefa277b2ef9f90234a78d28dfb00b5fc"
+    },
+    {
+      "source": "docs/event-algebraic-identity.md",
+      "restored": "proposal/reference/docs/event-algebraic-identity.md",
+      "bytes": 7267,
+      "sha256": "c63090ef45b1f100fb05b104a29fac006a60dff4f373fbc9bb607e03b147d724"
+    },
+    {
+      "source": "docs/event-algebraic-roots.md",
+      "restored": "proposal/reference/docs/event-algebraic-roots.md",
+      "bytes": 7477,
+      "sha256": "62942d8a1125ab69a5b83ba2d4aa1e5abaa0cfbdb6b070c5a30196ec966cdf2b"
+    },
+    {
+      "source": "docs/event-belief-memory.md",
+      "restored": "proposal/reference/docs/event-belief-memory.md",
+      "bytes": 15121,
+      "sha256": "02ff130c56918602fb37ff0d6d3983e596745204b4bcfee4165dc6c40244c2b1"
+    },
+    {
+      "source": "docs/event-checkpoint.md",
+      "restored": "proposal/reference/docs/event-checkpoint.md",
+      "bytes": 4051,
+      "sha256": "c50f5a5cfc56ffcc7a6c0f4b7f0a2b3aa0684f3bd93b2e601b77b5d3ceaa1126"
+    },
+    {
+      "source": "docs/event-descriptors.md",
+      "restored": "proposal/reference/docs/event-descriptors.md",
+      "bytes": 7075,
+      "sha256": "4e8f7578ffa52982d36463a8a3a31d4533d531fc95ff13c34e46956f1c5aa4b6"
+    },
+    {
+      "source": "docs/event-family-dynamics.md",
+      "restored": "proposal/reference/docs/event-family-dynamics.md",
+      "bytes": 6910,
+      "sha256": "5bb734eb2b862ef83e48895e6d364f550bbb7624e82ccb82e9b3af4df9e4f91e"
+    },
+    {
+      "source": "docs/event-family-functions.md",
+      "restored": "proposal/reference/docs/event-family-functions.md",
+      "bytes": 9018,
+      "sha256": "4ce55eee697f29481aaba62dd37f741f8755c209b8cb16a2f7f81067bf6ad7ba"
+    },
+    {
+      "source": "docs/event-fixed-points.md",
+      "restored": "proposal/reference/docs/event-fixed-points.md",
+      "bytes": 11174,
+      "sha256": "b159d7aa3a4525f4aad240e49d7ed79758a7e7abc402c4016e3156bb93c41ba3"
+    },
+    {
+      "source": "docs/event-function-covers.md",
+      "restored": "proposal/reference/docs/event-function-covers.md",
+      "bytes": 5789,
+      "sha256": "3a0bf4043712b931b23dc5c01d1a46e339da352c4ccbffb5ce1192988d909897"
+    },
+    {
+      "source": "docs/event-functions.md",
+      "restored": "proposal/reference/docs/event-functions.md",
+      "bytes": 9542,
+      "sha256": "ee8bf8691a417723ab502a70a0c1312516b2627df1ad7262d213445f8db8e0df"
+    },
+    {
+      "source": "docs/event-ground.md",
+      "restored": "proposal/reference/docs/event-ground.md",
+      "bytes": 5643,
+      "sha256": "a97fa6a507801495bea51b801edcbdd9ac3e78c3932fb23d869bfd93dcfe591c"
+    },
+    {
+      "source": "docs/event-implementation.md",
+      "restored": "proposal/reference/docs/event-implementation.md",
+      "bytes": 140886,
+      "sha256": "d3e95bc023b596c410ae1a52ac33a1544e587190693b89c24c46a90a201268f8"
+    },
+    {
+      "source": "docs/event-information.md",
+      "restored": "proposal/reference/docs/event-information.md",
+      "bytes": 7512,
+      "sha256": "fa9a355dee86e2850feeae98f68676aaed8e7786e6772e46ccc752ca02be8db0"
+    },
+    {
+      "source": "docs/event-inspection.md",
+      "restored": "proposal/reference/docs/event-inspection.md",
+      "bytes": 7075,
+      "sha256": "033bb08b7e1a91e776967ef99fcdd2560e4f6b0a398ef8883d6af3c37bdf40d3"
+    },
+    {
+      "source": "docs/event-maps.md",
+      "restored": "proposal/reference/docs/event-maps.md",
+      "bytes": 9013,
+      "sha256": "f9855320a5015fb8c0bc35a78f19f18a6c356fb9385bf0e7ee966255450af860"
+    },
+    {
+      "source": "docs/event-observation-numbers.md",
+      "restored": "proposal/reference/docs/event-observation-numbers.md",
+      "bytes": 17129,
+      "sha256": "11ef79b22aace8fb94357a67dc94b2a4315350eb2077d19e7656af3489ea8e8e"
+    },
+    {
+      "source": "docs/event-observation-predicates.md",
+      "restored": "proposal/reference/docs/event-observation-predicates.md",
+      "bytes": 30568,
+      "sha256": "703112b6b2db89023351b13b1d4f7bbf31d48e6b6956c5b33f3c8727e68cbf39"
+    },
+    {
+      "source": "docs/event-observation-stages.md",
+      "restored": "proposal/reference/docs/event-observation-stages.md",
+      "bytes": 8541,
+      "sha256": "e8b5c56c5a3ae8b1c4557a787cf48834c4d3c141510ebe1dd60d21b17dd8f45c"
+    },
+    {
+      "source": "docs/event-parameter-conditioning.md",
+      "restored": "proposal/reference/docs/event-parameter-conditioning.md",
+      "bytes": 8146,
+      "sha256": "cd1daa0e608143a573d43ede07a5813d521c23d3116aafd12dd8b87426e6a271"
+    },
+    {
+      "source": "docs/event-parameter-domains.md",
+      "restored": "proposal/reference/docs/event-parameter-domains.md",
+      "bytes": 9063,
+      "sha256": "3db8fe0ec7c9b641dee4dfcec19855a4d607fc9e0fca82dbe2434c98c1f0fd9b"
+    },
+    {
+      "source": "docs/event-parameter-expectations.md",
+      "restored": "proposal/reference/docs/event-parameter-expectations.md",
+      "bytes": 5318,
+      "sha256": "e45d1efe7d669644869c38e5c5dbf42d053fd4b9ff1b66b4450d8b5a8e5df65a"
+    },
+    {
+      "source": "docs/event-parameter-refinement.md",
+      "restored": "proposal/reference/docs/event-parameter-refinement.md",
+      "bytes": 7375,
+      "sha256": "c92e9535990f2438d03fce2d17b84aaa484059b2184b17bf1f063771fefbe616"
+    },
+    {
+      "source": "docs/event-parameter-sources.md",
+      "restored": "proposal/reference/docs/event-parameter-sources.md",
+      "bytes": 13456,
+      "sha256": "2dbc39fae56dd91367ad58ba4afd356aa334084903a32418e6649259e73eb8e1"
+    },
+    {
+      "source": "docs/event-partitions.md",
+      "restored": "proposal/reference/docs/event-partitions.md",
+      "bytes": 6724,
+      "sha256": "ae0d8473ba4aa9f89d53f496b4f46c5aa2cb60266d5272524f1135deed34f377"
+    },
+    {
+      "source": "docs/event-polynomials.md",
+      "restored": "proposal/reference/docs/event-polynomials.md",
+      "bytes": 8870,
+      "sha256": "88ffcd2a64c321556b2cd52893d9fa42ece967b9eaa117d6e820c92600642a7a"
+    },
+    {
+      "source": "docs/event-priors.md",
+      "restored": "proposal/reference/docs/event-priors.md",
+      "bytes": 7658,
+      "sha256": "391e50717ef71d7df0478c45b96d8c16d9dc76f1d4b124ef0a4a313c5cc346c8"
+    },
+    {
+      "source": "docs/event-projections.md",
+      "restored": "proposal/reference/docs/event-projections.md",
+      "bytes": 7123,
+      "sha256": "4dea69e2df06fcb0b4a7d564cc9e0651a9be72677d4bee82f032f272dc9dadf4"
+    },
+    {
+      "source": "docs/event-queries.md",
+      "restored": "proposal/reference/docs/event-queries.md",
+      "bytes": 20249,
+      "sha256": "7f863c310b1ecf9c61b8506a162d8f6f0e6b57c60c17b66108b8c7f3e3400739"
+    },
+    {
+      "source": "docs/event-query-binders.md",
+      "restored": "proposal/reference/docs/event-query-binders.md",
+      "bytes": 8094,
+      "sha256": "f24f9f42cca93a3a3f1ec57c5c5c6604a755ad09029e5f7b0ac9298e6ae57a31"
+    },
+    {
+      "source": "docs/event-query-expectation.md",
+      "restored": "proposal/reference/docs/event-query-expectation.md",
+      "bytes": 12481,
+      "sha256": "13ce9c60f7408dc722ad1f2d397f068d01e5ca226118ae5d27873757fe7fa74c"
+    },
+    {
+      "source": "docs/event-query-probability.md",
+      "restored": "proposal/reference/docs/event-query-probability.md",
+      "bytes": 6165,
+      "sha256": "ef0b57f1e7a28e80a34e8d98aea054f32fb48265b854ce51cb670f7893336da0"
+    },
+    {
+      "source": "docs/event-relations.md",
+      "restored": "proposal/reference/docs/event-relations.md",
+      "bytes": 10291,
+      "sha256": "be31753272177fe6a539e7328b530e4dc70d79ae30eb63c321fd473be68a6566"
+    },
+    {
+      "source": "docs/event-revisions.md",
+      "restored": "proposal/reference/docs/event-revisions.md",
+      "bytes": 8298,
+      "sha256": "b626f418f2416cfa2fc54ea99430642fb71f0c2f01abbcc68228ab0b9b2a106e"
+    },
+    {
+      "source": "docs/event-sdk-families.md",
+      "restored": "proposal/reference/docs/event-sdk-families.md",
+      "bytes": 10653,
+      "sha256": "678eafe48239009018aa22979c4ab19805e1d1d8eee2bff2590f34b13e795bf2"
+    },
+    {
+      "source": "docs/event-sdk-family-dynamics.md",
+      "restored": "proposal/reference/docs/event-sdk-family-dynamics.md",
+      "bytes": 8500,
+      "sha256": "ab5b6b1935d6c2e18486f4d50c01c096895b010e306cace9ea12eb836bbf1bb1"
+    },
+    {
+      "source": "docs/event-sdk-parameters.md",
+      "restored": "proposal/reference/docs/event-sdk-parameters.md",
+      "bytes": 10189,
+      "sha256": "617e45bc4fd33778b776a3e8002c87cc9248370e281d24e4c7538fe9fc891204"
+    },
+    {
+      "source": "docs/event-sdk-polynomials.md",
+      "restored": "proposal/reference/docs/event-sdk-polynomials.md",
+      "bytes": 6197,
+      "sha256": "d56eef80c95f097fb359c3c97a6a3ab1f4c06d7ae95c22ce4383dac365c97d60"
+    },
+    {
+      "source": "docs/event-sdk.md",
+      "restored": "proposal/reference/docs/event-sdk.md",
+      "bytes": 34625,
+      "sha256": "6e434ee427649fa7a3e7980e856e5f7db05eaf3eb0fd5e4b7e851066b6a788eb"
+    },
+    {
+      "source": "docs/event-selections.md",
+      "restored": "proposal/reference/docs/event-selections.md",
+      "bytes": 6189,
+      "sha256": "6272ad067113afebfa2409959e25d4d0685226e2e7e57900a4e950dcd2514a76"
+    },
+    {
+      "source": "docs/event-source-descriptors.md",
+      "restored": "proposal/reference/docs/event-source-descriptors.md",
+      "bytes": 15687,
+      "sha256": "44180a3b4e00568f45547ff10b039f47a5c254acb077e414c46d457294fae0de"
+    },
+    {
+      "source": "docs/event-sources.md",
+      "restored": "proposal/reference/docs/event-sources.md",
+      "bytes": 8666,
+      "sha256": "2597b18f0d8e061392c07ab1af78c8c3c52ff9d50ce1ded2c0d890e9a3af24f6"
+    },
+    {
+      "source": "docs/event-value-format.md",
+      "restored": "proposal/reference/docs/event-value-format.md",
+      "bytes": 10027,
+      "sha256": "2f6bf9b53ff189506331b0e4c1027e8c76a5890d7ba4b02b67c394e45fd4d67c"
+    },
+    {
+      "source": "proposal/PACKAGE.md",
+      "restored": "proposal/reference/proposal/PACKAGE.md",
+      "bytes": 3845,
+      "sha256": "7c6ce2642ef377c00b86433ca0c3aee26e30d20889be512549a50a9511e3e050"
+    },
+    {
+      "source": "proposal/README.md",
+      "restored": "proposal/reference/proposal/README.md",
+      "bytes": 8717,
+      "sha256": "e7b7a27590eb1e34c4f2d61bfb4dd84b24307a273d395fdcfc578ea9e79bf0c0"
+    },
+    {
+      "source": "proposal/RESEARCH-HANDOFF.md",
+      "restored": "proposal/reference/proposal/RESEARCH-HANDOFF.md",
+      "bytes": 7608,
+      "sha256": "6acec807dd5fb45a384db0aa501f3a09d1bf925810eb1369c9c4acf3d6f65af2"
+    },
+    {
+      "source": "proposal/algebra-analogy.md",
+      "restored": "proposal/reference/proposal/algebra-analogy.md",
+      "bytes": 190,
+      "sha256": "1364d602a1a684bae11aa64d6a28e0d6885a007719a33decd5627c2bc05e4e52"
+    },
+    {
+      "source": "proposal/archive/design-history/algebra-analogy.md",
+      "restored": "proposal/reference/proposal/archive/design-history/algebra-analogy.md",
+      "bytes": 13797,
+      "sha256": "7edd45b97c6f81f144e009cb8639a814ed3c136a2f2d68aba45cb63c3b1a5101"
+    },
+    {
+      "source": "proposal/archive/design-history/question.md",
+      "restored": "proposal/reference/proposal/archive/design-history/question.md",
+      "bytes": 5316,
+      "sha256": "370beaaf586dffba3ba0b757e12d5689534eab3b426296c906fd3bfbba8f0132"
+    },
+    {
+      "source": "proposal/archive/design-history/review-astra.md",
+      "restored": "proposal/reference/proposal/archive/design-history/review-astra.md",
+      "bytes": 71909,
+      "sha256": "274809526c5bef983802475dd7cb6e1772756820d4e1eeb9e76ea2bf27c6ef52"
+    },
+    {
+      "source": "proposal/archive/design-history/synthesis.md",
+      "restored": "proposal/reference/proposal/archive/design-history/synthesis.md",
+      "bytes": 14215,
+      "sha256": "bfa8a57ccee6252bcacb3bbfe60a14f220e221272c10b1eb2819dd0dc5b3d10b"
+    },
+    {
+      "source": "proposal/archive/design-history/use-cases.md",
+      "restored": "proposal/reference/proposal/archive/design-history/use-cases.md",
+      "bytes": 16763,
+      "sha256": "5656c0499cba77f0fab18c16952d80c0d9c18fa2ab82ca12f0aae321b48f84bd"
+    },
+    {
+      "source": "proposal/archive/draft-0.2/README.md",
+      "restored": "proposal/reference/proposal/archive/draft-0.2/README.md",
+      "bytes": 4668,
+      "sha256": "7ef5225741e46e21855ea51e7b4cef6c57e4e4f01c4b6b70b86e340df7d9468d"
+    },
+    {
+      "source": "proposal/archive/draft-0.2/decisions.md",
+      "restored": "proposal/reference/proposal/archive/draft-0.2/decisions.md",
+      "bytes": 16007,
+      "sha256": "f99c8afe43930d44d9f012b36ff1d1043f9fbe83dc6aed27b3c7d5503e166ee0"
+    },
+    {
+      "source": "proposal/archive/draft-0.2/laws.md",
+      "restored": "proposal/reference/proposal/archive/draft-0.2/laws.md",
+      "bytes": 18855,
+      "sha256": "72843ec96255658f63edf31d200cbc5b212b20770cc8fdcdd28caa573ff8284e"
+    },
+    {
+      "source": "proposal/archive/draft-0.2/proposal.md",
+      "restored": "proposal/reference/proposal/archive/draft-0.2/proposal.md",
+      "bytes": 39393,
+      "sha256": "354d3dedd8565b3fc6de1bb8c7029d3b22edad6f45b29f4db30041a847d9c550"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/README.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/README.md",
+      "bytes": 4284,
+      "sha256": "03dba117adef669d71d1d18dc8a5ef0a525ba9c6df4b6b31261b2b3650eab271"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/RESEARCH-HANDOFF.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/RESEARCH-HANDOFF.md",
+      "bytes": 7608,
+      "sha256": "6acec807dd5fb45a384db0aa501f3a09d1bf925810eb1369c9c4acf3d6f65af2"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/algebra-analogy.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/algebra-analogy.md",
+      "bytes": 190,
+      "sha256": "1364d602a1a684bae11aa64d6a28e0d6885a007719a33decd5627c2bc05e4e52"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/coup/README.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/coup/README.md",
+      "bytes": 26220,
+      "sha256": "2bbc0a0e403725a28b8e71b733bf42497714188cebc356e24d56b90685fa654d"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/coup/algebra-applications.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/coup/algebra-applications.md",
+      "bytes": 11594,
+      "sha256": "6a78c2855e8da5af0a3bae97c9705608888936a208e7317b91743c2df60352be"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/coup/query-walkthrough.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/coup/query-walkthrough.md",
+      "bytes": 11099,
+      "sha256": "a778f481fc10ed2cfeb43ac2b7de4852a4973666b19c3e13c5104620d41f7fd9"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/decisions.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/decisions.md",
+      "bytes": 7122,
+      "sha256": "ba508ac1712a54776e86727285b7296836bdc0538b82ebebfb962648801535a7"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/design-review.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/design-review.md",
+      "bytes": 12848,
+      "sha256": "01ef4140abf1a5f8c76486e9880a11e86fae514c7906c39070bd3ae7174343cb"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/event-algebra.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/event-algebra.md",
+      "bytes": 19166,
+      "sha256": "f0ee7c9266628e765eb3612b016247c1026fa3c6185eb2c603cc97678196bcd8"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/event-storage.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/event-storage.md",
+      "bytes": 5463,
+      "sha256": "27a08ef5f5ffda06d803ca5033d9936cb81fac6b91ba217252d2a04301c22fc0"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/event-surface.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/event-surface.md",
+      "bytes": 7168,
+      "sha256": "68925ed6343a2dd76685b844ab2b9cb3a7b35f56f1fa514f0b3751b6c74aa977"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/ANCHOR.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/ANCHOR.md",
+      "bytes": 4794,
+      "sha256": "e840ee99079e43ef3e7a1e36dfba227dbbb724f7e89e91292bc0fc09d03d092b"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/BLOCK-BASELINE-LAYOUTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/BLOCK-BASELINE-LAYOUTS.md",
+      "bytes": 15012,
+      "sha256": "36082355069e7347145e6846001b55bb467fc97b9293a6ee2310ed247f807241"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/BLOCKS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/BLOCKS.md",
+      "bytes": 7859,
+      "sha256": "d5a5a3d3bd9b934002496514c97408e3f37ac3f65a8becb81c5bf28ec0c1dd23"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/CLASSIFY-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/CLASSIFY-MEASUREMENTS.md",
+      "bytes": 38130,
+      "sha256": "43abca363efda1275bf929db80765b1e0f7efbb5d3ce311d010b075693f37e9f"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/CLASSIFY-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/CLASSIFY-SMOKE.md",
+      "bytes": 12740,
+      "sha256": "1afe984a9ba59239c2c7b22934b49b26d47b8c12100b04ed703eebb132257dec"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/CLASSIFY.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/CLASSIFY.md",
+      "bytes": 16751,
+      "sha256": "227f4f222ab8748e257aea45777d071ca8778fb82901b32b950d5af7ffe987c0"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/COMPLETION-FIRST-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/COMPLETION-FIRST-SMOKE.md",
+      "bytes": 3471,
+      "sha256": "ea22573dc3cfcc8c1e9bf873d3ff456ab33954a07f032825eb93b3077eeafd18"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/COMPLETION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/COMPLETION-MEASUREMENTS.md",
+      "bytes": 14478,
+      "sha256": "1a4bbadb8acc84d984ce350bf444d87853b3b62be1b0b866e6aebc61e67d2ac2"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/COMPLETION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/COMPLETION.md",
+      "bytes": 5726,
+      "sha256": "8d3be66d82f5a3b20c70fbc85d922dc0fd6dabda285e85809f6cd3d5b4a0e126"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/COUNTING.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/COUNTING.md",
+      "bytes": 5350,
+      "sha256": "c7f12a86a89b8e4a55b96fdc9b3dc896f32d15a87423af863763c8eff1655654"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/DEPENDENCIES.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/DEPENDENCIES.md",
+      "bytes": 11892,
+      "sha256": "17979f683c7f6bd598e77b5458c91c1bf305c60ab242a83441917c85195df24d"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/DIAGONAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/DIAGONAL.md",
+      "bytes": 10092,
+      "sha256": "70546c9a90706191df71cb231c99f7140c359a5b4a84b576eb87335acca6f0bc"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/DIFFERENTIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/DIFFERENTIAL.md",
+      "bytes": 8073,
+      "sha256": "a1e438e36cbdeed58248e2ce1b857c964dfe5a94316e9a43190e01455840dcb5"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/ESSENTIAL-BASELINE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/ESSENTIAL-BASELINE.md",
+      "bytes": 24248,
+      "sha256": "802cc7437dd1c105c886f43cc5b4af926ac6b40a1a671c34ea4d167eaec60958"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/ESSENTIAL-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/ESSENTIAL-MEASUREMENTS.md",
+      "bytes": 25651,
+      "sha256": "32000bfa6d91c9a64ad1439ad177170e3a5472386e45280361af81838508ba6d"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/ESSENTIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/ESSENTIAL.md",
+      "bytes": 20258,
+      "sha256": "b1dc8a2f92c7e2b68546fee08b9c71b4a4adad49db8074e26298d0cf7b917ba6"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FACTOR-COUNTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FACTOR-COUNTS.md",
+      "bytes": 9960,
+      "sha256": "5ba4e8c3daac42daf529609938a7ed3e2eabdb5350a1242dccbef2ee94713561"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FACTOR-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FACTOR-MEASUREMENTS.md",
+      "bytes": 37441,
+      "sha256": "036dc1e7d234f18edc1f96fcff393ddc8368e1cf6058eb534483fde94b5dfb7e"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FACTOR-SCREEN.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FACTOR-SCREEN.md",
+      "bytes": 30862,
+      "sha256": "b41253a0aebd32b6364ded9d706fecec5ef6d90fbcd32ebe664927125dc4bee3"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FACTORIZED-PACK.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FACTORIZED-PACK.md",
+      "bytes": 12130,
+      "sha256": "65de0005c90853b90494f30157b6af44d42b81ac26af74c3fa4c35a0e49ddddb"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FASTPATH-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FASTPATH-MEASUREMENTS.md",
+      "bytes": 10460,
+      "sha256": "0ca4546520c03c4dcd2ed41b7116f16c2ea151c6d11cc964d43befb775c4636e"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FIBRE-RETRACTION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FIBRE-RETRACTION.md",
+      "bytes": 32609,
+      "sha256": "6d7e42d4ce83992077ba0b8b5004ea1ff11de37bcdd5cd9cbae0d6a13669cd9b"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FUSED-PROJECTION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FUSED-PROJECTION-MEASUREMENTS.md",
+      "bytes": 46573,
+      "sha256": "b425b607e205c965c16138a41d05e723699142f0c22cdc6a508d8aacedf6aab7"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FUSED-PROJECTION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/FUSED-PROJECTION.md",
+      "bytes": 9414,
+      "sha256": "e00e69617e283ad6208088b23372e0268a6aeb2b8f399a51c3b11dcaafccd95c"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/INFORMATION-ALGEBRA.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/INFORMATION-ALGEBRA.md",
+      "bytes": 7457,
+      "sha256": "38243b0731184d86c7c3acee0c6e7a796cf11d427e1ee91fba3f7846b68c125c"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/ITE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/ITE-MEASUREMENTS.md",
+      "bytes": 32076,
+      "sha256": "c37d4f1ca3dcd3a163de1329a930b7f9be410b3bfb80838e2b5c96ad38c4d616"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LAW-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LAW-MEASUREMENTS.md",
+      "bytes": 14256,
+      "sha256": "9db28613e65d793aef6a6e733889efc09b1910ac89da552277c8cde5c7a2e15b"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LAYOUT-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LAYOUT-MEASUREMENTS.md",
+      "bytes": 15127,
+      "sha256": "e06cdd4f7778e1f33fa919a6aed16b506214cee7b18a40583b1b453187bb8fe0"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LAYOUT-PLANS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LAYOUT-PLANS.md",
+      "bytes": 3470,
+      "sha256": "efa246b301c0cd4838012949fe8edd622603f1d8f15b0beba71496adb50ffe37"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LEAN.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LEAN.md",
+      "bytes": 32701,
+      "sha256": "775140d2783e3ac93594a9b0debeafaa814a169815152b0aa98a5c6d53835a7e"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LEGAL-INITIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LEGAL-INITIAL.md",
+      "bytes": 35048,
+      "sha256": "09153aa53c2e175499325a438a44a3d109f23d059cd8101335f773c529174165"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LEGAL-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LEGAL-MEASUREMENTS.md",
+      "bytes": 35145,
+      "sha256": "dc0c0d6c4b9d6b34052b35b4ca2773bad5f09565fee96455eb3748bc648f1b84"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LEGAL-RELATIONS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LEGAL-RELATIONS.md",
+      "bytes": 17821,
+      "sha256": "69fcc85ab4a7b7628669e081cc1c4286f4b63b7c90b71474feeb842d8f0751b8"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LEGAL-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LEGAL-SMOKE.md",
+      "bytes": 17899,
+      "sha256": "39fca812bdf692aded0576bfebbffb91c6c9a3f887942fb25b694674c8e90670"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LOCAL-COMPLETION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LOCAL-COMPLETION-MEASUREMENTS.md",
+      "bytes": 58790,
+      "sha256": "cad2fe14796f859919ec4df7d2929077f2428de6a45db11e668b207f9e604308"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LOCAL-COMPLETION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/LOCAL-COMPLETION.md",
+      "bytes": 9770,
+      "sha256": "61d888cc21134e1687e92c2e2655cead955a865df3b4b98be1a0efe8cc6ab3f7"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/MAP-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/MAP-MEASUREMENTS.md",
+      "bytes": 4994,
+      "sha256": "0ba02ae01aa2751629fa72bf7661a45475694a3b619d7ceab27b12ed5df40365"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/MEASUREMENTS.md",
+      "bytes": 22812,
+      "sha256": "ca419db78d9b0cf6362bc8d73f95b3959e3872b1b40b41f216e418e54c6679dd"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/OBSERVATION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/OBSERVATION.md",
+      "bytes": 8536,
+      "sha256": "d11ada1580338dc9cea55c36dce0e4bc77f098b80ac03435b38575868a3310e6"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/OWNED-BASELINE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/OWNED-BASELINE.md",
+      "bytes": 13059,
+      "sha256": "c348a160291a2fe69bd2ab9f20c6fde0ba971f6f44d4a7073625b8bfcccf97f4"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/OWNED-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/OWNED-MEASUREMENTS.md",
+      "bytes": 50463,
+      "sha256": "07ee87f0dc40e31baea2849a2514ddbec16afaba0c14fe275d39d03c2441408a"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/OWNED.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/OWNED.md",
+      "bytes": 7459,
+      "sha256": "22b74c9172e521e50f84afae64ae60fbf4bac19cbe294cb77eaf3912197a6fd5"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PACK-CROSSOVER-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PACK-CROSSOVER-MEASUREMENTS.md",
+      "bytes": 4371,
+      "sha256": "a93263b55ee1d98a8d16f13fd26893628f8d64a4a1325dfa6ff3080ba8e7befe"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PACK-NATIVE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PACK-NATIVE-MEASUREMENTS.md",
+      "bytes": 9240,
+      "sha256": "58ebbc9ca5de1375668ca0039bdb01f19d07fd8aef04a0690386c076977fda3c"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PACKED.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PACKED.md",
+      "bytes": 7383,
+      "sha256": "50b35b9844a3111719b7e00f71b61bcb9813d40ab4cdc6fb9a65f5df70713a87"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PARTICIPATION-STATUS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PARTICIPATION-STATUS.md",
+      "bytes": 1512,
+      "sha256": "46a081c561605b17c6c8fad26c3913a78763bb89175544ee6493770074f71936"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PREFIX-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PREFIX-MEASUREMENTS.md",
+      "bytes": 30527,
+      "sha256": "7b6da03cff048639226d837107f6aa1d227a7ce24f45bbaa45fa9198c88fdd05"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PREFIX-READOUTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PREFIX-READOUTS.md",
+      "bytes": 18709,
+      "sha256": "65bc7b1764486ea49fe49461143ef27cc8ac43fcd190162f4f6d260f5955ca37"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PROJECTION-FIRST-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PROJECTION-FIRST-SMOKE.md",
+      "bytes": 3964,
+      "sha256": "8d20c7473c351a0d2e201f8896422f0bb2f32ce53cc1c75cc43a64b2826aac19"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PROJECTION-GATE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PROJECTION-GATE-MEASUREMENTS.md",
+      "bytes": 44730,
+      "sha256": "0131c33c9e01a5df490af7dfcac2f7267fb891bcbd7e96ee561a7dd594b01f57"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PROJECTION-GATES.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PROJECTION-GATES.md",
+      "bytes": 9400,
+      "sha256": "6df6a539a5abf0887bab5daffb21b5004a845eac5a5d490d4a793f5316adb93c"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PROJECTION-INITIAL-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/PROJECTION-INITIAL-MEASUREMENTS.md",
+      "bytes": 9023,
+      "sha256": "73d8cffc54f037c69d2500d5e8b9e37c59fc7db27acff3a1a1ef81f70bacdce4"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/QUESTIONS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/QUESTIONS.md",
+      "bytes": 33016,
+      "sha256": "55dec820abbeaecd822682d95c00562baa0c0abe019fbab02f5749b6a57cc1e1"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RANGE-NATIVE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RANGE-NATIVE-MEASUREMENTS.md",
+      "bytes": 5316,
+      "sha256": "1d18160d1fe7cd626d310abb383a8b2fa848b9a427020668c5280022bf201677"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RANGE-NATIVE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RANGE-NATIVE.md",
+      "bytes": 5104,
+      "sha256": "e9834e3281903d40cea50c34d3ab02741ce8409d71c48856bcdd6584ca4bbe8d"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RANGE-PLAN.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RANGE-PLAN.md",
+      "bytes": 4255,
+      "sha256": "e2c1910044dce1b04328e9bff6ac8259f96ff1a0d997aea51882c15343c6a8cd"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RANGES.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RANGES.md",
+      "bytes": 8258,
+      "sha256": "6abfcb7c0acc3d5d26b24d72019bb34189e51819caad4dc1c75640f7773ae7b0"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/README.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/README.md",
+      "bytes": 28664,
+      "sha256": "3db03507a670abbeea727371312d956f37ce4f7052b3e67b511bad33d71df949"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/READOUT-FIRST-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/READOUT-FIRST-SMOKE.md",
+      "bytes": 2544,
+      "sha256": "01a73f0f9bbb5c4649bc368ff1d53e117245521adb3bf82735f0fdc96959ee16"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/READOUT-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/READOUT-MEASUREMENTS.md",
+      "bytes": 65962,
+      "sha256": "84423512672989e22d3f14b9c675465d96e881735bf5c5ff7a1b97add38687b5"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/READOUT-SCREEN.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/READOUT-SCREEN.md",
+      "bytes": 65592,
+      "sha256": "17091828cf47201f77474d51eb7b119791cdf7c2f8e573fc9417bf825f0219d0"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RELATIONAL-PACK-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RELATIONAL-PACK-MEASUREMENTS.md",
+      "bytes": 22927,
+      "sha256": "d241f34d5dd1a279cf9c81af1932e08d649823535da1ebfe20672a28f730758e"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RELATIONAL-PACK-REPEAT.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RELATIONAL-PACK-REPEAT.md",
+      "bytes": 5235,
+      "sha256": "9fef64ccce5ae9e5cafa48d12a4c10019503d195cf3227ea5e51ed0a96835861"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RELATIONAL-PACK.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RELATIONAL-PACK.md",
+      "bytes": 12495,
+      "sha256": "bd5eb9bcb4e6040c5fa95cd66db443a7d97a0994a8340eb3f46b8c376d0a0552"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/REPORT.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/REPORT.md",
+      "bytes": 77857,
+      "sha256": "66475a0d338d5d4b9e18023247a18a8b4544ee3237fac3ed0e46d4e0d62fe5d7"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RETRACTION-INITIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RETRACTION-INITIAL.md",
+      "bytes": 9528,
+      "sha256": "399f4af3ba69d6408f63c6f54bfd68ff47ab49300d25c746c4ec21846aa34987"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RETRACTION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RETRACTION-MEASUREMENTS.md",
+      "bytes": 23524,
+      "sha256": "7662d2298e43c2bdadbec74977de7d4dbba4233702a4b84114e1ff1d540c32da"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RETRACTION-WORDS-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/RETRACTION-WORDS-SMOKE.md",
+      "bytes": 14774,
+      "sha256": "60e03ba3fc3b21359c19fb002763f4e45f89de451d514f383c607ccd467afb38"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/REUSE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/REUSE-MEASUREMENTS.md",
+      "bytes": 100378,
+      "sha256": "9693d7f5c2f252ade3f01c902f45267b03dcabf87ee09c0daa46e32817972b1d"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/REUSE-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/REUSE-SMOKE.md",
+      "bytes": 34320,
+      "sha256": "f989f6e1a2742256891bf990e70e4d2616beab6100abee45beae4beac7879a79"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/REUSE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/REUSE.md",
+      "bytes": 14141,
+      "sha256": "e83fc52431aedbd2b43e0a5953215fbc052e782ce1e29446d2af4b31fdea160e"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCOPED-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCOPED-MEASUREMENTS.md",
+      "bytes": 81356,
+      "sha256": "887b281ccba4c61df9ebdf256adab36d6cc1d216845825e221bf546ddf783d8e"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCOPED-PRODUCT.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCOPED-PRODUCT.md",
+      "bytes": 14136,
+      "sha256": "fc318f812bf0ea3479f417eb941892362c4e3adde957ac8a9888ce1c0e08d1ac"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCOPED-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCOPED-SMOKE.md",
+      "bytes": 18887,
+      "sha256": "ff03fde69d1493a56b92125da9661b4599445eb74aae65fac7fc05740fd8ea37"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCRATCH-INITIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCRATCH-INITIAL.md",
+      "bytes": 91328,
+      "sha256": "6971c4a0356caf082761da7cefd419faf54674841d3a24555d5ee691abca23ad"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCRATCH-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCRATCH-MEASUREMENTS.md",
+      "bytes": 91999,
+      "sha256": "58e6e333b35c7a4ffb1542b0613140233bcaf43e87b9a4b50c2ebe1a9909e46f"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCRATCH-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCRATCH-SMOKE.md",
+      "bytes": 11895,
+      "sha256": "8584bab85d20de04b29316e8f1d1a431a3334fcd642428e8b409a6b06c33f1bc"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCRATCH.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SCRATCH.md",
+      "bytes": 12764,
+      "sha256": "02e4006af0ab5c6d3d8792fae8847bd0fa406e3486593b7c3bd7d24c0f30802b"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SIGNATURE-CALCULUS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SIGNATURE-CALCULUS.md",
+      "bytes": 9147,
+      "sha256": "cac6700e5a55669468a9089aa2266319575b11e7ccdb4b3cf23fa2c0088296da"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SLAB-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SLAB-MEASUREMENTS.md",
+      "bytes": 43194,
+      "sha256": "e25807c963fef7de4f263d0d9dfa9c3e80930098622bb7b5912b916c7efaa623"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SLAB-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SLAB-SMOKE.md",
+      "bytes": 7981,
+      "sha256": "74488afb7beb55b4aa04bbc4cc70eb6276e5da893888f1451ed907e70cbe319e"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SLABS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SLABS.md",
+      "bytes": 11043,
+      "sha256": "47a8f2a383d0ea23e660c9feb1c9b0ec8ea56e662d4018b8edb28680f3c7f6af"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SUPPORTED-DEPENDENCE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SUPPORTED-DEPENDENCE.md",
+      "bytes": 5475,
+      "sha256": "36f65351535d695e3b5b130bd97bef96d1f305fc36a1afde2e62f08d45a2502c"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SYMBOLIC-RELATION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/SYMBOLIC-RELATION-MEASUREMENTS.md",
+      "bytes": 5314,
+      "sha256": "87fd19a2889c71f416941a55ab8074ad4fa94efa9b6e382e59cd836c2b6f6a24"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/TAIL-MAPS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/TAIL-MAPS.md",
+      "bytes": 2826,
+      "sha256": "4d9b6dd66a80b5dac8637c92a51b21854c2782048bfa34f209afde319fb5c5ad"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/TERNARY-COMPLETION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/TERNARY-COMPLETION.md",
+      "bytes": 10030,
+      "sha256": "ae8288275a63b9dfdaeacd03f2c68d7b820990456e6e6dfbfdcb817c0a01769d"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/TRANSPORT-BASELINE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/TRANSPORT-BASELINE.md",
+      "bytes": 13264,
+      "sha256": "32e2ab1b01b4f10d6e3706ffb7159eb996d18eb55451b1a80140adaa335ce158"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/TRANSPORT-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/TRANSPORT-MEASUREMENTS.md",
+      "bytes": 42064,
+      "sha256": "3da0bb47d98cb37c06057fa524d0b94da7b0dadae738748983aaaa3f5e92aac6"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/TRANSPORT.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/TRANSPORT.md",
+      "bytes": 16850,
+      "sha256": "32a2cb46eb34a42b924129805122970c5cf2b6d5c0fb7c4515c67d635d2badc2"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/UNARY-BLOCKS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/UNARY-BLOCKS.md",
+      "bytes": 5849,
+      "sha256": "92d826eee7a38aa8a06dac9d16d9943c9565d4d604b2dd8e0fb1031f6a5b509c"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/UNARY-CHAINS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/UNARY-CHAINS.md",
+      "bytes": 7365,
+      "sha256": "c755ab3c41150aa2279c27de66bed8c2e2f7d0bd395358e7896c886998e7b594"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW-FACTORIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW-FACTORIAL.md",
+      "bytes": 57794,
+      "sha256": "7164062cdf9489327da41c5c927a730547038f9d747ee5a3993da31b3f1372ef"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW-MEASUREMENTS.md",
+      "bytes": 30613,
+      "sha256": "dc025c43f8b04d7ce0e25d04f58b2b8650f877137f973c8f7c1e5031b6a4cc17"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW-ORDER.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW-ORDER.md",
+      "bytes": 14704,
+      "sha256": "a7539dc39211713e3e5cf3a15903702fd0ce832f316028aead3375a13d27b4df"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW-PRODUCT.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW-PRODUCT.md",
+      "bytes": 13740,
+      "sha256": "a463479c18cb4afb18626a6f3bd08748e56fe2b3dd451e62444ee8555b880847"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW-SMOKE.md",
+      "bytes": 7553,
+      "sha256": "b2d0bdaf1eeb5e4b66deba47b08051aa535125c143c4d75c652f89a6cb8302e4"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW2-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/VIEW2-SMOKE.md",
+      "bytes": 19958,
+      "sha256": "932ebfd3b34f5919dc36c0ca498315d4ee7b0baec1ed673681cea0d0add7ffb2"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/WORD-CLASSIFIER-INITIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/WORD-CLASSIFIER-INITIAL.md",
+      "bytes": 69720,
+      "sha256": "d91174989d37cd1bb48d6b4fd4ca05f249adbda7b80542d3a0f55a6e21130bcb"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/WORD-CLASSIFIER-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/WORD-CLASSIFIER-MEASUREMENTS.md",
+      "bytes": 69784,
+      "sha256": "3248d296d95a7b6ee68df72f3ecc96114b53d1b91795a304863a1b364e28fce5"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/WORD-CLASSIFIER-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/WORD-CLASSIFIER-SMOKE.md",
+      "bytes": 12210,
+      "sha256": "f8019d410b7fcd5978a30ac62a9c0efe935f3109919be0c7ac79fc6e9f5720fa"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/WORD-CLASSIFIER.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/experiments/event-repr-lab/WORD-CLASSIFIER.md",
+      "bytes": 12858,
+      "sha256": "f6b15c4ef7ddefdd4440b780ae425466dc30e7e9250b2c6c99906e8efec3ed7f"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/first-principles.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/first-principles.md",
+      "bytes": 5636,
+      "sha256": "10ce0cb12eb4ec2812e5bf5e52a8b971f0291e42db1494233af017332345f96d"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/implementation-plan.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/implementation-plan.md",
+      "bytes": 11510,
+      "sha256": "ee5e577d3c6c6cc2c7a3b549f1cee838fd72d8e4b6fe4f144b557a5e5e7e2a8b"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/kernels.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/kernels.md",
+      "bytes": 16902,
+      "sha256": "547709d5f44696ab1501c6c530552d5ed0146f79ff956e64bcfa2c38e0c9f790"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/laws.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/laws.md",
+      "bytes": 46464,
+      "sha256": "c7301459c321a80ada9540705592e441730a09bf62f458ff43797defc909f301"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/literature-resolution.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/literature-resolution.md",
+      "bytes": 19387,
+      "sha256": "5b12724ead25d0644247cd09a6f052e0129a0234145e9b179a1e7c2c5106a415"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/naming.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/naming.md",
+      "bytes": 5749,
+      "sha256": "477ace67703604868c52ed4ca9fcf196fd5148a5d2625ad7c5832a32a40565fa"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/proposal.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/proposal.md",
+      "bytes": 9620,
+      "sha256": "23b1dde5761b940a5ee645926bbb0663891afa9169b3a5675804179232dae26f"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/query-algebra.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/query-algebra.md",
+      "bytes": 27428,
+      "sha256": "975e3ff93ca5268c7ab7639f007d7926e04923a0f36ab6029a3ec4db4d1a8963"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/question.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/question.md",
+      "bytes": 183,
+      "sha256": "44e4ec827cb0a433908160644dd5acb892bb999ae06c6654fcc5088664408306"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/relational-surface.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/relational-surface.md",
+      "bytes": 536,
+      "sha256": "c771e17af94538d3db75f59131a581d77fca104cd213fc5354ceabeb23aaa80b"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/representation.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/representation.md",
+      "bytes": 8678,
+      "sha256": "d501fd3400afa4936927c207243a645fb624b4e71062dd1d6cc9d4230ef5cdf4"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/research/README.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/research/README.md",
+      "bytes": 4411,
+      "sha256": "42914ff6a1a612c8c51ab688bef3d67da02b5112a350afc579a0c67032963009"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/research/algebra-resolution.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/research/algebra-resolution.md",
+      "bytes": 14138,
+      "sha256": "ea769fe5f4193722ea9d71f9a1d9d788476861564be872cc2014bed2c1488d14"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/research/block-decomposition.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/research/block-decomposition.md",
+      "bytes": 11699,
+      "sha256": "90901a01e3b4c2d22f001076a719c822aec55e103107ae56612d80b952bd0e62"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/research/compact-counting.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/research/compact-counting.md",
+      "bytes": 7435,
+      "sha256": "8db0cdcee6624102a71ff9f9624ced7feed7d30acb496efd125241c20ef6df20"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/research/difference-decomposition.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/research/difference-decomposition.md",
+      "bytes": 7831,
+      "sha256": "f6430fca930fc274fc612bd7d6fa50bf2a07de9a7d4e2b10dbd54c228bed7bb4"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/research/process-theory.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/research/process-theory.md",
+      "bytes": 35605,
+      "sha256": "2371537723b0fddff11bbb4e0e99b682f8b89d0363b097f612b80d350d25723c"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/research/representation-brief.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/research/representation-brief.md",
+      "bytes": 28770,
+      "sha256": "a931bb20a66d732fa66961fac6e1e249f1fee1166f920f313ce46b943fd663c3"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/research/representation-notes.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/research/representation-notes.md",
+      "bytes": 5852,
+      "sha256": "1e4273842ed9cc31e8bd8765afcc6d5efb2523e0a94a8df47885898d43d89bc4"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/research/representation-search.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/research/representation-search.md",
+      "bytes": 11026,
+      "sha256": "9291a14a4e13400df40a4f5cc80660b6232446be2d19b91f30eb61da573596b2"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/research/space-maps.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/research/space-maps.md",
+      "bytes": 13488,
+      "sha256": "41ac678e5158d8626a9f6342abbfe3e16aaf41b7ff258b2f46c55e0bbbb13701"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/review-astra.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/review-astra.md",
+      "bytes": 187,
+      "sha256": "60ba38b5fe8ac48641779393f9a8be14ab5ee1c790f1cab104e9f06fb9131ce4"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/rust-surface.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/rust-surface.md",
+      "bytes": 673,
+      "sha256": "091b9a2fa6fbb46709fa03e8a2a8ed7fac3f405093eda06eac2b4c3dc16fb4ee"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/semantics/README.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/semantics/README.md",
+      "bytes": 7422,
+      "sha256": "ec704212c20a786886fa6996aa956a83bd66af0930ad725b6e8f32c3ea378eaf"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/source-law.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/source-law.md",
+      "bytes": 11800,
+      "sha256": "abb31ca558587593394a393b2f4da0877a0c7aa84a4dd9a1f165abae000249c8"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/sources.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/sources.md",
+      "bytes": 25978,
+      "sha256": "17a32a7b03485d07d6c9a051669a767e4240fda7d2914583f24628e7b7229e4f"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/synthesis.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/synthesis.md",
+      "bytes": 184,
+      "sha256": "5614d328a6219aac1cad344bee1713278618f558893cb79dc3be5c09cfb917a4"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/typesafe-inference.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/typesafe-inference.md",
+      "bytes": 12476,
+      "sha256": "09c6805331017498170b06760ba95077e81ff66b32c64f5ed92baf036aa54382"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/use-cases.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/use-cases.md",
+      "bytes": 184,
+      "sha256": "8e15d6145446ef4ed6f9e8bf42a6237e5911be02f2920cb518d650e745d85614"
+    },
+    {
+      "source": "proposal/archive/implementation-baseline-0.8/world-relations.md",
+      "restored": "proposal/reference/proposal/archive/implementation-baseline-0.8/world-relations.md",
+      "bytes": 20876,
+      "sha256": "9ff65f5b80425feb48a337ab6cc4b59d4b970c2f049539e63c09089f1799b535"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/README.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/README.md",
+      "bytes": 17153,
+      "sha256": "df302546655deae4af741cb0d09d29ec84718a0064d5c21c4d5650facec8c16e"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/RESEARCH-HANDOFF.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/RESEARCH-HANDOFF.md",
+      "bytes": 7069,
+      "sha256": "8e21a7c75902b3ee2281dc6e5144dee43ec33e45ceb68f91b97537aaee38e310"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/algebra-analogy.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/algebra-analogy.md",
+      "bytes": 190,
+      "sha256": "1364d602a1a684bae11aa64d6a28e0d6885a007719a33decd5627c2bc05e4e52"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/coup/README.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/coup/README.md",
+      "bytes": 26152,
+      "sha256": "8e994906036eb38149587f1d98b66309a38568b0a72fbf21712f683843dde6e4"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/coup/algebra-applications.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/coup/algebra-applications.md",
+      "bytes": 11594,
+      "sha256": "e4baca2c845f309245886504f3265717d067353d2a948dc6b6942a7fdab73bdb"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/coup/query-walkthrough.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/coup/query-walkthrough.md",
+      "bytes": 11094,
+      "sha256": "b05b8f07ec68d487b334f201dace8803e78d0361f7e89eb6c89d5338da49ee6b"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/decisions.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/decisions.md",
+      "bytes": 6615,
+      "sha256": "5d7dc27f269ed426eaf391b9f137c9b52e8afacacf34181c4923a3cc3730c3ae"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/design-review.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/design-review.md",
+      "bytes": 12576,
+      "sha256": "a5d3fb3f67ddfb11569c9996013a80c6ca425bd07062119f561ce21f353b6006"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/event-algebra.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/event-algebra.md",
+      "bytes": 19032,
+      "sha256": "4c58cb3e777bf2a799f17267e02d57bd4c9bf89c5ad164b3dbb218923ccbeec7"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/event-storage.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/event-storage.md",
+      "bytes": 5463,
+      "sha256": "27a08ef5f5ffda06d803ca5033d9936cb81fac6b91ba217252d2a04301c22fc0"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/event-surface.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/event-surface.md",
+      "bytes": 7145,
+      "sha256": "f70b8aac2febe74c7b28f094719a1afe4a7bbfc27e75416b4933d8348e69edd3"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/ANCHOR.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/ANCHOR.md",
+      "bytes": 4794,
+      "sha256": "e840ee99079e43ef3e7a1e36dfba227dbbb724f7e89e91292bc0fc09d03d092b"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/BLOCK-BASELINE-LAYOUTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/BLOCK-BASELINE-LAYOUTS.md",
+      "bytes": 15012,
+      "sha256": "36082355069e7347145e6846001b55bb467fc97b9293a6ee2310ed247f807241"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/BLOCKS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/BLOCKS.md",
+      "bytes": 7859,
+      "sha256": "d5a5a3d3bd9b934002496514c97408e3f37ac3f65a8becb81c5bf28ec0c1dd23"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/CLASSIFY-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/CLASSIFY-MEASUREMENTS.md",
+      "bytes": 38130,
+      "sha256": "43abca363efda1275bf929db80765b1e0f7efbb5d3ce311d010b075693f37e9f"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/CLASSIFY-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/CLASSIFY-SMOKE.md",
+      "bytes": 12740,
+      "sha256": "1afe984a9ba59239c2c7b22934b49b26d47b8c12100b04ed703eebb132257dec"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/CLASSIFY.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/CLASSIFY.md",
+      "bytes": 16751,
+      "sha256": "227f4f222ab8748e257aea45777d071ca8778fb82901b32b950d5af7ffe987c0"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/COMPLETION-FIRST-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/COMPLETION-FIRST-SMOKE.md",
+      "bytes": 3471,
+      "sha256": "ea22573dc3cfcc8c1e9bf873d3ff456ab33954a07f032825eb93b3077eeafd18"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/COMPLETION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/COMPLETION-MEASUREMENTS.md",
+      "bytes": 14478,
+      "sha256": "1a4bbadb8acc84d984ce350bf444d87853b3b62be1b0b866e6aebc61e67d2ac2"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/COMPLETION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/COMPLETION.md",
+      "bytes": 5726,
+      "sha256": "8d3be66d82f5a3b20c70fbc85d922dc0fd6dabda285e85809f6cd3d5b4a0e126"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/COUNTING.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/COUNTING.md",
+      "bytes": 5350,
+      "sha256": "c7f12a86a89b8e4a55b96fdc9b3dc896f32d15a87423af863763c8eff1655654"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/DEPENDENCIES.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/DEPENDENCIES.md",
+      "bytes": 11892,
+      "sha256": "17979f683c7f6bd598e77b5458c91c1bf305c60ab242a83441917c85195df24d"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/DIAGONAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/DIAGONAL.md",
+      "bytes": 10092,
+      "sha256": "70546c9a90706191df71cb231c99f7140c359a5b4a84b576eb87335acca6f0bc"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/DIFFERENTIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/DIFFERENTIAL.md",
+      "bytes": 8073,
+      "sha256": "a1e438e36cbdeed58248e2ce1b857c964dfe5a94316e9a43190e01455840dcb5"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/ESSENTIAL-BASELINE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/ESSENTIAL-BASELINE.md",
+      "bytes": 24248,
+      "sha256": "802cc7437dd1c105c886f43cc5b4af926ac6b40a1a671c34ea4d167eaec60958"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/ESSENTIAL-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/ESSENTIAL-MEASUREMENTS.md",
+      "bytes": 25651,
+      "sha256": "32000bfa6d91c9a64ad1439ad177170e3a5472386e45280361af81838508ba6d"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/ESSENTIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/ESSENTIAL.md",
+      "bytes": 20258,
+      "sha256": "b1dc8a2f92c7e2b68546fee08b9c71b4a4adad49db8074e26298d0cf7b917ba6"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FACTOR-COUNTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FACTOR-COUNTS.md",
+      "bytes": 9960,
+      "sha256": "5ba4e8c3daac42daf529609938a7ed3e2eabdb5350a1242dccbef2ee94713561"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FACTOR-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FACTOR-MEASUREMENTS.md",
+      "bytes": 37441,
+      "sha256": "036dc1e7d234f18edc1f96fcff393ddc8368e1cf6058eb534483fde94b5dfb7e"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FACTOR-SCREEN.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FACTOR-SCREEN.md",
+      "bytes": 30862,
+      "sha256": "b41253a0aebd32b6364ded9d706fecec5ef6d90fbcd32ebe664927125dc4bee3"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FACTORIZED-PACK.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FACTORIZED-PACK.md",
+      "bytes": 12130,
+      "sha256": "65de0005c90853b90494f30157b6af44d42b81ac26af74c3fa4c35a0e49ddddb"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FASTPATH-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FASTPATH-MEASUREMENTS.md",
+      "bytes": 10460,
+      "sha256": "0ca4546520c03c4dcd2ed41b7116f16c2ea151c6d11cc964d43befb775c4636e"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FIBRE-RETRACTION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FIBRE-RETRACTION.md",
+      "bytes": 32609,
+      "sha256": "6d7e42d4ce83992077ba0b8b5004ea1ff11de37bcdd5cd9cbae0d6a13669cd9b"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FUSED-PROJECTION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FUSED-PROJECTION-MEASUREMENTS.md",
+      "bytes": 46573,
+      "sha256": "b425b607e205c965c16138a41d05e723699142f0c22cdc6a508d8aacedf6aab7"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FUSED-PROJECTION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/FUSED-PROJECTION.md",
+      "bytes": 9414,
+      "sha256": "e00e69617e283ad6208088b23372e0268a6aeb2b8f399a51c3b11dcaafccd95c"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/INFORMATION-ALGEBRA.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/INFORMATION-ALGEBRA.md",
+      "bytes": 7457,
+      "sha256": "38243b0731184d86c7c3acee0c6e7a796cf11d427e1ee91fba3f7846b68c125c"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/ITE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/ITE-MEASUREMENTS.md",
+      "bytes": 32076,
+      "sha256": "c37d4f1ca3dcd3a163de1329a930b7f9be410b3bfb80838e2b5c96ad38c4d616"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LAW-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LAW-MEASUREMENTS.md",
+      "bytes": 14256,
+      "sha256": "9db28613e65d793aef6a6e733889efc09b1910ac89da552277c8cde5c7a2e15b"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LAYOUT-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LAYOUT-MEASUREMENTS.md",
+      "bytes": 15127,
+      "sha256": "e06cdd4f7778e1f33fa919a6aed16b506214cee7b18a40583b1b453187bb8fe0"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LAYOUT-PLANS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LAYOUT-PLANS.md",
+      "bytes": 3470,
+      "sha256": "efa246b301c0cd4838012949fe8edd622603f1d8f15b0beba71496adb50ffe37"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LEAN.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LEAN.md",
+      "bytes": 32701,
+      "sha256": "775140d2783e3ac93594a9b0debeafaa814a169815152b0aa98a5c6d53835a7e"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LEGAL-INITIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LEGAL-INITIAL.md",
+      "bytes": 35048,
+      "sha256": "09153aa53c2e175499325a438a44a3d109f23d059cd8101335f773c529174165"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LEGAL-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LEGAL-MEASUREMENTS.md",
+      "bytes": 35145,
+      "sha256": "dc0c0d6c4b9d6b34052b35b4ca2773bad5f09565fee96455eb3748bc648f1b84"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LEGAL-RELATIONS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LEGAL-RELATIONS.md",
+      "bytes": 17821,
+      "sha256": "69fcc85ab4a7b7628669e081cc1c4286f4b63b7c90b71474feeb842d8f0751b8"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LEGAL-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LEGAL-SMOKE.md",
+      "bytes": 17899,
+      "sha256": "39fca812bdf692aded0576bfebbffb91c6c9a3f887942fb25b694674c8e90670"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LOCAL-COMPLETION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LOCAL-COMPLETION-MEASUREMENTS.md",
+      "bytes": 58790,
+      "sha256": "cad2fe14796f859919ec4df7d2929077f2428de6a45db11e668b207f9e604308"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LOCAL-COMPLETION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/LOCAL-COMPLETION.md",
+      "bytes": 9770,
+      "sha256": "61d888cc21134e1687e92c2e2655cead955a865df3b4b98be1a0efe8cc6ab3f7"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/MAP-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/MAP-MEASUREMENTS.md",
+      "bytes": 4994,
+      "sha256": "0ba02ae01aa2751629fa72bf7661a45475694a3b619d7ceab27b12ed5df40365"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/MEASUREMENTS.md",
+      "bytes": 22812,
+      "sha256": "ca419db78d9b0cf6362bc8d73f95b3959e3872b1b40b41f216e418e54c6679dd"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/OBSERVATION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/OBSERVATION.md",
+      "bytes": 8536,
+      "sha256": "d11ada1580338dc9cea55c36dce0e4bc77f098b80ac03435b38575868a3310e6"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/OWNED-BASELINE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/OWNED-BASELINE.md",
+      "bytes": 13059,
+      "sha256": "c348a160291a2fe69bd2ab9f20c6fde0ba971f6f44d4a7073625b8bfcccf97f4"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/OWNED-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/OWNED-MEASUREMENTS.md",
+      "bytes": 50463,
+      "sha256": "07ee87f0dc40e31baea2849a2514ddbec16afaba0c14fe275d39d03c2441408a"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/OWNED.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/OWNED.md",
+      "bytes": 7459,
+      "sha256": "22b74c9172e521e50f84afae64ae60fbf4bac19cbe294cb77eaf3912197a6fd5"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PACK-CROSSOVER-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PACK-CROSSOVER-MEASUREMENTS.md",
+      "bytes": 4371,
+      "sha256": "a93263b55ee1d98a8d16f13fd26893628f8d64a4a1325dfa6ff3080ba8e7befe"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PACK-NATIVE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PACK-NATIVE-MEASUREMENTS.md",
+      "bytes": 9240,
+      "sha256": "58ebbc9ca5de1375668ca0039bdb01f19d07fd8aef04a0690386c076977fda3c"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PACKED.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PACKED.md",
+      "bytes": 7383,
+      "sha256": "50b35b9844a3111719b7e00f71b61bcb9813d40ab4cdc6fb9a65f5df70713a87"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PARTICIPATION-STATUS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PARTICIPATION-STATUS.md",
+      "bytes": 1512,
+      "sha256": "46a081c561605b17c6c8fad26c3913a78763bb89175544ee6493770074f71936"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PREFIX-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PREFIX-MEASUREMENTS.md",
+      "bytes": 30527,
+      "sha256": "7b6da03cff048639226d837107f6aa1d227a7ce24f45bbaa45fa9198c88fdd05"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PREFIX-READOUTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PREFIX-READOUTS.md",
+      "bytes": 18709,
+      "sha256": "65bc7b1764486ea49fe49461143ef27cc8ac43fcd190162f4f6d260f5955ca37"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PROJECTION-FIRST-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PROJECTION-FIRST-SMOKE.md",
+      "bytes": 3964,
+      "sha256": "8d20c7473c351a0d2e201f8896422f0bb2f32ce53cc1c75cc43a64b2826aac19"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PROJECTION-GATE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PROJECTION-GATE-MEASUREMENTS.md",
+      "bytes": 44730,
+      "sha256": "0131c33c9e01a5df490af7dfcac2f7267fb891bcbd7e96ee561a7dd594b01f57"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PROJECTION-GATES.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PROJECTION-GATES.md",
+      "bytes": 9400,
+      "sha256": "6df6a539a5abf0887bab5daffb21b5004a845eac5a5d490d4a793f5316adb93c"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PROJECTION-INITIAL-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/PROJECTION-INITIAL-MEASUREMENTS.md",
+      "bytes": 9023,
+      "sha256": "73d8cffc54f037c69d2500d5e8b9e37c59fc7db27acff3a1a1ef81f70bacdce4"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/QUESTIONS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/QUESTIONS.md",
+      "bytes": 33016,
+      "sha256": "55dec820abbeaecd822682d95c00562baa0c0abe019fbab02f5749b6a57cc1e1"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RANGE-NATIVE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RANGE-NATIVE-MEASUREMENTS.md",
+      "bytes": 5316,
+      "sha256": "1d18160d1fe7cd626d310abb383a8b2fa848b9a427020668c5280022bf201677"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RANGE-NATIVE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RANGE-NATIVE.md",
+      "bytes": 5104,
+      "sha256": "e9834e3281903d40cea50c34d3ab02741ce8409d71c48856bcdd6584ca4bbe8d"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RANGE-PLAN.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RANGE-PLAN.md",
+      "bytes": 4255,
+      "sha256": "e2c1910044dce1b04328e9bff6ac8259f96ff1a0d997aea51882c15343c6a8cd"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RANGES.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RANGES.md",
+      "bytes": 8258,
+      "sha256": "6abfcb7c0acc3d5d26b24d72019bb34189e51819caad4dc1c75640f7773ae7b0"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/README.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/README.md",
+      "bytes": 28664,
+      "sha256": "3db03507a670abbeea727371312d956f37ce4f7052b3e67b511bad33d71df949"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/READOUT-FIRST-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/READOUT-FIRST-SMOKE.md",
+      "bytes": 2544,
+      "sha256": "01a73f0f9bbb5c4649bc368ff1d53e117245521adb3bf82735f0fdc96959ee16"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/READOUT-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/READOUT-MEASUREMENTS.md",
+      "bytes": 65962,
+      "sha256": "84423512672989e22d3f14b9c675465d96e881735bf5c5ff7a1b97add38687b5"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/READOUT-SCREEN.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/READOUT-SCREEN.md",
+      "bytes": 65592,
+      "sha256": "17091828cf47201f77474d51eb7b119791cdf7c2f8e573fc9417bf825f0219d0"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RELATIONAL-PACK-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RELATIONAL-PACK-MEASUREMENTS.md",
+      "bytes": 22927,
+      "sha256": "d241f34d5dd1a279cf9c81af1932e08d649823535da1ebfe20672a28f730758e"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RELATIONAL-PACK-REPEAT.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RELATIONAL-PACK-REPEAT.md",
+      "bytes": 5235,
+      "sha256": "9fef64ccce5ae9e5cafa48d12a4c10019503d195cf3227ea5e51ed0a96835861"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RELATIONAL-PACK.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RELATIONAL-PACK.md",
+      "bytes": 12495,
+      "sha256": "bd5eb9bcb4e6040c5fa95cd66db443a7d97a0994a8340eb3f46b8c376d0a0552"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/REPORT.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/REPORT.md",
+      "bytes": 77857,
+      "sha256": "66475a0d338d5d4b9e18023247a18a8b4544ee3237fac3ed0e46d4e0d62fe5d7"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RETRACTION-INITIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RETRACTION-INITIAL.md",
+      "bytes": 9528,
+      "sha256": "399f4af3ba69d6408f63c6f54bfd68ff47ab49300d25c746c4ec21846aa34987"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RETRACTION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RETRACTION-MEASUREMENTS.md",
+      "bytes": 23524,
+      "sha256": "7662d2298e43c2bdadbec74977de7d4dbba4233702a4b84114e1ff1d540c32da"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RETRACTION-WORDS-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/RETRACTION-WORDS-SMOKE.md",
+      "bytes": 14774,
+      "sha256": "60e03ba3fc3b21359c19fb002763f4e45f89de451d514f383c607ccd467afb38"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/REUSE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/REUSE-MEASUREMENTS.md",
+      "bytes": 100378,
+      "sha256": "9693d7f5c2f252ade3f01c902f45267b03dcabf87ee09c0daa46e32817972b1d"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/REUSE-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/REUSE-SMOKE.md",
+      "bytes": 34320,
+      "sha256": "f989f6e1a2742256891bf990e70e4d2616beab6100abee45beae4beac7879a79"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/REUSE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/REUSE.md",
+      "bytes": 14141,
+      "sha256": "e83fc52431aedbd2b43e0a5953215fbc052e782ce1e29446d2af4b31fdea160e"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCOPED-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCOPED-MEASUREMENTS.md",
+      "bytes": 81356,
+      "sha256": "887b281ccba4c61df9ebdf256adab36d6cc1d216845825e221bf546ddf783d8e"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCOPED-PRODUCT.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCOPED-PRODUCT.md",
+      "bytes": 14136,
+      "sha256": "fc318f812bf0ea3479f417eb941892362c4e3adde957ac8a9888ce1c0e08d1ac"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCOPED-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCOPED-SMOKE.md",
+      "bytes": 18887,
+      "sha256": "ff03fde69d1493a56b92125da9661b4599445eb74aae65fac7fc05740fd8ea37"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCRATCH-INITIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCRATCH-INITIAL.md",
+      "bytes": 91328,
+      "sha256": "6971c4a0356caf082761da7cefd419faf54674841d3a24555d5ee691abca23ad"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCRATCH-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCRATCH-MEASUREMENTS.md",
+      "bytes": 91999,
+      "sha256": "58e6e333b35c7a4ffb1542b0613140233bcaf43e87b9a4b50c2ebe1a9909e46f"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCRATCH-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCRATCH-SMOKE.md",
+      "bytes": 11895,
+      "sha256": "8584bab85d20de04b29316e8f1d1a431a3334fcd642428e8b409a6b06c33f1bc"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCRATCH.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SCRATCH.md",
+      "bytes": 12764,
+      "sha256": "02e4006af0ab5c6d3d8792fae8847bd0fa406e3486593b7c3bd7d24c0f30802b"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SIGNATURE-CALCULUS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SIGNATURE-CALCULUS.md",
+      "bytes": 9147,
+      "sha256": "cac6700e5a55669468a9089aa2266319575b11e7ccdb4b3cf23fa2c0088296da"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SLAB-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SLAB-MEASUREMENTS.md",
+      "bytes": 43194,
+      "sha256": "e25807c963fef7de4f263d0d9dfa9c3e80930098622bb7b5912b916c7efaa623"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SLAB-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SLAB-SMOKE.md",
+      "bytes": 7981,
+      "sha256": "74488afb7beb55b4aa04bbc4cc70eb6276e5da893888f1451ed907e70cbe319e"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SLABS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SLABS.md",
+      "bytes": 11043,
+      "sha256": "47a8f2a383d0ea23e660c9feb1c9b0ec8ea56e662d4018b8edb28680f3c7f6af"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SUPPORTED-DEPENDENCE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SUPPORTED-DEPENDENCE.md",
+      "bytes": 5475,
+      "sha256": "36f65351535d695e3b5b130bd97bef96d1f305fc36a1afde2e62f08d45a2502c"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SYMBOLIC-RELATION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/SYMBOLIC-RELATION-MEASUREMENTS.md",
+      "bytes": 5314,
+      "sha256": "87fd19a2889c71f416941a55ab8074ad4fa94efa9b6e382e59cd836c2b6f6a24"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/TAIL-MAPS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/TAIL-MAPS.md",
+      "bytes": 2826,
+      "sha256": "4d9b6dd66a80b5dac8637c92a51b21854c2782048bfa34f209afde319fb5c5ad"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/TERNARY-COMPLETION.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/TERNARY-COMPLETION.md",
+      "bytes": 10030,
+      "sha256": "ae8288275a63b9dfdaeacd03f2c68d7b820990456e6e6dfbfdcb817c0a01769d"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/TRANSPORT-BASELINE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/TRANSPORT-BASELINE.md",
+      "bytes": 13264,
+      "sha256": "32e2ab1b01b4f10d6e3706ffb7159eb996d18eb55451b1a80140adaa335ce158"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/TRANSPORT-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/TRANSPORT-MEASUREMENTS.md",
+      "bytes": 42064,
+      "sha256": "3da0bb47d98cb37c06057fa524d0b94da7b0dadae738748983aaaa3f5e92aac6"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/TRANSPORT.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/TRANSPORT.md",
+      "bytes": 16850,
+      "sha256": "32a2cb46eb34a42b924129805122970c5cf2b6d5c0fb7c4515c67d635d2badc2"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/UNARY-BLOCKS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/UNARY-BLOCKS.md",
+      "bytes": 5849,
+      "sha256": "92d826eee7a38aa8a06dac9d16d9943c9565d4d604b2dd8e0fb1031f6a5b509c"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/UNARY-CHAINS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/UNARY-CHAINS.md",
+      "bytes": 7365,
+      "sha256": "c755ab3c41150aa2279c27de66bed8c2e2f7d0bd395358e7896c886998e7b594"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW-FACTORIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW-FACTORIAL.md",
+      "bytes": 57794,
+      "sha256": "7164062cdf9489327da41c5c927a730547038f9d747ee5a3993da31b3f1372ef"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW-MEASUREMENTS.md",
+      "bytes": 30613,
+      "sha256": "dc025c43f8b04d7ce0e25d04f58b2b8650f877137f973c8f7c1e5031b6a4cc17"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW-ORDER.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW-ORDER.md",
+      "bytes": 14704,
+      "sha256": "a7539dc39211713e3e5cf3a15903702fd0ce832f316028aead3375a13d27b4df"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW-PRODUCT.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW-PRODUCT.md",
+      "bytes": 13740,
+      "sha256": "a463479c18cb4afb18626a6f3bd08748e56fe2b3dd451e62444ee8555b880847"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW-SMOKE.md",
+      "bytes": 7553,
+      "sha256": "b2d0bdaf1eeb5e4b66deba47b08051aa535125c143c4d75c652f89a6cb8302e4"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW2-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/VIEW2-SMOKE.md",
+      "bytes": 19958,
+      "sha256": "932ebfd3b34f5919dc36c0ca498315d4ee7b0baec1ed673681cea0d0add7ffb2"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/WORD-CLASSIFIER-INITIAL.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/WORD-CLASSIFIER-INITIAL.md",
+      "bytes": 69720,
+      "sha256": "d91174989d37cd1bb48d6b4fd4ca05f249adbda7b80542d3a0f55a6e21130bcb"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/WORD-CLASSIFIER-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/WORD-CLASSIFIER-MEASUREMENTS.md",
+      "bytes": 69784,
+      "sha256": "3248d296d95a7b6ee68df72f3ecc96114b53d1b91795a304863a1b364e28fce5"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/WORD-CLASSIFIER-SMOKE.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/WORD-CLASSIFIER-SMOKE.md",
+      "bytes": 12210,
+      "sha256": "f8019d410b7fcd5978a30ac62a9c0efe935f3109919be0c7ac79fc6e9f5720fa"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/WORD-CLASSIFIER.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/experiments/event-repr-lab/WORD-CLASSIFIER.md",
+      "bytes": 12858,
+      "sha256": "f6b15c4ef7ddefdd4440b780ae425466dc30e7e9250b2c6c99906e8efec3ed7f"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/first-principles.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/first-principles.md",
+      "bytes": 5484,
+      "sha256": "a5be96549c0bddc5f9f1c2e0350b9a71a45d1f0757914e5a4ba9230e36663223"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/implementation-plan.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/implementation-plan.md",
+      "bytes": 26153,
+      "sha256": "1d0bb17d2a49b151220a47d53e258bfe36b300d1c168233176cf96f4aa1519d7"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/kernels.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/kernels.md",
+      "bytes": 15961,
+      "sha256": "f37d1f6c8c09a8dd8b5518c4d0c38761fef41c9e1409099f6de11dd2d7681068"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/laws.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/laws.md",
+      "bytes": 44652,
+      "sha256": "e8a05e724dec9ef3c35c0929057cab4739f603c1b26b5a5342ba1b13400a6edb"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/literature-resolution.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/literature-resolution.md",
+      "bytes": 19396,
+      "sha256": "ac05b2ef5feae51f31fbe08c7cdc6b6de3f95561591e3ad4cd6d1b5be2b1ea5e"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/naming.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/naming.md",
+      "bytes": 5738,
+      "sha256": "5d822eb2ab53972ee92eb937ea3cbb41efa64bc8c5fa92327046017debd53f5d"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/proposal.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/proposal.md",
+      "bytes": 17778,
+      "sha256": "3245cab3a7d4c46e97a4e0cfc464e18ece45e3d818d59540b1133888265e1cfe"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/query-algebra.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/query-algebra.md",
+      "bytes": 26934,
+      "sha256": "6f6a99c976991432f5fff713f09ef9f91025a46faf40fc30f95441175d74fb1e"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/question.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/question.md",
+      "bytes": 183,
+      "sha256": "44e4ec827cb0a433908160644dd5acb892bb999ae06c6654fcc5088664408306"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/relational-surface.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/relational-surface.md",
+      "bytes": 536,
+      "sha256": "c771e17af94538d3db75f59131a581d77fca104cd213fc5354ceabeb23aaa80b"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/representation.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/representation.md",
+      "bytes": 32521,
+      "sha256": "2d6c0bad6534e8d97e06cda95598bcfaf2efddcd6d463f7dc78927a0dcb315fd"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/research/README.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/research/README.md",
+      "bytes": 4266,
+      "sha256": "b1239d2053108b3a4a688b62871364cf6e85ab28b5cdcfa83eaf48217f919a86"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/research/algebra-resolution.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/research/algebra-resolution.md",
+      "bytes": 13851,
+      "sha256": "3a9881d8de18a2972ede57322335249830e61ba3b9852bd026831d265dbcaf7d"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/research/block-decomposition.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/research/block-decomposition.md",
+      "bytes": 11699,
+      "sha256": "90901a01e3b4c2d22f001076a719c822aec55e103107ae56612d80b952bd0e62"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/research/compact-counting.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/research/compact-counting.md",
+      "bytes": 7435,
+      "sha256": "8db0cdcee6624102a71ff9f9624ced7feed7d30acb496efd125241c20ef6df20"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/research/difference-decomposition.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/research/difference-decomposition.md",
+      "bytes": 7831,
+      "sha256": "f6430fca930fc274fc612bd7d6fa50bf2a07de9a7d4e2b10dbd54c228bed7bb4"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/research/process-theory.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/research/process-theory.md",
+      "bytes": 35605,
+      "sha256": "2371537723b0fddff11bbb4e0e99b682f8b89d0363b097f612b80d350d25723c"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/research/representation-brief.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/research/representation-brief.md",
+      "bytes": 28770,
+      "sha256": "a931bb20a66d732fa66961fac6e1e249f1fee1166f920f313ce46b943fd663c3"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/research/representation-notes.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/research/representation-notes.md",
+      "bytes": 5543,
+      "sha256": "bf0990aacb99c170a6992bd862d4ca3d81f550f06b6b42bdd7fc305493d91556"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/research/representation-search.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/research/representation-search.md",
+      "bytes": 11026,
+      "sha256": "9291a14a4e13400df40a4f5cc80660b6232446be2d19b91f30eb61da573596b2"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/research/space-maps.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/research/space-maps.md",
+      "bytes": 13488,
+      "sha256": "41ac678e5158d8626a9f6342abbfe3e16aaf41b7ff258b2f46c55e0bbbb13701"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/review-astra.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/review-astra.md",
+      "bytes": 187,
+      "sha256": "60ba38b5fe8ac48641779393f9a8be14ab5ee1c790f1cab104e9f06fb9131ce4"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/rust-surface.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/rust-surface.md",
+      "bytes": 673,
+      "sha256": "091b9a2fa6fbb46709fa03e8a2a8ed7fac3f405093eda06eac2b4c3dc16fb4ee"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/source-law.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/source-law.md",
+      "bytes": 11800,
+      "sha256": "edd15d58a42bbe50fb2f38d7da11cf63bccbf6321ba08d000de036bae568752f"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/sources.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/sources.md",
+      "bytes": 25978,
+      "sha256": "17a32a7b03485d07d6c9a051669a767e4240fda7d2914583f24628e7b7229e4f"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/synthesis.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/synthesis.md",
+      "bytes": 184,
+      "sha256": "5614d328a6219aac1cad344bee1713278618f558893cb79dc3be5c09cfb917a4"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/typesafe-inference.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/typesafe-inference.md",
+      "bytes": 12476,
+      "sha256": "f9eafeb1e255f9404fab3f6e2145405ff8381f8ed27274dbc53dfd8a243e72f8"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/use-cases.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/use-cases.md",
+      "bytes": 184,
+      "sha256": "8e15d6145446ef4ed6f9e8bf42a6237e5911be02f2920cb518d650e745d85614"
+    },
+    {
+      "source": "proposal/archive/implementation-prep-0.7/world-relations.md",
+      "restored": "proposal/reference/proposal/archive/implementation-prep-0.7/world-relations.md",
+      "bytes": 20363,
+      "sha256": "a98036e8a4490d7c82b0fecbe28cdff00dc911a4c15c9634a96177265ed86b9e"
+    },
+    {
+      "source": "proposal/coup/README.md",
+      "restored": "proposal/reference/proposal/coup/README.md",
+      "bytes": 26739,
+      "sha256": "51d4e6286726d78034722b70e2d23e9062d75be25998b31208a6531ced0dcc7e"
+    },
+    {
+      "source": "proposal/coup/algebra-applications.md",
+      "restored": "proposal/reference/proposal/coup/algebra-applications.md",
+      "bytes": 11594,
+      "sha256": "6a78c2855e8da5af0a3bae97c9705608888936a208e7317b91743c2df60352be"
+    },
+    {
+      "source": "proposal/coup/archive/kernel-surface/README.md",
+      "restored": "proposal/reference/proposal/coup/archive/kernel-surface/README.md",
+      "bytes": 21031,
+      "sha256": "6f5bb370bb09f2e2209acefd847d8f548878e5db8e65500eceb845ad022d5b75"
+    },
+    {
+      "source": "proposal/coup/query-walkthrough.md",
+      "restored": "proposal/reference/proposal/coup/query-walkthrough.md",
+      "bytes": 11265,
+      "sha256": "baee0153792d40cd1bad253e6931599795d2c0713e34c449df361cbe68d01079"
+    },
+    {
+      "source": "proposal/decisions.md",
+      "restored": "proposal/reference/proposal/decisions.md",
+      "bytes": 7182,
+      "sha256": "983636783bfb546c98a7094be123970ee8ee14179679880c332b884b79621c7c"
+    },
+    {
+      "source": "proposal/design-review.md",
+      "restored": "proposal/reference/proposal/design-review.md",
+      "bytes": 12848,
+      "sha256": "01ef4140abf1a5f8c76486e9880a11e86fae514c7906c39070bd3ae7174343cb"
+    },
+    {
+      "source": "proposal/event-algebra.md",
+      "restored": "proposal/reference/proposal/event-algebra.md",
+      "bytes": 20139,
+      "sha256": "536510ba9e292e3bf2fbf4d1295b4c839abd32e34478e9d429885c25ea6b0863"
+    },
+    {
+      "source": "proposal/event-storage.md",
+      "restored": "proposal/reference/proposal/event-storage.md",
+      "bytes": 6618,
+      "sha256": "f6cd164e691c1737f430b05ef340033d22cab9a96f85aa08a6d30291123f508a"
+    },
+    {
+      "source": "proposal/event-surface.md",
+      "restored": "proposal/reference/proposal/event-surface.md",
+      "bytes": 8021,
+      "sha256": "adafefad03ba7f1582c2f150ca1e157b058d8165d1db154d0adacd78fbae91dd"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/ANCHOR.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/ANCHOR.md",
+      "bytes": 4794,
+      "sha256": "e840ee99079e43ef3e7a1e36dfba227dbbb724f7e89e91292bc0fc09d03d092b"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/BLOCK-BASELINE-LAYOUTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/BLOCK-BASELINE-LAYOUTS.md",
+      "bytes": 15012,
+      "sha256": "36082355069e7347145e6846001b55bb467fc97b9293a6ee2310ed247f807241"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/BLOCKS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/BLOCKS.md",
+      "bytes": 7859,
+      "sha256": "d5a5a3d3bd9b934002496514c97408e3f37ac3f65a8becb81c5bf28ec0c1dd23"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/CLASSIFY-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/CLASSIFY-MEASUREMENTS.md",
+      "bytes": 38130,
+      "sha256": "43abca363efda1275bf929db80765b1e0f7efbb5d3ce311d010b075693f37e9f"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/CLASSIFY-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/CLASSIFY-SMOKE.md",
+      "bytes": 12740,
+      "sha256": "1afe984a9ba59239c2c7b22934b49b26d47b8c12100b04ed703eebb132257dec"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/CLASSIFY.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/CLASSIFY.md",
+      "bytes": 16751,
+      "sha256": "227f4f222ab8748e257aea45777d071ca8778fb82901b32b950d5af7ffe987c0"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/COMPLETION-FIRST-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/COMPLETION-FIRST-SMOKE.md",
+      "bytes": 3471,
+      "sha256": "ea22573dc3cfcc8c1e9bf873d3ff456ab33954a07f032825eb93b3077eeafd18"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/COMPLETION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/COMPLETION-MEASUREMENTS.md",
+      "bytes": 14478,
+      "sha256": "1a4bbadb8acc84d984ce350bf444d87853b3b62be1b0b866e6aebc61e67d2ac2"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/COMPLETION.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/COMPLETION.md",
+      "bytes": 5726,
+      "sha256": "8d3be66d82f5a3b20c70fbc85d922dc0fd6dabda285e85809f6cd3d5b4a0e126"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/COUNTING.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/COUNTING.md",
+      "bytes": 5350,
+      "sha256": "c7f12a86a89b8e4a55b96fdc9b3dc896f32d15a87423af863763c8eff1655654"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/DEPENDENCIES.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/DEPENDENCIES.md",
+      "bytes": 11892,
+      "sha256": "17979f683c7f6bd598e77b5458c91c1bf305c60ab242a83441917c85195df24d"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/DIAGONAL.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/DIAGONAL.md",
+      "bytes": 10092,
+      "sha256": "70546c9a90706191df71cb231c99f7140c359a5b4a84b576eb87335acca6f0bc"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/DIFFERENTIAL.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/DIFFERENTIAL.md",
+      "bytes": 8073,
+      "sha256": "a1e438e36cbdeed58248e2ce1b857c964dfe5a94316e9a43190e01455840dcb5"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/ESSENTIAL-BASELINE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/ESSENTIAL-BASELINE.md",
+      "bytes": 24248,
+      "sha256": "802cc7437dd1c105c886f43cc5b4af926ac6b40a1a671c34ea4d167eaec60958"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/ESSENTIAL-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/ESSENTIAL-MEASUREMENTS.md",
+      "bytes": 25651,
+      "sha256": "32000bfa6d91c9a64ad1439ad177170e3a5472386e45280361af81838508ba6d"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/ESSENTIAL.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/ESSENTIAL.md",
+      "bytes": 20258,
+      "sha256": "b1dc8a2f92c7e2b68546fee08b9c71b4a4adad49db8074e26298d0cf7b917ba6"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/FACTOR-COUNTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/FACTOR-COUNTS.md",
+      "bytes": 9960,
+      "sha256": "5ba4e8c3daac42daf529609938a7ed3e2eabdb5350a1242dccbef2ee94713561"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/FACTOR-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/FACTOR-MEASUREMENTS.md",
+      "bytes": 37441,
+      "sha256": "036dc1e7d234f18edc1f96fcff393ddc8368e1cf6058eb534483fde94b5dfb7e"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/FACTOR-SCREEN.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/FACTOR-SCREEN.md",
+      "bytes": 30862,
+      "sha256": "b41253a0aebd32b6364ded9d706fecec5ef6d90fbcd32ebe664927125dc4bee3"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/FACTORIZED-PACK.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/FACTORIZED-PACK.md",
+      "bytes": 12130,
+      "sha256": "65de0005c90853b90494f30157b6af44d42b81ac26af74c3fa4c35a0e49ddddb"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/FASTPATH-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/FASTPATH-MEASUREMENTS.md",
+      "bytes": 10460,
+      "sha256": "0ca4546520c03c4dcd2ed41b7116f16c2ea151c6d11cc964d43befb775c4636e"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/FIBRE-RETRACTION.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/FIBRE-RETRACTION.md",
+      "bytes": 32609,
+      "sha256": "6d7e42d4ce83992077ba0b8b5004ea1ff11de37bcdd5cd9cbae0d6a13669cd9b"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/FUSED-PROJECTION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/FUSED-PROJECTION-MEASUREMENTS.md",
+      "bytes": 46573,
+      "sha256": "b425b607e205c965c16138a41d05e723699142f0c22cdc6a508d8aacedf6aab7"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/FUSED-PROJECTION.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/FUSED-PROJECTION.md",
+      "bytes": 9414,
+      "sha256": "e00e69617e283ad6208088b23372e0268a6aeb2b8f399a51c3b11dcaafccd95c"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/INFORMATION-ALGEBRA.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/INFORMATION-ALGEBRA.md",
+      "bytes": 7457,
+      "sha256": "38243b0731184d86c7c3acee0c6e7a796cf11d427e1ee91fba3f7846b68c125c"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/ITE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/ITE-MEASUREMENTS.md",
+      "bytes": 32076,
+      "sha256": "c37d4f1ca3dcd3a163de1329a930b7f9be410b3bfb80838e2b5c96ad38c4d616"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/LAW-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/LAW-MEASUREMENTS.md",
+      "bytes": 14256,
+      "sha256": "9db28613e65d793aef6a6e733889efc09b1910ac89da552277c8cde5c7a2e15b"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/LAYOUT-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/LAYOUT-MEASUREMENTS.md",
+      "bytes": 15127,
+      "sha256": "e06cdd4f7778e1f33fa919a6aed16b506214cee7b18a40583b1b453187bb8fe0"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/LAYOUT-PLANS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/LAYOUT-PLANS.md",
+      "bytes": 3470,
+      "sha256": "efa246b301c0cd4838012949fe8edd622603f1d8f15b0beba71496adb50ffe37"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/LEAN.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/LEAN.md",
+      "bytes": 32701,
+      "sha256": "775140d2783e3ac93594a9b0debeafaa814a169815152b0aa98a5c6d53835a7e"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/LEGAL-INITIAL.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/LEGAL-INITIAL.md",
+      "bytes": 35048,
+      "sha256": "09153aa53c2e175499325a438a44a3d109f23d059cd8101335f773c529174165"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/LEGAL-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/LEGAL-MEASUREMENTS.md",
+      "bytes": 35145,
+      "sha256": "dc0c0d6c4b9d6b34052b35b4ca2773bad5f09565fee96455eb3748bc648f1b84"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/LEGAL-RELATIONS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/LEGAL-RELATIONS.md",
+      "bytes": 17821,
+      "sha256": "69fcc85ab4a7b7628669e081cc1c4286f4b63b7c90b71474feeb842d8f0751b8"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/LEGAL-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/LEGAL-SMOKE.md",
+      "bytes": 17899,
+      "sha256": "39fca812bdf692aded0576bfebbffb91c6c9a3f887942fb25b694674c8e90670"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/LOCAL-COMPLETION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/LOCAL-COMPLETION-MEASUREMENTS.md",
+      "bytes": 58790,
+      "sha256": "cad2fe14796f859919ec4df7d2929077f2428de6a45db11e668b207f9e604308"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/LOCAL-COMPLETION.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/LOCAL-COMPLETION.md",
+      "bytes": 9770,
+      "sha256": "61d888cc21134e1687e92c2e2655cead955a865df3b4b98be1a0efe8cc6ab3f7"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/MAP-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/MAP-MEASUREMENTS.md",
+      "bytes": 4994,
+      "sha256": "0ba02ae01aa2751629fa72bf7661a45475694a3b619d7ceab27b12ed5df40365"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/MEASUREMENTS.md",
+      "bytes": 22812,
+      "sha256": "ca419db78d9b0cf6362bc8d73f95b3959e3872b1b40b41f216e418e54c6679dd"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/OBSERVATION.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/OBSERVATION.md",
+      "bytes": 8440,
+      "sha256": "3cc22c53c51b377f2693361ad31ed5f32470ef4fd28955f50068954b2a62b93a"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/OWNED-BASELINE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/OWNED-BASELINE.md",
+      "bytes": 13059,
+      "sha256": "c348a160291a2fe69bd2ab9f20c6fde0ba971f6f44d4a7073625b8bfcccf97f4"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/OWNED-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/OWNED-MEASUREMENTS.md",
+      "bytes": 50463,
+      "sha256": "07ee87f0dc40e31baea2849a2514ddbec16afaba0c14fe275d39d03c2441408a"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/OWNED.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/OWNED.md",
+      "bytes": 7459,
+      "sha256": "22b74c9172e521e50f84afae64ae60fbf4bac19cbe294cb77eaf3912197a6fd5"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/PACK-CROSSOVER-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/PACK-CROSSOVER-MEASUREMENTS.md",
+      "bytes": 4371,
+      "sha256": "a93263b55ee1d98a8d16f13fd26893628f8d64a4a1325dfa6ff3080ba8e7befe"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/PACK-NATIVE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/PACK-NATIVE-MEASUREMENTS.md",
+      "bytes": 9240,
+      "sha256": "58ebbc9ca5de1375668ca0039bdb01f19d07fd8aef04a0690386c076977fda3c"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/PACKED.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/PACKED.md",
+      "bytes": 7383,
+      "sha256": "50b35b9844a3111719b7e00f71b61bcb9813d40ab4cdc6fb9a65f5df70713a87"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/PARTICIPATION-STATUS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/PARTICIPATION-STATUS.md",
+      "bytes": 1512,
+      "sha256": "46a081c561605b17c6c8fad26c3913a78763bb89175544ee6493770074f71936"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/PREFIX-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/PREFIX-MEASUREMENTS.md",
+      "bytes": 30527,
+      "sha256": "7b6da03cff048639226d837107f6aa1d227a7ce24f45bbaa45fa9198c88fdd05"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/PREFIX-READOUTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/PREFIX-READOUTS.md",
+      "bytes": 18709,
+      "sha256": "65bc7b1764486ea49fe49461143ef27cc8ac43fcd190162f4f6d260f5955ca37"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/PROJECTION-FIRST-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/PROJECTION-FIRST-SMOKE.md",
+      "bytes": 3964,
+      "sha256": "8d20c7473c351a0d2e201f8896422f0bb2f32ce53cc1c75cc43a64b2826aac19"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/PROJECTION-GATE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/PROJECTION-GATE-MEASUREMENTS.md",
+      "bytes": 44730,
+      "sha256": "0131c33c9e01a5df490af7dfcac2f7267fb891bcbd7e96ee561a7dd594b01f57"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/PROJECTION-GATES.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/PROJECTION-GATES.md",
+      "bytes": 9400,
+      "sha256": "6df6a539a5abf0887bab5daffb21b5004a845eac5a5d490d4a793f5316adb93c"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/PROJECTION-INITIAL-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/PROJECTION-INITIAL-MEASUREMENTS.md",
+      "bytes": 9023,
+      "sha256": "73d8cffc54f037c69d2500d5e8b9e37c59fc7db27acff3a1a1ef81f70bacdce4"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/QUESTIONS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/QUESTIONS.md",
+      "bytes": 33016,
+      "sha256": "55dec820abbeaecd822682d95c00562baa0c0abe019fbab02f5749b6a57cc1e1"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/RANGE-NATIVE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/RANGE-NATIVE-MEASUREMENTS.md",
+      "bytes": 5316,
+      "sha256": "1d18160d1fe7cd626d310abb383a8b2fa848b9a427020668c5280022bf201677"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/RANGE-NATIVE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/RANGE-NATIVE.md",
+      "bytes": 5104,
+      "sha256": "e9834e3281903d40cea50c34d3ab02741ce8409d71c48856bcdd6584ca4bbe8d"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/RANGE-PLAN.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/RANGE-PLAN.md",
+      "bytes": 4255,
+      "sha256": "e2c1910044dce1b04328e9bff6ac8259f96ff1a0d997aea51882c15343c6a8cd"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/RANGES.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/RANGES.md",
+      "bytes": 8258,
+      "sha256": "6abfcb7c0acc3d5d26b24d72019bb34189e51819caad4dc1c75640f7773ae7b0"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/README.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/README.md",
+      "bytes": 28664,
+      "sha256": "3db03507a670abbeea727371312d956f37ce4f7052b3e67b511bad33d71df949"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/READOUT-FIRST-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/READOUT-FIRST-SMOKE.md",
+      "bytes": 2544,
+      "sha256": "01a73f0f9bbb5c4649bc368ff1d53e117245521adb3bf82735f0fdc96959ee16"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/READOUT-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/READOUT-MEASUREMENTS.md",
+      "bytes": 65962,
+      "sha256": "84423512672989e22d3f14b9c675465d96e881735bf5c5ff7a1b97add38687b5"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/READOUT-SCREEN.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/READOUT-SCREEN.md",
+      "bytes": 65592,
+      "sha256": "17091828cf47201f77474d51eb7b119791cdf7c2f8e573fc9417bf825f0219d0"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/RELATIONAL-PACK-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/RELATIONAL-PACK-MEASUREMENTS.md",
+      "bytes": 22927,
+      "sha256": "d241f34d5dd1a279cf9c81af1932e08d649823535da1ebfe20672a28f730758e"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/RELATIONAL-PACK-REPEAT.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/RELATIONAL-PACK-REPEAT.md",
+      "bytes": 5235,
+      "sha256": "9fef64ccce5ae9e5cafa48d12a4c10019503d195cf3227ea5e51ed0a96835861"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/RELATIONAL-PACK.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/RELATIONAL-PACK.md",
+      "bytes": 12461,
+      "sha256": "69deb6137dad58c27ce8f239c28b7c64a6bf5c323c2fa831957ee7e1c21441e7"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/REPORT.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/REPORT.md",
+      "bytes": 77857,
+      "sha256": "66475a0d338d5d4b9e18023247a18a8b4544ee3237fac3ed0e46d4e0d62fe5d7"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/RETRACTION-INITIAL.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/RETRACTION-INITIAL.md",
+      "bytes": 9528,
+      "sha256": "399f4af3ba69d6408f63c6f54bfd68ff47ab49300d25c746c4ec21846aa34987"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/RETRACTION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/RETRACTION-MEASUREMENTS.md",
+      "bytes": 23524,
+      "sha256": "7662d2298e43c2bdadbec74977de7d4dbba4233702a4b84114e1ff1d540c32da"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/RETRACTION-WORDS-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/RETRACTION-WORDS-SMOKE.md",
+      "bytes": 14774,
+      "sha256": "60e03ba3fc3b21359c19fb002763f4e45f89de451d514f383c607ccd467afb38"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/REUSE-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/REUSE-MEASUREMENTS.md",
+      "bytes": 100378,
+      "sha256": "9693d7f5c2f252ade3f01c902f45267b03dcabf87ee09c0daa46e32817972b1d"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/REUSE-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/REUSE-SMOKE.md",
+      "bytes": 34320,
+      "sha256": "f989f6e1a2742256891bf990e70e4d2616beab6100abee45beae4beac7879a79"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/REUSE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/REUSE.md",
+      "bytes": 14141,
+      "sha256": "e83fc52431aedbd2b43e0a5953215fbc052e782ce1e29446d2af4b31fdea160e"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SCOPED-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SCOPED-MEASUREMENTS.md",
+      "bytes": 81356,
+      "sha256": "887b281ccba4c61df9ebdf256adab36d6cc1d216845825e221bf546ddf783d8e"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SCOPED-PRODUCT.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SCOPED-PRODUCT.md",
+      "bytes": 14136,
+      "sha256": "fc318f812bf0ea3479f417eb941892362c4e3adde957ac8a9888ce1c0e08d1ac"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SCOPED-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SCOPED-SMOKE.md",
+      "bytes": 18887,
+      "sha256": "ff03fde69d1493a56b92125da9661b4599445eb74aae65fac7fc05740fd8ea37"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SCRATCH-INITIAL.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SCRATCH-INITIAL.md",
+      "bytes": 91328,
+      "sha256": "6971c4a0356caf082761da7cefd419faf54674841d3a24555d5ee691abca23ad"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SCRATCH-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SCRATCH-MEASUREMENTS.md",
+      "bytes": 91999,
+      "sha256": "58e6e333b35c7a4ffb1542b0613140233bcaf43e87b9a4b50c2ebe1a9909e46f"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SCRATCH-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SCRATCH-SMOKE.md",
+      "bytes": 11895,
+      "sha256": "8584bab85d20de04b29316e8f1d1a431a3334fcd642428e8b409a6b06c33f1bc"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SCRATCH.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SCRATCH.md",
+      "bytes": 12764,
+      "sha256": "02e4006af0ab5c6d3d8792fae8847bd0fa406e3486593b7c3bd7d24c0f30802b"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SIGNATURE-CALCULUS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SIGNATURE-CALCULUS.md",
+      "bytes": 9147,
+      "sha256": "cac6700e5a55669468a9089aa2266319575b11e7ccdb4b3cf23fa2c0088296da"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SLAB-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SLAB-MEASUREMENTS.md",
+      "bytes": 43194,
+      "sha256": "e25807c963fef7de4f263d0d9dfa9c3e80930098622bb7b5912b916c7efaa623"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SLAB-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SLAB-SMOKE.md",
+      "bytes": 7981,
+      "sha256": "74488afb7beb55b4aa04bbc4cc70eb6276e5da893888f1451ed907e70cbe319e"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SLABS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SLABS.md",
+      "bytes": 11043,
+      "sha256": "47a8f2a383d0ea23e660c9feb1c9b0ec8ea56e662d4018b8edb28680f3c7f6af"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SUPPORTED-DEPENDENCE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SUPPORTED-DEPENDENCE.md",
+      "bytes": 5475,
+      "sha256": "36f65351535d695e3b5b130bd97bef96d1f305fc36a1afde2e62f08d45a2502c"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/SYMBOLIC-RELATION-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/SYMBOLIC-RELATION-MEASUREMENTS.md",
+      "bytes": 5314,
+      "sha256": "87fd19a2889c71f416941a55ab8074ad4fa94efa9b6e382e59cd836c2b6f6a24"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/TAIL-MAPS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/TAIL-MAPS.md",
+      "bytes": 2826,
+      "sha256": "4d9b6dd66a80b5dac8637c92a51b21854c2782048bfa34f209afde319fb5c5ad"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/TERNARY-COMPLETION.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/TERNARY-COMPLETION.md",
+      "bytes": 10023,
+      "sha256": "5166ae719f8d1fd1c81cbb6c399ec11ac935a853e89f895380d770831a46d761"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/TRANSPORT-BASELINE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/TRANSPORT-BASELINE.md",
+      "bytes": 13264,
+      "sha256": "32e2ab1b01b4f10d6e3706ffb7159eb996d18eb55451b1a80140adaa335ce158"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/TRANSPORT-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/TRANSPORT-MEASUREMENTS.md",
+      "bytes": 42064,
+      "sha256": "3da0bb47d98cb37c06057fa524d0b94da7b0dadae738748983aaaa3f5e92aac6"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/TRANSPORT.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/TRANSPORT.md",
+      "bytes": 16850,
+      "sha256": "32a2cb46eb34a42b924129805122970c5cf2b6d5c0fb7c4515c67d635d2badc2"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/UNARY-BLOCKS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/UNARY-BLOCKS.md",
+      "bytes": 5849,
+      "sha256": "92d826eee7a38aa8a06dac9d16d9943c9565d4d604b2dd8e0fb1031f6a5b509c"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/UNARY-CHAINS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/UNARY-CHAINS.md",
+      "bytes": 7365,
+      "sha256": "c755ab3c41150aa2279c27de66bed8c2e2f7d0bd395358e7896c886998e7b594"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/VIEW-FACTORIAL.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/VIEW-FACTORIAL.md",
+      "bytes": 57794,
+      "sha256": "7164062cdf9489327da41c5c927a730547038f9d747ee5a3993da31b3f1372ef"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/VIEW-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/VIEW-MEASUREMENTS.md",
+      "bytes": 30613,
+      "sha256": "dc025c43f8b04d7ce0e25d04f58b2b8650f877137f973c8f7c1e5031b6a4cc17"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/VIEW-ORDER.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/VIEW-ORDER.md",
+      "bytes": 14633,
+      "sha256": "a70fb03d601878c0f464be1ba8c732b7927f8aa20b798afba2f1d0071798098c"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/VIEW-PRODUCT.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/VIEW-PRODUCT.md",
+      "bytes": 13740,
+      "sha256": "a463479c18cb4afb18626a6f3bd08748e56fe2b3dd451e62444ee8555b880847"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/VIEW-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/VIEW-SMOKE.md",
+      "bytes": 7553,
+      "sha256": "b2d0bdaf1eeb5e4b66deba47b08051aa535125c143c4d75c652f89a6cb8302e4"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/VIEW2-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/VIEW2-SMOKE.md",
+      "bytes": 19958,
+      "sha256": "932ebfd3b34f5919dc36c0ca498315d4ee7b0baec1ed673681cea0d0add7ffb2"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/WORD-CLASSIFIER-INITIAL.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/WORD-CLASSIFIER-INITIAL.md",
+      "bytes": 69720,
+      "sha256": "d91174989d37cd1bb48d6b4fd4ca05f249adbda7b80542d3a0f55a6e21130bcb"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/WORD-CLASSIFIER-MEASUREMENTS.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/WORD-CLASSIFIER-MEASUREMENTS.md",
+      "bytes": 69784,
+      "sha256": "3248d296d95a7b6ee68df72f3ecc96114b53d1b91795a304863a1b364e28fce5"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/WORD-CLASSIFIER-SMOKE.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/WORD-CLASSIFIER-SMOKE.md",
+      "bytes": 12210,
+      "sha256": "f8019d410b7fcd5978a30ac62a9c0efe935f3109919be0c7ac79fc6e9f5720fa"
+    },
+    {
+      "source": "proposal/experiments/event-repr-lab/WORD-CLASSIFIER.md",
+      "restored": "proposal/reference/proposal/experiments/event-repr-lab/WORD-CLASSIFIER.md",
+      "bytes": 12858,
+      "sha256": "f6b15c4ef7ddefdd4440b780ae425466dc30e7e9250b2c6c99906e8efec3ed7f"
+    },
+    {
+      "source": "proposal/first-principles.md",
+      "restored": "proposal/reference/proposal/first-principles.md",
+      "bytes": 5636,
+      "sha256": "10ce0cb12eb4ec2812e5bf5e52a8b971f0291e42db1494233af017332345f96d"
+    },
+    {
+      "source": "proposal/implementation-plan.md",
+      "restored": "proposal/reference/proposal/implementation-plan.md",
+      "bytes": 59308,
+      "sha256": "df4f14f5e3f206c64277dd8eb0368f5e849e2a205e462416c2cc1d48fe4adbd8"
+    },
+    {
+      "source": "proposal/kernels.md",
+      "restored": "proposal/reference/proposal/kernels.md",
+      "bytes": 17026,
+      "sha256": "741affca3765a1648bd39ba2bb209049b0ebaec19eef8a2e9ac3bd98031e36c2"
+    },
+    {
+      "source": "proposal/laws.md",
+      "restored": "proposal/reference/proposal/laws.md",
+      "bytes": 46367,
+      "sha256": "baeff2fcbef555a9bd40162d8949f0e8742d4809b92fb211cf8346edbfba10a9"
+    },
+    {
+      "source": "proposal/lineages/01-imprecise-probability.md",
+      "restored": "proposal/reference/proposal/lineages/01-imprecise-probability.md",
+      "bytes": 8730,
+      "sha256": "49a98eeaf06e492716337a6e7bc7b3ae21ec1f3593e402176cca538074e34e27"
+    },
+    {
+      "source": "proposal/lineages/02-belief-functions-subjective-logic.md",
+      "restored": "proposal/reference/proposal/lineages/02-belief-functions-subjective-logic.md",
+      "bytes": 6167,
+      "sha256": "70cfa3d2651a54617c7232fb42774a3ba5d2c8bf61842e8fc8e7294683befa05"
+    },
+    {
+      "source": "proposal/lineages/03-interval-deductive-databases.md",
+      "restored": "proposal/reference/proposal/lineages/03-interval-deductive-databases.md",
+      "bytes": 10451,
+      "sha256": "6312621c54801d76233a3890c2198871c01d137aad2e2e605c85b96cb6836745"
+    },
+    {
+      "source": "proposal/lineages/04-semirings-provenance-datalog.md",
+      "restored": "proposal/reference/proposal/lineages/04-semirings-provenance-datalog.md",
+      "bytes": 16932,
+      "sha256": "6ce6b3d54c4012b01259c5763246df08ea662000d223804c48fa63eae5a4434b"
+    },
+    {
+      "source": "proposal/lineages/05-probabilistic-databases-compilation.md",
+      "restored": "proposal/reference/proposal/lineages/05-probabilistic-databases-compilation.md",
+      "bytes": 10757,
+      "sha256": "10dbc3356e9c184b2969e4b0a915b708c7f8bc8df21040fef1724b5a0da96f28"
+    },
+    {
+      "source": "proposal/lineages/06-dependence-bounds-arithmetic.md",
+      "restored": "proposal/reference/proposal/lineages/06-dependence-bounds-arithmetic.md",
+      "bytes": 8952,
+      "sha256": "aa0ed82bfb102aa41705f207ebbaf4a94fa28f4bf9a0f67884fb42436ab2a276"
+    },
+    {
+      "source": "proposal/lineages/07-upstream-calibration.md",
+      "restored": "proposal/reference/proposal/lineages/07-upstream-calibration.md",
+      "bytes": 8244,
+      "sha256": "8dfa69abeaa6bbb9d384b6601b2469f02bc691058239e898e17625a615f820d8"
+    },
+    {
+      "source": "proposal/literature-resolution.md",
+      "restored": "proposal/reference/proposal/literature-resolution.md",
+      "bytes": 19041,
+      "sha256": "4481485bd14f2ea78569909b7c8778870b4924c3958d9a46985696964cbf75d6"
+    },
+    {
+      "source": "proposal/naming.md",
+      "restored": "proposal/reference/proposal/naming.md",
+      "bytes": 5749,
+      "sha256": "477ace67703604868c52ed4ca9fcf196fd5148a5d2625ad7c5832a32a40565fa"
+    },
+    {
+      "source": "proposal/proposal.md",
+      "restored": "proposal/reference/proposal/proposal.md",
+      "bytes": 16587,
+      "sha256": "42dc08a8f43b5c365ae791ebb6a1b2d7c910e36c9ee1749d14a76e71e473f82e"
+    },
+    {
+      "source": "proposal/query-algebra.md",
+      "restored": "proposal/reference/proposal/query-algebra.md",
+      "bytes": 46622,
+      "sha256": "eefa6bfd04b968e424fba77304bb0903fb7f52365dc5aae461219fa89423e0ec"
+    },
+    {
+      "source": "proposal/question.md",
+      "restored": "proposal/reference/proposal/question.md",
+      "bytes": 183,
+      "sha256": "44e4ec827cb0a433908160644dd5acb892bb999ae06c6654fcc5088664408306"
+    },
+    {
+      "source": "proposal/relational-surface.md",
+      "restored": "proposal/reference/proposal/relational-surface.md",
+      "bytes": 536,
+      "sha256": "c771e17af94538d3db75f59131a581d77fca104cd213fc5354ceabeb23aaa80b"
+    },
+    {
+      "source": "proposal/representation.md",
+      "restored": "proposal/reference/proposal/representation.md",
+      "bytes": 13155,
+      "sha256": "b302ab5ac1746c8e9f4092039df8f8c455058c2a77bcdc29fc8aa7351043d3b8"
+    },
+    {
+      "source": "proposal/research/README.md",
+      "restored": "proposal/reference/proposal/research/README.md",
+      "bytes": 4411,
+      "sha256": "be48595b8340a0f241df7dfb92899b6a80f96020a008e160adb3753364a3c149"
+    },
+    {
+      "source": "proposal/research/algebra-resolution.md",
+      "restored": "proposal/reference/proposal/research/algebra-resolution.md",
+      "bytes": 13922,
+      "sha256": "f550160796060b2aade5eaa6c984fcdd11de2554d960b9cc85b828d64400b69e"
+    },
+    {
+      "source": "proposal/research/block-decomposition.md",
+      "restored": "proposal/reference/proposal/research/block-decomposition.md",
+      "bytes": 11699,
+      "sha256": "90901a01e3b4c2d22f001076a719c822aec55e103107ae56612d80b952bd0e62"
+    },
+    {
+      "source": "proposal/research/block-decomposition/reach-checks.json",
+      "restored": "proposal/reference/proposal/research/block-decomposition/reach-checks.json",
+      "bytes": 426,
+      "sha256": "7aa30f6058a7d66ca09d2888de401aa2f2e0c4e5af9b6351c32c933b93759d7d"
+    },
+    {
+      "source": "proposal/research/block-decomposition/reach-schedules.json",
+      "restored": "proposal/reference/proposal/research/block-decomposition/reach-schedules.json",
+      "bytes": 4572,
+      "sha256": "f620589ec525146b415815725631cb22b1e0952e9da31874526c5e25268dae27"
+    },
+    {
+      "source": "proposal/research/block-decomposition/search.json",
+      "restored": "proposal/reference/proposal/research/block-decomposition/search.json",
+      "bytes": 12566,
+      "sha256": "1f4188930f4e23aed0f4df1c425051823a11e983ed241d51b043e5f02a72d82b"
+    },
+    {
+      "source": "proposal/research/block-decomposition/sources.json",
+      "restored": "proposal/reference/proposal/research/block-decomposition/sources.json",
+      "bytes": 1254,
+      "sha256": "bfb9224426ff84f32e5a96a3aa004c55b9896908e35a201ecb9fc469ee25e533"
+    },
+    {
+      "source": "proposal/research/compact-counting.md",
+      "restored": "proposal/reference/proposal/research/compact-counting.md",
+      "bytes": 7435,
+      "sha256": "8db0cdcee6624102a71ff9f9624ced7feed7d30acb496efd125241c20ef6df20"
+    },
+    {
+      "source": "proposal/research/difference-decomposition.md",
+      "restored": "proposal/reference/proposal/research/difference-decomposition.md",
+      "bytes": 7831,
+      "sha256": "f6430fca930fc274fc612bd7d6fa50bf2a07de9a7d4e2b10dbd54c228bed7bb4"
+    },
+    {
+      "source": "proposal/research/difference-decomposition/counting-sources.json",
+      "restored": "proposal/reference/proposal/research/difference-decomposition/counting-sources.json",
+      "bytes": 1701,
+      "sha256": "a3fdec17837faff0c695496b76ae939ac0c2fe39c7702dd23c6436ad185d2c34"
+    },
+    {
+      "source": "proposal/research/difference-decomposition/sources.json",
+      "restored": "proposal/reference/proposal/research/difference-decomposition/sources.json",
+      "bytes": 739,
+      "sha256": "1a4840186b55d221dc64130c040bc79a74d8d10e03d156c3bf9f923aa754d689"
+    },
+    {
+      "source": "proposal/research/event-algebra/checks.json",
+      "restored": "proposal/reference/proposal/research/event-algebra/checks.json",
+      "bytes": 1541,
+      "sha256": "35a6171db1297f02038cd4c34f74552c09f0e61d9fc9d568e3b44f48930c1da6"
+    },
+    {
+      "source": "proposal/research/event-algebra/document-audit.json",
+      "restored": "proposal/reference/proposal/research/event-algebra/document-audit.json",
+      "bytes": 1129,
+      "sha256": "fd024da941418839d0c58bee5b68a24644a75276373d74af8b5b7c60ee542f50"
+    },
+    {
+      "source": "proposal/research/event-algebra/sources.json",
+      "restored": "proposal/reference/proposal/research/event-algebra/sources.json",
+      "bytes": 3297,
+      "sha256": "16bf089271adf6a255e9d84c957eab3f6e42fc45a8fa5a9f00da3b340ef1db9e"
+    },
+    {
+      "source": "proposal/research/event-algebra/typesafe-primitives-choice.md",
+      "restored": "proposal/reference/proposal/research/event-algebra/typesafe-primitives-choice.md",
+      "bytes": 26662,
+      "sha256": "5ba42269e9a07ac5b1220ee6b6c69f060f57b6a7ff619cfedcb916acfb6c92c5"
+    },
+    {
+      "source": "proposal/research/event-algebra/typesafe-primitives-noul.md",
+      "restored": "proposal/reference/proposal/research/event-algebra/typesafe-primitives-noul.md",
+      "bytes": 13083,
+      "sha256": "402a2f30ca71b53227058a5df3fb3e0a10063588a31b883f924d6660815c6916"
+    },
+    {
+      "source": "proposal/research/event-algebra/typesafe-primitives-score.md",
+      "restored": "proposal/reference/proposal/research/event-algebra/typesafe-primitives-score.md",
+      "bytes": 31889,
+      "sha256": "653ca2a688bf6613bf4c1621046a22c66e672a90cf40992c1fe218a8e96768c4"
+    },
+    {
+      "source": "proposal/research/event-algebra/typesafe-primitives.md",
+      "restored": "proposal/reference/proposal/research/event-algebra/typesafe-primitives.md",
+      "bytes": 24727,
+      "sha256": "6cbe8960e23863cf2a1c8c6892d2fa4a0c0b42c9a4f034b6cec0727f2ec8c728"
+    },
+    {
+      "source": "proposal/research/event-algebra/verification.json",
+      "restored": "proposal/reference/proposal/research/event-algebra/verification.json",
+      "bytes": 1518,
+      "sha256": "28cce755711bb843d9022811016450ba6e95fa2df5b9489879a97e26ef401391"
+    },
+    {
+      "source": "proposal/research/process-theory.md",
+      "restored": "proposal/reference/proposal/research/process-theory.md",
+      "bytes": 35605,
+      "sha256": "2371537723b0fddff11bbb4e0e99b682f8b89d0363b097f612b80d350d25723c"
+    },
+    {
+      "source": "proposal/research/representation-brief.md",
+      "restored": "proposal/reference/proposal/research/representation-brief.md",
+      "bytes": 28770,
+      "sha256": "a931bb20a66d732fa66961fac6e1e249f1fee1166f920f313ce46b943fd663c3"
+    },
+    {
+      "source": "proposal/research/representation-notes.md",
+      "restored": "proposal/reference/proposal/research/representation-notes.md",
+      "bytes": 5959,
+      "sha256": "6bacf307779d42236d387b4320499845dcd00adfc838c2e3b4fbd6fdea71d07d"
+    },
+    {
+      "source": "proposal/research/representation-search.md",
+      "restored": "proposal/reference/proposal/research/representation-search.md",
+      "bytes": 11026,
+      "sha256": "9291a14a4e13400df40a4f5cc80660b6232446be2d19b91f30eb61da573596b2"
+    },
+    {
+      "source": "proposal/research/representation-search/sources.json",
+      "restored": "proposal/reference/proposal/research/representation-search/sources.json",
+      "bytes": 2390,
+      "sha256": "4bd3b3efa7caa842bcdebb838cdcec38019da41d0091133a1768b068246cd45d"
+    },
+    {
+      "source": "proposal/research/representation/checks.json",
+      "restored": "proposal/reference/proposal/research/representation/checks.json",
+      "bytes": 636,
+      "sha256": "e913f8b2642f42c978535c4c3dac08ad9476b1c02d29c9e326287132ef4fb4c1"
+    },
+    {
+      "source": "proposal/research/representation/document-audit.json",
+      "restored": "proposal/reference/proposal/research/representation/document-audit.json",
+      "bytes": 102,
+      "sha256": "cecde2ee3d3e0f2be6845204e01dfb53cdda59d36851e02a8ebb6537e376830f"
+    },
+    {
+      "source": "proposal/research/representation/probes.json",
+      "restored": "proposal/reference/proposal/research/representation/probes.json",
+      "bytes": 577,
+      "sha256": "df094b61de6289f50840d58803ad264c0fd72ce18aca083658518cb4c212c609"
+    },
+    {
+      "source": "proposal/research/representation/regression-checks.json",
+      "restored": "proposal/reference/proposal/research/representation/regression-checks.json",
+      "bytes": 578,
+      "sha256": "b0691fc3ca8e0f20e83f74810af140c5cbb1d556373ce194b0f0e247a0be74f8"
+    },
+    {
+      "source": "proposal/research/representation/sources.json",
+      "restored": "proposal/reference/proposal/research/representation/sources.json",
+      "bytes": 841,
+      "sha256": "756c0bfeb9ae6e73360729376c5177e901567b98470bfb130bcba26b539a9e0c"
+    },
+    {
+      "source": "proposal/research/space-maps.md",
+      "restored": "proposal/reference/proposal/research/space-maps.md",
+      "bytes": 13456,
+      "sha256": "738cbf126e0b9f832e480bf539f763cd26d46907810bc8c2f418888e28245c65"
+    },
+    {
+      "source": "proposal/research/space-maps/checks.json",
+      "restored": "proposal/reference/proposal/research/space-maps/checks.json",
+      "bytes": 601,
+      "sha256": "4f6771d17d32c9d0edcf23e47f2905967ed2cc35548c91f4645c59eb0786c38d"
+    },
+    {
+      "source": "proposal/research/space-maps/graphs.json",
+      "restored": "proposal/reference/proposal/research/space-maps/graphs.json",
+      "bytes": 312,
+      "sha256": "9348b2729947595daf42a82a7ab023bc74162c522778cd1e00504df50d66de6a"
+    },
+    {
+      "source": "proposal/research/space-maps/sources.json",
+      "restored": "proposal/reference/proposal/research/space-maps/sources.json",
+      "bytes": 715,
+      "sha256": "6f2f4b127d56d44828fe5aa4f6b456d834ad40145ee7de2a0599b4d8f0b10de9"
+    },
+    {
+      "source": "proposal/review-astra.md",
+      "restored": "proposal/reference/proposal/review-astra.md",
+      "bytes": 187,
+      "sha256": "60ba38b5fe8ac48641779393f9a8be14ab5ee1c790f1cab104e9f06fb9131ce4"
+    },
+    {
+      "source": "proposal/review-evidence/README.md",
+      "restored": "proposal/reference/proposal/review-evidence/README.md",
+      "bytes": 5355,
+      "sha256": "4180f828560df4e6fa19f1e1dbc2c62c272beaa75396de88d786f5e0d8a63d7e"
+    },
+    {
+      "source": "proposal/review-evidence/draft-0.3-document-checks.json",
+      "restored": "proposal/reference/proposal/review-evidence/draft-0.3-document-checks.json",
+      "bytes": 139,
+      "sha256": "6a0c8073107e4ddc4774045a693fa9c3d2645c6b60d3cf133795f27ef14e493d"
+    },
+    {
+      "source": "proposal/review-evidence/event-checks.json",
+      "restored": "proposal/reference/proposal/review-evidence/event-checks.json",
+      "bytes": 567,
+      "sha256": "bae6dd4409a480adad001f9a553183af98ea9bee41c64d8d322ddbaced3d1af2"
+    },
+    {
+      "source": "proposal/review-evidence/jev-api.md",
+      "restored": "proposal/reference/proposal/review-evidence/jev-api.md",
+      "bytes": 10262,
+      "sha256": "5b9aee330404378bfe9520924fadb447d14b840f082fc8b9511e340ed7baa4c8"
+    },
+    {
+      "source": "proposal/review-evidence/jev-confidence.md",
+      "restored": "proposal/reference/proposal/review-evidence/jev-confidence.md",
+      "bytes": 4892,
+      "sha256": "c553ccda01913b9962e33b9f3948afeb7496482ab8bfe5352ff0e451f97514ef"
+    },
+    {
+      "source": "proposal/review-evidence/jev-introduction-machine-learning-primer.md",
+      "restored": "proposal/reference/proposal/review-evidence/jev-introduction-machine-learning-primer.md",
+      "bytes": 6580,
+      "sha256": "45e6a22bc175f2ce1c404271dd26559179a6f6a83bde2dfcdbd963dbc1649551"
+    },
+    {
+      "source": "proposal/review-evidence/jev-noul-event-comparison.md",
+      "restored": "proposal/reference/proposal/review-evidence/jev-noul-event-comparison.md",
+      "bytes": 13083,
+      "sha256": "402a2f30ca71b53227058a5df3fb3e0a10063588a31b883f924d6660815c6916"
+    },
+    {
+      "source": "proposal/review-evidence/jev-primitives-choice.md",
+      "restored": "proposal/reference/proposal/review-evidence/jev-primitives-choice.md",
+      "bytes": 26662,
+      "sha256": "5ba42269e9a07ac5b1220ee6b6c69f060f57b6a7ff619cfedcb916acfb6c92c5"
+    },
+    {
+      "source": "proposal/review-evidence/jev-primitives-noul.md",
+      "restored": "proposal/reference/proposal/review-evidence/jev-primitives-noul.md",
+      "bytes": 13083,
+      "sha256": "402a2f30ca71b53227058a5df3fb3e0a10063588a31b883f924d6660815c6916"
+    },
+    {
+      "source": "proposal/review-evidence/jev-primitives-score.md",
+      "restored": "proposal/reference/proposal/review-evidence/jev-primitives-score.md",
+      "bytes": 31889,
+      "sha256": "653ca2a688bf6613bf4c1621046a22c66e672a90cf40992c1fe218a8e96768c4"
+    },
+    {
+      "source": "proposal/review-evidence/jev-primitives.md",
+      "restored": "proposal/reference/proposal/review-evidence/jev-primitives.md",
+      "bytes": 24727,
+      "sha256": "6cbe8960e23863cf2a1c8c6892d2fa4a0c0b42c9a4f034b6cec0727f2ec8c728"
+    },
+    {
+      "source": "proposal/review-evidence/literature-round-downloads.json",
+      "restored": "proposal/reference/proposal/review-evidence/literature-round-downloads.json",
+      "bytes": 9879,
+      "sha256": "51499a888656388e23d339a259b2b20ec32c582c1b4c26a64d2e8d22adcd1a78"
+    },
+    {
+      "source": "proposal/review-evidence/process-checks.json",
+      "restored": "proposal/reference/proposal/review-evidence/process-checks.json",
+      "bytes": 3044,
+      "sha256": "f3b1d495cde4cc45fc935f519e17825e8be346fb31902a6d92e73760e37b53b8"
+    },
+    {
+      "source": "proposal/review-evidence/review-checks.json",
+      "restored": "proposal/reference/proposal/review-evidence/review-checks.json",
+      "bytes": 743,
+      "sha256": "2441025c640ceedf596d0c14a40397391e3003a4fb911f24b37f9885d626a1a9"
+    },
+    {
+      "source": "proposal/review-evidence/search-axiomatisation.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-axiomatisation.json",
+      "bytes": 111341,
+      "sha256": "02cb0779ca072161d039f5768378f99e328d74c9ed1e27a75579472ec2aea207"
+    },
+    {
+      "source": "proposal/review-evidence/search-beta.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-beta.json",
+      "bytes": 112240,
+      "sha256": "2e2c8fee4e88f479ed8d117925fdb142ac84e4b0d5fa1ae0c6b46732795f6e97"
+    },
+    {
+      "source": "proposal/review-evidence/search-causal_reasoning.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-causal_reasoning.json",
+      "bytes": 90620,
+      "sha256": "cf20497f3d26bb45ea6c12104e94b01f6ff93a70536b528306c36b5aa1faa69a"
+    },
+    {
+      "source": "proposal/review-evidence/search-composition.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-composition.json",
+      "bytes": 82381,
+      "sha256": "d7c8862daf9fb9c039b30f2e726d8ae8f7a400ccf88219b38201ab4948efbad5"
+    },
+    {
+      "source": "proposal/review-evidence/search-constraints.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-constraints.json",
+      "bytes": 125527,
+      "sha256": "3bd1502d1b8955f38943980aa5c0d121a58e9fc6d739169df0c97bbdeceb31f4"
+    },
+    {
+      "source": "proposal/review-evidence/search-exchangeable.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-exchangeable.json",
+      "bytes": 122132,
+      "sha256": "7c05cb287cda88b2709e3c6e228a530a7e165e994d3168c8e4face359a952093"
+    },
+    {
+      "source": "proposal/review-evidence/search-nodice.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-nodice.json",
+      "bytes": 110035,
+      "sha256": "c0dc930682d2034932bf0d0d3e625f235ccef8b40798a562d1c55ef2fe03443b"
+    },
+    {
+      "source": "proposal/review-evidence/search-parametric.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-parametric.json",
+      "bytes": 130098,
+      "sha256": "8f4a6b0769f2804ac6401909e5169bd219d59a56ba582ad164b412e614d34fee"
+    },
+    {
+      "source": "proposal/review-evidence/search-parametric_short.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-parametric_short.json",
+      "bytes": 158331,
+      "sha256": "c96cecc62f36d3ac93d25f6b4493d559602b73c69a6e8d22891977c5d8dd49f5"
+    },
+    {
+      "source": "proposal/review-evidence/search-qualitative.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-qualitative.json",
+      "bytes": 109187,
+      "sha256": "d0a5f86886d1080f6e59ad283b208ac0f81e8f26149f8eba55ccaef6b1296ca0"
+    },
+    {
+      "source": "proposal/review-evidence/search-team.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-team.json",
+      "bytes": 91592,
+      "sha256": "ae35a9abafa62cb7fcb52540023d18374dc1c54e79020e938f28e734ce6c18ba"
+    },
+    {
+      "source": "proposal/review-evidence/search-teams.json",
+      "restored": "proposal/reference/proposal/review-evidence/search-teams.json",
+      "bytes": 140120,
+      "sha256": "80a3a89b690443f8016269551540f625e346080b41a6d11a8c24dbd6f1f81b56"
+    },
+    {
+      "source": "proposal/review-evidence/spec-checks.json",
+      "restored": "proposal/reference/proposal/review-evidence/spec-checks.json",
+      "bytes": 1268,
+      "sha256": "429803218f34319957aa4273c93f15b538f576c58ec2523f0e05373acf9553cf"
+    },
+    {
+      "source": "proposal/review-evidence/use-cases/api.md",
+      "restored": "proposal/reference/proposal/review-evidence/use-cases/api.md",
+      "bytes": 10262,
+      "sha256": "5b9aee330404378bfe9520924fadb447d14b840f082fc8b9511e340ed7baa4c8"
+    },
+    {
+      "source": "proposal/review-evidence/use-cases/example-checks.json",
+      "restored": "proposal/reference/proposal/review-evidence/use-cases/example-checks.json",
+      "bytes": 828,
+      "sha256": "4e238666b4c4ea6ea8ea59e1193cb2bfe9009cac0a333ab565376dad6062a1c5"
+    },
+    {
+      "source": "proposal/review-evidence/use-cases/manifest.json",
+      "restored": "proposal/reference/proposal/review-evidence/use-cases/manifest.json",
+      "bytes": 923,
+      "sha256": "d7bdc5adee65187f73edb4f393a623f9c6a43446d954cd5dce58c4488cda6a4c"
+    },
+    {
+      "source": "proposal/review-evidence/use-cases/primitives-choice.md",
+      "restored": "proposal/reference/proposal/review-evidence/use-cases/primitives-choice.md",
+      "bytes": 26662,
+      "sha256": "5ba42269e9a07ac5b1220ee6b6c69f060f57b6a7ff619cfedcb916acfb6c92c5"
+    },
+    {
+      "source": "proposal/review-evidence/use-cases/primitives-score.md",
+      "restored": "proposal/reference/proposal/review-evidence/use-cases/primitives-score.md",
+      "bytes": 31889,
+      "sha256": "653ca2a688bf6613bf4c1621046a22c66e672a90cf40992c1fe218a8e96768c4"
+    },
+    {
+      "source": "proposal/review-evidence/use-cases/primitives.md",
+      "restored": "proposal/reference/proposal/review-evidence/use-cases/primitives.md",
+      "bytes": 24727,
+      "sha256": "6cbe8960e23863cf2a1c8c6892d2fa4a0c0b42c9a4f034b6cec0727f2ec8c728"
+    },
+    {
+      "source": "proposal/review-evidence/use-cases/visual-interaction-check.json",
+      "restored": "proposal/reference/proposal/review-evidence/use-cases/visual-interaction-check.json",
+      "bytes": 534,
+      "sha256": "642e46a51351fa562452d6d4e13b0463b1140ec294f90fea394ddd821511f59e"
+    },
+    {
+      "source": "proposal/rust-surface.md",
+      "restored": "proposal/reference/proposal/rust-surface.md",
+      "bytes": 1802,
+      "sha256": "0d61527e3dc45898afb3134ade9161479a3d77b98659d9f0d880affc3d6d68e3"
+    },
+    {
+      "source": "proposal/semantics/README.md",
+      "restored": "proposal/reference/proposal/semantics/README.md",
+      "bytes": 19405,
+      "sha256": "b0ff375e451caae479f19c36f0f082d2f6edef2756b36a5e2798a71c6535e3bc"
+    },
+    {
+      "source": "proposal/source-law.md",
+      "restored": "proposal/reference/proposal/source-law.md",
+      "bytes": 26857,
+      "sha256": "0e0e2ad87d1a802a8828e38323667c7335d3c9789db9b8efa73b361fcff1545b"
+    },
+    {
+      "source": "proposal/sources.md",
+      "restored": "proposal/reference/proposal/sources.md",
+      "bytes": 25408,
+      "sha256": "79db6d3625afa665b4183ecc04311fc54f57364537ad0e0e09c8ff86b99e4ea3"
+    },
+    {
+      "source": "proposal/synthesis.md",
+      "restored": "proposal/reference/proposal/synthesis.md",
+      "bytes": 184,
+      "sha256": "5614d328a6219aac1cad344bee1713278618f558893cb79dc3be5c09cfb917a4"
+    },
+    {
+      "source": "proposal/typesafe-inference.md",
+      "restored": "proposal/reference/proposal/typesafe-inference.md",
+      "bytes": 13732,
+      "sha256": "cd15183825dbbc5b43131799b9d2557208eba0bd4e6d4a369ca3dd19d055f3b3"
+    },
+    {
+      "source": "proposal/use-cases.md",
+      "restored": "proposal/reference/proposal/use-cases.md",
+      "bytes": 184,
+      "sha256": "8e15d6145446ef4ed6f9e8bf42a6237e5911be02f2920cb518d650e745d85614"
+    },
+    {
+      "source": "proposal/world-relations.md",
+      "restored": "proposal/reference/proposal/world-relations.md",
+      "bytes": 24922,
+      "sha256": "024989dbd33dc8a870cab5ecf5be637dbd4a47873d1a96bd2ddb19bdaad7c73a"
+    }
+  ]
+}

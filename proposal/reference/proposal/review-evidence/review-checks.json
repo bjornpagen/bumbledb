@@ -1,0 +1,18 @@
+{
+  "rational_semiring_grid_checks": "passed: 3 algebras x 125 triples",
+  "feasible_box_models_checked": 306,
+  "box_checks": "vertex extrema, tightening, every event, 2-monotonicity, signed Choquet expectation",
+  "rounded_product_associativity": {
+    "scale": 9223372036854775808,
+    "a": 2305843009213693952,
+    "b": 5,
+    "c": 8070450532247928832,
+    "left": 0,
+    "right": 1
+  },
+  "decision_demo": "event [0.7,0.9], score [0.5,0.9], payoff [-2,6], refined payoff [6,6]",
+  "same_box_different_model": "passed",
+  "robust_dominance_with_overlapping_ranges": "passed, including crossing action payoffs",
+  "conditioning_box_information_loss": "passed: exact upper 0, box upper 0.1",
+  "deterministic_regrouping_closure": "passed"
+}

@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "relations": 64,
+  "total_function_graphs": 8,
+  "event_complement_checks": 256,
+  "checker_sha256": "8fd3d753a382705c8fffbcac6ced15dfcdad0896fa54f2b689942c7f9dd10b79",
+  "scope": "Independent finite mathematics. Does not implement a general graph-backed CoordinateMap or law transport."
+}

@@ -1,0 +1,34 @@
+{
+  "passed": true,
+  "support_pairs": 3825,
+  "extensions": 255,
+  "squares": 765,
+  "commuting_squares": 243,
+  "event_checks": 12240,
+  "copied_coordinate_counterexample": {
+    "source": [
+      0,
+      1
+    ],
+    "target": [
+      0,
+      3
+    ],
+    "lift_after_hide": [
+      0,
+      3
+    ],
+    "hide_after_lift": [
+      3
+    ]
+  },
+  "structural_extension_changed_probability": [
+    "1/2",
+    "3/4"
+  ],
+  "same_marginals_joint_probabilities": [
+    "1/4",
+    "3/8"
+  ],
+  "scope": "Independent finite mathematics, not a native timing or a generalized Rust map implementation."
+}

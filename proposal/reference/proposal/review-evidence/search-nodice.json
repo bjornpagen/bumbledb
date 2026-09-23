@@ -1,0 +1,4009 @@
+{
+  "meta": {
+    "count": 6,
+    "db_response_time_ms": 203,
+    "page": 1,
+    "per_page": 4,
+    "groups_count": null,
+    "x_query": {
+      "oql": "works where full text has (noDice Inference Discrete Probabilistic Programs Nondeterminism Conditioning)",
+      "oqo": {
+        "get_rows": "works",
+        "filter_rows": [
+          {
+            "column_id": "fulltext.search",
+            "value": "noDice Inference Discrete Probabilistic Programs Nondeterminism Conditioning",
+            "operator": "has"
+          }
+        ]
+      },
+      "url": "/works?filter=fulltext.search:noDice Inference Discrete Probabilistic Programs Nondeterminism Conditioning&per_page=4"
+    },
+    "cost_usd": 0.001
+  },
+  "results": [
+    {
+      "id": "https://openalex.org/W7153100281",
+      "doi": "https://doi.org/10.1145/3798215",
+      "title": "noDice: Inference for Discrete Probabilistic Programs with Nondeterminism and Conditioning",
+      "display_name": "noDice: Inference for Discrete Probabilistic Programs with Nondeterminism and Conditioning",
+      "relevance_score": 361.2729,
+      "publication_year": 2026,
+      "publication_date": "2026-04-10",
+      "ids": {
+        "openalex": "https://openalex.org/W7153100281",
+        "doi": "https://doi.org/10.1145/3798215"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1145/3798215",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1145/3798215",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4210216081",
+          "display_name": "Proceedings of the ACM on Programming Languages",
+          "issn_l": "2475-1421",
+          "issn": [
+            "2475-1421"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310319798",
+          "host_organization_name": "Association for Computing Machinery",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310319798"
+          ],
+          "host_organization_lineage_names": [
+            "Association for Computing Machinery"
+          ],
+          "type": "journal"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Proceedings of the ACM on Programming Languages",
+        "raw_type": "journal-article"
+      },
+      "type": "article",
+      "indexed_in": [
+        "crossref"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "diamond",
+        "oa_url": "https://doi.org/10.1145/3798215",
+        "any_repository_has_fulltext": false
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5119795544",
+            "display_name": "Tobias G\u00fcrtler",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I91712215",
+              "display_name": "Saarland University",
+              "ror": "https://ror.org/01jdpyv68",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I91712215"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Tobias G\u00fcrtler",
+          "raw_affiliation_strings": [
+            "Saarland Informatics Campus, Saarbr\u00fccken, Germany",
+            "Saarland University, Saarbr\u00fccken, Germany"
+          ],
+          "raw_orcid": "https://orcid.org/0009-0000-7131-0936",
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Saarland Informatics Campus, Saarbr\u00fccken, Germany",
+              "institution_ids": []
+            },
+            {
+              "raw_affiliation_string": "Saarland University, Saarbr\u00fccken, Germany",
+              "institution_ids": [
+                "https://openalex.org/I91712215"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5045667283",
+            "display_name": "Benjamin Lucien Kaminski",
+            "orcid": "https://orcid.org/0000-0001-5185-2324"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I45129253",
+              "display_name": "University College London",
+              "ror": "https://ror.org/02jx3x895",
+              "country_code": "GB",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I124357947",
+                "https://openalex.org/I45129253"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I91712215",
+              "display_name": "Saarland University",
+              "ror": "https://ror.org/01jdpyv68",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I91712215"
+              ]
+            }
+          ],
+          "countries": [
+            "DE",
+            "GB"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Benjamin Lucien Kaminski",
+          "raw_affiliation_strings": [
+            "Saarland University, Saarbr\u00fccken, Germany",
+            "University College London, London, United Kingdom"
+          ],
+          "raw_orcid": "https://orcid.org/0000-0001-5185-2324",
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Saarland University, Saarbr\u00fccken, Germany",
+              "institution_ids": [
+                "https://openalex.org/I91712215"
+              ]
+            },
+            {
+              "raw_affiliation_string": "University College London, London, United Kingdom",
+              "institution_ids": [
+                "https://openalex.org/I45129253"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 2,
+      "institutions_distinct_count": 2,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": 7.0462,
+      "has_fulltext": false,
+      "cited_by_count": 1,
+      "citation_normalized_percentile": {
+        "value": 0.96257435,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": true
+      },
+      "cited_by_percentile_year": {
+        "min": 94,
+        "max": 97
+      },
+      "biblio": {
+        "volume": "10",
+        "issue": "OOPSLA1",
+        "first_page": "427",
+        "last_page": "455"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11303",
+        "display_name": "Bayesian Modeling and Causal Inference",
+        "score": 0.3416999876499176,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11303",
+          "display_name": "Bayesian Modeling and Causal Inference",
+          "score": 0.3416999876499176,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10462",
+          "display_name": "Reinforcement Learning in Robotics",
+          "score": 0.20280000567436218,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10142",
+          "display_name": "Formal Methods in Verification",
+          "score": 0.09860000014305115,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1703",
+            "display_name": "Computational Theory and Mathematics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/probabilistic-logic",
+          "display_name": "Probabilistic logic",
+          "score": 0.6996999979019165
+        },
+        {
+          "id": "https://openalex.org/keywords/nondeterministic-algorithm",
+          "display_name": "Nondeterministic algorithm",
+          "score": 0.6430000066757202
+        },
+        {
+          "id": "https://openalex.org/keywords/markov-decision-process",
+          "display_name": "Markov decision process",
+          "score": 0.5637000203132629
+        },
+        {
+          "id": "https://openalex.org/keywords/inference",
+          "display_name": "Inference",
+          "score": 0.5435000061988831
+        },
+        {
+          "id": "https://openalex.org/keywords/exploit",
+          "display_name": "Exploit",
+          "score": 0.5181000232696533
+        },
+        {
+          "id": "https://openalex.org/keywords/markov-chain",
+          "display_name": "Markov chain",
+          "score": 0.5098999738693237
+        },
+        {
+          "id": "https://openalex.org/keywords/probability-distribution",
+          "display_name": "Probability distribution",
+          "score": 0.4596000015735626
+        },
+        {
+          "id": "https://openalex.org/keywords/state-space",
+          "display_name": "State space",
+          "score": 0.41519999504089355
+        },
+        {
+          "id": "https://openalex.org/keywords/markov-process",
+          "display_name": "Markov process",
+          "score": 0.40959998965263367
+        },
+        {
+          "id": "https://openalex.org/keywords/class",
+          "display_name": "Class (philosophy)",
+          "score": 0.4074999988079071
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C49937458",
+          "wikidata": "https://www.wikidata.org/wiki/Q2599292",
+          "display_name": "Probabilistic logic",
+          "level": 2,
+          "score": 0.6996999979019165
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.6547999978065491
+        },
+        {
+          "id": "https://openalex.org/C176181172",
+          "wikidata": "https://www.wikidata.org/wiki/Q3490301",
+          "display_name": "Nondeterministic algorithm",
+          "level": 2,
+          "score": 0.6430000066757202
+        },
+        {
+          "id": "https://openalex.org/C106189395",
+          "wikidata": "https://www.wikidata.org/wiki/Q176789",
+          "display_name": "Markov decision process",
+          "level": 3,
+          "score": 0.5637000203132629
+        },
+        {
+          "id": "https://openalex.org/C2776214188",
+          "wikidata": "https://www.wikidata.org/wiki/Q408386",
+          "display_name": "Inference",
+          "level": 2,
+          "score": 0.5435000061988831
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.5295000076293945
+        },
+        {
+          "id": "https://openalex.org/C165696696",
+          "wikidata": "https://www.wikidata.org/wiki/Q11287",
+          "display_name": "Exploit",
+          "level": 2,
+          "score": 0.5181000232696533
+        },
+        {
+          "id": "https://openalex.org/C98763669",
+          "wikidata": "https://www.wikidata.org/wiki/Q176645",
+          "display_name": "Markov chain",
+          "level": 2,
+          "score": 0.5098999738693237
+        },
+        {
+          "id": "https://openalex.org/C149441793",
+          "wikidata": "https://www.wikidata.org/wiki/Q200726",
+          "display_name": "Probability distribution",
+          "level": 2,
+          "score": 0.4596000015735626
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.41990000009536743
+        },
+        {
+          "id": "https://openalex.org/C72434380",
+          "wikidata": "https://www.wikidata.org/wiki/Q230930",
+          "display_name": "State space",
+          "level": 2,
+          "score": 0.41519999504089355
+        },
+        {
+          "id": "https://openalex.org/C159886148",
+          "wikidata": "https://www.wikidata.org/wiki/Q176645",
+          "display_name": "Markov process",
+          "level": 2,
+          "score": 0.40959998965263367
+        },
+        {
+          "id": "https://openalex.org/C2777212361",
+          "wikidata": "https://www.wikidata.org/wiki/Q5127848",
+          "display_name": "Class (philosophy)",
+          "level": 2,
+          "score": 0.4074999988079071
+        },
+        {
+          "id": "https://openalex.org/C143017306",
+          "wikidata": "https://www.wikidata.org/wiki/Q3318133",
+          "display_name": "Probabilistic relevance model",
+          "level": 4,
+          "score": 0.3677999973297119
+        },
+        {
+          "id": "https://openalex.org/C132525143",
+          "wikidata": "https://www.wikidata.org/wiki/Q141488",
+          "display_name": "Graph",
+          "level": 2,
+          "score": 0.36410000920295715
+        },
+        {
+          "id": "https://openalex.org/C48103436",
+          "wikidata": "https://www.wikidata.org/wiki/Q599031",
+          "display_name": "State (computer science)",
+          "level": 2,
+          "score": 0.36059999465942383
+        },
+        {
+          "id": "https://openalex.org/C20837028",
+          "wikidata": "https://www.wikidata.org/wiki/Q623966",
+          "display_name": "Influence diagram",
+          "level": 3,
+          "score": 0.33640000224113464
+        },
+        {
+          "id": "https://openalex.org/C2777472644",
+          "wikidata": "https://www.wikidata.org/wiki/Q16968992",
+          "display_name": "Approximate inference",
+          "level": 3,
+          "score": 0.32440000772476196
+        },
+        {
+          "id": "https://openalex.org/C2776401178",
+          "wikidata": "https://www.wikidata.org/wiki/Q12050496",
+          "display_name": "Feature (linguistics)",
+          "level": 2,
+          "score": 0.3158000111579895
+        },
+        {
+          "id": "https://openalex.org/C119857082",
+          "wikidata": "https://www.wikidata.org/wiki/Q2539",
+          "display_name": "Machine learning",
+          "level": 1,
+          "score": 0.3151000142097473
+        },
+        {
+          "id": "https://openalex.org/C52063229",
+          "wikidata": "https://www.wikidata.org/wiki/Q7246845",
+          "display_name": "Probabilistic CTL",
+          "level": 4,
+          "score": 0.3122999966144562
+        },
+        {
+          "id": "https://openalex.org/C55508974",
+          "wikidata": "https://www.wikidata.org/wiki/Q190763",
+          "display_name": "Venn diagram",
+          "level": 2,
+          "score": 0.30979999899864197
+        },
+        {
+          "id": "https://openalex.org/C167729594",
+          "wikidata": "https://www.wikidata.org/wiki/Q17736",
+          "display_name": "Axiom",
+          "level": 2,
+          "score": 0.29499998688697815
+        },
+        {
+          "id": "https://openalex.org/C11413529",
+          "wikidata": "https://www.wikidata.org/wiki/Q8366",
+          "display_name": "Algorithm",
+          "level": 1,
+          "score": 0.29260000586509705
+        },
+        {
+          "id": "https://openalex.org/C95167961",
+          "wikidata": "https://www.wikidata.org/wiki/Q4483495",
+          "display_name": "Fiducial inference",
+          "level": 5,
+          "score": 0.29170000553131104
+        },
+        {
+          "id": "https://openalex.org/C33724603",
+          "wikidata": "https://www.wikidata.org/wiki/Q812540",
+          "display_name": "Bayesian network",
+          "level": 2,
+          "score": 0.2856000065803528
+        },
+        {
+          "id": "https://openalex.org/C16671368",
+          "wikidata": "https://www.wikidata.org/wiki/Q230885",
+          "display_name": "State diagram",
+          "level": 3,
+          "score": 0.2831999957561493
+        },
+        {
+          "id": "https://openalex.org/C115988155",
+          "wikidata": "https://www.wikidata.org/wiki/Q3262192",
+          "display_name": "Decision problem",
+          "level": 2,
+          "score": 0.27950000762939453
+        },
+        {
+          "id": "https://openalex.org/C17098449",
+          "wikidata": "https://www.wikidata.org/wiki/Q176814",
+          "display_name": "Partially observable Markov decision process",
+          "level": 4,
+          "score": 0.27790001034736633
+        },
+        {
+          "id": "https://openalex.org/C163836022",
+          "wikidata": "https://www.wikidata.org/wiki/Q6771326",
+          "display_name": "Markov model",
+          "level": 3,
+          "score": 0.2703000009059906
+        },
+        {
+          "id": "https://openalex.org/C74197172",
+          "wikidata": "https://www.wikidata.org/wiki/Q1195339",
+          "display_name": "Directed acyclic graph",
+          "level": 2,
+          "score": 0.27000001072883606
+        },
+        {
+          "id": "https://openalex.org/C2778572836",
+          "wikidata": "https://www.wikidata.org/wiki/Q380933",
+          "display_name": "Space (punctuation)",
+          "level": 2,
+          "score": 0.259799987077713
+        },
+        {
+          "id": "https://openalex.org/C28901747",
+          "wikidata": "https://www.wikidata.org/wiki/Q177571",
+          "display_name": "Decision theory",
+          "level": 2,
+          "score": 0.25920000672340393
+        },
+        {
+          "id": "https://openalex.org/C55689738",
+          "wikidata": "https://www.wikidata.org/wiki/Q15963867",
+          "display_name": "Discrete time and continuous time",
+          "level": 2,
+          "score": 0.2563000023365021
+        },
+        {
+          "id": "https://openalex.org/C97541855",
+          "wikidata": "https://www.wikidata.org/wiki/Q830687",
+          "display_name": "Reinforcement learning",
+          "level": 2,
+          "score": 0.25429999828338623
+        },
+        {
+          "id": "https://openalex.org/C21031990",
+          "wikidata": "https://www.wikidata.org/wiki/Q355020",
+          "display_name": "Probability measure",
+          "level": 2,
+          "score": 0.2531999945640564
+        }
+      ],
+      "mesh": [],
+      "locations_count": 1,
+      "locations": [
+        {
+          "id": "doi:10.1145/3798215",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.1145/3798215",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4210216081",
+            "display_name": "Proceedings of the ACM on Programming Languages",
+            "issn_l": "2475-1421",
+            "issn": [
+              "2475-1421"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310319798",
+            "host_organization_name": "Association for Computing Machinery",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310319798"
+            ],
+            "host_organization_lineage_names": [
+              "Association for Computing Machinery"
+            ],
+            "type": "journal"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Proceedings of the ACM on Programming Languages",
+          "raw_type": "journal-article"
+        }
+      ],
+      "best_oa_location": {
+        "id": "doi:10.1145/3798215",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1145/3798215",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4210216081",
+          "display_name": "Proceedings of the ACM on Programming Languages",
+          "issn_l": "2475-1421",
+          "issn": [
+            "2475-1421"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310319798",
+          "host_organization_name": "Association for Computing Machinery",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310319798"
+          ],
+          "host_organization_lineage_names": [
+            "Association for Computing Machinery"
+          ],
+          "type": "journal"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Proceedings of the ACM on Programming Languages",
+        "raw_type": "journal-article"
+      },
+      "sustainable_development_goals": [
+        {
+          "display_name": "Peace, Justice and strong institutions",
+          "id": "https://metadata.un.org/sdg/16",
+          "score": 0.7809036374092102
+        }
+      ],
+      "awards": [],
+      "funders": [],
+      "has_content": {
+        "pdf": false,
+        "grobid_xml": false
+      },
+      "content_urls": null,
+      "referenced_works_count": 63,
+      "referenced_works": [
+        "https://openalex.org/W225106791",
+        "https://openalex.org/W275084143",
+        "https://openalex.org/W1491152510",
+        "https://openalex.org/W1580323521",
+        "https://openalex.org/W1596186423",
+        "https://openalex.org/W1793726001",
+        "https://openalex.org/W1806449990",
+        "https://openalex.org/W1809182522",
+        "https://openalex.org/W1856314200",
+        "https://openalex.org/W1862398452",
+        "https://openalex.org/W1970904244",
+        "https://openalex.org/W1992008267",
+        "https://openalex.org/W2047000063",
+        "https://openalex.org/W2072033902",
+        "https://openalex.org/W2080267935",
+        "https://openalex.org/W2099184861",
+        "https://openalex.org/W2102506621",
+        "https://openalex.org/W2102750354",
+        "https://openalex.org/W2135394066",
+        "https://openalex.org/W2141472133",
+        "https://openalex.org/W2149190985",
+        "https://openalex.org/W2155049725",
+        "https://openalex.org/W2295266283",
+        "https://openalex.org/W2334782222",
+        "https://openalex.org/W2395654200",
+        "https://openalex.org/W2395880299",
+        "https://openalex.org/W2465272687",
+        "https://openalex.org/W2494200839",
+        "https://openalex.org/W2577537660",
+        "https://openalex.org/W2598014203",
+        "https://openalex.org/W2782235253",
+        "https://openalex.org/W2803490327",
+        "https://openalex.org/W2925395957",
+        "https://openalex.org/W2926374695",
+        "https://openalex.org/W2964321317",
+        "https://openalex.org/W2995312724",
+        "https://openalex.org/W3007301222",
+        "https://openalex.org/W3024760727",
+        "https://openalex.org/W3033339947",
+        "https://openalex.org/W3034025806",
+        "https://openalex.org/W3043182562",
+        "https://openalex.org/W3179132544",
+        "https://openalex.org/W3184761245",
+        "https://openalex.org/W3206560132",
+        "https://openalex.org/W3207720664",
+        "https://openalex.org/W4225916435",
+        "https://openalex.org/W4246239274",
+        "https://openalex.org/W4247177360",
+        "https://openalex.org/W4250551189",
+        "https://openalex.org/W4252267268",
+        "https://openalex.org/W4252567017",
+        "https://openalex.org/W4297810470",
+        "https://openalex.org/W4366721447",
+        "https://openalex.org/W4385327678",
+        "https://openalex.org/W4388717310",
+        "https://openalex.org/W4390605315",
+        "https://openalex.org/W4393942729",
+        "https://openalex.org/W4404342313",
+        "https://openalex.org/W4405425677",
+        "https://openalex.org/W6947512423",
+        "https://openalex.org/W7131077606",
+        "https://openalex.org/W7131409344",
+        "https://openalex.org/W7134250080"
+      ],
+      "related_works": [],
+      "abstract_inverted_index": {
+        "Probabilistic": [
+          0
+        ],
+        "programming": [
+          1
+        ],
+        "languages": [
+          2,
+          18
+        ],
+        "(PPLs)": [
+          3
+        ],
+        "are": [
+          4,
+          32,
+          36,
+          60,
+          132
+        ],
+        "an": [
+          5,
+          22,
+          113,
+          135
+        ],
+        "expressive": [
+          6
+        ],
+        "and": [
+          7,
+          48,
+          143
+        ],
+        "intuitive": [
+          8
+        ],
+        "means": [
+          9
+        ],
+        "of": [
+          10,
+          25,
+          57,
+          93,
+          149
+        ],
+        "representing": [
+          11
+        ],
+        "complex": [
+          12
+        ],
+        "probability": [
+          13,
+          30
+        ],
+        "distributions.": [
+          14
+        ],
+        "In": [
+          15
+        ],
+        "that": [
+          16,
+          116
+        ],
+        "realm,": [
+          17
+        ],
+        "like": [
+          19
+        ],
+        "Dice": [
+          20,
+          103
+        ],
+        "target": [
+          21
+        ],
+        "important": [
+          23,
+          52
+        ],
+        "class": [
+          24
+        ],
+        "probabilistic": [
+          26,
+          58,
+          100
+        ],
+        "programs:": [
+          27
+        ],
+        "those": [
+          28
+        ],
+        "whose": [
+          29
+        ],
+        "distributions": [
+          31,
+          35,
+          118
+        ],
+        "discrete.": [
+          33
+        ],
+        "Discrete": [
+          34
+        ],
+        "common": [
+          37
+        ],
+        "in": [
+          38,
+          54,
+          65,
+          75,
+          126
+        ],
+        "many": [
+          39
+        ],
+        "fields,": [
+          40
+        ],
+        "including": [
+          41
+        ],
+        "text": [
+          42
+        ],
+        "analysis,": [
+          43
+        ],
+        "network": [
+          44
+        ],
+        "verification,": [
+          45
+        ],
+        "artificial": [
+          46
+        ],
+        "intelligence,": [
+          47
+        ],
+        "graph": [
+          49
+        ],
+        "analysis.": [
+          50
+        ],
+        "Another": [
+          51
+        ],
+        "feature": [
+          53
+        ],
+        "the": [
+          55,
+          91,
+          98,
+          117,
+          121,
+          127,
+          140,
+          146,
+          150
+        ],
+        "world": [
+          56
+        ],
+        "modeling": [
+          59
+        ],
+        "nondeterministic": [
+          61
+        ],
+        "choices": [
+          62
+        ],
+        "as": [
+          63,
+          134
+        ],
+        "found": [
+          64
+        ],
+        "Markov": [
+          66
+        ],
+        "Decision": [
+          67
+        ],
+        "Processes": [
+          68
+        ],
+        "(MDPs)": [
+          69
+        ],
+        "which": [
+          70,
+          96
+        ],
+        "play": [
+          71
+        ],
+        "a": [
+          72
+        ],
+        "major": [
+          73
+        ],
+        "role": [
+          74
+        ],
+        "reinforcement": [
+          76
+        ],
+        "learning.": [
+          77
+        ],
+        "Modern": [
+          78
+        ],
+        "PPLs": [
+          79
+        ],
+        "usually": [
+          80
+        ],
+        "lack": [
+          81
+        ],
+        "support": [
+          82
+        ],
+        "for": [
+          83
+        ],
+        "nondeterminism": [
+          84
+        ],
+        ".": [
+          85,
+          104
+        ],
+        "We": [
+          86
+        ],
+        "address": [
+          87
+        ],
+        "this": [
+          88
+        ],
+        "gap": [
+          89
+        ],
+        "with": [
+          90
+        ],
+        "introduction": [
+          92
+        ],
+        "noDice": [
+          94,
+          105
+        ],
+        ",": [
+          95
+        ],
+        "extends": [
+          97
+        ],
+        "discrete": [
+          99
+        ],
+        "inference": [
+          101,
+          107
+        ],
+        "engine": [
+          102
+        ],
+        "performs": [
+          106
+        ],
+        "on": [
+          108
+        ],
+        "loop-free": [
+          109
+        ],
+        "programs": [
+          110
+        ],
+        "by": [
+          111,
+          120
+        ],
+        "constructing": [
+          112
+        ],
+        "MDP": [
+          114
+        ],
+        "so": [
+          115
+        ],
+        "modeled": [
+          119
+        ],
+        "program": [
+          122,
+          141
+        ],
+        "correspond": [
+          123
+        ],
+        "to": [
+          124,
+          138
+        ],
+        "schedulers": [
+          125
+        ],
+        "MDP.": [
+          128,
+          151
+        ],
+        "Furthermore,": [
+          129
+        ],
+        "decision": [
+          130
+        ],
+        "diagrams": [
+          131
+        ],
+        "used": [
+          133
+        ],
+        "intermediate": [
+          136
+        ],
+        "step": [
+          137
+        ],
+        "exploit": [
+          139
+        ],
+        "structure": [
+          142
+        ],
+        "drastically": [
+          144
+        ],
+        "reduce": [
+          145
+        ],
+        "state": [
+          147
+        ],
+        "space": [
+          148
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2026,
+          "cited_by_count": 1
+        }
+      ],
+      "updated_date": "2026-08-24T07:32:12.397491",
+      "created_date": "2026-04-11T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W7131409344",
+      "doi": "https://doi.org/10.48550/arxiv.2602.20049",
+      "title": "noDice: Inference for Discrete Probabilistic Programs with Nondeterminism and Conditioning",
+      "display_name": "noDice: Inference for Discrete Probabilistic Programs with Nondeterminism and Conditioning",
+      "relevance_score": 359.02203,
+      "publication_year": 2026,
+      "publication_date": "2026-02-23",
+      "ids": {
+        "openalex": "https://openalex.org/W7131409344",
+        "doi": "https://doi.org/10.48550/arxiv.2602.20049"
+      },
+      "language": null,
+      "primary_location": {
+        "id": "doi:10.48550/arxiv.2602.20049",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.48550/arxiv.2602.20049",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4306400194",
+          "display_name": "arXiv (Cornell University)",
+          "issn_l": "2331-8422",
+          "issn": [
+            "2331-8422"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I205783295",
+          "host_organization_name": "Cornell University",
+          "host_organization_lineage": [
+            "https://openalex.org/I205783295"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": null,
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "Preprint"
+      },
+      "type": "preprint",
+      "indexed_in": [
+        "datacite"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "green",
+        "oa_url": "https://doi.org/10.48550/arxiv.2602.20049",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5119795544",
+            "display_name": "Tobias G\u00fcrtler",
+            "orcid": null
+          },
+          "institutions": [],
+          "countries": [],
+          "is_corresponding": false,
+          "raw_author_name": "G\u00fcrtler, Tobias",
+          "raw_affiliation_strings": [],
+          "raw_orcid": null,
+          "affiliations": []
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5045667283",
+            "display_name": "Benjamin Lucien Kaminski",
+            "orcid": "https://orcid.org/0000-0001-5185-2324"
+          },
+          "institutions": [],
+          "countries": [],
+          "is_corresponding": false,
+          "raw_author_name": "Kaminski, Benjamin Lucien",
+          "raw_affiliation_strings": [],
+          "raw_orcid": null,
+          "affiliations": []
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 0,
+      "institutions_distinct_count": 0,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": null,
+      "has_fulltext": false,
+      "cited_by_count": 1,
+      "citation_normalized_percentile": null,
+      "cited_by_percentile_year": null,
+      "biblio": {
+        "volume": null,
+        "issue": null,
+        "first_page": null,
+        "last_page": null
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11303",
+        "display_name": "Bayesian Modeling and Causal Inference",
+        "score": 0.41179999709129333,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11303",
+          "display_name": "Bayesian Modeling and Causal Inference",
+          "score": 0.41179999709129333,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10142",
+          "display_name": "Formal Methods in Verification",
+          "score": 0.15520000457763672,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1703",
+            "display_name": "Computational Theory and Mathematics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10462",
+          "display_name": "Reinforcement Learning in Robotics",
+          "score": 0.12280000001192093,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/probabilistic-logic",
+          "display_name": "Probabilistic logic",
+          "score": 0.7358999848365784
+        },
+        {
+          "id": "https://openalex.org/keywords/nondeterministic-algorithm",
+          "display_name": "Nondeterministic algorithm",
+          "score": 0.6449999809265137
+        },
+        {
+          "id": "https://openalex.org/keywords/markov-decision-process",
+          "display_name": "Markov decision process",
+          "score": 0.5662999749183655
+        },
+        {
+          "id": "https://openalex.org/keywords/inference",
+          "display_name": "Inference",
+          "score": 0.5343999862670898
+        },
+        {
+          "id": "https://openalex.org/keywords/markov-chain",
+          "display_name": "Markov chain",
+          "score": 0.517300009727478
+        },
+        {
+          "id": "https://openalex.org/keywords/exploit",
+          "display_name": "Exploit",
+          "score": 0.5144000053405762
+        },
+        {
+          "id": "https://openalex.org/keywords/probability-distribution",
+          "display_name": "Probability distribution",
+          "score": 0.4595000147819519
+        },
+        {
+          "id": "https://openalex.org/keywords/probabilistic-relevance-model",
+          "display_name": "Probabilistic relevance model",
+          "score": 0.4350000023841858
+        },
+        {
+          "id": "https://openalex.org/keywords/markov-process",
+          "display_name": "Markov process",
+          "score": 0.4081999957561493
+        },
+        {
+          "id": "https://openalex.org/keywords/state-space",
+          "display_name": "State space",
+          "score": 0.4025000035762787
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C49937458",
+          "wikidata": "https://www.wikidata.org/wiki/Q2599292",
+          "display_name": "Probabilistic logic",
+          "level": 2,
+          "score": 0.7358999848365784
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.6524999737739563
+        },
+        {
+          "id": "https://openalex.org/C176181172",
+          "wikidata": "https://www.wikidata.org/wiki/Q3490301",
+          "display_name": "Nondeterministic algorithm",
+          "level": 2,
+          "score": 0.6449999809265137
+        },
+        {
+          "id": "https://openalex.org/C106189395",
+          "wikidata": "https://www.wikidata.org/wiki/Q176789",
+          "display_name": "Markov decision process",
+          "level": 3,
+          "score": 0.5662999749183655
+        },
+        {
+          "id": "https://openalex.org/C2776214188",
+          "wikidata": "https://www.wikidata.org/wiki/Q408386",
+          "display_name": "Inference",
+          "level": 2,
+          "score": 0.5343999862670898
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.5264000296592712
+        },
+        {
+          "id": "https://openalex.org/C98763669",
+          "wikidata": "https://www.wikidata.org/wiki/Q176645",
+          "display_name": "Markov chain",
+          "level": 2,
+          "score": 0.517300009727478
+        },
+        {
+          "id": "https://openalex.org/C165696696",
+          "wikidata": "https://www.wikidata.org/wiki/Q11287",
+          "display_name": "Exploit",
+          "level": 2,
+          "score": 0.5144000053405762
+        },
+        {
+          "id": "https://openalex.org/C149441793",
+          "wikidata": "https://www.wikidata.org/wiki/Q200726",
+          "display_name": "Probability distribution",
+          "level": 2,
+          "score": 0.4595000147819519
+        },
+        {
+          "id": "https://openalex.org/C143017306",
+          "wikidata": "https://www.wikidata.org/wiki/Q3318133",
+          "display_name": "Probabilistic relevance model",
+          "level": 4,
+          "score": 0.4350000023841858
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.41359999775886536
+        },
+        {
+          "id": "https://openalex.org/C159886148",
+          "wikidata": "https://www.wikidata.org/wiki/Q176645",
+          "display_name": "Markov process",
+          "level": 2,
+          "score": 0.4081999957561493
+        },
+        {
+          "id": "https://openalex.org/C72434380",
+          "wikidata": "https://www.wikidata.org/wiki/Q230930",
+          "display_name": "State space",
+          "level": 2,
+          "score": 0.4025000035762787
+        },
+        {
+          "id": "https://openalex.org/C2777212361",
+          "wikidata": "https://www.wikidata.org/wiki/Q5127848",
+          "display_name": "Class (philosophy)",
+          "level": 2,
+          "score": 0.40209999680519104
+        },
+        {
+          "id": "https://openalex.org/C52063229",
+          "wikidata": "https://www.wikidata.org/wiki/Q7246845",
+          "display_name": "Probabilistic CTL",
+          "level": 4,
+          "score": 0.38920000195503235
+        },
+        {
+          "id": "https://openalex.org/C132525143",
+          "wikidata": "https://www.wikidata.org/wiki/Q141488",
+          "display_name": "Graph",
+          "level": 2,
+          "score": 0.3650999963283539
+        },
+        {
+          "id": "https://openalex.org/C48103436",
+          "wikidata": "https://www.wikidata.org/wiki/Q599031",
+          "display_name": "State (computer science)",
+          "level": 2,
+          "score": 0.34769999980926514
+        },
+        {
+          "id": "https://openalex.org/C20837028",
+          "wikidata": "https://www.wikidata.org/wiki/Q623966",
+          "display_name": "Influence diagram",
+          "level": 3,
+          "score": 0.32710000872612
+        },
+        {
+          "id": "https://openalex.org/C2777472644",
+          "wikidata": "https://www.wikidata.org/wiki/Q16968992",
+          "display_name": "Approximate inference",
+          "level": 3,
+          "score": 0.3151000142097473
+        },
+        {
+          "id": "https://openalex.org/C119857082",
+          "wikidata": "https://www.wikidata.org/wiki/Q2539",
+          "display_name": "Machine learning",
+          "level": 1,
+          "score": 0.31029999256134033
+        },
+        {
+          "id": "https://openalex.org/C55508974",
+          "wikidata": "https://www.wikidata.org/wiki/Q190763",
+          "display_name": "Venn diagram",
+          "level": 2,
+          "score": 0.3095000088214874
+        },
+        {
+          "id": "https://openalex.org/C2776401178",
+          "wikidata": "https://www.wikidata.org/wiki/Q12050496",
+          "display_name": "Feature (linguistics)",
+          "level": 2,
+          "score": 0.305400013923645
+        },
+        {
+          "id": "https://openalex.org/C11413529",
+          "wikidata": "https://www.wikidata.org/wiki/Q8366",
+          "display_name": "Algorithm",
+          "level": 1,
+          "score": 0.2937999963760376
+        },
+        {
+          "id": "https://openalex.org/C33724603",
+          "wikidata": "https://www.wikidata.org/wiki/Q812540",
+          "display_name": "Bayesian network",
+          "level": 2,
+          "score": 0.2840000092983246
+        },
+        {
+          "id": "https://openalex.org/C167729594",
+          "wikidata": "https://www.wikidata.org/wiki/Q17736",
+          "display_name": "Axiom",
+          "level": 2,
+          "score": 0.2831000089645386
+        },
+        {
+          "id": "https://openalex.org/C95167961",
+          "wikidata": "https://www.wikidata.org/wiki/Q4483495",
+          "display_name": "Fiducial inference",
+          "level": 5,
+          "score": 0.2809000015258789
+        },
+        {
+          "id": "https://openalex.org/C115988155",
+          "wikidata": "https://www.wikidata.org/wiki/Q3262192",
+          "display_name": "Decision problem",
+          "level": 2,
+          "score": 0.2775999903678894
+        },
+        {
+          "id": "https://openalex.org/C74197172",
+          "wikidata": "https://www.wikidata.org/wiki/Q1195339",
+          "display_name": "Directed acyclic graph",
+          "level": 2,
+          "score": 0.27720001339912415
+        },
+        {
+          "id": "https://openalex.org/C16671368",
+          "wikidata": "https://www.wikidata.org/wiki/Q230885",
+          "display_name": "State diagram",
+          "level": 3,
+          "score": 0.2732999920845032
+        },
+        {
+          "id": "https://openalex.org/C163836022",
+          "wikidata": "https://www.wikidata.org/wiki/Q6771326",
+          "display_name": "Markov model",
+          "level": 3,
+          "score": 0.2720000147819519
+        },
+        {
+          "id": "https://openalex.org/C17098449",
+          "wikidata": "https://www.wikidata.org/wiki/Q176814",
+          "display_name": "Partially observable Markov decision process",
+          "level": 4,
+          "score": 0.2687000036239624
+        },
+        {
+          "id": "https://openalex.org/C114289077",
+          "wikidata": "https://www.wikidata.org/wiki/Q3284399",
+          "display_name": "Statistical model",
+          "level": 2,
+          "score": 0.2574000060558319
+        },
+        {
+          "id": "https://openalex.org/C55689738",
+          "wikidata": "https://www.wikidata.org/wiki/Q15963867",
+          "display_name": "Discrete time and continuous time",
+          "level": 2,
+          "score": 0.2542000114917755
+        },
+        {
+          "id": "https://openalex.org/C2778572836",
+          "wikidata": "https://www.wikidata.org/wiki/Q380933",
+          "display_name": "Space (punctuation)",
+          "level": 2,
+          "score": 0.25209999084472656
+        }
+      ],
+      "mesh": [],
+      "locations_count": 1,
+      "locations": [
+        {
+          "id": "doi:10.48550/arxiv.2602.20049",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.48550/arxiv.2602.20049",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Preprint"
+        }
+      ],
+      "best_oa_location": {
+        "id": "doi:10.48550/arxiv.2602.20049",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.48550/arxiv.2602.20049",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4306400194",
+          "display_name": "arXiv (Cornell University)",
+          "issn_l": "2331-8422",
+          "issn": [
+            "2331-8422"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I205783295",
+          "host_organization_name": "Cornell University",
+          "host_organization_lineage": [
+            "https://openalex.org/I205783295"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": null,
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "Preprint"
+      },
+      "sustainable_development_goals": [
+        {
+          "display_name": "Peace, Justice and strong institutions",
+          "id": "https://metadata.un.org/sdg/16",
+          "score": 0.7525526881217957
+        }
+      ],
+      "awards": [],
+      "funders": [],
+      "has_content": {
+        "pdf": false,
+        "grobid_xml": false
+      },
+      "content_urls": null,
+      "referenced_works_count": 0,
+      "referenced_works": [],
+      "related_works": [],
+      "abstract_inverted_index": {
+        "Probabilistic": [
+          0
+        ],
+        "programming": [
+          1
+        ],
+        "languages": [
+          2,
+          18
+        ],
+        "(PPLs)": [
+          3
+        ],
+        "are": [
+          4,
+          32,
+          36,
+          60,
+          129
+        ],
+        "an": [
+          5,
+          22,
+          110,
+          132
+        ],
+        "expressive": [
+          6
+        ],
+        "and": [
+          7,
+          48,
+          140
+        ],
+        "intuitive": [
+          8
+        ],
+        "means": [
+          9
+        ],
+        "of": [
+          10,
+          25,
+          57,
+          92,
+          146
+        ],
+        "representing": [
+          11
+        ],
+        "complex": [
+          12
+        ],
+        "probability": [
+          13,
+          30
+        ],
+        "distributions.": [
+          14
+        ],
+        "In": [
+          15
+        ],
+        "that": [
+          16,
+          113
+        ],
+        "realm,": [
+          17
+        ],
+        "like": [
+          19
+        ],
+        "Dice": [
+          20
+        ],
+        "target": [
+          21
+        ],
+        "important": [
+          23,
+          52
+        ],
+        "class": [
+          24
+        ],
+        "probabilistic": [
+          26,
+          58,
+          98
+        ],
+        "programs:": [
+          27
+        ],
+        "those": [
+          28
+        ],
+        "whose": [
+          29
+        ],
+        "distributions": [
+          31,
+          35,
+          115
+        ],
+        "discrete.": [
+          33
+        ],
+        "Discrete": [
+          34
+        ],
+        "common": [
+          37
+        ],
+        "in": [
+          38,
+          54,
+          65,
+          75,
+          123
+        ],
+        "many": [
+          39
+        ],
+        "fields,": [
+          40
+        ],
+        "including": [
+          41
+        ],
+        "text": [
+          42
+        ],
+        "analysis,": [
+          43
+        ],
+        "network": [
+          44
+        ],
+        "verification,": [
+          45
+        ],
+        "artificial": [
+          46
+        ],
+        "intelligence,": [
+          47
+        ],
+        "graph": [
+          49
+        ],
+        "analysis.": [
+          50
+        ],
+        "Another": [
+          51
+        ],
+        "feature": [
+          53
+        ],
+        "the": [
+          55,
+          90,
+          96,
+          114,
+          118,
+          124,
+          137,
+          143,
+          147
+        ],
+        "world": [
+          56
+        ],
+        "modeling": [
+          59
+        ],
+        "nondeterministic": [
+          61
+        ],
+        "choices": [
+          62
+        ],
+        "as": [
+          63,
+          131
+        ],
+        "found": [
+          64
+        ],
+        "Markov": [
+          66
+        ],
+        "Decision": [
+          67
+        ],
+        "Processes": [
+          68
+        ],
+        "(MDPs)": [
+          69
+        ],
+        "which": [
+          70,
+          94
+        ],
+        "play": [
+          71
+        ],
+        "a": [
+          72
+        ],
+        "major": [
+          73
+        ],
+        "role": [
+          74
+        ],
+        "reinforcement": [
+          76
+        ],
+        "learning.": [
+          77
+        ],
+        "Modern": [
+          78
+        ],
+        "PPLs": [
+          79
+        ],
+        "usually": [
+          80
+        ],
+        "lack": [
+          81
+        ],
+        "support": [
+          82
+        ],
+        "for": [
+          83
+        ],
+        "nondeterminism.": [
+          84
+        ],
+        "We": [
+          85
+        ],
+        "address": [
+          86
+        ],
+        "this": [
+          87
+        ],
+        "gap": [
+          88
+        ],
+        "with": [
+          89
+        ],
+        "introduction": [
+          91
+        ],
+        "noDice,": [
+          93
+        ],
+        "extends": [
+          95
+        ],
+        "discrete": [
+          97
+        ],
+        "inference": [
+          99,
+          104
+        ],
+        "engine": [
+          100
+        ],
+        "Dice.": [
+          101
+        ],
+        "noDice": [
+          102
+        ],
+        "performs": [
+          103
+        ],
+        "on": [
+          105
+        ],
+        "loop-free": [
+          106
+        ],
+        "programs": [
+          107
+        ],
+        "by": [
+          108,
+          117
+        ],
+        "constructing": [
+          109
+        ],
+        "MDP": [
+          111
+        ],
+        "so": [
+          112
+        ],
+        "modeled": [
+          116
+        ],
+        "program": [
+          119,
+          138
+        ],
+        "correspond": [
+          120
+        ],
+        "to": [
+          121,
+          135
+        ],
+        "schedulers": [
+          122
+        ],
+        "MDP.": [
+          125,
+          148
+        ],
+        "Furthermore,": [
+          126
+        ],
+        "decision": [
+          127
+        ],
+        "diagrams": [
+          128
+        ],
+        "used": [
+          130
+        ],
+        "intermediate": [
+          133
+        ],
+        "step": [
+          134
+        ],
+        "exploit": [
+          136
+        ],
+        "structure": [
+          139
+        ],
+        "drastically": [
+          141
+        ],
+        "reduce": [
+          142
+        ],
+        "state": [
+          144
+        ],
+        "space": [
+          145
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2026,
+          "cited_by_count": 1
+        }
+      ],
+      "updated_date": "2026-07-28T07:46:37.118299",
+      "created_date": "2026-02-26T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W7131319817",
+      "doi": null,
+      "title": "noDice: Inference for Discrete Probabilistic Programs with Nondeterminism and Conditioning",
+      "display_name": "noDice: Inference for Discrete Probabilistic Programs with Nondeterminism and Conditioning",
+      "relevance_score": 91.863075,
+      "publication_year": 2026,
+      "publication_date": "2026-02-23",
+      "ids": {
+        "openalex": "https://openalex.org/W7131319817"
+      },
+      "language": null,
+      "primary_location": {
+        "id": "pmh:oai:arXiv.org:2602.20049",
+        "is_oa": true,
+        "landing_page_url": "http://arxiv.org/abs/2602.20049",
+        "pdf_url": "https://arxiv.org/pdf/2602.20049",
+        "source": {
+          "id": "https://openalex.org/S4306400194",
+          "display_name": "arXiv (Cornell University)",
+          "issn_l": "2331-8422",
+          "issn": [
+            "2331-8422"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I205783295",
+          "host_organization_name": "Cornell University",
+          "host_organization_lineage": [
+            "https://openalex.org/I205783295"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "text"
+      },
+      "type": "preprint",
+      "indexed_in": [
+        "arxiv"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "green",
+        "oa_url": "https://arxiv.org/pdf/2602.20049",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5119795544",
+            "display_name": "Tobias G\u00fcrtler",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I91712215",
+              "display_name": "Saarland University",
+              "ror": "https://ror.org/01jdpyv68",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I91712215"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "G\u00fcrtler, Tobias",
+          "raw_affiliation_strings": [
+            "Saarland Informatics Campus , Germany",
+            "Saarland University , Germany and"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Saarland Informatics Campus , Germany",
+              "institution_ids": [
+                "https://openalex.org/I91712215"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Saarland University , Germany and",
+              "institution_ids": [
+                "https://openalex.org/I91712215"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5045667283",
+            "display_name": "Benjamin Lucien Kaminski",
+            "orcid": "https://orcid.org/0000-0001-5185-2324"
+          },
+          "institutions": [],
+          "countries": [],
+          "is_corresponding": false,
+          "raw_author_name": "Kaminski, Benjamin Lucien",
+          "raw_affiliation_strings": [],
+          "raw_orcid": null,
+          "affiliations": []
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 1,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": null,
+      "has_fulltext": true,
+      "cited_by_count": 0,
+      "citation_normalized_percentile": null,
+      "cited_by_percentile_year": null,
+      "biblio": {
+        "volume": null,
+        "issue": null,
+        "first_page": null,
+        "last_page": null
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11303",
+        "display_name": "Bayesian Modeling and Causal Inference",
+        "score": 0.41179999709129333,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11303",
+          "display_name": "Bayesian Modeling and Causal Inference",
+          "score": 0.41179999709129333,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10142",
+          "display_name": "Formal Methods in Verification",
+          "score": 0.15520000457763672,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1703",
+            "display_name": "Computational Theory and Mathematics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10462",
+          "display_name": "Reinforcement Learning in Robotics",
+          "score": 0.12280000001192093,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/probabilistic-logic",
+          "display_name": "Probabilistic logic",
+          "score": 0.7358999848365784
+        },
+        {
+          "id": "https://openalex.org/keywords/nondeterministic-algorithm",
+          "display_name": "Nondeterministic algorithm",
+          "score": 0.6449999809265137
+        },
+        {
+          "id": "https://openalex.org/keywords/markov-decision-process",
+          "display_name": "Markov decision process",
+          "score": 0.5662999749183655
+        },
+        {
+          "id": "https://openalex.org/keywords/inference",
+          "display_name": "Inference",
+          "score": 0.5343999862670898
+        },
+        {
+          "id": "https://openalex.org/keywords/markov-chain",
+          "display_name": "Markov chain",
+          "score": 0.517300009727478
+        },
+        {
+          "id": "https://openalex.org/keywords/exploit",
+          "display_name": "Exploit",
+          "score": 0.5144000053405762
+        },
+        {
+          "id": "https://openalex.org/keywords/probability-distribution",
+          "display_name": "Probability distribution",
+          "score": 0.4595000147819519
+        },
+        {
+          "id": "https://openalex.org/keywords/probabilistic-relevance-model",
+          "display_name": "Probabilistic relevance model",
+          "score": 0.4350000023841858
+        },
+        {
+          "id": "https://openalex.org/keywords/markov-process",
+          "display_name": "Markov process",
+          "score": 0.4081999957561493
+        },
+        {
+          "id": "https://openalex.org/keywords/state-space",
+          "display_name": "State space",
+          "score": 0.4025000035762787
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C49937458",
+          "wikidata": "https://www.wikidata.org/wiki/Q2599292",
+          "display_name": "Probabilistic logic",
+          "level": 2,
+          "score": 0.7358999848365784
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.6524999737739563
+        },
+        {
+          "id": "https://openalex.org/C176181172",
+          "wikidata": "https://www.wikidata.org/wiki/Q3490301",
+          "display_name": "Nondeterministic algorithm",
+          "level": 2,
+          "score": 0.6449999809265137
+        },
+        {
+          "id": "https://openalex.org/C106189395",
+          "wikidata": "https://www.wikidata.org/wiki/Q176789",
+          "display_name": "Markov decision process",
+          "level": 3,
+          "score": 0.5662999749183655
+        },
+        {
+          "id": "https://openalex.org/C2776214188",
+          "wikidata": "https://www.wikidata.org/wiki/Q408386",
+          "display_name": "Inference",
+          "level": 2,
+          "score": 0.5343999862670898
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.5264000296592712
+        },
+        {
+          "id": "https://openalex.org/C98763669",
+          "wikidata": "https://www.wikidata.org/wiki/Q176645",
+          "display_name": "Markov chain",
+          "level": 2,
+          "score": 0.517300009727478
+        },
+        {
+          "id": "https://openalex.org/C165696696",
+          "wikidata": "https://www.wikidata.org/wiki/Q11287",
+          "display_name": "Exploit",
+          "level": 2,
+          "score": 0.5144000053405762
+        },
+        {
+          "id": "https://openalex.org/C149441793",
+          "wikidata": "https://www.wikidata.org/wiki/Q200726",
+          "display_name": "Probability distribution",
+          "level": 2,
+          "score": 0.4595000147819519
+        },
+        {
+          "id": "https://openalex.org/C143017306",
+          "wikidata": "https://www.wikidata.org/wiki/Q3318133",
+          "display_name": "Probabilistic relevance model",
+          "level": 4,
+          "score": 0.4350000023841858
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.41359999775886536
+        },
+        {
+          "id": "https://openalex.org/C159886148",
+          "wikidata": "https://www.wikidata.org/wiki/Q176645",
+          "display_name": "Markov process",
+          "level": 2,
+          "score": 0.4081999957561493
+        },
+        {
+          "id": "https://openalex.org/C72434380",
+          "wikidata": "https://www.wikidata.org/wiki/Q230930",
+          "display_name": "State space",
+          "level": 2,
+          "score": 0.4025000035762787
+        },
+        {
+          "id": "https://openalex.org/C2777212361",
+          "wikidata": "https://www.wikidata.org/wiki/Q5127848",
+          "display_name": "Class (philosophy)",
+          "level": 2,
+          "score": 0.40209999680519104
+        },
+        {
+          "id": "https://openalex.org/C52063229",
+          "wikidata": "https://www.wikidata.org/wiki/Q7246845",
+          "display_name": "Probabilistic CTL",
+          "level": 4,
+          "score": 0.38920000195503235
+        },
+        {
+          "id": "https://openalex.org/C132525143",
+          "wikidata": "https://www.wikidata.org/wiki/Q141488",
+          "display_name": "Graph",
+          "level": 2,
+          "score": 0.3650999963283539
+        },
+        {
+          "id": "https://openalex.org/C48103436",
+          "wikidata": "https://www.wikidata.org/wiki/Q599031",
+          "display_name": "State (computer science)",
+          "level": 2,
+          "score": 0.34769999980926514
+        },
+        {
+          "id": "https://openalex.org/C20837028",
+          "wikidata": "https://www.wikidata.org/wiki/Q623966",
+          "display_name": "Influence diagram",
+          "level": 3,
+          "score": 0.32710000872612
+        },
+        {
+          "id": "https://openalex.org/C2777472644",
+          "wikidata": "https://www.wikidata.org/wiki/Q16968992",
+          "display_name": "Approximate inference",
+          "level": 3,
+          "score": 0.3151000142097473
+        },
+        {
+          "id": "https://openalex.org/C119857082",
+          "wikidata": "https://www.wikidata.org/wiki/Q2539",
+          "display_name": "Machine learning",
+          "level": 1,
+          "score": 0.31029999256134033
+        },
+        {
+          "id": "https://openalex.org/C55508974",
+          "wikidata": "https://www.wikidata.org/wiki/Q190763",
+          "display_name": "Venn diagram",
+          "level": 2,
+          "score": 0.3095000088214874
+        },
+        {
+          "id": "https://openalex.org/C2776401178",
+          "wikidata": "https://www.wikidata.org/wiki/Q12050496",
+          "display_name": "Feature (linguistics)",
+          "level": 2,
+          "score": 0.305400013923645
+        },
+        {
+          "id": "https://openalex.org/C11413529",
+          "wikidata": "https://www.wikidata.org/wiki/Q8366",
+          "display_name": "Algorithm",
+          "level": 1,
+          "score": 0.2937999963760376
+        },
+        {
+          "id": "https://openalex.org/C33724603",
+          "wikidata": "https://www.wikidata.org/wiki/Q812540",
+          "display_name": "Bayesian network",
+          "level": 2,
+          "score": 0.2840000092983246
+        },
+        {
+          "id": "https://openalex.org/C167729594",
+          "wikidata": "https://www.wikidata.org/wiki/Q17736",
+          "display_name": "Axiom",
+          "level": 2,
+          "score": 0.2831000089645386
+        },
+        {
+          "id": "https://openalex.org/C95167961",
+          "wikidata": "https://www.wikidata.org/wiki/Q4483495",
+          "display_name": "Fiducial inference",
+          "level": 5,
+          "score": 0.2809000015258789
+        },
+        {
+          "id": "https://openalex.org/C115988155",
+          "wikidata": "https://www.wikidata.org/wiki/Q3262192",
+          "display_name": "Decision problem",
+          "level": 2,
+          "score": 0.2775999903678894
+        },
+        {
+          "id": "https://openalex.org/C74197172",
+          "wikidata": "https://www.wikidata.org/wiki/Q1195339",
+          "display_name": "Directed acyclic graph",
+          "level": 2,
+          "score": 0.27720001339912415
+        },
+        {
+          "id": "https://openalex.org/C16671368",
+          "wikidata": "https://www.wikidata.org/wiki/Q230885",
+          "display_name": "State diagram",
+          "level": 3,
+          "score": 0.2732999920845032
+        },
+        {
+          "id": "https://openalex.org/C163836022",
+          "wikidata": "https://www.wikidata.org/wiki/Q6771326",
+          "display_name": "Markov model",
+          "level": 3,
+          "score": 0.2720000147819519
+        },
+        {
+          "id": "https://openalex.org/C17098449",
+          "wikidata": "https://www.wikidata.org/wiki/Q176814",
+          "display_name": "Partially observable Markov decision process",
+          "level": 4,
+          "score": 0.2687000036239624
+        },
+        {
+          "id": "https://openalex.org/C114289077",
+          "wikidata": "https://www.wikidata.org/wiki/Q3284399",
+          "display_name": "Statistical model",
+          "level": 2,
+          "score": 0.2574000060558319
+        },
+        {
+          "id": "https://openalex.org/C55689738",
+          "wikidata": "https://www.wikidata.org/wiki/Q15963867",
+          "display_name": "Discrete time and continuous time",
+          "level": 2,
+          "score": 0.2542000114917755
+        },
+        {
+          "id": "https://openalex.org/C2778572836",
+          "wikidata": "https://www.wikidata.org/wiki/Q380933",
+          "display_name": "Space (punctuation)",
+          "level": 2,
+          "score": 0.25209999084472656
+        }
+      ],
+      "mesh": [],
+      "locations_count": 1,
+      "locations": [
+        {
+          "id": "pmh:oai:arXiv.org:2602.20049",
+          "is_oa": true,
+          "landing_page_url": "http://arxiv.org/abs/2602.20049",
+          "pdf_url": "https://arxiv.org/pdf/2602.20049",
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "text"
+        }
+      ],
+      "best_oa_location": {
+        "id": "pmh:oai:arXiv.org:2602.20049",
+        "is_oa": true,
+        "landing_page_url": "http://arxiv.org/abs/2602.20049",
+        "pdf_url": "https://arxiv.org/pdf/2602.20049",
+        "source": {
+          "id": "https://openalex.org/S4306400194",
+          "display_name": "arXiv (Cornell University)",
+          "issn_l": "2331-8422",
+          "issn": [
+            "2331-8422"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I205783295",
+          "host_organization_name": "Cornell University",
+          "host_organization_lineage": [
+            "https://openalex.org/I205783295"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "text"
+      },
+      "sustainable_development_goals": [
+        {
+          "display_name": "Peace, Justice and strong institutions",
+          "id": "https://metadata.un.org/sdg/16",
+          "score": 0.7525526881217957
+        }
+      ],
+      "awards": [],
+      "funders": [],
+      "has_content": {
+        "pdf": true,
+        "grobid_xml": true
+      },
+      "content_urls": {
+        "pdf": "https://content.openalex.org/works/W7131319817.pdf",
+        "grobid_xml": "https://content.openalex.org/works/W7131319817.grobid-xml"
+      },
+      "referenced_works_count": 0,
+      "referenced_works": [],
+      "related_works": [],
+      "abstract_inverted_index": {
+        "Probabilistic": [
+          0
+        ],
+        "programming": [
+          1
+        ],
+        "languages": [
+          2,
+          18
+        ],
+        "(PPLs)": [
+          3
+        ],
+        "are": [
+          4,
+          32,
+          36,
+          60,
+          129
+        ],
+        "an": [
+          5,
+          22,
+          110,
+          132
+        ],
+        "expressive": [
+          6
+        ],
+        "and": [
+          7,
+          48,
+          140
+        ],
+        "intuitive": [
+          8
+        ],
+        "means": [
+          9
+        ],
+        "of": [
+          10,
+          25,
+          57,
+          92,
+          146
+        ],
+        "representing": [
+          11
+        ],
+        "complex": [
+          12
+        ],
+        "probability": [
+          13,
+          30
+        ],
+        "distributions.": [
+          14
+        ],
+        "In": [
+          15
+        ],
+        "that": [
+          16,
+          113
+        ],
+        "realm,": [
+          17
+        ],
+        "like": [
+          19
+        ],
+        "Dice": [
+          20
+        ],
+        "target": [
+          21
+        ],
+        "important": [
+          23,
+          52
+        ],
+        "class": [
+          24
+        ],
+        "probabilistic": [
+          26,
+          58,
+          98
+        ],
+        "programs:": [
+          27
+        ],
+        "those": [
+          28
+        ],
+        "whose": [
+          29
+        ],
+        "distributions": [
+          31,
+          35,
+          115
+        ],
+        "discrete.": [
+          33
+        ],
+        "Discrete": [
+          34
+        ],
+        "common": [
+          37
+        ],
+        "in": [
+          38,
+          54,
+          65,
+          75,
+          123
+        ],
+        "many": [
+          39
+        ],
+        "fields,": [
+          40
+        ],
+        "including": [
+          41
+        ],
+        "text": [
+          42
+        ],
+        "analysis,": [
+          43
+        ],
+        "network": [
+          44
+        ],
+        "verification,": [
+          45
+        ],
+        "artificial": [
+          46
+        ],
+        "intelligence,": [
+          47
+        ],
+        "graph": [
+          49
+        ],
+        "analysis.": [
+          50
+        ],
+        "Another": [
+          51
+        ],
+        "feature": [
+          53
+        ],
+        "the": [
+          55,
+          90,
+          96,
+          114,
+          118,
+          124,
+          137,
+          143,
+          147
+        ],
+        "world": [
+          56
+        ],
+        "modeling": [
+          59
+        ],
+        "nondeterministic": [
+          61
+        ],
+        "choices": [
+          62
+        ],
+        "as": [
+          63,
+          131
+        ],
+        "found": [
+          64
+        ],
+        "Markov": [
+          66
+        ],
+        "Decision": [
+          67
+        ],
+        "Processes": [
+          68
+        ],
+        "(MDPs)": [
+          69
+        ],
+        "which": [
+          70,
+          94
+        ],
+        "play": [
+          71
+        ],
+        "a": [
+          72
+        ],
+        "major": [
+          73
+        ],
+        "role": [
+          74
+        ],
+        "reinforcement": [
+          76
+        ],
+        "learning.": [
+          77
+        ],
+        "Modern": [
+          78
+        ],
+        "PPLs": [
+          79
+        ],
+        "usually": [
+          80
+        ],
+        "lack": [
+          81
+        ],
+        "support": [
+          82
+        ],
+        "for": [
+          83
+        ],
+        "nondeterminism.": [
+          84
+        ],
+        "We": [
+          85
+        ],
+        "address": [
+          86
+        ],
+        "this": [
+          87
+        ],
+        "gap": [
+          88
+        ],
+        "with": [
+          89
+        ],
+        "introduction": [
+          91
+        ],
+        "noDice,": [
+          93
+        ],
+        "extends": [
+          95
+        ],
+        "discrete": [
+          97
+        ],
+        "inference": [
+          99,
+          104
+        ],
+        "engine": [
+          100
+        ],
+        "Dice.": [
+          101
+        ],
+        "noDice": [
+          102
+        ],
+        "performs": [
+          103
+        ],
+        "on": [
+          105
+        ],
+        "loop-free": [
+          106
+        ],
+        "programs": [
+          107
+        ],
+        "by": [
+          108,
+          117
+        ],
+        "constructing": [
+          109
+        ],
+        "MDP": [
+          111
+        ],
+        "so": [
+          112
+        ],
+        "modeled": [
+          116
+        ],
+        "program": [
+          119,
+          138
+        ],
+        "correspond": [
+          120
+        ],
+        "to": [
+          121,
+          135
+        ],
+        "schedulers": [
+          122
+        ],
+        "MDP.": [
+          125,
+          148
+        ],
+        "Furthermore,": [
+          126
+        ],
+        "decision": [
+          127
+        ],
+        "diagrams": [
+          128
+        ],
+        "used": [
+          130
+        ],
+        "intermediate": [
+          133
+        ],
+        "step": [
+          134
+        ],
+        "exploit": [
+          136
+        ],
+        "structure": [
+          139
+        ],
+        "drastically": [
+          141
+        ],
+        "reduce": [
+          142
+        ],
+        "state": [
+          144
+        ],
+        "space": [
+          145
+        ]
+      },
+      "counts_by_year": [],
+      "updated_date": "2026-08-26T07:47:46.906454",
+      "created_date": "2026-02-25T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W7171034603",
+      "doi": "https://doi.org/10.1145/3828698",
+      "title": "Imprecise Probabilistic Programming, Precisely: Credal Sets via Graded Monads, BDDs, and Semiring-Parametric Inference (Functional Pearl)",
+      "display_name": "Imprecise Probabilistic Programming, Precisely: Credal Sets via Graded Monads, BDDs, and Semiring-Parametric Inference (Functional Pearl)",
+      "relevance_score": 10.568996,
+      "publication_year": 2026,
+      "publication_date": "2026-08-17",
+      "ids": {
+        "openalex": "https://openalex.org/W7171034603",
+        "doi": "https://doi.org/10.1145/3828698"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1145/3828698",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1145/3828698",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4210216081",
+          "display_name": "Proceedings of the ACM on Programming Languages",
+          "issn_l": "2475-1421",
+          "issn": [
+            "2475-1421"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310319798",
+          "host_organization_name": "Association for Computing Machinery",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310319798"
+          ],
+          "host_organization_lineage_names": [
+            "Association for Computing Machinery"
+          ],
+          "type": "journal"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Proceedings of the ACM on Programming Languages",
+        "raw_type": "journal-article"
+      },
+      "type": "article",
+      "indexed_in": [
+        "arxiv",
+        "crossref"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "diamond",
+        "oa_url": "https://doi.org/10.1145/3828698",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5004851201",
+            "display_name": "Jack Liell-Cock",
+            "orcid": "https://orcid.org/0009-0005-7121-8095"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I40120149",
+              "display_name": "University of Oxford",
+              "ror": "https://ror.org/052gg0110",
+              "country_code": "GB",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I40120149"
+              ]
+            }
+          ],
+          "countries": [
+            "GB"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Jack Liell-Cock",
+          "raw_affiliation_strings": [
+            "University of Oxford, Oxford, United Kingdom"
+          ],
+          "raw_orcid": "https://orcid.org/0009-0005-7121-8095",
+          "affiliations": [
+            {
+              "raw_affiliation_string": "University of Oxford, Oxford, United Kingdom",
+              "institution_ids": [
+                "https://openalex.org/I40120149"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5068183682",
+            "display_name": "Sam Staton",
+            "orcid": "https://orcid.org/0000-0002-0141-8922"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I40120149",
+              "display_name": "University of Oxford",
+              "ror": "https://ror.org/052gg0110",
+              "country_code": "GB",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I40120149"
+              ]
+            }
+          ],
+          "countries": [
+            "GB"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Sam Staton",
+          "raw_affiliation_strings": [
+            "University of Oxford, Oxford, United Kingdom"
+          ],
+          "raw_orcid": "https://orcid.org/0000-0002-7149-3805",
+          "affiliations": [
+            {
+              "raw_affiliation_string": "University of Oxford, Oxford, United Kingdom",
+              "institution_ids": [
+                "https://openalex.org/I40120149"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 1,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I40120149"
+      ],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": 0.0,
+      "has_fulltext": true,
+      "cited_by_count": 0,
+      "citation_normalized_percentile": {
+        "value": 0.79579823,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": false
+      },
+      "cited_by_percentile_year": null,
+      "biblio": {
+        "volume": "10",
+        "issue": "ICFP",
+        "first_page": "751",
+        "last_page": "771"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11303",
+        "display_name": "Bayesian Modeling and Causal Inference",
+        "score": 0.8442999720573425,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11303",
+          "display_name": "Bayesian Modeling and Causal Inference",
+          "score": 0.8442999720573425,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11010",
+          "display_name": "Logic, Reasoning, and Knowledge",
+          "score": 0.05790000036358833,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11596",
+          "display_name": "Constraint Satisfaction and Optimization",
+          "score": 0.025299999862909317,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1705",
+            "display_name": "Computer Networks and Communications"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/probabilistic-logic",
+          "display_name": "Probabilistic logic",
+          "score": 0.6424000263214111
+        },
+        {
+          "id": "https://openalex.org/keywords/generalization",
+          "display_name": "Generalization",
+          "score": 0.6168000102043152
+        },
+        {
+          "id": "https://openalex.org/keywords/probability-distribution",
+          "display_name": "Probability distribution",
+          "score": 0.4602000117301941
+        },
+        {
+          "id": "https://openalex.org/keywords/set",
+          "display_name": "Set (abstract data type)",
+          "score": 0.45570001006126404
+        },
+        {
+          "id": "https://openalex.org/keywords/parametric-statistics",
+          "display_name": "Parametric statistics",
+          "score": 0.44929999113082886
+        },
+        {
+          "id": "https://openalex.org/keywords/probability-measure",
+          "display_name": "Probability measure",
+          "score": 0.41359999775886536
+        },
+        {
+          "id": "https://openalex.org/keywords/random-variable",
+          "display_name": "Random variable",
+          "score": 0.3950999975204468
+        },
+        {
+          "id": "https://openalex.org/keywords/imprecise-probability",
+          "display_name": "Imprecise probability",
+          "score": 0.37929999828338623
+        },
+        {
+          "id": "https://openalex.org/keywords/constraint",
+          "display_name": "Constraint (computer-aided design)",
+          "score": 0.37689998745918274
+        },
+        {
+          "id": "https://openalex.org/keywords/commutative-property",
+          "display_name": "Commutative property",
+          "score": 0.37130001187324524
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C49937458",
+          "wikidata": "https://www.wikidata.org/wiki/Q2599292",
+          "display_name": "Probabilistic logic",
+          "level": 2,
+          "score": 0.6424000263214111
+        },
+        {
+          "id": "https://openalex.org/C177148314",
+          "wikidata": "https://www.wikidata.org/wiki/Q170084",
+          "display_name": "Generalization",
+          "level": 2,
+          "score": 0.6168000102043152
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.6118999719619751
+        },
+        {
+          "id": "https://openalex.org/C149441793",
+          "wikidata": "https://www.wikidata.org/wiki/Q200726",
+          "display_name": "Probability distribution",
+          "level": 2,
+          "score": 0.4602000117301941
+        },
+        {
+          "id": "https://openalex.org/C118615104",
+          "wikidata": "https://www.wikidata.org/wiki/Q121416",
+          "display_name": "Discrete mathematics",
+          "level": 1,
+          "score": 0.46000000834465027
+        },
+        {
+          "id": "https://openalex.org/C177264268",
+          "wikidata": "https://www.wikidata.org/wiki/Q1514741",
+          "display_name": "Set (abstract data type)",
+          "level": 2,
+          "score": 0.45570001006126404
+        },
+        {
+          "id": "https://openalex.org/C11413529",
+          "wikidata": "https://www.wikidata.org/wiki/Q8366",
+          "display_name": "Algorithm",
+          "level": 1,
+          "score": 0.45179998874664307
+        },
+        {
+          "id": "https://openalex.org/C117251300",
+          "wikidata": "https://www.wikidata.org/wiki/Q1849855",
+          "display_name": "Parametric statistics",
+          "level": 2,
+          "score": 0.44929999113082886
+        },
+        {
+          "id": "https://openalex.org/C21031990",
+          "wikidata": "https://www.wikidata.org/wiki/Q355020",
+          "display_name": "Probability measure",
+          "level": 2,
+          "score": 0.41359999775886536
+        },
+        {
+          "id": "https://openalex.org/C122123141",
+          "wikidata": "https://www.wikidata.org/wiki/Q176623",
+          "display_name": "Random variable",
+          "level": 2,
+          "score": 0.3950999975204468
+        },
+        {
+          "id": "https://openalex.org/C130648207",
+          "wikidata": "https://www.wikidata.org/wiki/Q6007562",
+          "display_name": "Imprecise probability",
+          "level": 3,
+          "score": 0.37929999828338623
+        },
+        {
+          "id": "https://openalex.org/C2776036281",
+          "wikidata": "https://www.wikidata.org/wiki/Q48769818",
+          "display_name": "Constraint (computer-aided design)",
+          "level": 2,
+          "score": 0.37689998745918274
+        },
+        {
+          "id": "https://openalex.org/C183778304",
+          "wikidata": "https://www.wikidata.org/wiki/Q165474",
+          "display_name": "Commutative property",
+          "level": 2,
+          "score": 0.37130001187324524
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.36649999022483826
+        },
+        {
+          "id": "https://openalex.org/C112680207",
+          "wikidata": "https://www.wikidata.org/wiki/Q714886",
+          "display_name": "Regular polygon",
+          "level": 2,
+          "score": 0.3650999963283539
+        },
+        {
+          "id": "https://openalex.org/C49870271",
+          "wikidata": "https://www.wikidata.org/wiki/Q193657",
+          "display_name": "Convex set",
+          "level": 4,
+          "score": 0.3610999882221222
+        },
+        {
+          "id": "https://openalex.org/C2777299769",
+          "wikidata": "https://www.wikidata.org/wiki/Q3707858",
+          "display_name": "Type (biology)",
+          "level": 2,
+          "score": 0.35749998688697815
+        },
+        {
+          "id": "https://openalex.org/C162392398",
+          "wikidata": "https://www.wikidata.org/wiki/Q272404",
+          "display_name": "Finite set",
+          "level": 2,
+          "score": 0.3312000036239624
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.322299987077713
+        },
+        {
+          "id": "https://openalex.org/C61797465",
+          "wikidata": "https://www.wikidata.org/wiki/Q1188986",
+          "display_name": "Term (time)",
+          "level": 2,
+          "score": 0.310699999332428
+        },
+        {
+          "id": "https://openalex.org/C184337299",
+          "wikidata": "https://www.wikidata.org/wiki/Q1437428",
+          "display_name": "Semantics (computer science)",
+          "level": 2,
+          "score": 0.31049999594688416
+        },
+        {
+          "id": "https://openalex.org/C136119220",
+          "wikidata": "https://www.wikidata.org/wiki/Q1000660",
+          "display_name": "Algebra over a field",
+          "level": 2,
+          "score": 0.30880001187324524
+        },
+        {
+          "id": "https://openalex.org/C198370458",
+          "wikidata": "https://www.wikidata.org/wiki/Q586459",
+          "display_name": "Type inference",
+          "level": 3,
+          "score": 0.30799999833106995
+        },
+        {
+          "id": "https://openalex.org/C149364088",
+          "wikidata": "https://www.wikidata.org/wiki/Q185917",
+          "display_name": "Translation (biology)",
+          "level": 4,
+          "score": 0.3073999881744385
+        },
+        {
+          "id": "https://openalex.org/C2776214188",
+          "wikidata": "https://www.wikidata.org/wiki/Q408386",
+          "display_name": "Inference",
+          "level": 2,
+          "score": 0.30640000104904175
+        },
+        {
+          "id": "https://openalex.org/C2777686260",
+          "wikidata": "https://www.wikidata.org/wiki/Q144037",
+          "display_name": "Calculus (dental)",
+          "level": 2,
+          "score": 0.29170000553131104
+        },
+        {
+          "id": "https://openalex.org/C18653775",
+          "wikidata": "https://www.wikidata.org/wiki/Q1333358",
+          "display_name": "Joint probability distribution",
+          "level": 2,
+          "score": 0.2883000075817108
+        },
+        {
+          "id": "https://openalex.org/C182365436",
+          "wikidata": "https://www.wikidata.org/wiki/Q50701",
+          "display_name": "Variable (mathematics)",
+          "level": 2,
+          "score": 0.2752000093460083
+        },
+        {
+          "id": "https://openalex.org/C150921843",
+          "wikidata": "https://www.wikidata.org/wiki/Q1170431",
+          "display_name": "Resampling",
+          "level": 2,
+          "score": 0.27459999918937683
+        },
+        {
+          "id": "https://openalex.org/C2780069185",
+          "wikidata": "https://www.wikidata.org/wiki/Q7977945",
+          "display_name": "Equivalence (formal languages)",
+          "level": 2,
+          "score": 0.273499995470047
+        },
+        {
+          "id": "https://openalex.org/C33959348",
+          "wikidata": "https://www.wikidata.org/wiki/Q1630568",
+          "display_name": "Monad (category theory)",
+          "level": 3,
+          "score": 0.2702000141143799
+        },
+        {
+          "id": "https://openalex.org/C95167961",
+          "wikidata": "https://www.wikidata.org/wiki/Q4483495",
+          "display_name": "Fiducial inference",
+          "level": 5,
+          "score": 0.26910001039505005
+        },
+        {
+          "id": "https://openalex.org/C107673813",
+          "wikidata": "https://www.wikidata.org/wiki/Q812534",
+          "display_name": "Bayesian probability",
+          "level": 2,
+          "score": 0.2655999958515167
+        },
+        {
+          "id": "https://openalex.org/C153046414",
+          "wikidata": "https://www.wikidata.org/wiki/Q12482",
+          "display_name": "Set theory",
+          "level": 3,
+          "score": 0.26339998841285706
+        },
+        {
+          "id": "https://openalex.org/C114289077",
+          "wikidata": "https://www.wikidata.org/wiki/Q3284399",
+          "display_name": "Statistical model",
+          "level": 2,
+          "score": 0.26330000162124634
+        },
+        {
+          "id": "https://openalex.org/C2778220771",
+          "wikidata": "https://www.wikidata.org/wiki/Q1522579",
+          "display_name": "Substitution (logic)",
+          "level": 2,
+          "score": 0.2565000057220459
+        },
+        {
+          "id": "https://openalex.org/C122203268",
+          "wikidata": "https://www.wikidata.org/wiki/Q5862903",
+          "display_name": "Probability theory",
+          "level": 2,
+          "score": 0.2563000023365021
+        },
+        {
+          "id": "https://openalex.org/C917703",
+          "wikidata": "https://www.wikidata.org/wiki/Q7239668",
+          "display_name": "Predictive inference",
+          "level": 5,
+          "score": 0.2533000111579895
+        }
+      ],
+      "mesh": [],
+      "locations_count": 2,
+      "locations": [
+        {
+          "id": "doi:10.1145/3828698",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.1145/3828698",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4210216081",
+            "display_name": "Proceedings of the ACM on Programming Languages",
+            "issn_l": "2475-1421",
+            "issn": [
+              "2475-1421"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310319798",
+            "host_organization_name": "Association for Computing Machinery",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310319798"
+            ],
+            "host_organization_lineage_names": [
+              "Association for Computing Machinery"
+            ],
+            "type": "journal"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Proceedings of the ACM on Programming Languages",
+          "raw_type": "journal-article"
+        },
+        {
+          "id": "pmh:oai:arXiv.org:2607.20801",
+          "is_oa": true,
+          "landing_page_url": "https://arxiv.org/abs/2607.20801",
+          "pdf_url": "https://arxiv.org/pdf/2607.20801",
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "text"
+        }
+      ],
+      "best_oa_location": {
+        "id": "doi:10.1145/3828698",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1145/3828698",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4210216081",
+          "display_name": "Proceedings of the ACM on Programming Languages",
+          "issn_l": "2475-1421",
+          "issn": [
+            "2475-1421"
+          ],
+          "is_oa": true,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310319798",
+          "host_organization_name": "Association for Computing Machinery",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310319798"
+          ],
+          "host_organization_lineage_names": [
+            "Association for Computing Machinery"
+          ],
+          "type": "journal"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Proceedings of the ACM on Programming Languages",
+        "raw_type": "journal-article"
+      },
+      "sustainable_development_goals": [],
+      "awards": [
+        {
+          "id": "https://openalex.org/G1523888516",
+          "display_name": null,
+          "funder_award_id": "FA9550-",
+          "funder_id": "https://openalex.org/F4320338279",
+          "funder_display_name": "Air Force Office of Scientific Research"
+        },
+        {
+          "id": "https://openalex.org/G1785147656",
+          "display_name": null,
+          "funder_award_id": "FA9550-21-1-0038",
+          "funder_id": "https://openalex.org/F4320338279",
+          "funder_display_name": "Air Force Office of Scientific Research"
+        },
+        {
+          "id": "https://openalex.org/G4516736450",
+          "display_name": null,
+          "funder_award_id": "-21-1-",
+          "funder_id": "https://openalex.org/F4320338279",
+          "funder_display_name": "Air Force Office of Scientific Research"
+        },
+        {
+          "id": "https://openalex.org/G6478756169",
+          "display_name": null,
+          "funder_award_id": "FA9550-21",
+          "funder_id": "https://openalex.org/F4320338279",
+          "funder_display_name": "Air Force Office of Scientific Research"
+        }
+      ],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320338279",
+          "display_name": "Air Force Office of Scientific Research",
+          "ror": "https://ror.org/011e9bt93"
+        }
+      ],
+      "has_content": {
+        "pdf": false,
+        "grobid_xml": false
+      },
+      "content_urls": null,
+      "referenced_works_count": 0,
+      "referenced_works": [],
+      "related_works": [],
+      "abstract_inverted_index": {
+        "Imprecise": [
+          0
+        ],
+        "probability": [
+          1,
+          4
+        ],
+        "generalizes": [
+          2
+        ],
+        "standard": [
+          3,
+          28,
+          86
+        ],
+        "theory": [
+          5
+        ],
+        "by": [
+          6,
+          37,
+          72
+        ],
+        "replacing": [
+          7
+        ],
+        "a": [
+          8,
+          12,
+          47,
+          61
+        ],
+        "single": [
+          9
+        ],
+        "distribution": [
+          10
+        ],
+        "with": [
+          11
+        ],
+        "convex": [
+          13,
+          87
+        ],
+        "set": [
+          14
+        ],
+        "of": [
+          15,
+          75,
+          78
+        ],
+        "possible": [
+          16
+        ],
+        "distributions.": [
+          17
+        ],
+        "We": [
+          18,
+          58
+        ],
+        "show": [
+          19
+        ],
+        "that": [
+          20,
+          84
+        ],
+        "this": [
+          21,
+          96
+        ],
+        "generalization": [
+          22
+        ],
+        "requires": [
+          23
+        ],
+        "no": [
+          24
+        ],
+        "change": [
+          25
+        ],
+        "to": [
+          26
+        ],
+        "the": [
+          27,
+          82,
+          85,
+          106,
+          109
+        ],
+        "BDD": [
+          29,
+          48,
+          112
+        ],
+        "compilation": [
+          30
+        ],
+        "and": [
+          31,
+          91,
+          116
+        ],
+        "weighted": [
+          32
+        ],
+        "model": [
+          33,
+          101
+        ],
+        "counting": [
+          34,
+          102
+        ],
+        "pipeline": [
+          35
+        ],
+        "used": [
+          36
+        ],
+        "discrete": [
+          38
+        ],
+        "probabilistic": [
+          39,
+          66
+        ],
+        "languages.": [
+          40
+        ],
+        "An": [
+          41
+        ],
+        "imprecise": [
+          42,
+          65
+        ],
+        "coin": [
+          43
+        ],
+        "flip": [
+          44
+        ],
+        "is": [
+          45,
+          52,
+          103
+        ],
+        "simply": [
+          46
+        ],
+        "variable": [
+          49
+        ],
+        "whose": [
+          50
+        ],
+        "weight": [
+          51
+        ],
+        "left": [
+          53
+        ],
+        "free": [
+          54
+        ],
+        "rather": [
+          55
+        ],
+        "than": [
+          56
+        ],
+        "fixed.": [
+          57
+        ],
+        "introduce": [
+          59
+        ],
+        "Imp,": [
+          60
+        ],
+        "Haskell-embedded": [
+          62
+        ],
+        "DSL": [
+          63
+        ],
+        "for": [
+          64
+        ],
+        "programming.": [
+          67
+        ],
+        "A": [
+          68
+        ],
+        "graded": [
+          69
+        ],
+        "monad,": [
+          70
+        ],
+        "indexed": [
+          71
+        ],
+        "finite": [
+          73
+        ],
+        "sets": [
+          74
+        ],
+        "named": [
+          76
+        ],
+        "sources": [
+          77
+        ],
+        "epistemic": [
+          79
+        ],
+        "uncertainty,": [
+          80
+        ],
+        "restores": [
+          81
+        ],
+        "commutativity": [
+          83
+        ],
+        "powerset": [
+          88
+        ],
+        "monad": [
+          89
+        ],
+        "lacks,": [
+          90
+        ],
+        "GHC's": [
+          92
+        ],
+        "type": [
+          93
+        ],
+        "system": [
+          94
+        ],
+        "enforces": [
+          95
+        ],
+        "at": [
+          97
+        ],
+        "compile": [
+          98
+        ],
+        "time.": [
+          99
+        ],
+        "Weighted": [
+          100
+        ],
+        "parametric": [
+          104
+        ],
+        "in": [
+          105
+        ],
+        "semiring,": [
+          107
+        ],
+        "so": [
+          108
+        ],
+        "same": [
+          110
+        ],
+        "compiled": [
+          111
+        ],
+        "supports": [
+          113
+        ],
+        "exact,": [
+          114
+        ],
+        "differentiable,": [
+          115
+        ],
+        "interval-bounded": [
+          117
+        ],
+        "inference.": [
+          118
+        ]
+      },
+      "counts_by_year": [],
+      "updated_date": "2026-08-26T07:47:46.906454",
+      "created_date": "2026-07-26T00:00:00"
+    }
+  ],
+  "group_by": []
+}

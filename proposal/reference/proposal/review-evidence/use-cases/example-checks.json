@@ -1,0 +1,34 @@
+{
+  "status": "passed",
+  "arithmetic": "exact fractions; synthetic inputs",
+  "audit": {
+    "prior_error": "999/100000",
+    "fault_after_error": "100/111",
+    "next_error": "90011/111000"
+  },
+  "diagnostic": {
+    "immediate_losses": [
+      "64/5",
+      "129/10"
+    ],
+    "follow_up_branches": "pass -> rollback; fail -> failover",
+    "loss_with_test": "997/200",
+    "saving": "1563/200"
+  },
+  "score_expected_losses": [
+    "50000",
+    "100"
+  ],
+  "exposure": {
+    "any_exposure": "3/5",
+    "expected_minutes": 3
+  },
+  "local_links_checked": 20,
+  "broken_links": [],
+  "schema_check": "node syntax check passed",
+  "limits": [
+    "No TypeSafe inference request was made.",
+    "Dependencies are not installed for a package typecheck.",
+    "No new probability operators are implemented in the engine."
+  ]
+}

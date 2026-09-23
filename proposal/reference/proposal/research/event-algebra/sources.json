@@ -1,0 +1,78 @@
+{
+  "retrieved_utc": "2026-09-17T18:29:04.149748+00:00",
+  "papers": [
+    {
+      "id": "1106.1819v1",
+      "url": "https://arxiv.org/pdf/1106.1819v1",
+      "pdf": "proposal/papers/darwiche-marquis-2002-knowledge-compilation-map.pdf",
+      "text": "proposal/research/event-algebra/darwiche-marquis-2002-knowledge-compilation-map.txt",
+      "sha256": "e521e1d0bd3e670b5b31cac5caa8111d9b154c88809f57c5af2a9a5c8b095a12",
+      "bytes": 426218,
+      "text_chars": 149482
+    },
+    {
+      "id": "1807.05609v3",
+      "url": "https://arxiv.org/pdf/1807.05609v3",
+      "pdf": "proposal/papers/jacobs-2019-changing-ones-mind.pdf",
+      "text": "proposal/research/event-algebra/jacobs-2019-changing-ones-mind.txt",
+      "sha256": "005e231606275f1362910dd55ffa79c1cf02a6fab8a64dade691dad9f141b70a",
+      "bytes": 419256,
+      "text_chars": 82369
+    },
+    {
+      "id": "2309.07053v2",
+      "url": "https://arxiv.org/pdf/2309.07053v2",
+      "pdf": "proposal/papers/jacobs-stein-2023-pearl-jeffrey-update.pdf",
+      "text": "proposal/research/event-algebra/jacobs-stein-2023-pearl-jeffrey-update.txt",
+      "sha256": "e242978b5b5c684be9c851973db17eb17e3fa5811cd876ad2cf97098627ef4b4",
+      "bytes": 513592,
+      "text_chars": 65002
+    },
+    {
+      "id": "cs/0310054v1",
+      "url": "https://arxiv.org/pdf/cs/0310054v1",
+      "pdf": "proposal/papers/desharnais-moeller-struth-2003-kleene-algebra-domain.pdf",
+      "text": "proposal/research/event-algebra/desharnais-moeller-struth-2003-kleene-algebra-domain.txt",
+      "sha256": "41f7446d51d79fa7d93acc6294efea3ba30f8729a9d52fb0b964f7637ac4f643",
+      "bytes": 334857
+    },
+    {
+      "id": "1507.07246v2",
+      "url": "https://arxiv.org/pdf/1507.07246v2",
+      "pdf": "proposal/papers/struth-2015-expressive-power-domain.pdf",
+      "text": "proposal/research/event-algebra/struth-2015-expressive-power-domain.txt",
+      "sha256": "e86d89c9273b0ed129e4490904d08b7f0792c19479787994d7fdc5210f990c44",
+      "bytes": 98876
+    }
+  ],
+  "typesafe_docs": [
+    {
+      "url": "https://docs.typesafe.ai/primitives.md",
+      "snapshot": "proposal/research/event-algebra/typesafe-primitives.md",
+      "sha256": "6cbe8960e23863cf2a1c8c6892d2fa4a0c0b42c9a4f034b6cec0727f2ec8c728",
+      "bytes": 24727,
+      "retrieved_utc": "2026-09-17T18:52:45.850548+00:00"
+    },
+    {
+      "url": "https://docs.typesafe.ai/primitives/noul.md",
+      "snapshot": "proposal/research/event-algebra/typesafe-primitives-noul.md",
+      "sha256": "402a2f30ca71b53227058a5df3fb3e0a10063588a31b883f924d6660815c6916",
+      "bytes": 13083,
+      "retrieved_utc": "2026-09-17T18:52:45.920152+00:00"
+    },
+    {
+      "url": "https://docs.typesafe.ai/primitives/choice.md",
+      "snapshot": "proposal/research/event-algebra/typesafe-primitives-choice.md",
+      "sha256": "5ba42269e9a07ac5b1220ee6b6c69f060f57b6a7ff619cfedcb916acfb6c92c5",
+      "bytes": 26662,
+      "retrieved_utc": "2026-09-17T18:52:45.957544+00:00"
+    },
+    {
+      "url": "https://docs.typesafe.ai/primitives/score.md",
+      "snapshot": "proposal/research/event-algebra/typesafe-primitives-score.md",
+      "sha256": "653ca2a688bf6613bf4c1621046a22c66e672a90cf40992c1fe218a8e96768c4",
+      "bytes": 31889,
+      "retrieved_utc": "2026-09-17T18:52:45.872614+00:00"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+[
+  {
+    "arxiv": "1404.4089v1",
+    "url": "https://arxiv.org/pdf/1404.4089v1",
+    "retrieved_url": "https://arxiv.org/pdf/1404.4089v1",
+    "file": "vandenbroeck-darwiche-2014-canonicity.pdf",
+    "sha256": "7b86bc9312e8ae9bfe98e8ba227258de13b752cfa638f83d6fef5da9c301d7f2",
+    "retrieved_utc": "2026-09-17T20:22:33.727935+00:00",
+    "text_file": "vandenbroeck-darwiche-2014-canonicity.txt",
+    "text_sha256": "62f08d53b1e70667e2526a54c4e2b7c89ab7d1e02e2ca4baef248d2a1f5b460c"
+  },
+  {
+    "arxiv": "1710.06500v1",
+    "url": "https://arxiv.org/pdf/1710.06500v1",
+    "retrieved_url": "https://arxiv.org/pdf/1710.06500v1",
+    "file": "bryant-2017-chain-reduction.pdf",
+    "sha256": "6ef977e48874c759d55268a9f1cf170571a4aa33ac09332f7dfa6e7191c0a691",
+    "retrieved_utc": "2026-09-17T20:22:34.425560+00:00",
+    "text_file": "bryant-2017-chain-reduction.txt",
+    "text_sha256": "795ccd57e017a49358c278ef6459097030aea526ac63c072bcf715b9b54345e3"
+  },
+  {
+    "arxiv": "1512.05813v1",
+    "url": "https://arxiv.org/pdf/1512.05813v1",
+    "retrieved_url": "https://arxiv.org/pdf/1512.05813v1",
+    "file": "jacobs-2015-effectus.pdf",
+    "sha256": "5f47241d561df649a763034ffc1fcf160906edcfa20cded142bff7f8f8e4c8eb",
+    "retrieved_utc": "2026-09-17T20:22:35.985799+00:00",
+    "text_file": "jacobs-2015-effectus.txt",
+    "text_sha256": "b5b82f52297094584ba2e25e2cf337faf067f2b10c1fc1bdeb1b49015e961b5e"
+  },
+  {
+    "arxiv": "2004.02502v1",
+    "url": "https://arxiv.org/pdf/2004.02502v1",
+    "retrieved_url": "https://arxiv.org/pdf/2004.02502v1",
+    "file": "nakamura-denzumi-nishino-2020-variable-shift.pdf",
+    "sha256": "767fccdbcf97cecd81bb37b91634f389671ae6a5bdfe16d93fa42cfc3f87c76d",
+    "retrieved_utc": "2026-09-17T20:22:36.718783+00:00",
+    "text_file": "nakamura-denzumi-nishino-2020-variable-shift.txt",
+    "text_sha256": "4121c1920361107bfa268073d6a884ee66f264b9f8b814aa5a9bb5719cba75b3"
+  },
+  {
+    "arxiv": "2312.00793v1",
+    "url": "https://arxiv.org/pdf/2312.00793v1",
+    "retrieved_url": "https://arxiv.org/pdf/2312.00793v1",
+    "file": "zhong-et-al-2023-tagged-sdd.pdf",
+    "sha256": "499f58998a667fa4433bebfa5cd347b1fb8e7d88b2a992419cc9802d54981379",
+    "retrieved_utc": "2026-09-17T20:22:37.201159+00:00",
+    "text_file": "zhong-et-al-2023-tagged-sdd.txt",
+    "text_sha256": "f66c10a328eef885be853dbb001e1ab1dbe5f72fd5aae4149852b8f79b95c526"
+  }
+]

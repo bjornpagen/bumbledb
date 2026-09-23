@@ -1,0 +1,2147 @@
+# Event implementation ledger
+
+The complete revision 0.9 proposal is the target. This ledger records native
+implementation evidence; it does not replace or reduce the M0–M8 acceptance
+gates in `proposal/implementation-plan.md`. No release is authorized by this work.
+Work resumed at the user’s request. [The checkpoint](event-checkpoint.md) retains
+the historical pause and completed resumption checks. The full goal remains active.
+Checkpoint sections below retain the remaining-work statements from their own
+revision; this table and the latest checkpoint describe current progress.
+
+Base: `d76d31ab` (public v1.3.1 plus removal of scratch allocation-count tests).
+Implementation branch: `codex/event-algebra`. Owned core commit: `fca4ac667`.
+
+| Gate | Status | Evidence / remaining work |
+| --- | --- | --- |
+| M0 contract baseline | Passed before native edits; current proposal audited separately | Historical revision 0.8 readiness record is preserved; revision 0.9 adds native identity and bounded fixed-point semantics |
+| M1 owned canonical core | Implemented | Shared `bumbledb-event` crate; completed functions, essential tables, fallible construction, legal counts, saturation, checked alignment/registry, ownership and native cancellation |
+| M2 structural type / persistence | Native structural/fixed-law/univariate-family and initial SDK slices implemented; full gate open | Event values/macros, canonical rows, image words, parameters/sets/literals, Free Join equality, spill and owned results; SDK event field, owned carriers, executor-backed host algebra and Pack. BEDC descriptors reconstruct checked owners; BEVT v2 retains finite laws and v3 retains shared univariate sources; BESC v1 fixed objects and v2 family functions/channels/refinements/revisions/explicit Beta priors are implemented; complete SDK remains |
+| M3 dependencies / admission | Native field and contextual full projections implemented; full gate open | Pointwise overlap, union coverage, full partitions, final-state repair/deletion, empty-key lookup refusal and conservative planner witnesses work. Exact Event selections and owned closed Event rosters are implemented; capacity projection positions remain guarded |
+| M4 faces / maps / relations | Structural relation core, parameter maps, domain inclusions and common guard refinement implemented; integration gates remain | Full face/fibre products, complete square certificates, membership-FD roles, converse, composition, modalities, both residuals, graph/readout conversion and safe diagram inspection/reconstruction. BEDC transport, SDK construction/inspection and typed relation queries are implemented; parameter maps/products retain one actual assignment. Guard lifts, exact descent and readout refinement preserve the source; domain inclusions require whole target cells. Captured and row-bound query guard/refinement transport includes equal-domain peer source rosters; parameter-changing maps and complete SDK remain |
+| M5 query / Pack / Free Join | Complete-binding Event/Test, relation/readout programs, SDK builders/diagnostics, Pack and staged Probability/Expectation/Number/Predicate values implemented; full gate open | Boolean/ITE/cardinality, structural tests, six readout operators, typed relation operators and Star with captured faces/products, grouped union, scratch claims, staging and owned occurrence fault sets; integer/ratio and exact rational/finite/family payoff heads; typed SDK observation imports, identity joins and owned forwarding; nested least/greatest binders retain sealed contexts and shared work budgets; explicit predicate quantifiers and captured/row-bound Guard plans with truth cases/lift/exact descent; common bound-predicate rosters and exact parameter-region membership are implemented; equal-domain multiple-source refinement is implemented; certified factoring remains |
+| M6 sources / inference | Fixed finite dynamics, shared univariate families/functions and family conditioning/likelihood/Jeffrey and channels plus explicit univariate Beta binding and native partial numerical arithmetic and predicate algebra with portable replay and explicit truth guards implemented; full gate open | Exact arithmetic, univariate domains/guards, normalized fibre laws, owned conditional functions with endpoint holes, domain restriction, BEVT v3, family function arithmetic/weighted images/law designation and finite channels/revisions; multivariate/general function solving, multivariate source binding, TypeSafe adapters and retained-memory policy remain |
+| M7 information / fixed points | Finite information, partition, expectation, fixed-point, strategy and reachable belief-memory core implemented; other gates open | Readouts, indexed partitions, typed programs, closure, enabled actions, uniform permissions and ranked/safe policies; exact reachable possibility memory lowers to ActionArena; signed host expectations with rational and guarded parameter-dependent payoffs plus checked local function covers; BEBM recipes and BEBA named memory compilation have SDK construction/inspection, hidden knowledge/possibility and ranked reach/continuing-safety consumers; BEAC native arena/reach/safety replay is implemented; general strategy query consumers, program transport, native query memory construction, general semialgebraic functions and complete query/source integration remain |
+| M8 qualification | Pending | Full battery, packaged Rust/TypeScript consumers, executable Coup fixtures, malformed descriptors, integrated performance and ARM64 evidence |
+| Final commit / push | Pending | Complete implementation and curated evidence committed and pushed; no version bump, tag or release |
+
+## Core and equality
+
+`Value` belongs to the theory crate and must not depend on the storage engine.
+The shared Event crate owns values, canonical managers and mathematical
+operations; the engine supplies cancellation through `Control`/`WorkContext`.
+
+An owned Event retains its manager. Rust `Eq`/`Hash` is scoped handle identity.
+Independent owners require checked `align_to`; it is not an extensional global
+comparison. Canonical persistent bytes identify the named source, original support,
+designated law if present, and supported membership. A query registry aligns equivalent decoded values into
+one namespace, so ordinary word equality implements Event equality there. Equal
+counts or probabilities do not identify Events. Public order comparisons refuse.
+
+## Native storage and ownership
+
+[BEVT v1/v2/v3](event-value-format.md) is embedded as a length-prefixed Event field in
+canonical rows. The field occupies two ordinary resident words, not an interval
+endpoint pair. Whole-fact deduplication uses canonical bytes, never resident keys.
+Generated facts containing Event are owned and `Clone`; they are not `Copy`.
+Event host-newtype syntax is not implemented.
+
+Each typed or dynamic decoded row aligns its own Event fields through a lazy
+registry. Independent rows remain independently owned and require explicit
+alignment for standalone algebra. Query outputs use the execution registry and
+own their returned Events, including pages and spill results after the snapshot,
+executor and database are dropped. Missing/stale/unregistered keys refuse.
+Database decode paths with a WorkContext retain cancellation; manual
+`RowReader::new` and the legacy no-work scan use the uncancellable core control.
+
+Resolver generations reclaim unreferenced text independently. **All registered
+Events and canonical descriptors remain strongly retained until the generation
+is released.** The default registry limit is 2,000,000 distinct Events; that is
+an entry bound, not a byte budget. Images and executions pin their generation.
+Cache rotation cannot invalidate retained results. Memory-pressure qualification
+and a complete retained-byte policy remain acceptance work; eviction alone does
+not reclaim Event history in a live generation.
+
+The raw Node bridge transports canonical BEVT `Uint8Array` values, tagged `event`
+where a tag is required. The worker serializes returned Events under its work
+context; malformed input refuses in the shared core decoder. This is the native
+wire foundation. The [initial TypeScript SDK](event-sdk.md) now adds the `event`
+field, opaque owned carriers, worker-backed host algebra, query literals and
+parameters, Pack and generated stored-field bindings. Pure envelope parsing does
+not claim mathematical admission. Contextual full terms and exact Event schema selections are supported.
+Managed log schema ingress also uses worker-owned admission across histories,
+caches, command recovery, administration and transitions. Complete query/source
+APIs remain open; historical synchronous descriptor/log-schema handles retain
+their scalar-only guard.
+The log JSON value spelling is `{"event":"<BEVT hex>"}`.
+Command result records retain their existing scalar-only contract.
+
+## Native dependency admission
+
+An Event key routes on its ordinary scalar fields and rejects intersection
+between distinct whole facts. Event containment compares each source region
+with the union of matching target regions. Exact declared target keys are still
+required. Canonical BEVT values hold the union/conflict summaries in the existing
+scratch maps; independently decoded owners are checked and aligned before any
+empty/full shortcut. A group retains its context even when its target is absent
+and every source Event is empty. Different scalar groups may use different spaces.
+
+Incremental admission rebuilds the complete final state of each affected Event
+statement. This handles deletions and atomic insert-before-delete repairs;
+affected-group scheduling is a future optimization. Conflict citations include
+only facts meeting the conflict region, ordered by canonical whole-fact bytes.
+Domain-law rejections and operational/context failures remain distinct. The
+complete participating-operand fault set is implemented for Event/Test and Pack
+heads as described below; typed relation programs retain their M5 gate.
+
+The compiled `EventKeyMayBeEmpty` witness cannot authorize unconditional result
+distinctness. Single-result keyed lookup refuses an empty Event unless the
+supplied fields include an independently sufficient scalar key. Ordinary queries
+continue to return empty-valued facts and deduplicate equal projected Events.
+Cross-owner lookup equality uses canonical bytes. The small reference `MapState`
+now also deduplicates Event meaning; insertion is fallible and reports whether
+a fact was new, with a cancellable `insert_with_control` variant.
+
+[Contextual `true`](event-projections.md) is now a typed projection term across
+Rust macros, named/resolved descriptors, schema JSON, raw Node transport,
+fingerprints, compiled metadata and admission. It establishes full coverage
+without storing an Event owner. Full/full requires actual target presence;
+full keys imply scalar uniqueness under the admitted nonempty-world contract.
+Existing field-only fingerprints and permuted Event containment positions remain
+unchanged. Closed scalar rosters may participate through declared full keys.
+[Exact Event selections](event-selections.md) also filter these statements.
+[Closed Event rosters](event-ground.md) now participate through exact declared
+pointwise keys and checked ground coverage. Event capacity projections remain
+guarded; complete query/source authoring awaits the later consumer milestone.
+
+## Checked finite maps
+
+The [native map contract](event-maps.md) supplies owned arbitrary Boolean
+readouts between checked source/target spaces. Pullback uses simultaneous graph
+substitution; image masks original support and abstracts source coordinates as
+soon as remaining readouts no longer use them. Maps may copy, discard or combine
+coordinates. Each side can contain 62 coordinates without a combined workspace.
+
+Construction checks every readout and original target support. The separate
+surjectivity certificate checks the exact support image, without asserting
+complete projection-square fibres or preservation of a designated law. Map
+results are ordinary owned Events and already persist/join using BEVT identity;
+BEDC now carries checked finite map descriptors, including measured endpoint
+Events. Captured map/face/product query heads are implemented below. Structural
+map certificates make no law-pushforward assertion.
+
+## Lean evidence and remaining correspondence
+
+The proposal suite was rerun: **246 reports / 30 files, 160 axiom-free**.
+The [current native semantic run](event-evidence/native-rational-payoffs-semantics/check.json) adds
+**645 reports / 38 files**, using only permitted standard Lean axioms.
+Persistence proves support-relative identity and the registry-key law under
+explicit admission/roundtrip premises. FixedPoint proves bounded stabilization,
+least/greatest extremality, uniform shared environments and counterexamples for
+negation and environment mixing. No `sorryAx` is accepted.
+
+Admission proves the executable Boolean coverage/conflict accumulator against
+distinct whole-fact incidence, pointwise-key and containment equivalences,
+traversal independence and exact citation membership. It retains counterexamples
+for duplicate contributors and subtracting deleted coverage. Seven additional
+reports prove contextual full-key uniqueness, partition and presence laws and
+show why an empty world space breaks them. These laws assume
+one already-aligned legal world type and a duplicate-free fact roster; they do
+not establish those native premises by themselves.
+
+These prove reference denotations. They do not verify the Rust graph, encoder,
+byte parser, mutexes, allocator, source solver or query compiler.
+In particular, a finite-diagram node count is not an Event-algebra atom bound.
+Native fixed-point admission counts legal logical atoms and checks typed program variance;
+the correspondence of native counting, DAG execution and equality to those
+reference premises remains tested, not kernel-verified.
+
+CoordinateMaps adds 26 reports for support admission, Boolean substitution,
+both image adjunctions, surjectivity/occupancy, composition and the recursive
+image reference with safe abstraction after last use. Its counterexamples keep
+decoder aliases, absent fibres, image intersections and prematurely forgotten
+readouts separate. These proofs neither certify every native map square nor
+verify extraction of raw coordinate dependencies from the Rust graph.
+
+Relations adds 22 reports for full legal products, joint-fibre certificates,
+membership-FD descent, shared-witness lowering, both residual adjunctions and
+graph/readout admission. The [native relation API](event-relations.md) implements
+those finite structural operations. Its actual constructors and plans remain
+tested Rust, not a machine-checked refinement of these denotations.
+
+The old readiness record pins preimplementation production source. Do not
+rewrite it to claim its isolation audit verifies the current engine. Revision
+0.8 documents are preserved before revision 0.9 changes. The new current-proposal
+auditor checks documentation/proof evidence without asserting Rust completion.
+
+## Verification of the native slice
+
+- Event core: 15 substantive tests, including exhaustive four-world supports,
+  dense symbolic oracles, projection/counts, codec corruption, allocation/order
+  changes, collisions, capacity/cancellation and owner lifetimes.
+- Native Event storage: ten tests covering canonical dedup/reopen, cross-owner
+  equality joins on resident/cursor paths, literals/parameters/set dedup, rollback,
+  concurrent publication, malformed bytes, a pinned row fixture, same-row alignment,
+  cancellation and retained pages. A separate internal test covers spill/stale keys.
+- Rust query macro Event parameter test and native WorkContext test pass.
+- Raw Node bridge: all 103 unit tests pass, including two Event tests for owned
+  wire roundtrip, malformed/version refusal and worker cancellation. Node crate
+  compilation includes every target. TypeScript checking and the wire-tag fixture
+  test pass; this does not claim the complete packaged SDK has been qualified.
+- Earlier regression run: 1,341 engine unit tests passed, 18 ignored; 25 API and
+  five keyed-get tests passed. These precede the final same-row decoder change;
+  the focused Event tests exercise that change. Log JSON: seven tests passed.
+
+Formatting, whitespace checks and strict clippy pass for the core/engine and
+the separate Node crate. The [native slice record](event-evidence/native-storage-qualification-final/check.json)
+pins the checked source state and retained logs. The
+[proposal handoff](event-evidence/implementation-handoff-0-9-final/check.json)
+separately records documentation, proof and reference checks.
+This evidence qualifies the described slice, not the entire proposal. The final
+packaged-consumer battery and integrated performance qualification remain M8.
+The local proposal laboratory is preserved and will be curated explicitly for
+Git; it is not blanket-added or deleted.
+
+The [native admission qualification](event-evidence/native-admission-qualification/check.json)
+records the later field-dependency implementation and its checks. Its independent
+four-world oracle covers 768 partition cases across full and nonrectangular
+supports. Additional tests cover foreign/empty contexts, multiple groups,
+canonical duplicates, final-state repair, rollback, deletion, keyed reads,
+Free Join projection deduplication, stable citations and reference-state identity.
+A separate internal test forces Event summaries through scratch spill, oversized
+keys, context refusal and cancellation. This supersedes the earlier native
+storage record for the changed admission paths, without rewriting that record.
+
+The [full projection qualification](event-evidence/native-full-projection-qualification/check.json)
+extends the field-dependency slice with contextual constants. Fourteen tests
+(including three generated closed-enum checks) cover 768 additional partition
+cases across three supports, empty/foreign contexts, full-only keys, exact target
+resolution, scalar permutations, closed rosters, atomic repair/deletion and
+reopening. Schema-file and real N-API tests retain the typed marker and refuse
+malformed constants. The [updated handoff](event-evidence/implementation-handoff-full-projection-final/check.json)
+audits the current proposal and 246 proposal plus 37 native proof reports.
+These records do not close M3, later source/face/query milestones or M8 performance.
+
+The [native map qualification](event-evidence/native-map-qualification/check.json)
+adds nine core map tests, including 61,440 exhaustive map/predicate cases and a
+bounded 62-coordinate symbolic case, plus two database integration tests for
+storage, Free Join equality, ownership and cancellation. The
+[map handoff](event-evidence/implementation-handoff-maps/check.json)
+reconciles current documents with 246 proposal and 63 native reports. Full M4
+and the complete M0–M8 implementation target remain open.
+
+The [native relation qualification](event-evidence/native-relation-qualification-final/check.json)
+adds thirteen relation tests and a database persistence/join consumer. It checks
+all 4,096 two-state R/Q/V triples for both adjunctions and all 1,024 R/Q/E triples
+for the guarded Must law, alongside asymmetric supports, role failures, nonlinear
+environments, descriptor mismatches, graph/readout recovery, algebraic identities,
+capacities and a 60-bit symbolic workspace. The
+[relation handoff](event-evidence/implementation-handoff-relations/check.json)
+records the current proposal and 246 proposal plus 85 native proof reports.
+This does not close descriptor transport, source/query integration or M8.
+
+The [diagram inspection API](event-inspection.md) now exposes original support,
+completed membership, borrowed table words and safe shared-node traversal through
+an immutable owned snapshot. Checked reconstruction preserves named context and
+legal support across working orders. Borrowed views hold no manager lock. Ten
+Inspection reports prove an acyclic signed-graph reconstruction reference under
+explicit constructor correspondence; they do not verify native graph copying.
+Seven native tests include a separate bitset interpreter, arbitrary supports,
+62-coordinate symbolic traversal, independent lifetime and resource refusal.
+The [inspection qualification](event-evidence/native-inspection-qualification/check.json)
+and [updated handoff](event-evidence/implementation-handoff-inspection/check.json)
+record this extension. Query/source integration, descriptor transport and the
+remaining M0–M8 gates stay open.
+
+The [finite information API](event-information.md) adds possible/guaranteed/ambiguous
+Events, nonvacuous evidence cases, unique FD factorization through onto readouts
+and checked indistinguishability relations. Its environment gate prevents the
+product from silently changing observation cells. Nineteen Information reports
+prove reference lowering, evidence/FD and relation-kernel contracts. Eight native
+tests include independent partition oracles and 62-bit symbolic readouts; the
+database consumer uses information after reopening and closing its owner.
+The [information qualification](event-evidence/native-information-qualification/check.json)
+and [information handoff](event-evidence/implementation-handoff-information/check.json)
+record this extension. These operations implement part of M7.
+
+The [finite program and fixed-point API](event-fixed-points.md) now adds owned,
+inspectable typed instruction DAGs with checked monotone admission. Finite carriers
+count original legal worlds; bounded iteration includes exact equality detection
+and refuses budgets/cancellation without returning a partial solution. Derived
+operations implement CanReach, InevitablyReach, SafeThroughout and Star with
+checked endpoint/environment roles and one shared middle witness. Programs has
+13 variance/reference reports; Closure has 14 denotational reports; FixedPoint
+adds nine legal-roster and detection reports. No arbitrary host callback can
+bypass admission.
+
+The [fixed-point qualification](event-evidence/native-fixed-point-qualification/check.json)
+records **63 core tests and five doctests**, 1,343 engine tests (18 ignored),
+Event integrations, workspace and Node checks, and strict clippy. Eleven new core
+tests cover truth functions, finite relational oracles, environment/role refusal,
+budgets, ownership and symbolic carriers up to 2^62 worlds. The database consumer
+persists computed answers, reopens, joins on resident/cursor paths and retains
+owned results after closing the database. The
+[fixed-point handoff](event-evidence/implementation-handoff-fixed-points/check.json)
+audits that checkpoint against 246 proposal plus 150 native reports. The partition
+extension below supplies finite observable rosters. Measured expectation, action availability/uniform strategies,
+descriptor transport, full query programs and integrated performance remain open.
+
+The [finite partition API](event-partitions.md) adds an indexed, owned Event
+roster with explicit parent coverage and disjointness. Scalar observable labels
+stay in ordinary columns. Admission clips to evidence; grouping, shared-world
+refinement, pullback, checked readout conversion and complete cardinality buckets
+preserve the partition contract and empty positions. Thirteen Partitions reports
+prove those reference laws and keep arbitrary image separate from pullback.
+
+The [partition qualification](event-evidence/native-partition-qualification/check.json)
+records **70 core tests and six doctests**, 1,343 engine tests (18 ignored),
+Event integrations, workspace/Node checks and strict clippy. Seven new core tests
+cover exhaustive finite oracles, evidence, contexts, readouts, resource refusal,
+empty cells and a 62-bit symbolic carrier. The database fixture uses native
+pointwise dependencies to admit stored count/value rows and reject a coverage
+gap; reopen and owner-lifetime checks preserve explicit empty buckets.
+The [partition handoff](event-evidence/implementation-handoff-partitions/check.json)
+audits 246 proposal and 163 native reports.
+
+The [action and strategy API](event-actions.md) adds checked Step(state, action,
+outcome) roles, enabled choices, controlled predecessors and greatest uniform
+one-step permissions on inhabited observation cases. Fully observed reachability
+retains first-entry rank partitions and every action that strictly decreases
+rank. Continuing safety retains enabled actions that preserve its invariant.
+Supplied policies can restrict these choices only while preserving coverage.
+No state visibility, probability policy or belief-memory update is inferred.
+
+Nineteen Actions reports prove reference quantifier order, permissions,
+rank-bounded termination for every policy choice/outcome, policy restriction and
+safety. Three FixedPoint reports prove first-entry uniqueness/coverage. The
+[action qualification](event-evidence/native-action-qualification/check.json)
+records **78 core tests and seven doctests**, 1,343 engine tests (18 ignored),
+Event integrations, workspace/Node checks and strict clippy. It includes
+exhaustive two-state policy/permission oracles and a symbolic 20-bit arena.
+The [action handoff](event-evidence/implementation-handoff-actions/check.json)
+audits 246 proposal and 185 native reports. Belief/information-memory construction,
+measured expectation, exact sources/adapters, query/SDK/descriptor integration
+and the complete M8 performance/consumer gates remain open.
+
+The [native Event/Test query heads](event-queries.md) now construct owned regions
+and six structural predicates in the Rust macro/IR and raw Node descriptor path.
+All sixteen truth functions, ITE, complement and fixed-roster cardinality preserve
+participating operands through scope admission. Empty results remain values.
+Interiors seal before consumption. Complete context-fault sets retain canonical
+source/support/value bytes and logical stage/rule/find/leaf identities; DNF
+collapse retains every written-rule stamp. Resource and scalar refusals never
+claim to be complete fault sets. Existing scalar first-error semantics remain.
+
+Query.lean adds **22 reference reports** for participation, same-world counts,
+empty closure, schedule invariance and complete-versus-partial fault reporting.
+The [query qualification](event-evidence/native-query-qualification/check.json)
+records core/engine/integration/macro regressions, strict workspace/Node clippy,
+Node tests, TypeScript checking and actual N-API grammar admission/refusals.
+The [query handoff](event-evidence/implementation-handoff-query-heads/check.json)
+audits that checkpoint against 246 proposal plus 207 native reports. The Pack
+extension below supersedes its query coverage; the evidence is unchanged.
+
+
+Grouped Event Pack now emits one union per present group, retaining empty values
+and all participating written provenance. Its canonical minimum context is
+independent of physical join order. Computed group-key faults and Pack context
+faults are accumulated together; undefined keys do not create groups, and later
+valid keys still participate. Exact claims and wide group keys use native scratch,
+with inline claim keys preserving group traversal after spill.
+
+Pack.lean adds **19 reports** for union/presence, canonical minima in a lawful total
+order, context admission, provenance, saturation and partial-key participation.
+The [Pack qualification](event-evidence/native-pack-qualification/check.json)
+records the expanded query integrations, forced spill/cancellation, regressions,
+strict workspace/Node clippy and actual Node Pack execution. The
+[Pack handoff](event-evidence/implementation-handoff-pack/check.json) audits
+246 proposal plus 226 native reports. M5 remains open for face imports, typed
+relation programs, SDK diagnostics and certified factoring. Sources, complete
+SDK/descriptor transport, partial-observation memory, packaged Coup consumers,
+integrated performance and the full M0–M8 acceptance gates remain unfinished.
+
+
+[BEDC v1 descriptor transport](event-descriptors.md) now captures finite maps,
+surjectivity requests, face/pair products, relation regions, composition plans
+and complete squares as pure data. Import checks full space markers, reconstructs
+original supports and endpoint orientation, and reruns every certificate gate.
+Syntax parsing returns no executable certificate. Names remain authored; import
+performs no implicit source allocation. Descriptor extents and kernel capacities
+are explicit refusals, with cooperative cancellation throughout.
+
+Descriptors.lean adds **eleven reference reports**, ten axiom-free, for legal-code
+reconstruction and the support/role/environment premises it requires. The
+[descriptor qualification](event-evidence/native-descriptor-qualification/check.json)
+records seven new core tests, the strengthened database reopen/join consumer and
+workspace/Node regressions. The
+[descriptor handoff](event-evidence/implementation-handoff-descriptors/check.json)
+audits 246 proposal plus 237 native reports. This implements finite host transport;
+query face imports, SDK consumers, measured-source descriptors, programs/strategy
+transport and all remaining M0–M8 gates retain their scope.
+
+Captured readout queries now retain checked `EventImport` owners and their
+canonical BEDC data. Rust `use map` and raw Node map descriptors expose pullback,
+image, universal/nonvacuous image and possible/guaranteed regions. Map boundaries
+supply input and output contexts; every syntactic leaf occurrence retains its
+own context demand. Incompatible declared outputs refuse before body execution.
+Independent equivalent owners align explicitly, and no query operator infers
+source identity, independence or a new probability law.
+
+QueryMaps.lean adds **18 reports**, 11 axiom-free, for scope-indexed evaluation,
+whole-program congruence from demanded inputs, complete occurrence validation
+and map denotations. The [readout qualification](event-evidence/native-query-map-qualification/check.json)
+records five new database integrations, compile-fail coverage, strict workspace
+and Node checks, TypeScript parser tests and eight actual map execution cases.
+The [readout handoff](event-evidence/implementation-handoff-query-maps/check.json)
+audits 246 proposal plus 255 native reports. These remain reference proofs with
+explicit Rust correspondence obligations. Full relation query programs, SDK
+diagnostics, certified factoring and the other M0–M8 gates remain open.
+
+Typed relation query programs now retain `use faces`/`use product` imports.
+The pure-data `RelationExpr` supplies binding, identity/tests, Boolean operations,
+converse, composition, both residuals and finite Star. Event views expose Region,
+Domain, Range, May, All, Must and Post. Composition/residual/Star syntax requires
+the authored product plan; no result namespace or shared workspace is invented.
+Static role checks compare actual environment readouts and original support.
+Converse retains coordinate orientation; equivalent independently named products
+reindex through the checked host algebra. Per-occurrence context validation
+precedes all value evaluation, including dead ends and constant results.
+
+QueryRelations.lean adds **eleven reports**, eight axiom-free, proving typed
+whole-program transport under legal endpoint bijections, both residuals, finite
+paths and modal transport. The [relation-query qualification](event-evidence/native-query-relation-qualification/check.json)
+records seven database integrations, 4,096 complete and 512 asymmetric/coupled
+product triples, role/ownership/fault checks, all 31 actual N-API relation scenarios
+and eight malformed/context refusals. The
+[relation-query handoff](event-evidence/implementation-handoff-query-relations-final/check.json)
+audits 246 proposal plus 266 native reports. General bound fixed-point query
+programs, complete SDK diagnostics, measured sources, certified factoring and
+the other full-plan gates remain open. No performance ranking or release follows.
+
+## Exact finite laws and measured persistence
+
+The [finite source API](event-sources.md) now designates normalized nonnegative
+rational joint densities over Event regions. Equal densities merge canonically;
+zero-mass admissible worlds remain structural possibilities. Contraction uses
+legal counts, including skipped outcome bits, and returns exact rationals.
+Conditional observations retain their source, numerator and evidence mass;
+undefined conditioning remains distinct from MissingLaw and empty Events.
+
+BEVT v2 carries the designated finite law; version 1 is unchanged. Alignment,
+diagram rebuilding, registry identity, storage and Free Join include the law.
+Structural restriction explicitly produces an unmeasured context. Products
+remain unmeasured, and map certificates do not establish law pushforward.
+Arithmetic has explicit conservative bit/step limits; law pieces and canonical
+payload bytes have separate bounds. These are not total retained-memory quotas.
+
+FiniteDensity adds 20 reports (six axiom-free) for count/density contraction,
+regrouping, complement, evidence and skipped-outcome multiplicity. The module
+uses common-denominator natural numerators and an exhaustive legal-world roster;
+it does not verify the bigint library, graph counts or BEVT v2 parser. Twelve
+new core tests and three database integrations include 61,440 conditional
+observations, a 62-bit symbolic law, law-sensitive joins, zero-mass dependency
+admission/rollback, malformed sources, cancellation and independent ownership.
+Actual N-API execution checks measured values and refuses unnormalized laws.
+
+The [finite-law qualification](event-evidence/native-finite-law-qualification/check.json)
+and [finite-law handoff](event-evidence/implementation-handoff-finite-laws-final/check.json)
+record that slice with 246 proposal plus 286 native reports. It left conditional
+channels to the later implementation below. Shared parameters, solver-backed
+constructors, source revisions, TypeSafe imports and owned query observations
+remained at that checkpoint. Later sections record subsequent work; full M0–M8
+qualification is not complete.
+
+
+## Conditional sources through exact weighted images
+
+[FiniteFunction and FiniteKernel](event-functions.md) now supply canonical signed
+rational functions, pointwise algebra, pullback and symbolic weighted image.
+The image kernel masks support and sums each source coordinate exactly once,
+after its last remaining readout use. It preserves copied-readout correlation
+and supports 62-bit source/target spaces without a combined coordinate arena.
+
+Conditional-law admission checks unit row mass at every legal parent, including
+zero-prior rows. Closing under an explicit prior retains its old marginal and
+returns a measured extension plus the parent readout/surjectivity certificate.
+An FD check detects dependence on information omitted by an actor readout.
+Fresh outcome extensions remain distinct from copying or reusing an Event.
+
+WeightedMaps adds 18 reports (four axiom-free). Eight core tests check 3,840
+four-world maps, signed values, categorical encodings, symbolic images, scope
+and resource faults. The native Coup channel obtains 92/147 and 5/21 after Tax;
+a database consumer reopens those worlds and computes translated intersections
+through captured map query heads on both execution paths.
+
+The [conditional-source qualification](event-evidence/native-conditional-source-qualification/check.json)
+and [conditional-source handoff](event-evidence/implementation-handoff-conditional-sources/check.json)
+record 246 proposal plus 304 native reports. That checkpoint left source revisions,
+shared parameters, solver capabilities, TypeSafe adapters and observation heads open;
+function/kernel SDK and descriptor transport were also left open there; the
+later BESC slice below implements fixed-law native descriptor transport.
+
+
+## Fixed-law revisions and signed expectations
+
+[Explicit revisions](event-revisions.md) now distinguish Event conditioning,
+nonnegative likelihood factors and Jeffrey posterior replacement. Each retains
+its prior and mathematical receipt; successful outcomes retain a checked
+identity-on-worlds translation. Zero evidence/normalizers and unsupported positive
+targets are owned impossible outcomes. Neither zero posterior mass nor revision
+changes structural admissibility. Likelihood scale remains visible; Jeffrey
+revision has no intrinsic evidence probability.
+
+Finite-function expectation now retains the signed payoff, evidence, numerator
+and evidence mass. It checks contexts and missing laws even for zero payoffs.
+The total function's authored zero default does not discharge a query observable's
+separate grouping, distinct-value disjointness and coverage obligations.
+
+Revisions added 30 exact rational Lean reports, bringing that native suite to
+nineteen modules. The new proofs cover normalized/nonnegative revisions, likelihood scale/composition, target
+masses, within-cell ratios, same-partition idempotence and signed contraction.
+Nine core tests include 1,280 conditioning/expectation cases, 240 partition
+revisions, symbolic 62-bit support, owned outcomes and explicit refusals. The
+persisted Coup consumer translates old Events into the posterior on resident
+and cursor paths, and measures signed utility after external owners drop.
+
+The [resumed revision qualification](event-evidence/resumed-revision-qualification/check.json)
+and [current handoff](event-evidence/implementation-handoff-revisions-checkpoint/check.json)
+record 246 proposal plus 334 native reports. These are denotational proofs,
+not Rust extraction or a performance result. That checkpoint left receipt/function/
+kernel transport, parameter families, TypeSafe adapters, query observations/
+expectation and SDK completion open. The BESC slice below implements fixed-law
+native transport; the other M0–M8 obligations retain their scope. No release follows.
+
+The first [revision qualification attempt](event-evidence/native-revision-qualification/check.json)
+exposed a Node runtime cleanup race: supervisor reclamation removed a cancelled
+operation without waking workers waiting for its owner. Reclamation now notifies
+those waiters for both successful and error outputs. A focused concurrency test
+[passes with the wakeup and fails when it is removed](event-evidence/native-revision-runtime-wakeup-checked/check.json).
+The failed run remains evidence. The qualification at the pause contained this
+fix but was stopped before all checks completed. The resumed qualification above
+subsequently passed all fourteen steps.
+
+An earlier negative-control attempt revealed that `wait_timeout_while` can
+observe the changed predicate only at its deadline and still report success.
+The regression now checks the direct wait timeout, so it actually distinguishes
+a delivered wakeup from a deadline poll. Both attempts are retained.
+
+
+The [portable fixed-law source envelope](event-source-descriptors.md) now adds
+BESC v1 functions, channels and complete revision receipts. Admission reconstructs
+scalar cells and per-parent normalization, then replays every revision and checks
+all receipt numbers/outcomes. Embedded measured Events consume the caller's shared
+arithmetic budget and law limits. Independent descriptor owners exposed a native
+channel-arena alignment defect; construction now retains the density in its map's
+source arena before later closure. Ten core tests include 980 finite-function and
+revision cases plus forged claims, zero-prior rows, 62-coordinate support, byte
+compatibility and resource/cancellation refusal. The persisted Coup consumer
+reconstructs channels, receipts and signed payoffs across owner/database release.
+SourceTransport adds fourteen reference reports; native total is 348, proposal 246.
+[Source transport qualification](event-evidence/native-source-transport-qualification/check.json)
+and [current handoff](event-evidence/implementation-handoff-source-transport/check.json)
+retain this slice. Full SDK, parameter families/provider provenance, query
+observations/aggregates and the remaining M0–M8 gates remain open.
+
+The [initial Event SDK contract](event-sdk.md) now exposes owned Event carriers
+and native host algebra through the existing Effect runtime. Ordinary keys and
+mirrors enforce pointwise conflict and joint coverage from TypeScript. The
+isolated SDK qualification builds declarations and compiles/imports generated
+bindings, then exercises native algebra, row persistence/reopen, equality joins,
+parameters, imported Pack queries, malformed contexts and cancelled delivery.
+The [SDK qualification](event-evidence/native-sdk-value-qualification/check.json)
+retains source hashes and the regression battery. The
+[updated handoff](event-evidence/implementation-handoff-sdk-values/check.json)
+continues to use 246 proposal and 348 native semantic reports; this slice changes
+transport/authoring, not those mathematical models. Worker-side ingress is extended
+below; constructive SDK query/source operators and the other M0–M8 gates remain open.
+
+Supported row/key/parameter/query ingress now separates synchronous owned copying
+from cancellable mathematical admission. A private pending tree carries BEVT/BEDC
+bytes; worker admission reconstructs native Events, imports and query IR. Shared
+and detached backing refuse before copying. Malformed semantic inputs return a
+registered operation and an Event engine error. A failed draft admission releases
+all prior staged chunks and spends the draft. Rejection citations also encode
+their Event values on the worker, rather than during JavaScript delivery.
+
+The [ingress qualification](event-evidence/native-sdk-ingress-qualification/check.json)
+adds actual-addon boundary checks to the full battery. Native checks cover
+cancellation precedence, owned worker results, draft-prefix reclamation and
+rejection encoding. The [ingress handoff](event-evidence/implementation-handoff-sdk-ingress-final/check.json)
+retains 246 proposal and 348 native semantic reports. No mathematical model or
+wire format changes in this slice. Full SDK operators/diagnostics, schema Event
+placements, aggregate retained-memory policy and the remaining M0–M8 gates stay open.
+
+The SDK now constructs the complete existing Event/Test/map/relation query grammar
+through `EventExpr`, `EventTest` and `RelationExpr`. It retains owned BEDC carriers,
+shares the wire grammar with variable/descriptor leaf types, and lowers every
+operand without JavaScript evaluation. Description imports reconstruct checked
+builders; complete-query snapshots preserve binder identity through copied
+variables and captured programs. Derived fields retain Event/Boolean types through
+query imports, stages and Pack. Native preparation remains the role/context authority.
+
+The [query-builder qualification](event-evidence/native-sdk-query-qualification/check.json)
+adds SDK executions with independent tiny-world transport and answer fixtures,
+all sixteen Event functions, cardinality, readouts, relation/modal/residual/Star
+programs, owned query descriptions and refusal/reuse cases. The
+[query-builder handoff](event-evidence/implementation-handoff-sdk-query/check.json)
+retains the existing 594 semantic reports; no new mathematical interpreter is
+introduced. Descriptor/source construction, general fixed-point binders, structured
+diagnostics and all remaining M0–M8 gates retain their scope.
+
+Structured SDK Event errors now retain complete native operand fault sets under
+the existing Engine/event family. One-shot and prepared executions move owned
+canonical payloads into the executor. Delivery transfers logical coordinates and
+bytes without Event mathematics; a failed conversion publishes no partial reason.
+Decoder, capacity and cancellation errors never acquire a complete-set marker.
+
+The [diagnostic qualification](event-evidence/native-sdk-diagnostics-qualification/check.json)
+includes all eight records from duplicate written rules, multiple heads and
+multiple offending values, plus prepared/staged execution and retained payloads
+after runtime release. Native tests establish payload transfer without cloning and
+keep operational errors separate. The [diagnostic handoff](event-evidence/implementation-handoff-sdk-diagnostics/check.json)
+retains the unchanged 594 semantic reports. This closes current Event operand
+diagnostic transport; it does not close the remaining M0–M8 implementation gates.
+
+Structural SDK authoring now covers all seven BEDC kinds through native
+`EventDescriptor.admit`, `describe` and `inspect`. Plain data retains full space
+markers, arbitrary Event readouts and explicit product identities. Workers
+reconstruct every role/support certificate; inspection returns owned Events and
+portable derived descriptors. Combined inspection payloads have separate byte
+and item limits. No JavaScript mathematical interpreter or new wire version is
+introduced, and these bounds do not establish aggregate retained-memory policy.
+
+The [descriptor SDK qualification](event-evidence/native-sdk-descriptors-qualification/check.json)
+covers editable roundtrips, independent grammar, correlation, reversal, distinct
+composition roles, measured endpoints, incomplete-square refusal, copy boundaries,
+runtime lifetime and cancellation. A stored reachability query uses inspected
+projections and a native-authored composition plan. The
+[descriptor SDK handoff](event-evidence/implementation-handoff-sdk-descriptors/check.json)
+retains 246 proposal and 348 native semantic reports. BESC SDK construction,
+parameter families, complete query programs/observations and remaining M0–M8
+gates stay open; no release or version bump follows this slice.
+
+The SDK now exposes native exact scalars, signed finite functions, weighted
+images, strict law designation and owned fixed-law probability/expectation
+observations. These keep their original Event/function, evidence, numerator,
+denominator and rational-or-null value; no query-observable coverage is inferred.
+One arithmetic budget spans all decoded laws/scalars and the final operation.
+The shared Event/map admission methods also support this contract for Rust callers.
+
+The [source SDK qualification](event-evidence/native-sdk-functions-qualification/check.json)
+covers canonical arithmetic and decimal/binary intent, signed cell algebra,
+copied readout multiplicity, symbolic 62-bit laws, zero-mass possibilities, worker
+ownership/cancellation and the exact persisted Coup posteriors/utility. Pure
+Effect construction is tested with the addon unavailable. The
+[source SDK handoff](event-evidence/implementation-handoff-sdk-functions/check.json)
+retains the same 246 proposal and 348 native semantic reports: this reuses the
+existing finite mathematics, not a new JavaScript interpreter or Lean extraction.
+Kernel/revision SDK operations, parameter families, TypeSafe adapters, query
+observation/expectation slots and the other M0–M8 gates remain open.
+
+The SDK now constructs and closes checked conditional kernels and inspects
+explicit conditioning, likelihood and Jeffrey revisions through the native BESC
+core. Channel normalization covers zero-prior fibres. Visibility checks are FDs
+on an explicit onto readout. Owned receipts preserve likelihood scale, indexed
+empty cells and every unsupported positive target; importing a revision replays
+the entire claim. The posterior-to-prior translation and channel parent maps
+compose in ordinary stored Event queries. Resource errors remain errors.
+
+The [dynamics SDK qualification](event-evidence/native-sdk-dynamics-qualification/check.json)
+covers posterior-versus-likelihood interpretation, copy-versus-new-outcome
+semantics, zero-evidence outcomes, rejected forgeries, cancellation, shared
+admission arithmetic and bounded combined inspections. Its persisted Coup query
+enforces actor visibility and obtains exact posteriors after runtime/database
+release. The [dynamics SDK handoff](event-evidence/implementation-handoff-sdk-dynamics/check.json)
+retains 246 proposal and 348 native semantic reports. This is checked SDK access
+to the existing mathematical model, not a new proof of Rust refinement.
+Parameterized sources, TypeSafe adapters, query observations/expectation,
+general fixed-point query integration and the remaining M0–M8 gates remain open.
+
+The SDK now authors contextual full projections with trailing `true` through
+ordinary `key` and `on`, including explicit full keys on closed scalar rosters.
+Shape pairing includes the logical Event position; join-class inference and
+key lookup use stored columns only. A stored column named `true` remains
+distinct. The native binding emitter preserves the constant and schema identity.
+
+The [full-projection SDK qualification](event-evidence/native-sdk-full-final-qualification/check.json)
+adds measured-world partitions, zero-mass coverage, missing/overlapping branches,
+empty orphan rows, singleton lookup, selected closed ground laws and reopened
+Pack. Generated bindings are compiled, imported and compared with native
+fingerprints. Existing statement, declared-key and law-typing regressions are
+included. The [full-projection handoff](event-evidence/implementation-handoff-sdk-full/check.json)
+retains its 594 semantic reports. The subsequent selection slice below adds
+Event literals. Closed Event rosters are implemented in the later slice below;
+Event capacity positions and the remaining M0–M8 gates remain open.
+
+
+## Exact Event schema selections
+
+[Selections](event-selections.md) now use captured canonical Event identity
+through Rust descriptors/macros, native dependency judgment and managed core SDK
+schema authoring. Independently decoded owners have equal literal identity;
+named context, support, law and region remain part of the value. Event selections
+filter scalar/interval/Event/full containments and scalar capacity counts without
+clipping a projected region. All incremental and citation paths propagate
+predicate errors.
+
+Managed input carries owned envelopes in the same schema grammar until worker
+admission. Schema outputs capture Event bytes before delivery. Generated bindings
+preserve selections and fingerprints. Managed log converters now use the same
+input stage as described below. Historical synchronous descriptor/log-schema
+handles retain their guard; the full SDK gate remains open.
+
+The [selection qualification](event-evidence/native-selection-final-qualification/check.json)
+checks native/SDK regressions, persisted replacement/deletion/repair, runtime
+release and reopen, row/change-set codecs and generated bindings. The
+[selection handoff](event-evidence/implementation-handoff-selections-final/check.json)
+retains 246 proposal reports and 360 native reports (21 native modules).
+The twelve new Lean reports describe denotation and explicitly assume codec
+faithfulness; they are not a Rust implementation proof. The later ground slice
+implements closed Event rosters; Event capacity projections remain open, and
+M0–M8 remains active.
+
+## Managed log schema admission
+
+History create/open, tenant caches, command decode, administration and transitions
+now carry pending owned schema envelopes through runtime registration and resolve
+them on workers. Admitted requests alone reach the existing history machine.
+The copy boundary preserves shape/protocol diagnostics and typed work/resource
+errors. Legacy synchronous descriptor/log-schema handles remain scalar-only.
+
+The [log-schema qualification](event-evidence/native-log-schema-qualification/check.json)
+passes all 19 checks, including 150 core SDK tests, 51 log SDK tests, 119 native
+bridge tests, 1,354 engine tests (18 ignored) and 107 log unit tests. Raw ingress
+checks include 23 deferred semantic refusals and malformed log schemas that
+leave storage untouched. The log lifecycle tests preserve exact selections
+through runtime release, command recovery, cached history, backup/restore,
+transition rejection, replay, activation and abort. Private compiled SDK/addon
+copies are used; this is not packaged-consumer or hosted-storage qualification.
+No mathematical semantics changed: the current evidence remains 246 proposal
+and 360 native Lean reports. Remaining M0–M8 gates are unchanged.
+
+## Rust schema authoring compatibility
+
+The public named-schema structs and enums remain concrete Rust types. A single
+grammar declaration generates those types and the deferred `*SpecData<V>` forms;
+the fallible `try_into_spec` interpreter admits payloads into `SchemaSpec` before
+descriptor resolution. This preserves `use StatementSpec::*`, literal-variant
+imports, empty schemas and unannotated literal-free declarations. Concrete type
+aliases did not preserve enum imports and are no longer used for these names.
+
+The [schema-API qualification](event-evidence/native-schema-api-qualification/check.json)
+adds the theory library and external spec-consumer tests to the full Event
+qualification. Managed core/log SDK lifecycle tests exercise the same interpreter.
+This changes authoring representation only; dependency denotations and persistent
+schema fingerprints are unchanged. The complete M0–M8 goal remains open.
+
+
+## Owned closed Event rosters
+
+[Ground Events](event-ground.md) now carry portable schema bytes separately from
+owned values and execution-bound physical rows. Scalar-only schema fingerprints
+remain unchanged. Pointwise closed keys and ground Event/full coverage are
+checked while sealing; a shared helper preserves context across empty/full
+shortcuts in both sealing and transaction judgment. Mixed dependencies support
+populated admission, contributor deletion and atomic repairs.
+
+Closed reads, point lookups, actual ground folding and Free Join image/cursor
+paths retain exact Event equality across independent owners. Rust macro ground
+accessors construct owned Events; SDK key/target-key rules and generated bindings
+retain the same declared laws. Managed log lifecycle tests now carry ground
+Event axioms through command recovery, runtime release, caches, backup/restore,
+transition rejection, retry, activation and abort.
+
+The [ground qualification](event-evidence/native-ground-qualification/check.json)
+checks the complete native/SDK regression set. The
+[ground handoff](event-evidence/implementation-handoff-ground/check.json)
+retains 246 proposal and 371 native reports across 30 and 22 modules respectively.
+The eleven new Ground reports specify context retention and explicit
+binding/codec faithfulness premises; they are not Rust refinement or performance
+proofs. Event capacity projections, shared parameter sources, further query
+forms and the remaining M0–M8 gates remain open. No release, tag or version bump.
+
+## Named-parameter arithmetic foundation
+
+[Exact polynomials](event-polynomials.md) now retain shared real parameter names
+in a canonical sparse rational normal form. Arithmetic, simultaneous substitution,
+exact rational evaluation and explicit Beta moments preserve those identities;
+BEPL v1 supplies canonical standalone bytes. Parameters do not become Event
+outcome coordinates, and the arithmetic object does not claim source-domain or
+probability-law admission.
+
+Nine core tests include 625 independent signed cross-product assignments,
+55 Bernstein elevation identities, 36 conjugate updates, shared/allocation
+distinctions, evidence endpoints, byte malleability and resource refusal.
+A Rust database consumer explicitly integrates a full Beta prior cube, checks
+the resulting finite joint law, persists it and preserves its correlation
+through resident/cursor Free Join queries and owner release.
+
+The [polynomial qualification](event-evidence/native-polynomial-final-qualification/check.json)
+records the native/SDK regression set. The
+[polynomial handoff](event-evidence/implementation-handoff-polynomials-final/check.json)
+retains 246 proposal and 394 native reports across 30 and 23 modules. The 23 new
+Polynomials reports establish rational-assignment algebra and finite moment
+examples; they do not prove analytic integration, Rust refinement, normal-form
+completeness or the byte codec. Parameter-domain/guard solving, law ownership and
+transport, owned conditional domains and all remaining M0–M8 gates remain open.
+No release, tag or version bump.
+
+## Exact real-root capability
+
+[Algebraic roots](event-algebraic-roots.md) now provide checked real witnesses,
+exact polynomial signs and cross-presentation numeric comparison. Bounded native
+Sturm/GCD arithmetic isolates distinct roots, handles repeated factors, preserves
+strict endpoints and refuses unsupported multivariate input explicitly. It
+neither turns parameters into outcomes nor claims that root descriptions are
+canonical scalar bytes.
+
+Eight core tests include 245 factored rational-root cases, irrational witnesses,
+adversarial isolation/sign claims, close distinct roots and preallocation limits.
+An independent exact SymPy 1.14.0 fixture supplies 105 dense polynomials with
+complete real-root rosters and four sign judgments per root. The generator is
+retained and hashed; native tests have no external solver dependency.
+
+The [root qualification](event-evidence/native-algebraic-root-qualification/check.json)
+records the full native/SDK regression run. The
+[root handoff](event-evidence/implementation-handoff-algebraic-roots/check.json)
+retains 246 proposal and 409 native reports across 30 and 24 modules. The fifteen
+new reports cover generic field/order obligations and a local Sturm sign law;
+the full Sturm theorem and Rust correspondence remain explicit proof boundaries.
+Domain assembly, multivariate solving, canonical root/source transport, guarded
+functions and the remaining M0–M8 gates remain open. No release or version bump.
+
+## Univariate domains and guarded rational functions
+
+[Parameter regions](event-parameter-domains.md) now solve polynomial sign sets
+over one named real parameter, merge exact algebraic boundaries under all sixteen
+Boolean operations and retain independent point/sector membership. Complement
+shares immutable cell data. Inclusion, equality and witnesses are exact; empty
+regions cannot designate inhabited source domains.
+
+Guarded rational functions retain their ambient and defined domains together
+with original numerator/denominator polynomials. Arithmetic preserves every input
+hole, zero divisors exclude points, and signed comparison returns parameter
+regions. Numerical function equality does not equate evidence mass or provenance.
+Eight native tests include irrational singleton witnesses, every Boolean/sign
+operation, exact endpoints, rational oracles, shared-bias conditioning and failures.
+
+The [domain qualification](event-evidence/native-parameter-domain-qualification/check.json)
+records native/SDK regressions. The
+[domain handoff](event-evidence/implementation-handoff-parameter-domains/check.json)
+retains 246 proposal and 425 native reports across 30 and 25 modules. The sixteen
+new reports establish logical-cell and generic-field contracts with explicit
+presentation assumptions; they are not Rust or general source-solver refinement.
+Parameterized source/Space integration, multivariate solving, normalized laws,
+canonical transport and the remaining M0–M8 gates stay open. No release or bump.
+
+## Canonical algebraic boundaries and parameter-region transport
+
+[BEAR v1 and BEPR v1](event-algebraic-identity.md) now give standalone real
+algebraic values and named univariate sets stable numeric identity. Bounded
+Kronecker factor search selects a monic minimal polynomial and ordered real-root
+index. Region transport retains the captured parameter name and essential
+boundaries with independent point/sector membership. Decoders recompute the
+claims and refuse noncanonical descriptions or unfinished searches.
+
+Seven new tests cover numeric identity, rational/higher-degree roots, equivalent
+region descriptions, complement, scopes, malformed inputs, budgets and
+cancellation. A separate pinned SymPy 1.14.0 oracle supplies 143 exact
+minimal-polynomial/root-ordinal judgments from 104 polynomials.
+
+The [identity qualification](event-evidence/native-algebraic-identity-qualification/check.json)
+records native/SDK regressions. The
+[identity handoff](event-evidence/implementation-handoff-algebraic-identity/check.json)
+retains 246 proposal and 434 native reports across 30 and 26 modules. Nine new
+reports describe factor-selection, search completeness and key-uniqueness
+obligations under explicit mathematical premises. They do not formalize Gauss's
+lemma, interpolation, the full Sturm theorem, minimal-polynomial theory or Rust
+refinement. No performance qualification is claimed for trial divisor search.
+Parameterized source/Space integration, guard/outcome contraction, multivariate
+solving and the remaining M0–M8 gates stay open. No release or version bump.
+
+## Shared univariate sources in owned Events
+
+[Parameterized sources](event-parameter-sources.md) now retain one exact real
+parameter, its inhabited domain, deterministic guards and optional normalized
+rational-function law inside the ordinary Event owner. Constructor admission
+checks feasible guard codes, every nonempty outcome fibre and each law endpoint.
+Contraction sums outcomes only. Shared-bias conditioning retains its exact ratio
+and undefined endpoints; no prior or independence is inferred.
+
+BEVT v3 rechecks the entire binding/law and preserves declared source identity
+through storage, equality joins, FD/IND admission and owned results. Possible
+zero-mass worlds still require coverage and can conflict. Parameter-preserving
+maps and products capture one actual assignment and require equivalent exact
+guard partitions. Logical atoms, rather than real-world cardinality, bound
+sealed fixed points. SDK carriers accept v3 and expose `atomCount`; complete
+family authoring and observation APIs remain open.
+
+The [parameter-source qualification](event-evidence/native-parameter-source-qualification/check.json)
+records native/SDK regressions, including ten new core tests, two database
+consumers and a pinned cross-language shared-bias fixture. The
+[parameter-source handoff](event-evidence/implementation-handoff-parameter-sources/check.json)
+retains 246 proposal and 450 native Lean reports across 30 and 27 modules. The
+sixteen new reports establish quotient, map and contraction obligations under
+explicit feasibility/coherence premises; they do not prove Rust refinement.
+Common guard refinement, multivariate solving, family dynamics/prior integration,
+query observations, TypeSafe intents, full SDK and all remaining M0–M8 gates stay
+open. No release, tag or version bump.
+
+## Checked guard refinement and common presentations
+
+[ParameterRefinement](event-parameter-refinement.md) now appends exact guards
+while preserving the source's actual worlds, outcomes and law. Old Events lift
+through the full Boolean algebra. Exact descent requires that lifting the
+candidate recovers the refined Event; an essential guard refuses. Common
+refinement resolves the union of parameter predicates across named sources,
+and readout refinement reconstructs existing maps over the new presentations.
+The old scope and its sealed fixed-point atom bound remain unchanged.
+
+The [refinement qualification](event-evidence/native-parameter-refinement-final-qualification/check.json)
+records the native/SDK regression battery. Six new core tests include an
+independent 64-Event descent oracle, actual membership/mass preservation,
+map squares, common products, irrational singleton worlds and explicit failures.
+A database consumer splits a persisted pointwise partition, rejects lost coverage,
+and retains its exact family through reopen and both Free Join paths.
+The [refinement handoff](event-evidence/implementation-handoff-parameter-refinement-final/check.json)
+retains 246 proposal and 459 native Lean reports across 30 and 28 modules. Nine
+new reports establish the logical refinement/representability contract under
+explicit source-constructor premises; they do not prove native refinement.
+Refinement certificate transport/query instructions, multivariate solving,
+scope-changing maps, family dynamics, TypeSafe intents, full SDK and all remaining
+M0–M8 gates stay open. No release, tag or version bump.
+
+The initial [refinement run](event-evidence/native-parameter-refinement-qualification/check.json)
+exposed a native inbox shutdown race. A channel could accept owned work after a
+worker's last inbox check but before its receiver dropped, stranding an operation.
+Enqueue now shares the worker-exit bookkeeping lock and refuses new owned work
+once closing begins. Rejected payloads drop outside that lock so reservation and
+close destructors can re-enter cleanup. A deterministic regression holds the
+receiver alive during closing and checks both resource and payload-install
+refusal, reentrant destruction, and complete reclamation. The failed run remains
+preserved; the final qualification above includes the fix and all 120 bridge tests.
+
+## Parameter-domain inclusions and materialized conditional families
+
+[Family conditioning](event-parameter-conditioning.md) now constructs an exact
+posterior on the positive-evidence parameter domain. It retains all outcomes
+there, including those with posterior zero. Its owned receipt retains the prior,
+original evidence and full mass function; everywhere-zero evidence has no
+posterior. `ParameterRestriction` separately captures a smaller domain while
+preserving the original law and outcome fibres. Explicit function-domain rebasing
+retains inherited holes and refuses extension.
+
+Checked maps admit same-parameter domain inclusion when every source cell equals
+one whole target cell. Unreachable target cells stay unreachable and universal
+images there are vacuous. The posterior-to-refined-prior map is generally not
+onto; fixed-law revision surjectivity does not extend to excluded parameters.
+Source/domain operations and map admission share caller-owned exact arithmetic.
+
+The [conditioning qualification](event-evidence/native-parameter-conditioning-qualification/check.json)
+records the full native/SDK regression battery, including seven new core tests
+and two new database consumers. They cover exact irrational singleton parameters,
+endpoint receipts, repeated evidence, weighted images, inherited holes, explicit
+refusal and ownership. Persisted translations run on both Free Join paths;
+pointwise FD/INDs still require coverage of zero-posterior outcomes.
+The [conditioning handoff](event-evidence/implementation-handoff-parameter-conditioning/check.json)
+retains 246 proposal and 474 native reports across 30 and 29 Lean modules. Fifteen
+new reports establish domain/image and conditional-family laws under explicit
+source/roster premises; they do not verify native solver, graph or transport code.
+
+Family likelihood/Jeffrey revisions, general family functions/channels and law
+pushforwards, explicit prior integration, receipt/SDK/query integration,
+multivariate solving and all remaining M0–M8 gates stay open. No release, tag or
+version bump.
+
+## Signed finite payoffs under parameter-family laws
+
+[`parameter_expectation`](event-parameter-expectations.md) now contracts an
+ordinary total `FiniteFunction` with its designated family law. The owned result
+retains the original payoff/evidence, signed numerator, evidence-mass function
+and exact conditional domain. Zero payoffs and signed cancellation preserve
+undefined endpoints; all terms use the same actual parameter. The exact positive
+region can return to ordinary Event algebra through checked guard refinement.
+
+The [expectation qualification](event-evidence/native-parameter-expectation-qualification/check.json)
+includes six new core tests: 432 independent finite-oracle cases, exact function
+linearity/indicator agreement, irrational domains, possible zero-mass evidence,
+retained ownership and explicit failures. A persisted posterior consumer feeds
+results from both Free Join paths into the host operation after database release.
+The [expectation handoff](event-evidence/implementation-handoff-parameter-expectations/check.json)
+retains 246 proposal and 486 native reports across 30 and 30 Lean modules. Twelve
+new reports prove finite-sum cell contraction and pointwise conditional domains
+under explicit representation/roster premises, without claiming native refinement.
+
+General parameter-valued payoffs, query-observable coverage and owned query/SDK
+results remain open, alongside the other M0–M8 gates. No release or version bump.
+
+## Family function algebra and likelihood revision
+
+[`FamilyFunction`](event-family-functions.md) now retains guarded rational values
+on ordinary Event cells. Admission checks definedness on every active parameter
+fibre; omitted cells have an explicit zero default. Signed arithmetic, total
+division, exact numerical comparison, sign/refinement, density designation and
+parameter-dependent expectations share that contract. Existing finite-payoff
+observations remain compatible through the generic owned observation carrier.
+
+Weighted image factors coefficients from finite outcome sums and reuses the
+symbolic multiplicity kernel. Pullback/domain inclusion keep actual parameter
+assignments; unreachable target parameter cases receive zero. Explicit family
+likelihood revision retains the supplied factor and normalizer and constructs
+a normalized posterior on its valid domain, retaining zero-posterior outcomes.
+Positive scale is receipt data; repeated likelihoods multiply. No implicit prior,
+independence or posterior-target interpretation is introduced.
+
+The [family qualification](event-evidence/native-family-function-qualification/check.json)
+includes eleven new core tests, all 256 four-world maps and 56 restricted-support
+controls, exact weighted pairing, 62-coordinate symbolic images, active holes,
+law identity, likelihood scaling/composition and explicit failures. A persisted
+consumer measures parameter-dependent payoffs from both Free Join paths after
+owner/database release. The [family handoff](event-evidence/implementation-handoff-family-functions/check.json)
+retains 246 proposal and 503 native reports across 30 and 31 Lean modules.
+Seventeen new reports establish coefficient factoring, weighted pairing/total
+mass and likelihood normalization/scaling under explicit roster/map premises.
+They do not verify the Rust implementation or claim performance results.
+
+Family channels, Jeffrey revisions, multivariate/general semialgebraic functions,
+explicit prior integration, function/receipt transport, TypeSafe intents, full
+SDK/query observations and the remaining M0–M8 gates stay open. No release,
+version bump or tag.
+
+
+## Shared-parameter channels and Jeffrey replacement
+
+[Family dynamics](event-family-dynamics.md) now admits normalized conditional
+channels on every parent world, closes them against explicit prior laws, and
+checks numerical information FDs through exact function descent. Jeffrey
+replacement takes total normalized parameter targets, preserves original
+within-cell conditionals, keeps zero-target possibilities and records each
+unsupported parameter region. Piece boundaries are captured in one refinement
+retaining translation from the original prior. Repeated targets are numerically
+idempotent; overlapping partitions need not commute.
+
+The [dynamics qualification](event-evidence/native-family-dynamics-qualification-final/check.json)
+adds nine core tests and a persisted channel/Jeffrey consumer on both Free Join
+paths after owner release. The [dynamics handoff](event-evidence/implementation-handoff-family-dynamics/check.json)
+retains 246 proposal and 513 native reports across 30 and 31 Lean modules. Ten
+new field-algebra reports cover marginal preservation, normalization, exact
+descent and replacement laws. No Rust refinement or timing claim is made.
+
+Family dynamics/function/refinement transport and SDK authoring/results, prior
+integration, scope-changing maps, multivariate/general function solving, TypeSafe
+intents, query observation heads and all other open M0–M8 gates remain required.
+
+The [initial dynamics run](event-evidence/native-family-dynamics-qualification/check.json)
+is retained as unsuccessful: its source snapshot changed while the new database
+fixture was corrected. The final qualification above uses a frozen source set.
+
+
+## Shared-parameter source transport
+
+[BESC v2](event-source-descriptors.md) now carries partial parameter functions,
+total family functions, normalized conditional channels, refinements, restrictions
+and complete family update receipts. Fixed BESC v1 bytes remain unchanged. Import
+reconstructs all objects, replays updates from original priors, and checks every
+claimed function/domain/unsupported region and full refined/posterior context.
+Impossible receipts keep the requested identity. Shared arithmetic covers nested
+maps, laws and replay; operational failure never becomes mathematical impossibility.
+
+The [transport qualification](event-evidence/native-family-transport-qualification-final/check.json)
+includes ten new core tests for partial endpoints, piecewise targets, explicit
+zero definitions, zero-prior channel rows, forged receipt scales/results/domains,
+owner release, nested budgets and malformed data. The persisted family consumer
+now imports the channel and Jeffrey receipt before reopen and both Free Join paths.
+The [transport handoff](event-evidence/implementation-handoff-family-transport-final/check.json)
+retains 246 proposal and 533 native reports across 30 and 32 Lean modules.
+`FamilyTransport.lean` adds twenty denotational reports under explicit faithful
+codec, arithmetic, context and replay premises. No Rust refinement or performance
+claim follows from these proofs.
+
+Family SDK authoring/results and query observation/expectation heads, prior
+integration, parameter-changing maps, multivariate/general solving, TypeSafe
+provenance and actor visibility, retained-memory policy, remaining dependencies,
+fixed-point query binders/factoring, belief memory and complete M8 qualification
+remain open. The full goal stays active. No release, tag or version bump.
+
+The [initial transport run](event-evidence/native-family-transport-qualification/check.json)
+passed the core, engine and integration tests, then failed strict clippy on the
+new fixture test's string formatting. That attempt is preserved; the final run
+uses the corrected fixture comparison and a fresh frozen source snapshot.
+
+
+## SDK named polynomial expressions
+
+The [polynomial SDK](event-sdk-polynomials.md) now supplies opaque owned BEPL
+values, parameter identities, normalized authored terms, exact arithmetic,
+simultaneous substitution, rational evaluation, explicit Beta moments and owned
+canonical descriptions. Every semantic operation runs on the existing native
+worker with one arithmetic budget for all operands and results. Pure imports
+and Effect construction remain addon-free; arbitrary input normalization stays
+in the shared Rust core.
+
+The [SDK polynomial qualification](event-evidence/native-sdk-polynomial-qualification/check.json)
+includes five consumer tests and two native bridge tests. A persisted consumer
+constructs the full joint law after explicit Beta integration: two draws sharing
+one bias have two-head probability 1/3; an explicitly independent pair has 1/4.
+Both survive database reopen and query construction. Tests also cover duplicate
+bindings, unused malformed expressions, input mutation, owned descriptions,
+resource refusal and cancellation of a completed result before delivery.
+The [SDK polynomial handoff](event-evidence/implementation-handoff-sdk-polynomials/check.json)
+retains the existing 246 proposal and 533 native semantic reports. Existing
+polynomial proofs state the arithmetic contracts; this SDK layer adds integration
+evidence, not a new claim of verified Rust or analytic source integration.
+
+SDK domains/guards/family authoring and observations, general source prior
+integration and all other open M0–M8 gates remain required. No release or version
+change. The full implementation goal remains active.
+
+
+## SDK exact parameter regions and partial functions
+
+The [parameter SDK](event-sdk-parameters.md) now exposes exact regions, inhabited
+domains, numerical algebraic roots and partial parameter functions. BEPR/BEAR/BESC
+carriers remain owned and lazy; each worker use re-admits the native mathematics.
+All 16 set operators and all 8 sign masks preserve exact membership, and partial
+function arithmetic keeps undefined endpoints distinct from the allowed ambient.
+Version and kind are checked together across finite BESC v1 and family BESC v2.
+
+The [SDK parameter qualification](event-evidence/native-sdk-parameter-qualification/check.json)
+includes seven consumer tests and three bridge tests. Irrational singleton
+witnesses, disconnected regions, original expressions and inherited holes remain
+inspectable. The persisted host-function consumer retains the conditional p²/p
+through ordinary descriptor storage, a relational join, reopen and runtime release;
+it stays undefined at zero. This is not function-valued query-head coverage.
+The [SDK parameter handoff](event-evidence/implementation-handoff-sdk-parameters/check.json)
+retains 246 proposal and 533 native reference reports; the unchanged native
+denotations remain the proof contracts, without a new Rust refinement claim.
+
+Full family source authoring/observations, prior integration, multivariate and
+general function solving, parameter-changing maps, TypeSafe integration, query
+observation/expectation slots, retained memory and the remaining M0–M8 gates
+remain open. The full implementation goal stays active. No release or version bump.
+
+
+## SDK live family sources, functions and observations
+
+The [family SDK](event-sdk-families.md) now constructs named parameterized Event
+spaces with deterministic guards, admits total signed functions and designates
+exactly normalized laws. Probability and expectation results own the original
+Event/payoff, evidence, numerator, evidence mass, conditional function and exact
+defined region. Weighted maps preserve finite witness multiplicity at one actual
+parameter. Individual guard refinements lift existing Events/functions without
+changing worlds or laws; essential new predicates refuse descent.
+
+The [SDK family qualification](event-evidence/native-sdk-family-qualification/check.json)
+adds nine consumer tests and one native bridge test. A normalized joint family
+is admitted under ordinary Event keys/containments, stored, joined after reopen,
+and observed after owner release. Other cases cover irrational actual witnesses,
+total signed values, zero-evidence/guard-local holes, exact threshold refinement,
+weighted image/descent, malformed inputs and cancellation. A symbolic 62-coordinate
+case counts 61 outcome bits and one deterministic guard correctly. This is host
+observation coverage, not native query observation/aggregate coverage or timing.
+The [SDK family handoff](event-evidence/implementation-handoff-sdk-families/check.json)
+retains the 246 proposal and 533 native reference reports. Existing semantic
+contracts remain unchanged; no Rust refinement claim is added.
+
+Family channel/revision/restriction consumers and common refinement rosters,
+full query observations/expectation aggregates, prior integration, multivariate
+and general functional solving, TypeSafe intents/visibility, parameter-changing
+maps, retained-memory policy and every other open M0–M8 gate remain required.
+The full goal stays active. No release, tag or version bump.
+
+
+## SDK family channels, revisions and restrictions
+
+The [family dynamics SDK](event-sdk-family-dynamics.md) now exposes normalized
+channels, numerical dependency checks, prior-preserving closure, explicit
+conditioning/likelihood/Jeffrey updates, parameter restrictions and common guard
+refinements. Owned inspections retain requested identities, original inputs,
+exact functions/domains and every indexed unsupported region. Posterior pullback
+composes the retained refinement, so original-prior Events keep their meaning.
+No source format or mathematical core change is required by this boundary.
+
+The [SDK dynamics qualification](event-evidence/native-sdk-family-dynamics-qualification/check.json)
+adds ten consumer tests and one native bridge test. Cases include exact
+positive-evidence domains, retained zero-mass possibilities, likelihood scale and
+reapplication, piecewise Jeffrey targets and zero-target conditionals, impossible
+receipts, normalization at zero-prior parents, common refinements, copied inputs
+and late cancellation. A joined persisted query translates refined-prior Events
+to the posterior after reopen and runtime release, agreeing with original-prior
+host pullback. The [handoff](event-evidence/implementation-handoff-sdk-family-dynamics/check.json)
+retains the existing 246 proposal and 533 native reference reports. This adds SDK
+integration evidence, without a new Rust refinement or performance claim.
+
+Native owned query observation/expectation heads, general prior integration,
+multivariate/general functional solving, parameter-changing maps, TypeSafe
+intents/provenance/visibility, retained-memory policy, fixed-point query binders,
+belief-memory construction and every other open M0–M8 gate remain required.
+The full implementation goal stays active. No release, tag or version bump.
+
+
+## Native final probability query heads
+
+[Probability query heads](event-query-probability.md) now retain Event/evidence
+pairs through Rust macros, native IR, Free Join, aggregate grouping, owned answers
+and Node/TypeScript delivery. Exact fixed ratios or univariate partial conditional
+functions are contracted under one execution arithmetic budget after pair dedup,
+with original evidence/mass and zero-mass possibilities intact. Missing laws and
+participating context failures remain errors. Node delivery shares arithmetic and
+a cumulative observation-payload bound across each collection or page.
+
+The [qualification](event-evidence/native-query-probability-qualification-verified/check.json)
+covers exhaustive finite pairs on both join paths, family persistence/reopen,
+source-pair distinctness, grouped counts, atomic error reuse and typed SDK
+observations/descriptions/pages. The [handoff](event-evidence/implementation-handoff-query-probability-verified/check.json)
+checks 246 proposal and 547 native reference reports. The fourteen new
+QueryProbability reports prove reference semantics only, not Rust refinement.
+
+Final observation heads are an integration boundary: observation interiors and
+query arithmetic, rational/function payoff query slots, general prior integration, multivariate
+solving, parameter-changing maps, TypeSafe provenance/visibility, retained-memory
+policy, fixed-point query binders, belief memory and all other open gates remain
+required. The full M0–M8 goal stays active; no release, tag or version bump.
+
+
+The first probability qualification caught an internal append regression: a
+failed finalization cleared an existing initialized prefix. The corrected rollback
+preserves prior cells/observations and removes only pending pairs; a forced-spill
+and resident regression also checks later append indexes and pair reuse. The
+[failed run](event-evidence/native-query-probability-qualification/check.json) is
+retained as evidence; only the final qualification above is a passing checkpoint.
+
+The [second run](event-evidence/native-query-probability-qualification-final/check.json)
+passed the engine and integration checks, then caught the missing `probability`
+entry in the native/SDK wire-tag golden fixture. The fixture now records the new
+IR variant; the independently typed roster and native enum still cross-check it.
+
+
+## Native final expectation query heads
+
+[Expectation heads](event-query-expectation.md) now admit grouped integer-payoff
+rosters, retaining supplied zeros and empty buckets on the evidence. Equal-value
+regions union before structural disjointness/coverage checks; zero-mass gaps
+refuse. A complete context pass precedes partition admission, and scratch claims
+retain written provenance through spill and changing rule layouts. Multiple
+expectations share stable group tokens with ordinary scalar aggregates and Pack.
+Fixed and family answers preserve source/payoff/evidence and exact defined
+domains. Node and TypeScript expose owned results and imported descriptions.
+
+The [qualification](event-evidence/native-query-expectation-qualification-verified/check.json)
+includes the independent 256-case weighted-world oracle on both join paths,
+composition, zero-mass admission, integer extremes, family holes, scratch
+spill/cancellation, append rollback and SDK descriptions/pages. The
+[semantic run](event-evidence/native-query-expectation-semantics/check.json)
+checks 567 native reference reports; the twenty new QueryExpectation reports
+formalize roster admission and grouping, not Rust refinement. The
+[handoff](event-evidence/implementation-handoff-query-expectation/check.json)
+combines them with 246 proposal reports.
+
+Observation staging/arithmetic, rational/function payoff query slots, multivariate
+solving, parameter-changing maps, explicit priors, TypeSafe provenance/visibility,
+retained-memory policy, fixed-point query binders, belief memory, full Coup
+consumers and performance qualification remain open. The whole M0–M8 goal stays
+active. This checkpoint makes no release, tag or version change.
+
+The [initial expectation qualification](event-evidence/native-query-expectation-qualification/check.json)
+passed core, engine and integration checks, then refused an oversized method at
+Clippy. The collector is split into context and roster admission phases. Final
+review also added native/SDK refusal of closed vocabulary IDs as utilities, with
+a regression showing that an explicit numeric mapping remains admitted.
+
+
+## Exact reachable belief memory
+
+[BeliefMemory](event-belief-memory.md) now closes the reachable sets of hidden
+worlds under public action labels and observation cells. It checks every action's
+endoroles/shared environment and requires enabledness throughout each nonempty
+belief. Updates are symbolic relational post-images intersected with observed
+cells; equal Events share memory, while equal screens alone do not. Original
+zero-mass worlds and shared unknown parameters remain in the possibility model.
+Explicit state/transition/step limits refuse incomplete construction.
+
+The retained graph lowers into the existing ActionArena using finite memory and
+action codes with exact legal support. `known` and `possible` build ordinary
+target Events; existing rank-decreasing reachability and continuing-safety
+strategies then operate on memory. The disappearing-signal test proves a
+three-step policy that needs remembered information; forgetting it loses.
+This is possibility memory. Equal supports do not identify different posterior
+laws, and eventually knowing a goal is not every possible hidden-goal objective.
+
+Seven new core tests cover 2,048 two-state cases against an independent dense
+history-update oracle, 256 compiled arenas and their goal regions, hidden-memory
+policies, zero-mass possibilities, guard preservation, cross-owner/context
+admission, budgets and cancellation. A 20-bit hidden-state fixture closes to
+one memory state without world enumeration. The database test uses ordinary
+FD/INDs and a checked code partition, then verifies owned Event equality joins
+on both resident/cursor paths after reopen and database release.
+
+The [semantic run](event-evidence/native-belief-memory-semantics/check.json)
+adds eighteen reference reports, including exact agreement with complete
+action/observation histories, uniform enabledness, successor coverage/disjointness,
+same-belief congruence, safety and environment preservation. They do not verify
+the Rust BFS, interner, encoder or symbolic kernels. The
+[qualification](event-evidence/native-belief-memory-qualification/check.json)
+records the full native/Node/SDK battery, including the new memory tests. The
+[handoff](event-evidence/implementation-handoff-belief-memory/check.json)
+combines 246 proposal and 585 native reference reports.
+
+Dedicated memory descriptor/SDK/query construction, observation
+staging/arithmetic, rational/function payoff query
+slots, general solver/prior/import work, retained-memory policy, fixed-point
+query binders, full Coup and performance/ARM64 qualification remain required.
+The full M0–M8 goal is active. No release, tag or version bump.
+
+
+## Scoped fixed-point query binders
+
+[Least/Greatest query binders](event-query-binders.md) now retain a sealed full
+context and distinct lexical predicates. Row inputs stay fixed during iteration;
+nested solutions may refer to outer predicates and may produce relation regions.
+The variance checker handles the full constructive Event/relation grammar,
+including relation-operand polarity and conservative cardinality/ITE analysis.
+Complete context admission retains every external leaf once, including operands
+under constants. Shared per-head/binding work budgets cover nested binders and
+Star. No failure publishes a partial fixed point.
+
+The Rust IR, strict Node worker boundary and typed SDK now carry these operators.
+Pure SDK callbacks close to owned data with hygienic lexical depths; escaped
+handles refuse. Ordinary interiors, tests, Pack and final Probability consume the
+resulting Events. The Rust macro grammar and relational recursion are unchanged.
+
+The [qualification](event-evidence/native-query-binders-qualification/check.json)
+includes exhaustive two-state graph/goal oracles on both Free Join paths,
+alternating binders, relation closure, zero-mass/shared-parameter scopes,
+static and dynamic context refusal, occurrence diagnostics, nested/Star budget
+sharing, cancellation, ownership, malformed wire and staged SDK consumers.
+The [semantic run](event-evidence/native-query-binders-semantics/check.json)
+adds 21 QueryBinders reference reports for extremal solutions, nested covariance,
+lexical extension and modal/residual variance. The
+[handoff](event-evidence/implementation-handoff-query-binders/check.json)
+combines 246 proposal and 606 native reports. No Rust/SDK refinement or
+performance improvement is claimed.
+
+Observation staging/arithmetic, rational/function payoff query slots,
+multivariate/general solving, parameter-changing maps, explicit priors,
+TypeSafe provenance/visibility, retained-memory policy, capacity projections,
+certified Free Join factoring, complete host-program/strategy/memory transport,
+full Coup and performance/ARM64 qualification remain required. The full M0–M8
+goal stays active. No release, tag or version bump.
+
+
+## Explicit univariate Beta binding
+
+[BetaSource](event-priors.md) now adds an explicit prior commitment to a measured
+source over the full named `[0,1]` domain. It integrates raw joint/utility and
+evidence masses before division, retaining original per-parameter observations
+and their conditional holes. Total functions that agree with one polynomial
+outside finitely many points receive an owned polynomial/exception certificate.
+Original Events and exceptional world values remain distinct even at zero prior
+mass. Undefined points, nonpolynomial sectors and truncated prior domains refuse.
+
+BESC v2 tag 6 transports the complete source and exact positive shapes. The SDK
+constructs, validates, describes and binds finite/family observations with shared
+worker budgets and owned results. The database fixture binds retained final query
+observations after reopen and owner release on both Free Join paths. Seven core
+tests include 768 independent labelled-world comparisons; additional descriptor,
+Node and seven SDK tests check replay, scope, holes, capacities and cancellation.
+`PriorBinding.lean` adds eighteen reference reports. Analytic moment/non-atomicity
+premises are explicit; no Rust or integration-library refinement is claimed.
+
+The [qualification](event-evidence/native-prior-binding-qualification/check.json)
+passes all twenty checks, including 200 SDK tests. The
+[semantic run](event-evidence/native-prior-binding-semantics/check.json) checks
+624 native reports across 37 modules; the
+[handoff](event-evidence/implementation-handoff-prior-binding/check.json)
+combines these with 246 proposal reports. A fresh staged checkout also verifies
+the packaged proposal, proofs and readiness independently.
+Multivariate/general solving and source binding, observation
+staging/arithmetic, rational/function payoff slots, TypeSafe provenance/visibility,
+retained-memory policy, capacity projections, certified Free Join factoring,
+complete host-program/strategy/memory transport, full Coup and performance/ARM64
+qualification remain required. The full M0–M8 goal stays active. No release, tag
+or version bump.
+
+## Local finite and parameter-dependent function covers
+
+[Function covers](event-function-covers.md) now glue source-owned local payoffs
+that agree pointwise on overlaps and cover their evidence structurally. Empty
+patches, supplied zeros and full original regions remain owned. Zero extension
+outside evidence never supplies missing coverage. Contexts are admitted before
+structural shortcuts, and parameter-boundary equality uses actual worlds rather
+than global symbolic function equality or almost-sure equality. Masking preserves
+the original source and parameter domain.
+
+Rust and the SDK expose finite/family masking and checked gluing. Node ingress
+reconstructs all operands under shared arithmetic; the output owns every patch
+under a cumulative byte limit. No new descriptor role or version is introduced.
+The database fixture retrieves patches through scalar keys and Event containment
+after reopen, on both Free Join paths, then glues functions after dropping owners.
+It is host gluing of query-produced patches, not a native functional-payoff head.
+
+Core tests check all 1,024 two-world covers against a pointwise oracle, isolated
+parameter overlap, zero-mass failures, foreign empty inputs, symbolic sources,
+limits and cancellation. Four SDK tests and a Node budget/late-operand test cover
+the exposed operations. FunctionCovers adds fifteen Lean reference reports for
+compatibility, coverage, uniqueness, masking and duplicate/order invariance,
+without a measure premise. These do not prove Rust, solver or compiler refinement.
+
+The [qualification](event-evidence/native-function-covers-qualification-final/check.json)
+passes all twenty checks, including 204 SDK tests. Its 1,303 source hashes are
+compared with staged Git blobs. The
+[semantic run](event-evidence/native-function-covers-semantics/check.json) checks
+639 native reports across 38 modules; the
+[handoff](event-evidence/implementation-handoff-function-covers-final/check.json)
+combines these with 246 proposal reports. The earlier qualification attempt is
+retained: a test-only narrowing cast failed strict Clippy and was corrected.
+
+Native rational/function payoff slots and observation staging/arithmetic remain
+required, along with every other open M0–M8 gate above. No release, tag or
+version bump.
+
+
+## Exact ratios in native expectation heads
+
+[`Expectation(Ratio(numerator, denominator), when, given)`](event-query-expectation.md)
+now constructs exact rational payoffs from ordinary signed/unsigned integer
+columns. Native `PayoffExpr`, Rust macros, query planning, scratch claims,
+Node ingress and SDK `payoffRatio` authoring/imports share that contract. Equal
+presentations such as `1/2` and `2/4` union before partition admission. Supplied
+zeros remain visible; every divisor participates even on an empty region.
+
+The collector retains raw signed magnitudes until the full source-context pass
+and common-evidence checks succeed. Finalization then uses one arithmetic budget
+to normalize all rosters, admit every partition and contract every observation.
+No per-row/group budget reset or integer rounding is introduced. Existing owned
+results and parameter-defined domains remain intact. Early admission failures
+preserve the initialized answer prefix on both memory and spill paths.
+
+The native weighted-world oracle now covers integer and fractional payoffs over
+all 256 four-world region/evidence pairs on both Free Join paths. Further tests
+exercise persistence/reopen, equivalent presentations, extreme unsigned values
+with negative divisors, `i64::MIN`, foreign empty operands before division
+errors, static divisor/reference roles, shared limits and empty `0/0` refusal.
+SDK tests retain imported descriptions, exact fixed/family results, parameter
+holes and owned answers. Six additional QueryExpectation Lean reports cover
+presentation invariance and participating definedness; they do not verify the
+Rust collector, normalizer or query compiler.
+
+The [qualification](event-evidence/native-rational-payoffs-qualification/check.json)
+passes all twenty checks, including 206 SDK tests. Its 1,304 source hashes are
+compared with staged Git blobs. The
+[semantic run](event-evidence/native-rational-payoffs-semantics/check.json) checks
+645 native reports across 38 modules. The
+[handoff](event-evidence/implementation-handoff-rational-payoffs/check.json)
+combines these with 246 proposal reports; a fresh staged checkout checks the
+packaged proposal, proofs and readiness independently.
+
+Arbitrary-precision rational literals and functional payoff query slots remain
+open, as do observation staging/arithmetic and all other open M0–M8 gates.
+No release, tag or version bump.
+
+## Function-valued payoff query imports
+
+[Final expectation heads](event-query-expectation.md) now import owned exact
+rational constants and total finite/family functions. Each row supplies its
+observable on an Event region. The collector preserves complete context
+participation, groups identical presentations by union, and admits pointwise
+agreement plus exact coverage before contraction. Scalar patches become constant
+functions; finite patches promote explicitly when a family participates. No
+prior, independence, zero-mass quotient or missing-value default is introduced.
+
+Rust `use payoff`/`Payoff(import)` and native `PayoffExpr::Imported` retain sealed
+BERA/BESC imports. Node copies raw imports before worker admission under a shared
+arithmetic budget and cumulative byte limit. SDK `expectation` accepts owned
+rational/finite/family values, preserving pure query data, snapshots and strict
+description imports. Wrong descriptor roles, including partial parameter-only
+functions, refuse. Imported-function diagnostics retain BESC and identify a payoff
+operand without fabricating a database variable.
+
+Owned native and SDK answers distinguish scalar partitions from finite/family
+function covers. Covers retain grouped supplied regions and functions and can be
+replayed after all query/database/runtime owners close. Raw numerator, evidence
+mass and exact conditional domains remain intact. Family answer identity uses
+the encoded arithmetic presentation; numerical equivalence is a separate checked
+operation, not an infallible equality shortcut.
+
+The native query oracle enumerates all 64 two-world evidence/patch-mask cases on
+both Free Join paths, including a possible zero-mass world. Further tests exercise
+large rational constants, persistence/reopen, local agreement despite global
+disagreement, scalar/finite/family union arms, isolated parameter-boundary
+conflicts, complete source faults, shared budgets, cancellation, spill/reaim,
+registry reset, output pages and atomic failed-append rollback. SDK results replay
+their checked covers with the same source. Six additional QueryExpectation Lean
+reports connect function admission to structural coverage and a pointwise FD,
+constant scalar embeddings, union/duplicate witnesses, local replacement and the
+unique selected value. These are reference semantics, not Rust/SDK refinement.
+
+The [final qualification](event-evidence/native-function-payoffs-qualification-final/check.json)
+passes all twenty checks, including 210 SDK tests. Its 1,310 source hashes are
+compared with staged Git blobs. The
+[semantic run](event-evidence/native-function-payoffs-semantics/check.json) checks
+651 native reference reports across 38 modules. The
+[handoff](event-evidence/implementation-handoff-function-payoffs/check.json)
+combines these with 246 proposal reports. The preliminary green qualification is
+retained; the final run also covers pure numerical imports without native loading
+and updates the checker's scope statement. A fresh staged checkout independently
+checks the packaged proposal, proofs and readiness before this checkpoint.
+
+Observation staging/arithmetic, multivariate/general solving and source binding,
+parameter-changing query maps, TypeSafe provenance/visibility, retained-memory
+policy, capacity projections, certified Free Join factoring, complete
+program/strategy/belief-memory descriptors and consumers, full Coup and integrated
+performance/ARM64 qualification remain required. The full M0–M8 goal stays active.
+No release, tag or version bump.
+
+
+## Native observation staging
+
+[Observation stages](event-observation-stages.md) now give completed probability
+and expectation values their own query binding domain. Producer/fold roles are
+separate from projected observation types. Derived images and scratch rows carry
+canonical execution-local identity words backed by owned sources and evidence.
+Projection, equality joins, antijoins, grouping and deduplication preserve those
+identities; equal numbers do not collapse distinct propositions or payoffs.
+
+Producer admission precedes every consumer. One exact observation budget spans
+all stages and finalization; parameter holes and possible zero-mass obligations
+survive. Spilled producers keep transformed rows in scratch, while pure
+observation projections follow ordinary stage sealing. Final results own their
+observations across rebind/release/close, with atomic failed-append rollback.
+
+The four-world oracle checks 256 event/evidence pairs on both Free Join paths;
+additional native consumers cover expectation identity, family imports and
+parameter holes, ownership, type refusals, mixed heads and producer failures.
+Spill, shared-budget exhaustion and rollback receive native unit coverage.
+Eighteen ObservationStages Lean reference reports extend the native roster to
+669 reports across 39 modules. They assume faithful registry encoding and do
+not verify Rust execution or performance.
+
+The [final qualification](event-evidence/native-observation-stages-qualification-final/check.json)
+passes all twenty checks, including 210 SDK regression tests and 1,376 native
+engine tests. Its 1,313 source hashes are compared with staged Git blobs.
+The [semantic run](event-evidence/native-observation-stages-semantics/check.json)
+checks 669 reports across 39 modules. The
+[handoff](event-evidence/implementation-handoff-observation-stages/check.json)
+combines those with 246 proposal reports. The preliminary green qualification
+is retained; the final run clarifies the checker's native-versus-SDK scope.
+A fresh staged checkout independently checks the packaged proposal, proofs and
+readiness before this checkpoint.
+
+Typed SDK observation staging, observation arithmetic, multivariate/general
+solving and source binding, parameter-changing query maps, TypeSafe
+provenance/visibility, retained-memory policy, capacity projections, certified
+factoring, complete program/strategy/belief-memory transport and consumers, full
+Coup and integrated performance/ARM64 qualification remain required. The full
+M0–M8 goal remains active. No release, tag or version bump.
+
+
+## Typed SDK observation staging
+
+The SDK now uses a genuine query value domain for completed Probability and
+Expectation results. It retains stored field descriptors separately, preserves
+carrier classes on stored values, and gives imported variables query owners.
+Head types, imported binding judgments, equality/inequality, description replay
+and answer decoding follow the completed value's domain independently of the
+producer operation. No stored scalar or Event coercion is introduced.
+
+Typed imports and named interiors can produce, bind, forward, join, group and
+antijoin observations. Projection-only recursion can forward them. Producer and
+projection union roles remain distinct; completed projections can union normally.
+The staging suite covers source/evidence/function identity, equal numbers with
+different observations, prepare/rebind/release, reopen, pages and returned value
+ownership. Producer coverage errors remain visible before filtering. Existing
+parameter/family suites compare staged and direct results, including undefined
+endpoints and imported family function covers. Static and dynamic refusals cover
+numeric operations, mismatched observation kinds, schema fields and parameters.
+
+The [qualification](event-evidence/sdk-observation-stages-qualification/check.json)
+passes all twenty checks, including 214 SDK tests and 1,376 native engine tests
+(18 ignored), with 1,315 source hashes unchanged. The
+[semantic run](event-evidence/sdk-observation-stages-semantics/check.json) checks
+669 reports across 39 modules; the
+[handoff](event-evidence/implementation-handoff-sdk-observation-stages-final/check.json)
+also checks the 246 proposal reports. Qualification sources are compared against
+staged blobs before the fresh-checkout check retained in
+`event-evidence/sdk-observation-stages-portable-final`. A preliminary green
+handoff/checkout is retained; the final records also align the query, SDK and
+proposal documentation with the implemented staging boundary.
+SDK tests exercise the ordinary native path; forced cursor/spill and shared
+arithmetic counter evidence remains native. The Lean reference contracts are
+unchanged: they do not prove TypeScript/Rust refinement or performance.
+
+Numerical observation arithmetic, multivariate/general solving and source
+binding, parameter-changing maps/refinement queries, TypeSafe provenance and
+visibility, retained-memory policy, capacity projections, certified factoring,
+complete program/strategy/belief-memory transport and consumers, full Coup and
+integrated performance/ARM64 qualification remain required. The whole M0–M8
+goal remains active. No release, tag or version bump.
+
+
+## Exact partial observation numbers
+
+[Observation numbers](event-observation-numbers.md) now provide the native host
+arithmetic layer over completed query observations. `PartialNumber` combines
+fixed optional rationals with owned parameter functions. Exact arithmetic,
+powers, min/max and comparisons preserve inherited holes; division excludes
+zero divisors. `NumberPredicate` retains true/false/undefined regions, strict
+Boolean composition and explicit possible/always judgments. Parameter-domain
+agreement is checked; restriction is explicit and no prior is introduced.
+
+`ObservationNumber` retains an inspectable bounded derivation containing the
+entire probability/expectation leaves and their original source/evidence/payoff.
+It distinguishes numerical equivalence from provenance. Database consumers use
+completed staged observations on both Free Join paths, retain them after owner
+close and check partial shared-parameter values. Core tests cover rational
+oracles, independent poles, irrational boundaries, truth partitions, capacity,
+shared budgets and cancellation. Twenty-six new Lean reference reports bring
+the native roster to 695 across 40 modules; they do not prove Rust refinement.
+
+Evidence for this checkpoint is retained in
+`event-evidence/observation-numbers-qualification`,
+`event-evidence/observation-numbers-semantics`,
+`event-evidence/implementation-handoff-observation-numbers` and
+`event-evidence/observation-numbers-portable`.
+
+Numerical query IR/heads/staging/transport and SDK integration are still required.
+So are predicate guard/refinement queries, multivariate/general source solving,
+TypeSafe adapters and provenance/visibility, complete retained-memory policy,
+capacity projections, certified factoring, program/strategy/belief-memory
+transport, full Coup and performance/ARM64 qualification. The complete M0–M8
+goal stays active. No release, tag or version bump.
+
+
+## Portable numerical derivation replay
+
+The native `ObservationNumberImport` now supplies checked BENO v1 transport and
+portable identity for the arithmetic foundation. It owns the complete expression,
+selected components and original probability/expectation leaves. Indexed scalar
+rosters and finite/family function covers survive transport, including empty
+cells, possible zero-mass outcomes and full patch functions. Equality/hashing use
+the encoded derivation; numerical equivalence remains explicit. This is the
+transport prerequisite for numerical query values, not query integration itself.
+
+Admission replays all source and coverage constructors, observations and numerical
+operations under shared exact work, then requires canonical reencoding. Byte,
+item, source, expression and depth bounds refuse explicitly. Both codec walks use
+explicit stacks; the adversarial depth test exposed and eliminated a recursive
+decoder stack overflow. Six native test groups cover arithmetic/component/roster
+round trips, identity, partial domains, malformed data, source/coverage refusals,
+hidden oversized payoffs and shared capacities. Database consumers replay
+composed observations after closing their original owners. Eight Lean reference
+reports bring the native roster to 703 across 41 modules. They prove abstract
+stack order/isolation and source retention, not Rust codec refinement.
+
+Evidence is retained in `event-evidence/observation-number-replay-qualification`,
+`event-evidence/observation-number-replay-semantics`,
+`event-evidence/implementation-handoff-observation-number-replay` and
+`event-evidence/observation-number-replay-portable`.
+
+Numerical query instructions/heads/staging, predicates/guard refinements and the
+macro/Node/SDK consumers remain required. This does not close multivariate/source
+binding, TypeSafe provenance/visibility, aggregate retained memory, capacity
+projections, certified factoring, program/strategy/belief-memory transport,
+full Coup or integrated performance/ARM64 gates. The full M0–M8 goal stays active.
+No release, tag or version bump.
+
+
+## Numerical query checkpoint
+
+[Exact observation numbers](event-observation-numbers.md) now run inside native
+queries, with Rust macro and typed SDK authoring, raw Node transport and owned
+result decoding. Component selection, exact integer/literal imports, arithmetic,
+min/max/absolute value/powers and explicit domain restriction preserve full BENO
+derivation identity and partial parameter domains. Numbers remain query values;
+stored scalar operators and external parameters cannot silently consume them.
+
+Canonical identities are assigned before grouping, avoiding per-row placeholders
+that would split logical groups. Ordinary one-word tokens flow through Free Join,
+identity joins, antijoins, grouping, imported stages and recursive forwarding.
+Stage computation temporarily owns the shared registry and exact work counter;
+probability/expectation contraction resumes that same counter. Result retention,
+failed append rollback, spill and re-execution are exercised separately.
+
+Numerical tests cover direct versus staged Count, equal-valued distinct sources,
+zero-mass undefined observations, all operators/components, partial family holes,
+domain refusals before consumer filtering and all supported authoring boundaries.
+The native semantic roster adds ten `NumberQueries` reports for grouping/counts,
+stage roundtrips and shared charging, with explicit codec-faithfulness/cost
+premises. They do not verify Rust, Free Join or the Node bridge.
+
+This checkpoint's qualification records are retained in
+`event-evidence/query-numbers-qualification`,
+`event-evidence/query-numbers-semantics`,
+`event-evidence/implementation-handoff-query-numbers` and
+`event-evidence/query-numbers-portable`. These qualify this slice only.
+Predicate/parameter-region query integration, general multivariate solving and
+source binding, parameter-changing maps, TypeSafe provenance/visibility,
+retained-memory policy, capacity projections, certified factoring, complete
+program/strategy/belief-memory descriptors and consumers, full Coup and integrated
+performance/ARM64 qualification remain open. The M0–M8 goal stays active.
+No version bump, release or tag.
+
+
+## Owned predicate and guard checkpoint
+
+[Observation predicates](event-observation-predicates.md) now preserve complete
+sign/negation/Boolean/domain derivations alongside exact true/false/undefined
+partitions. All sixteen Boolean operations are strict and retain both operands.
+BENP replay rechecks complete numerical observations and uses one combined
+byte/item/node/depth budget plus shared exact work. Numerical equivalence is
+separate from full derivation identity.
+
+Explicit guard construction requires exact ambient-domain agreement and refuses
+unresolved cells. Explicitly named refinements add deterministic truth guards;
+old Events lift with unchanged actual worlds and law. Three-case partitions
+retain irrational boundaries, endpoint holes and possible zero-mass worlds.
+The persisted native consumer goes from query Number answers to this host API,
+through ordinary Event keys/full containments and back into Free Join after
+reopening. Dedicated predicate query instructions are still required.
+
+Seven native tests and one database consumer cover the new boundary. Nineteen
+PredicateGuards reference reports establish truth coding, world bijection,
+Boolean lifting, finite contraction and exact factorization obligations. The
+native roster is 732 reports / 43 modules; no Rust or performance proof is claimed.
+Evidence is retained in `event-evidence/predicate-guards-qualification`,
+`event-evidence/predicate-guards-semantics`,
+`event-evidence/implementation-handoff-predicate-guards` and
+`event-evidence/predicate-guards-portable`.
+
+Predicate query IR/staging/imports and guard/refinement opcodes, Node/SDK consumers
+and every other open M0–M8 obligation remain required. The full goal stays active.
+No release, tag or version bump.
+
+
+## Predicate query checkpoint
+
+The host predicate algebra now has Rust IR/macro and Node/SDK query consumers.
+`Predicate` retains the full numerical derivation and exact true/false/undefined
+partition; explicit `PredicateTest(Possibly/Always/IsTotal)` produces Bool.
+All comparisons, strict Boolean tables, BENP imports and explicit domains are
+available. Query equality compares derivation identity. Canonicalization happens
+before grouping; complete source/evidence differences survive equal truth values.
+
+The query-only predicate type works through staged/imported projections,
+identity joins/antijoins and recursive forwarding. Mixed Probability,
+Expectation, Number and Predicate producers share execution arithmetic. Domain
+refusals occur at the producer even behind a downstream filter. Forced spill,
+prepared reuse, rollback of newly appended values and owner closure retain
+complete identities. Native shape admission and SDK/Node/macro grammar count
+predicate and numerical trees together. Worker replay and answer delivery share
+query/batch budgets, respectively; no aggregate retained-memory claim is made.
+
+Seven native integration tests, focused sink/rollback/shape checks, six syntax
+refusal fixtures, Node admission/delivery tests, raw-wire adversaries and SDK
+consumers exercise this boundary. Fourteen `PredicateQueries` reference reports
+bring the native roster to 746 reports / 44 modules. They include the shared
+witness obligation: individually possible predicates need not be jointly
+possible. Existing generic grouping proofs assume faithful derivation encoding;
+neither module proves Rust or performance.
+
+Current evidence: `event-evidence/query-predicates-qualification`,
+`event-evidence/query-predicates-semantics`,
+`event-evidence/implementation-handoff-query-predicates` and
+`event-evidence/query-predicates-portable`.
+
+This completes the predicate head/staging/SDK portion left open by the previous
+checkpoint. Query guard/refinement construction and parameter-region consumers,
+multivariate/general solving and source binding, parameter-changing maps,
+TypeSafe inference intents/provenance/visibility, full memory policy and capacity
+projections, certified Free Join factoring, complete program/strategy/belief-memory
+descriptors and consumers, full Coup and integrated performance/ARM64 qualification
+remain required. The M0–M8 goal stays active. No release, tag or version bump.
+
+## Captured guard query checkpoint
+
+`PredicateGuardPlan` independently admits a complete source and an optional
+explicit refinement identity. New `Guard` heads extract holds/fails/undefined
+as ordinary Event values and explicitly lift or exactly descend Event inputs.
+Existing-source plans refuse truth regions that split existing cells. Named
+refinements preserve actual worlds and the designated law, including possible
+zero-mass outcomes. Extracted cases retain their Event source; a separately
+retained Predicate column carries the full numerical BENP derivation.
+
+The native IR, Rust `use guard` macro, strict Node grammar and typed SDK
+`GuardPlan`/`Guard` builders now share these operations. All outputs use the
+existing two-word Event layout, canonical identity, staging, dependencies and
+delivery path. Descriptions replay through ordinary Event fields. Guard,
+predicate and numerical nodes share shape admission; copied plan/import bytes
+share whole-query worker limits, and exact interpretation shares the execution
+arithmetic counter. Transport context faults retain every written rule and
+canonical expected/offending source value. Unresolved cells, domain mismatch
+and essential-guard descent remain producer errors behind later filters.
+
+Native consumers run on both Free Join paths, replay after owner closure,
+persist a complete truth partition, retain zero-mass worlds and exercise
+existing resolved cells, fixed constants, embedded predicates and type refusals.
+Internal sinks force spill, retain empty-valued rows, exhaust shared exact work
+and recover after cancellation. A planner regression now pins all body bindings
+for Predicate and PredicateTest computed heads, correcting a missing sink demand.
+Node worker/raw-wire and SDK tests check ownership, strict plan grammar,
+unreachable invalid imports, description replay and combined expression limits.
+Three additional macro fixtures bring the refusal roster to 58.
+
+Five new PredicateGuards reference reports establish complete/disjoint cases,
+reconstruction of a claim from its three cases, exact descent iff membership
+is constant on old cells and uniqueness on legal cells. The native roster is
+751 reports in 44 modules. This is denotational evidence, not native solver,
+codec, planner, allocator or performance verification.
+
+Evidence for this slice is retained in `event-evidence/query-guards-qualification`,
+`event-evidence/query-guards-semantics`,
+`event-evidence/implementation-handoff-query-guards` and
+`event-evidence/query-guards-portable`.
+
+Captured plans name one static source. They do not create per-row identities or
+compute a common refinement across unrelated predicates. Dynamic/common query
+refinements, direct parameter-region consumers, multivariate/general solving and
+source binding, TypeSafe provenance/actor visibility, capacity projections,
+aggregate retained-memory policy, certified Free Join factoring, complete
+program/strategy/belief-memory transport, full Coup consumers and integrated
+performance/ARM64 qualification remain open. The full M0–M8 goal stays active.
+No release, tag or version bump.
+
+
+## Common bound-predicate query refinements
+
+`PredicateRefinement::common` now resolves a nonempty numerical predicate roster
+in one named source presentation. It checks every origin/domain before collecting
+canonical truth regions, sorts/deduplicates the regions, skips existing
+distinctions and constructs one law-preserving refinement. Results retain each
+input position's numerical origin. Reordered or duplicated rosters produce the
+same canonical presentation within admitted resource bounds.
+
+Rust `Guard(... Common(g, p, q, ...))` and SDK `Guard.common(plan, predicates)`
+share that operation. The primary predicate is also included. Ordinary Event
+outputs can compose cases belonging to different comparisons, with one actual
+parameter assignment and exact transport back to the old presentation. A
+companion's undefined case does not change another predicate's truth. All
+written companion variables/expressions participate in validation, shared shape,
+byte and arithmetic budgets. Existing-source plans must already resolve every
+companion, including behind a later empty filter.
+
+Host and both Free Join paths verify canonical reordering/duplication, preserved
+origins and worlds, exact boundary/undefined cases and lift/descent. SDK and raw
+Node tests cover owned roster/description replay and malformed/unbound companions;
+spill and shared admission/execution-budget tests now include companions. Two
+new macro fixtures bring the refusal roster to 60.
+
+Five additional PredicateGuards reports characterize joint observation cells,
+roster concatenation/permutation/duplication and the coarsest common refinement.
+The native semantic roster is 756 reports across 44 modules. These laws do not
+prove Rust, canonical encoding, minimum physical coordinates or performance.
+Evidence: `event-evidence/common-guards-qualification`,
+`event-evidence/common-guards-semantics`,
+`event-evidence/implementation-handoff-common-guards` and
+`event-evidence/common-guards-portable`.
+
+This closes common bound-predicate construction for one captured source, not
+dynamic source identities or multiple-source query refinement. All other open
+M0–M8 requirements, including multivariate solving/source binding, TypeSafe
+provenance/visibility, capacity/retained-memory policy, certified factoring,
+complete program/strategy/memory consumers, full Coup and integrated performance
+qualification, remain required. The full goal stays active; no release or bump.
+
+
+## Direct parameter-region query checkpoint
+
+Exact named regions now enter the predicate algebra directly through native
+`ObservationPredicate::region`, `PredicateExpr::Region`, Rust `Region(d,r)` and
+SDK `PredicateExpr.region(domain,region)`. Membership is total on an explicit
+inhabited ambient domain. Complete authored regions remain in the derivation,
+including outside-domain portions; no law, prior or source is fabricated.
+The ordinary predicate staging, quantifiers, common Event guards and exact
+transport apply, including independent partial-observation holes.
+
+BENP v2 adds a region/domain leaf with canonical replay. Existing derivations
+retain their BENP v1 bytes. Query workers share both BEPR imports' byte and exact
+admission budgets; description replay authenticates copied SDK carriers.
+Tests cover irrational singleton witnesses, distinct same-truth origins, mixed
+partial predicates, both Free Join paths, stored partition coverage, retained
+outputs, malformed/truncated/versioned replay, cancellation, byte/work bounds
+and unreachable corrupt imports. Two macro fixtures bring the refusal roster
+to 62. Six new PredicateQueries reports bring the native reference roster to
+762 across 44 modules; they do not prove native Rust or codec refinement.
+
+Evidence: `event-evidence/region-predicates-qualification-final`,
+`event-evidence/region-predicates-semantics`,
+`event-evidence/implementation-handoff-region-predicates-final` and
+`event-evidence/region-predicates-portable`.
+
+This closes direct captured univariate region membership in predicate/guard
+queries. Dynamic/multiple-source refinements, multivariate solving/source
+binding, parameter-changing maps, TypeSafe imports/provenance/visibility,
+capacity and aggregate retained-memory policy, certified factoring, complete
+program/strategy/memory consumers, full Coup and integrated performance/ARM64
+qualification remain required. The goal stays active; no release or version bump.
+
+
+## Row-bound guard source checkpoint
+
+Guard plans now bind full source Events and explicit `bytes<32>` presentation
+identities from ordinary relations or earlier stages. Native `GuardPlanExpr`,
+Rust `Existing(source)` / `Refine(source,identity)`, strict raw Node selectors
+and SDK `GuardPlan.bound` / `boundRefine` share the same interpretation. The
+existing Common predicate roster, truth cases and exact lift/descent apply.
+No schema type, source identity, prior or independence is synthesized.
+
+Source/name variables remain required even when unprojected. Participating
+bindings replay complete canonical source admission, including the law, under
+the shared execution arithmetic budget. Proper/empty markers refuse, even for
+constant false; a finite source cannot request a parameter refinement. Bound
+failures remain producer errors behind later filters. Captured plans retain
+their preparation-time admission, including unreachable imports.
+
+Native tests exercise two row sources with opposite laws, all identity words,
+independent endpoint holes, exact descent, source-only demands, owner closure,
+stored input reopening and both Free Join paths. Wrong types and 31/33-byte
+identities refuse preparation. Sink tests force spill, retain empty output
+Events, exhaust shared work and recover after cancellation. SDK tests cover
+staged Common plans, captured/bound byte equality, description replay and
+source refusals; raw Node tests independently cover dynamic source staging and
+malformed selectors. Three new macro fixtures bring the refusal roster to 65.
+
+Six new PredicateGuards laws establish row-indexed world roundtrips, source
+separation, exact truth, law-preserving contraction and full-marker coverage.
+The native reference roster is 768 reports across 44 modules. These do not
+verify the native solver, encoding, slot mapping, allocator or performance.
+Evidence: `event-evidence/bound-guards-qualification`,
+`event-evidence/bound-guards-semantics`,
+`event-evidence/implementation-handoff-bound-guards` and
+`event-evidence/bound-guards-portable`.
+
+This closes dynamic single-source guard binding. Multiple-source query common
+refinement, multivariate/general solving and source binding, parameter-changing
+maps, TypeSafe adapters/provenance/visibility, capacity and aggregate retained
+memory, certified factoring, full program/strategy/belief-memory consumers,
+Coup and integrated performance/ARM64 qualification remain required. The full
+M0–M8 goal stays active. No release, tag or version bump.
+
+
+## Common source query checkpoint
+
+`CommonSources` imports a bound peer source roster's exact parameter guards into
+one primary source presentation. It composes with the existing Common predicate
+roster and all five guard operations across native/Rust macro/Node/SDK APIs.
+Every peer must be a full canonical parameter source on the same named domain;
+participating peers replay full law admission under shared execution work.
+No domain intersection, outcome coupling, joint law, independence or generated
+identity is implied. The primary retains its own outcomes and designated law.
+
+Canonical guard sorting/deduplication and omission of already-resolved regions
+make source-roster ordering and duplication immaterial within resource bounds.
+All authored sources validate before simplification. Existing-source plans
+require all peer distinctions to be present already. Flat source/predicate
+rosters share expression-node and temporary region-byte bounds. Source variables
+remain demands even when absent from the result; descriptions replay both rosters.
+
+Both Free Join paths compare query bytes against the independent host common
+refinement constructor, preserve laws and exact lift/descent, combine peer guards
+with separate predicate holes, and retain outputs after owner closure. Rejections
+cover partial/empty/finite peers, foreign or different domains, unresolved cells,
+wrong types, hidden producer failures and strict raw numeric ordinals. Sink tests
+force spill and cumulative arithmetic exhaustion for captured and bound plans
+with peer sources, and recover after cancellation. SDK tests check owned rosters,
+composed contexts, native comparison and staged description replay. Two macro
+fixtures bring the refusal roster to 67.
+
+Five new PredicateGuards laws characterize the union of source distinctions,
+permutation/duplication, already-resolved guards and the failure of equal guard
+partitions to identify normalized laws. The reference roster is 773 reports in
+44 modules; it does not verify native code, encoding, allocation or performance.
+Evidence: `event-evidence/source-rosters-qualification`,
+`event-evidence/source-rosters-semantics`,
+`event-evidence/implementation-handoff-source-rosters` and
+`event-evidence/source-rosters-portable`.
+
+This closes equal-domain multiple-source guard refinement query consumers.
+Multivariate/general solving and source binding, parameter-changing maps,
+TypeSafe adapters/provenance/visibility, capacity and aggregate retained memory,
+certified factoring, complete program/strategy/belief-memory consumers, full
+Coup and integrated performance/ARM64 qualification remain required. The full
+M0–M8 goal stays active. No release, tag or version bump.
+
+
+## Belief-memory transport checkpoint
+
+`BeliefDescriptor` / BEBM v1 owns a full source, initial evidence, indexed
+observations and indexed action products/regions. Import rebuilds every source,
+map, complete product, observation partition and reachable memory through checked
+constructors. There is no serialized graph, winner or controller claim to trust.
+Empty observations, action direction, explicit identities, law-bearing sources,
+zero-mass possibilities and one actual parameter assignment survive replay.
+Capture records retained action normalization into the first product; original
+syntax and provider provenance remain distinct from this executable recipe.
+
+Face/fibre construction, product pairing/reindexing and memory normalization now
+have explicit-parameter APIs that share one arithmetic allowance. Replay uses
+one counter for all embedded source/domain/law checks and normalization. Transport
+items/bytes include nested map/readout rosters cumulatively. Belief, partition,
+per-owner kernel and cancellation bounds remain separate; no total retained-byte
+quota or completeness beyond the supported parameter fragment is asserted.
+
+SDK `EventMemory.admit`, `describe`, `inspect`, `fromBytes` and `toBytes` use a
+dedicated worker route and owned carriers. Pure envelope parsing proves no
+semantics. Inspection reconstructs the graph and bounds its combined detached
+output; possible-world Events feed ordinary database rows and equality joins.
+The SDK contains no alternative belief solver.
+
+Native replay is checked against all 2,048 small-game/input oracle cases, the
+remembered-secret strategy, reversed/differently named products, empty evidence,
+empty rosters, zero-mass worlds and shared parameters. Tests cover full source
+markers, coverage, role/context errors, every truncated byte prefix, aggregate
+transport limits, exact shared arithmetic exhaustion and cancellation. Native
+stored consumers rebuild from BEBM before compiling policies and retain existing
+FD/IND checks, reopen and both Free Join paths. SDK tests include independent
+BEBM authoring, runtime release/reopen, native copy ownership, strict raw ingress,
+parameter memory, cancellation and real stored Event joins.
+
+Six new BeliefMemory laws establish extensional recipe replay across updates,
+complete histories, permissions, knowledge/possibility, the significance of action
+indices and absence of successors for empty observations. The native reference
+roster is 779 reports in 44 modules; these laws do not verify Rust, codecs,
+BFS numbering, allocator behavior or performance.
+Evidence: `event-evidence/memory-transport-qualification`,
+`event-evidence/memory-transport-semantics`,
+`event-evidence/implementation-handoff-memory-transport` and
+`event-evidence/memory-transport-portable`.
+
+Compiled memory/strategy/program transport and query construction remain open.
+So do multivariate/general solving and source binding, parameter-changing maps,
+TypeSafe adapters/provenance/visibility, capacity and aggregate retained memory,
+certified factoring, full Coup and integrated performance/ARM64 qualification.
+The full M0–M8 goal stays active. No release, tag or version bump.
+
+
+## Compiled belief-arena checkpoint
+
+`BeliefArenaDescriptor` / BEBA v1 retains an exact memory recipe and its five
+explicit compilation identities. Admission rebuilds reachable memory and the
+named finite code/transition spaces; no stored graph, winning set or proof claim
+is trusted. Identity and nested recipe items share one descriptor allowance.
+Every newly created code/product owner uses the caller's Event kernel policy.
+Shared-parameter source replay retains the existing single arithmetic counter.
+
+SDK `EventMemory.compile` returns an owned `EventMemoryArena`. Describe/replay
+retains its recipe and names. Inspection returns ordinary state/action code
+Events, initial region, action product and transition relation descriptors.
+`known` and `possible` interpret hidden predicates on the memory space; `reach`
+and `safe` consume explicit memory-space objectives and call existing native
+solvers. Results include winning regions, policy descriptors and reach ranks.
+These are detached checked results, not an importable executable strategy
+certificate; general strategy/program transport remains required.
+
+All 256 small compiled games now replay BEBA before the independent edge/modal/
+winning oracle. The remembered-secret fixture replays its arena before proving
+its three-step strategy. Native tests cover exact codes and unused-index refusal,
+renaming, empty memory/actions, every truncated prefix, aggregate name/recipe
+bounds, compiled-owner capacities, shared parameter arithmetic and cancellation.
+The database fixture imports BEBA before storing policies under existing FDs/INDs,
+reopening and using both Free Join paths. SDK tests cover an independently authored
+BEBA envelope, raw copy/arity refusal, exact knowledge/possibility, rank-decreasing
+secret-dependent policies, continuing safety, runtime release/replay, parameter
+memory, foreign objectives and persisted policy equality joins. Output inspection
+bounds all derived descriptors and code/rank rosters together.
+
+Five new BeliefMemory reference laws cover injective code membership, exact legal
+code support, all three transition roles, enabled controlled predecessors and
+hidden-world knowledge. The reference roster is 784 reports in 44 modules. Native
+BFS numbering, codec admission, kernels, allocator and performance remain tested
+correspondence obligations, not Lean-verified Rust.
+Evidence: `event-evidence/memory-arena-qualification`,
+`event-evidence/memory-arena-semantics`,
+`event-evidence/implementation-handoff-memory-arena` and
+`event-evidence/memory-arena-portable`.
+
+General program/strategy transport and native query memory construction remain
+open, along with multivariate/general solving and source binding, parameter-changing
+maps, TypeSafe adapters/provenance/visibility, capacity and aggregate retained memory,
+certified factoring, full Coup and integrated performance/ARM64 qualification.
+The full M0–M8 goal stays active. No release, tag or version bump.
+
+
+## Native action/strategy transport checkpoint
+
+`ActionDescriptor` / BEAC v1 retains a general fully observed arena or an arena,
+objective and optional selected-policy region. Import rebuilds every source/map/
+product certificate, recomputes the objective's solver result, then checks policy
+inclusion and complete required-state coverage. Capture retains actual choices,
+including strict restrictions; no serialized winning/rank claim is trusted.
+Absent policies request the full solver policy. Reach continues to require
+strict first-entry progress; safety continues to require enabled continuation.
+
+Finite/fixed-law and supported shared-parameter sources use one structural
+admission path. A public plain `RelationDescriptor` replaces duplicated relation
+data; `BeliefActionDescriptor` remains a compatibility alias and BEBM bytes are
+unchanged. Explicit-work map composition, arena construction, policy extraction
+and restriction share replay's arithmetic counter. Product direction retains
+original concatenation. Source laws and zero-mass possibilities survive. Nested
+transport bounds, per-owner limits, fixed-point work, layers and cancellation
+remain explicit; a global retained-memory quota is not asserted.
+
+All 256 tiny games replay arenas and all 2,048 goal/solver results before the
+independent policy oracle. Tests cover proper selected policies, changed goals,
+stalling/incomplete choices, dormant invalid data, original converse order,
+full-marker/role checks, fixed-law zero-mass outcomes, shared parameters and
+exact cumulative arithmetic exhaustion. Independently authored wire grammar,
+every truncated prefix, marker/version/trailing-byte refusal and capacities
+exercise ingress. The database fixture imports a complete strategy before its
+existing FD/IND, persistence/reopen and resident/cursor Free Join consumers.
+
+Five new Actions reference laws connect extensional replay to controlled
+predecessors and reach/safety iterates, and connect checked subset/domain
+conditions to termination bounds and continuing safety. The native reference
+roster is 789 reports in 44 modules. These do not prove Rust, codecs, solver
+execution, allocation or performance.
+Evidence: `event-evidence/action-transport-qualification`,
+`event-evidence/action-transport-semantics`,
+`event-evidence/implementation-handoff-action-transport` and
+`event-evidence/action-transport-portable`.
+
+General action/strategy SDK/query consumers, EventProgram transport and native
+query memory construction remain open, along with multivariate/general solving
+and source binding, parameter-changing maps, TypeSafe adapters/provenance/visibility,
+capacity and aggregate retained memory, certified factoring, full Coup and
+integrated performance/ARM64 qualification. The full M0–M8 goal stays active.
+No release, tag or version bump.
+
+
+## Action/strategy SDK checkpoint
+
+Owned `EventAction` BEAC values now have lazy envelope transport, worker admission,
+description and bounded inspection. The SDK exposes enabled choices, good choices,
+controlled predecessors, ranked reach/continuing-safety solving and checked
+restriction of an existing selected policy. Descriptions author the existing
+native arena and objective/policy recipe. Null policy requests all native choices;
+normalized captures retain actual choices. Further restriction cannot re-expand
+removed actions. Distinct outcome roles remain valid for one-step reasoning and
+refuse iterative solvers.
+
+`fromMemory` reconstructs BEBA before exporting its named arena as BEAC. The
+hidden interpretation remains on the original memory arena. The remembered-secret
+consumer checks identical ranks/winning/policies and different final actions after
+strategy replay and runtime release. Other consumers persist strategy Event regions
+and join independent expected values. Raw Node tests cover strict shape/arity,
+owned copies, malformed envelopes/roles/objectives/policies and cancellation.
+Supported shared-parameter cases retain one actual unknown and their sources.
+
+One worker arithmetic counter covers arena/strategy replay, operand admission,
+solving and restriction. Input carrier/operand bytes share a bound; nested
+plain descriptions share structural limits. Action and memory inspection now
+share one cumulative Event/descriptor export helper, including complete rank
+rosters. Exact-bound and one-short refusal tests cover combined exports.
+A lazy memory compilation wrapper also removes a module-initialization cycle
+exposed by the new import path; pure imports remain native-addon-free.
+
+No new mathematical semantics are introduced. The existing 789 native Lean
+reports across 44 modules remain denotational evidence; SDK, worker, codec,
+allocator and solver implementation remain tested correspondence obligations.
+Evidence: `event-evidence/action-sdk-qualification`,
+`event-evidence/action-sdk-semantics`,
+`event-evidence/implementation-handoff-action-sdk` and
+`event-evidence/action-sdk-portable`.
+
+Constructive action/strategy query consumers, EventProgram transport and native
+query memory construction remain open. So do multivariate/general solving and
+source binding, parameter-changing maps, TypeSafe adapters/provenance/visibility,
+capacity/aggregate retained memory, certified factoring, full Coup consumers and
+integrated performance/ARM64 qualification. The entire M0–M8 goal stays active;
+no release, tag or version bump.
