@@ -1,7 +1,7 @@
 /**
  * An installed-package consumer of the TypeScript SDK: one schema, typed queries, a scoped
  * ChangeSet, a QueryReader helper, apply, a witnessed correction, computed query heads and
- * scoped result reads. Importing this module performs no native work.
+ * scoped result reads. Importing this module loads the addon, which validates every definition.
  */
 import {
 	alternatives,
@@ -64,8 +64,6 @@ export const attemptsFor = query(Learning).rule((r) => {
 		.find({ id, student, score, units, active })
 })
 
-/** Generated logical descriptions use the same checked schema and typed result fields. */
-
 export const attemptStats = query(Learning)
 	.rule((r) => {
 		const { id, student, score } = v(Attempt)
@@ -95,7 +93,7 @@ export const newAttempt = Effect.fn("newAttempt")(function* (
 	return yield* draft.finish()
 })
 
-/** Same helper on a core snapshot and a published log snapshot — no adapter. */
+/** Runs on an engine snapshot and on a `Database` reader alike. */
 export const readAttempts = Effect.fn("readAttempts")(
 	function* (reader: QueryReader<typeof Learning>, student: Uuid) {
 		const result = yield* reader.execute(attemptsFor, { student })
@@ -112,8 +110,6 @@ export const runtimePolicy: BumbleOptions = {
 	nativeHandleCapacity: 64,
 	cleanupTimeout: "2 seconds"
 }
-
-
 
 /** One process-lifetime runtime. Request code must not construct another. */
 export const makeConsumerRuntime = () => ManagedRuntime.make(Bumble.layer(runtimePolicy))
@@ -167,7 +163,7 @@ export const drainPages = (reader: QueryReader<typeof Learning>, student: Uuid) 
 		})
 	)
 
-/** Packed declaration portability for the structural algebra. */
+/** Interval, computed-head and closed-roster declarations survive packing. */
 const Observed = relation("Observed", { span: interval(i64), amount: u64 })
 const Observations = schema("Observations", { Observed }, [])
 export const measuredSegments = query(Observations).rule((r) => {

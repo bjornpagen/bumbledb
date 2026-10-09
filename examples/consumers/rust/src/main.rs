@@ -1,20 +1,11 @@
-//! Packed Rust core consumer (D07/D22): the shared `Learning` schema,
-//! ordinary RAII, application-owned `Uuid` values generated once before
-//! sealing, typed nominal entity IDs, grouped exact float aggregates,
-//! `use`-composition of a reusable typed query template, and a witnessed
-//! read/modify/write against the same store.
-//!
-//! Current public spellings: `Db::create(..., work)` by value,
-//! `ChangeSet::builder(db.schema(), work.clone())`, `db.apply` /
-//! `ApplyOutcome::InvariantRejected`, `db.snapshot(&work)` → `OwnedRead` /
-//! `ReadFrame`, `frame.prepare` + `execute_collect`, `Db::close() -> CloseReport`.
-//! Typed facts encode through `Fact::append_values`. Query params bind as
-//! `BindValue` (the published `BindArgs` surface).
-//!
+//! A standalone consumer of the `bumbledb` crate: the `Learning` schema,
+//! application-owned `Uuid`s, typed nominal ids, grouped exact float
+//! aggregates, a composed query template, a witnessed read/modify/write,
+//! per-operation cancellation and a capacity rejection.
 
 use bumbledb::{
-    Admission, ApplyExpected, ApplyOutcome, BindValue, ChangeSet, ChangeSetBuilder, CloseReport,
-    Db, F64, Fact, Interval, Uuid, WorkContext,
+    Admission, BindValue, ChangeSet, ChangeSetBuilder, CloseReport, Db, ErrorKind, F64, Fact,
+    Interval, Uuid, WorkContext, WriteOutcome,
 };
 
 bumbledb::schema! {
@@ -60,12 +51,11 @@ fn delete_fact<'a, F: Fact<'a>>(
     Ok(())
 }
 
-fn outcome_name(outcome: &ApplyOutcome) -> &'static str {
+fn outcome_name(outcome: &WriteOutcome<()>) -> &'static str {
     match outcome {
-        ApplyOutcome::Accepted { .. } => "accepted",
-        ApplyOutcome::NoChange { .. } => "no-change",
-        ApplyOutcome::InvariantRejected { .. } => "invariant-rejected",
-        ApplyOutcome::Moved { .. } => "moved",
+        WriteOutcome::Committed(_) => "committed",
+        WriteOutcome::Rejected(_) => "rejected",
+        WriteOutcome::Moved { .. } => "moved",
     }
 }
 
@@ -78,8 +68,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos();
-    let dir =
-        std::env::temp_dir().join(format!("bumbledb-consumer-{}-{nonce}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("consumer-{}-{nonce}.bdb", std::process::id()));
     let work = work();
 
     let student_id = StudentId(Uuid::from_bytes(
@@ -128,8 +117,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             active: Interval::new(60i64, 120i64).expect("nonempty half-open interval"),
         },
     )?;
-    match db.apply(&draft.finish()?, ApplyExpected::Any, &work)? {
-        ApplyOutcome::Accepted { .. } | ApplyOutcome::NoChange { .. } => {}
+    match db.apply(&draft.finish()?, &work)? {
+        WriteOutcome::Committed(_) => {}
         other => return Err(format!("insert apply refused: {}", outcome_name(&other)).into()),
     }
 
@@ -177,8 +166,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let error = frame
         .execute_collect(&mut reusable, &[BindValue::Uuid(student_id.0)])
         .expect_err("cancelled execution refuses");
-    assert!(matches!(error, bumbledb::Error::Store(error)
-            if matches!(*error, bumbledb::store::StoreError::Work(bumbledb::work::WorkError::Cancelled))));
+    assert_eq!(error.kind(), ErrorKind::Cancelled);
     let frame = snapshot.frame(&work);
     assert_eq!(
         frame
@@ -197,8 +185,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             ..previous
         },
     )?;
-    match db.apply(&correction.finish()?, ApplyExpected::Exact(witness), &work)? {
-        ApplyOutcome::Accepted { .. } | ApplyOutcome::NoChange { .. } => {}
+    match db.apply_from(&correction.finish()?, &witness, &work)? {
+        WriteOutcome::Committed(_) => {}
         other => {
             return Err(format!("witnessed correction refused: {}", outcome_name(&other)).into());
         }
@@ -218,8 +206,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             active: Interval::new(120i64, 180i64).expect("nonempty half-open interval"),
         },
     )?;
-    match db.apply(&over.finish()?, ApplyExpected::Any, &work)? {
-        ApplyOutcome::InvariantRejected { violations } => {
+    match db.apply(&over.finish()?, &work)? {
+        WriteOutcome::Rejected(violations) => {
             assert!(
                 !violations.is_empty(),
                 "capacity rejection names its statements"
