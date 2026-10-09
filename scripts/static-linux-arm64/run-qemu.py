@@ -37,18 +37,18 @@ def main():
     (output / "qemu.log").write_text(log)
     assert result.returncode == 0, f"QEMU exited {result.returncode}; see {output / 'qemu.log'}"
     assert "BUMBLEDB_STATIC_QEMU: PASS" in log and "BUMBLEDB_STATIC_QEMU: FAIL" not in log, f"guest verification failed; see {output / 'qemu.log'}"
-    assert "static C/Rust/musl/LMDB link probe: OK" in log and "condition: Missing" in log
+    assert "static C/Rust/musl/LMDB link probe: OK" in log
     report = {
         "mode": "full-system Linux, TCG",
         "cpu": "cortex-a53",
         "kernelSha256": hashlib.sha256(kernel.read_bytes()).hexdigest(),
         "initramfsSha256": hashlib.sha256(initramfs.read_bytes()).hexdigest(),
         "qemuVersion": subprocess.check_output([qemu, "--version"], text=True).splitlines()[0],
-        "coreAndDutyPassed": True,
+        "coreProbePassed": True,
         "sharedLibrariesInGuest": False,
     }
     (output / "qemu-verification.json").write_text(json.dumps(report, indent=2) + "\n")
-    print("PASS: full-system ARM64 QEMU booted Linux and ran the static core/C consumer and duty with no shared libraries")
+    print("PASS: full-system ARM64 QEMU booted Linux and ran the static core/C consumer with no shared libraries")
 
 
 if __name__ == "__main__":

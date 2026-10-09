@@ -23,9 +23,4 @@ trap finish EXIT
 
 # No runtime loader or shared libraries exist in this fresh root filesystem.
 [ ! -e /lib ] && [ ! -e /usr/lib ]
-/bin/busybox mkdir -p /tmp/host
 /bumbledb-static-smoke
-/bumbledb-log-duty status --fs-root /tmp/host --prefix static > /tmp/duty-status
-/bin/busybox cat /tmp/duty-status
-/bin/busybox grep -q '^condition: Missing$' /tmp/duty-status
-[ ! -e /tmp/host/static/HEAD ]

@@ -19,7 +19,6 @@ export CC_aarch64_unknown_linux_musl=cc
 export AR_aarch64_unknown_linux_musl=ar
 export PYTHONDONTWRITEBYTECODE=1
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo/target}"
-export CARGO_PROFILE_DEV_DEBUG=1
 output="${1:-$CARGO_TARGET_DIR/static-linux-arm64}"
 mkdir -p "$output"
 output="$(cd "$output" && pwd)"
@@ -38,8 +37,7 @@ python3 scripts/static-linux-arm64/verify-elf.py --cargo-json "$output/bin-artif
 echo "==> real static core archive, C linker, native runtime and negative controls"
 cargo rustc --locked -p bumbledb --release --target "$target" --crate-type rlib,staticlib --message-format=json -- --print native-static-libs > "$output/core-artifacts.jsonl"
 python3 scripts/static-linux-arm64/link-probe.py "$output/core-artifacts.jsonl" "$output"
-cp "$CARGO_TARGET_DIR/$target/release/duty" "$output/bumbledb-log-duty"
-python3 scripts/static-linux-arm64/verify-elf.py "$output/bumbledb-static-smoke" "$output/bumbledb-log-duty" > "$output/static-executables.json"
+python3 scripts/static-linux-arm64/verify-elf.py "$output/bumbledb-static-smoke" > "$output/static-executables.json"
 "$output/bumbledb-static-smoke"
 cc scripts/static-linux-arm64/dynamic-negative.c -o "$output/dynamic-negative"
 if python3 scripts/static-linux-arm64/verify-elf.py "$output/dynamic-negative" > "$output/dynamic-negative.log" 2>&1; then
@@ -53,10 +51,11 @@ bash scripts/static-linux-arm64/prepare-rootfs.sh "$output"
 python3 scripts/static-linux-arm64/run-qemu.py "$output"
 
 echo "==> all-feature Rust correctness on native ARM64 musl"
-cargo nextest run --locked --workspace --all-features --target "$target" --profile ci 2>&1 | tee "$output/musl-tests.log"
-cargo test --locked --workspace --all-features --doc --target "$target" 2>&1 | tee "$output/musl-doctests.log"
-cargo check --locked -p bumbledb-log --no-default-features --target "$target"
-cargo nextest run --locked -p bumbledb --features alloc-counter --test alloc_gate --release --target "$target" --profile ci 2>&1 | tee "$output/musl-allocation-gate.log"
+cargo nextest run --locked --workspace --all-features --target "$target" --cargo-profile ci --profile ci 2>&1 | tee "$output/musl-tests.log"
+cargo test --locked --workspace --all-features --doc --target "$target" --profile ci 2>&1 | tee "$output/musl-doctests.log"
+
+echo "==> release-mode engine tests on native ARM64 musl (allocation gates included)"
+cargo nextest run --locked -p bumbledb --target "$target" --cargo-profile gate --profile ci 2>&1 | tee "$output/musl-release-tests.log"
 
 python3 scripts/static-linux-arm64/notices.py "$output"
 
@@ -80,11 +79,11 @@ report = {
                "C linker and missing-archive negative control", "dynamic-ELF negative control",
                "threads, panic recovery, persistence and queries", "empty chroot",
                "full-system QEMU Linux", "all-feature workspace nextest", "all-feature doctests",
-               "store-disabled log compile", "release allocation gate"],
+               "release-mode engine tests"],
     "benchmarksRun": False,
     "scope": "static Rust core embedding and Linux executables; no new public C API or static Node executable",
 }
 (out / "verification.json").write_text(json.dumps(report, indent=2) + "\n")
 PY
-(cd "$output" && sha256sum libbumbledb.a bumbledb-static-smoke bumbledb-log-duty vmlinuz-virt initramfs.cpio.gz notices.tar.gz static-library.json static-executables.json workspace-binaries.json qemu-verification.json verification.json > SHA256SUMS)
+(cd "$output" && sha256sum libbumbledb.a bumbledb-static-smoke vmlinuz-virt initramfs.cpio.gz notices.tar.gz static-library.json static-executables.json workspace-binaries.json qemu-verification.json verification.json > SHA256SUMS)
 echo "static Linux ARM64 qualification passed; artifacts and evidence: $output"

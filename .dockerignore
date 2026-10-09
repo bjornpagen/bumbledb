@@ -1,6 +1,7 @@
 .git
 **/node_modules
 **/target
+**/dist
 **/.pnpm-store
 **/.DS_Store
 **/__pycache__
@@ -11,4 +12,5 @@ bench-data
 .claude
 .idea
 .vscode
+ts/bumbledb.*.node
 ts/npm/**/bumbledb.node
