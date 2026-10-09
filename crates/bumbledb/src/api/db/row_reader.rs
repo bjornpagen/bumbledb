@@ -1,21 +1,15 @@
 //! Borrowed sequential decode of one stored canonical row.
 //!
-//! The canonical wire (C01, `crate::canonical`) owns text inline, so a
-//! typed fact's `&str` / `&[u8]` fields borrow directly from the stored
-//! bytes — an LMDB snapshot's mapped pages (transaction-stable by `CoW`) or a
-//! transaction's pending row — with no dictionary and no copy. The reader
-//! walks fields strictly in sealed order, which is exactly the order the
-//! `schema!`-generated `Fact::decode` impls consume them.
-//!
-//! This is a *view* over bytes the engine already validated at their write
-//! boundary (`CanonicalRow::encode`/`parse`); every step still bounds-checks
-//! and re-refuses malformed bytes as typed corruption rather than trusting
-//! storage.
+//! Canonical rows hold text inline, so a typed fact's `&str` and `&[u8]`
+//! fields borrow the stored bytes (a snapshot's mapped pages or a
+//! transaction's pending row) without a copy. Fields are read in declaration
+//! order, the order `schema!`-generated `Fact::decode` consumes them. Every
+//! step bounds-checks and refuses malformed bytes as corruption.
 
 use crate::error::{CorruptionError, Error, Result};
 use bumbledb_theory::{F64, Interval, Uuid};
 
-/// Wire tags, mirrored from the canonical codec (C01 contract).
+/// Field tags of the canonical codec.
 mod tag {
     pub const BOOL: u8 = 0;
     pub const U64: u8 = 1;
@@ -136,6 +130,15 @@ impl<'a> RowReader<'a> {
         self.blob("canonical bytes payload")
     }
 
+    /// A `bytes<N>` field.
+    /// # Errors
+    /// Corruption on a wrong tag or a payload that is not `N` bytes.
+    pub fn next_fixed_bytes<const N: usize>(&mut self) -> Result<[u8; N]> {
+        self.expect_tag(tag::FIXED_BYTES, "canonical bytes field")?;
+        <[u8; N]>::try_from(self.blob("canonical bytes payload")?)
+            .map_err(|_| malformed("canonical bytes payload width"))
+    }
+
     /// # Errors
     /// Corruption on a wrong tag or an empty/inverted span.
     pub fn next_interval_u64(&mut self) -> Result<Interval<u64>> {
@@ -180,5 +183,41 @@ impl<'a> RowReader<'a> {
             return Err(malformed("canonical row trailing bytes"));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RowReader;
+    use crate::Value;
+    use crate::canonical::CanonicalRow;
+    use crate::error::{CorruptionError, Error};
+    use crate::schema::{FieldDescriptor, ValueType};
+
+    fn row(len: u16, bytes: &[u8]) -> CanonicalRow {
+        let fields = [FieldDescriptor {
+            name: "b".into(),
+            value_type: ValueType::FixedBytes { len },
+        }];
+        CanonicalRow::encode(
+            &fields,
+            &[Value::FixedBytes(bytes.into())],
+            &crate::WorkContext::new(),
+        )
+        .expect("encode")
+    }
+
+    #[test]
+    fn fixed_bytes_read_at_their_declared_width() {
+        let row = row(3, &[1, 2, 3]);
+        let mut reader = RowReader::new(row.as_bytes()).expect("header");
+        assert_eq!(reader.next_fixed_bytes::<3>().expect("read"), [1, 2, 3]);
+        reader.finish().expect("consumed");
+
+        let mut reader = RowReader::new(row.as_bytes()).expect("header");
+        assert!(matches!(
+            reader.next_fixed_bytes::<4>(),
+            Err(Error::Corruption(CorruptionError::MalformedValue(_)))
+        ));
     }
 }
