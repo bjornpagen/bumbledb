@@ -5,6 +5,7 @@
 //! by renaming `CURRENT`, so a crash leaves the old state or the new one.
 
 use std::collections::{BTreeMap, HashMap};
+use std::convert::Infallible;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,6 +13,9 @@ use std::sync::Arc;
 use bumbledb::changes::ChangeKind;
 use bumbledb::integration::{AttachmentChange, HostChanges, HostRecordChange, Preparation};
 use bumbledb::schema::evidence;
+use bumbledb::store::{
+    CandidateJudge, CandidateState, Judgment as StoreJudgment, Prepared, StoreResult, UnindexedRows,
+};
 use bumbledb::{
     Admission, ChangeSet, Db, RelationId, Schema, SchemaDescriptor, SchemaFingerprint, WorkContext,
 };
@@ -248,9 +252,13 @@ impl Replica for Cache {
             .collect();
         let head = update.head.encode();
         let work = WorkContext::new();
-        let mut session = live.db.integration_writer(&work).map_err(local)?;
-        let Preparation::Accepted(prepared) = session.prepare(&changes).map_err(local)? else {
-            return Err(CacheError::Diverged);
+        let mut owner = live.db.integration_store().writer(&work).map_err(local)?;
+        let prepared = match owner
+            .prepare(&changes, &UnindexedRows, &Decided)
+            .map_err(local)?
+        {
+            Prepared::Admitted(prepared) => prepared,
+            Prepared::Rejected { rejection, .. } => match rejection {},
         };
         prepared
             .seal(HostChanges {
@@ -260,7 +268,7 @@ impl Replica for Cache {
             .map_err(local)?
             .commit()
             .map_err(local)?;
-        drop(session);
+        drop(owner);
         live.head = update.head.clone();
         Ok(())
     }
@@ -358,6 +366,21 @@ impl Replica for Cache {
         drop(db);
         remove(&stage)?;
         migrated
+    }
+}
+
+/// Admits every candidate: an applied entry was decided when it was written.
+struct Decided;
+
+impl CandidateJudge for Decided {
+    type Rejection = Infallible;
+
+    fn judge(
+        &self,
+        _: &CandidateState<'_, '_>,
+        _: &WorkContext,
+    ) -> StoreResult<StoreJudgment<Infallible>> {
+        Ok(StoreJudgment::Admitted)
     }
 }
 

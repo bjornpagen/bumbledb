@@ -224,8 +224,9 @@ The log needs, beyond the planned `host` surface:
 
 Until these land the cache uses today's `bumbledb::integration` writer: judging prepares the
 ordered composition of the accepted change sets plus the next one and aborts; applying prepares
-the composition of an entry's committed sets (so apply still judges until R-E2), seals receipts and
-the head, and commits; per-set deltas come from snapshot membership lookups. Images are verified
+the composition of an entry's committed sets through `store::WriteOwner::prepare` with an
+always-admitting `CandidateJudge` (apply never judges), seals receipts and the head, and commits;
+per-set deltas come from snapshot membership lookups and are checked against the entry. Images are verified
 by a BLAKE3 digest of the image file until `content_digest()` (C16) lands. The cache commits
 durably until R-E3.
 

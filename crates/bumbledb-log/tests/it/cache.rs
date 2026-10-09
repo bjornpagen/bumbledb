@@ -505,3 +505,48 @@ fn the_cache_migrates_and_records_a_rejected_migration() {
     assert_eq!(opened, Settled::Opened { pending: 0 });
     assert_same(&cache_state(reader.machine.replica()), &migrated);
 }
+
+#[test]
+fn catch_up_applies_what_the_log_decided_without_judging_it_again() {
+    let schema = schema();
+    let bundle = bundle();
+    let step = &bundle.steps()[0];
+    let genesis = Entry {
+        nonce: bumbledb_log::Nonce([1; 16]),
+        body: Body::Genesis(bumbledb_log::Genesis {
+            database: DatabaseId([1; 16]),
+            initial: step.id.clone(),
+            schema: step.fingerprint,
+        }),
+    };
+    // Two rows sharing a key: today's judgment would reject this commit.
+    let decided = Entry {
+        nonce: bumbledb_log::Nonce([2; 16]),
+        body: Body::Commands(
+            vec![bumbledb_log::Decided {
+                command: bumbledb_log::CommandRef {
+                    request: RequestId([3; 16]),
+                    digest: bumbledb_log::CommandDigest([4; 32]),
+                },
+                verdict: bumbledb_log::Verdict::Committed {
+                    changes: items(&schema, &[(1, 1), (1, 2)], &[]),
+                    delta: bumbledb_log::Delta::new(2, 0).unwrap(),
+                },
+            }]
+            .into(),
+        ),
+    };
+    let mut store = Store::default();
+    for (seq, entry) in [genesis, decided].iter().enumerate() {
+        let key = bumbledb_log::log_key(Seq::new(seq as u64 + 1).unwrap());
+        store.log.insert(key, (entry.encode(), 1));
+    }
+    let dir = TempDir::new("cache-decided");
+    let mut config = config(8, 1_000);
+    config.create = None;
+    let (solo, opened) = Solo::open(&mut store, dir.path(), bundle.clone(), config);
+    assert_eq!(opened, Settled::Opened { pending: 0 });
+    let state = cache_state(solo.machine.replica());
+    assert_eq!(state.head.seq, Seq::new(2).unwrap());
+    assert_eq!(state.rows.len(), 2);
+}
