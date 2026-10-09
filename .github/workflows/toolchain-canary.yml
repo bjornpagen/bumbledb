@@ -1,0 +1,82 @@
+# Weekly: move to the newest qualifying nightly with scripts/bump-toolchain.sh
+# and open (or update) the bot/toolchain pull request; a red bump files an issue.
+# The bot GitHub App's token makes the pull request trigger ci.yml.
+name: toolchain-canary
+
+on:
+  schedule:
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.BUMBLEDB_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BUMBLEDB_BOT_PRIVATE_KEY }}
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app.outputs.token }}
+      - name: Commit as the bot
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          id=$(gh api "/users/${SLUG}%5Bbot%5D" --jq .id)
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.148,cargo-deny,cargo-shear
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          package_json_file: ts/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: ts/pnpm-lock.yaml
+      - id: bump
+        run: |
+          before=$(git rev-parse HEAD)
+          scripts/bump-toolchain.sh
+          if [ "$(git rev-parse HEAD)" != "$before" ]; then
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.bump.outputs.bumped == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.app.outputs.token }}
+          branch: bot/toolchain
+          title: Bump the nightly toolchain
+          body-path: target/toolchain-bump/report.md
+      - if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="toolchain canary red"
+          issue=$(gh issue list --state open --search "in:title \"$title\"" --json number,title \
+            --jq ".[] | select(.title == \"$title\") | .number" | head -n 1)
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "Still red: $RUN"
+          else
+            gh issue create --title "$title" --body "The weekly nightly bump failed: $RUN"
+          fi

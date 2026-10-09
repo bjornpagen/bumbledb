@@ -17,7 +17,7 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
 | G5: `.config/deny.toml`, cargo-shear, Dependabot | landed (not runnable locally: no cargo-deny/cargo-shear here) |
 | G4: SeaweedFS and AWS S3 lanes | landed (red until ts adds `test:s3`, see requests) |
 | G10: `deep.yml` (Miri, musl, AWS, deep sweeps + release gates, macOS clippy, udeps, NEON asm, deep-red issue) | landed |
-| G11: `scripts/bump-toolchain.sh`, `toolchain-canary.yml`, toolchain components | todo |
+| G11: `scripts/bump-toolchain.sh`, `toolchain-canary.yml`, toolchain components | landed (micro report needs bench, see requests) |
 | G12: `release.yml`, `scripts/family.mjs`, packed smoke | todo |
 
 ## API changes (announcements)
@@ -91,6 +91,20 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
   on macos-26; `udeps`; `asm` (`scripts/check-asm.sh` on the release `bumbledb-bench` on
   ubuntu-24.04-arm). Any red lane opens or comments on the one open issue titled `deep red`; a
   fully green night closes it. `scripts/miri.sh` and `scripts/miri-cross-cc.sh` are deleted.
+- **`rust-toolchain.toml`** is the only place the nightly is named: `channel`, components
+  `rustfmt` + `clippy`, `profile = "minimal"`, no extra targets. Miri jobs add `miri` and
+  `rust-src` themselves.
+- **`scripts/bump-toolchain.sh [nightly-YYYY-MM-DD]`** (needs a clean tree): picks the newest
+  nightly (last 31 days) whose channel manifest ships rustc, cargo, rust-std, rustfmt and clippy
+  for aarch64-apple-darwin, aarch64-unknown-linux-{gnu,musl}, x86_64-unknown-linux-gnu, plus Miri
+  for the two Miri hosts and rust-src; rewrites the channel; `cargo fmt`, `clippy --fix` (default
+  and `--all-features`), deletes every `#[expect]` lint reported unfulfilled (and the attribute
+  when nothing is left); runs `scripts/ci.sh lint` and `test`; writes the micro report to
+  `target/toolchain-bump/report.md`; commits `Toolchain: nightly-YYYY-MM-DD`.
+- **`toolchain-canary.yml`** (Mondays 05:41 UTC and manual): runs the bump with the bot GitHub
+  App token (`vars.BUMBLEDB_BOT_CLIENT_ID`, `secrets.BUMBLEDB_BOT_PRIVATE_KEY`) and opens or
+  updates the `bot/toolchain` pull request; a red run opens or comments on the issue
+  `toolchain canary red`.
 
 ## Requests to other lanes
 
@@ -109,6 +123,12 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
   `allen_code_batch_const_neon` and `allen_filter_batch_neon` (each must exist in the release
   `bumbledb-bench` binary and be free of flag writers, `b.cond` and calls). Keep those names or
   tell me the new ones.
+
+### bench
+- `scripts/bump-toolchain.sh` runs, never blocking:
+  `cargo run --profile gate -p bumbledb-bench -- micro --levels all --out <file.json>` on the old
+  and the new nightly, then `... micro --compare <old.json> <new.json>` and puts its stdout
+  (Markdown) in the bump pull request. Please provide those two forms (or tell me the real flags).
 
 ### ts
 - **`pnpm --dir ts run test:s3`**: the S3Store conformance suite against a real store, reading the
