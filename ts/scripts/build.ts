@@ -1,6 +1,7 @@
 /**
- * `node scripts/build.ts dev`: debug addon at `bumbledb.<platform>-<arch>.node`, which the
+ * `node scripts/build.ts dev`: debug addon at `bdb.<platform>-<arch>.node`, which the
  * loader prefers over platform packages.
+ * `node scripts/build.ts dist`: the compiled package (`dist/`), for consumers that link this package.
  * `node scripts/build.ts release`: optimized addon into `npm/<platform>-<arch>/` plus `dist/`.
  * `node scripts/build.ts stage <out>`: packs the main package (platform packages pinned as
  * optional dependencies) and every platform package that holds an addon into `<out>`.
@@ -59,20 +60,21 @@ function stage(out: string): void {
 	}
 	for (const platform of SHIPPED_PLATFORMS) {
 		const dir = path.join(root, "npm", platform)
-		if (fs.existsSync(path.join(dir, "bumbledb.node")))
-			run("pnpm", ["pack", "--pack-destination", path.resolve(out)], dir)
+		if (fs.existsSync(path.join(dir, "bdb.node"))) run("pnpm", ["pack", "--pack-destination", path.resolve(out)], dir)
 	}
 }
 
 const [mode, out] = process.argv.slice(2)
 if (mode === "dev") {
-	install(addon("debug"), path.join(root, `bumbledb.${target}.node`))
+	install(addon("debug"), path.join(root, `bdb.${target}.node`))
+} else if (mode === "dist") {
+	dist()
 } else if (mode === "release") {
-	install(addon("release"), path.join(root, "npm", target, "bumbledb.node"))
+	install(addon("release"), path.join(root, "npm", target, "bdb.node"))
 	dist()
 } else if (mode === "stage" && out !== undefined) {
 	stage(out)
 } else {
-	console.error("usage: node scripts/build.ts dev | release | stage <out>")
+	console.error("usage: node scripts/build.ts dev | dist | release | stage <out>")
 	process.exitCode = 2
 }

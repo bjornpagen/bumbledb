@@ -1,4 +1,4 @@
 node_modules/
 dist/
-bumbledb.*.node
-npm/*/bumbledb.node
+bdb.*.node
+npm/*/bdb.node

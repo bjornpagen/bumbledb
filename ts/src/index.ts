@@ -70,6 +70,7 @@ export type { AnyMigration, Migrations, Populate } from "./database/migration.ts
 export { Migration } from "./database/migration.ts"
 export type { S3StoreOptions } from "./database/s3.ts"
 export { S3Store } from "./database/s3.ts"
+export type { PreparedQuery, QueryReader } from "./db.ts"
 export type { CloseReport, OutstandingWork } from "./errors.ts"
 export {
 	AuthoringDiagnostic,

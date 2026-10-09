@@ -8,10 +8,9 @@
 	"cpu": [
 		"arm64"
 	],
-	"main": "bumbledb.node",
+	"main": "bdb.node",
 	"files": [
-		"pack-provenance.json",
-		"bumbledb.node"
+		"bdb.node"
 	],
 	"author": "Bjorn Pagen",
 	"license": "0BSD",

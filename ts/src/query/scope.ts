@@ -10,9 +10,9 @@ import type { FieldsOf } from "../selection.ts"
 import type { QueryParam } from "../spec.ts"
 import type { FindColumn } from "./atom.ts"
 
-const term: unique symbol = Symbol("bumbledb.query.term")
+const term: unique symbol = Symbol("bdb.query.term")
 
-const inferred: unique symbol = Symbol("bumbledb.query.inferred")
+const inferred: unique symbol = Symbol("bdb.query.inferred")
 
 type MatchOwner = AnyRelation | AnyClosed
 

@@ -10,12 +10,12 @@ export const SHIPPED_PLATFORMS = ["darwin-arm64", "linux-arm64", "linux-x64"] as
 
 /**
  * Loads the addon for `platform-arch`: a development build at the package root
- * (`bumbledb.<platform>-<arch>.node`, written by `scripts/build.ts dev`) wins over the
+ * (`bdb.<platform>-<arch>.node`, written by `scripts/build.ts dev`) wins over the
  * installed `@bjornpagen/bumbledb-<platform>-<arch>` package.
  */
 export function loadAddon<T>(platform: string, arch: string): T {
 	const target = `${platform}-${arch}`
-	const dev = fileURLToPath(new URL(`../../bumbledb.${target}.node`, import.meta.url))
+	const dev = fileURLToPath(new URL(`../../bdb.${target}.node`, import.meta.url))
 	const source = existsSync(dev) ? dev : `@bjornpagen/bumbledb-${target}`
 	try {
 		return require(source) as T
