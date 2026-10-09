@@ -104,6 +104,7 @@ pub enum Refusal {
     NotPending,                              // Freeze/Migrate for a step that is not next
     Stale { head: Seq },                     // recompute the population at `head` (or freeze first)
     RequestReused(CommandRef),               // request id already decided for another command
+    ForeignSchema,                           // the command's changes are for another schema than the head's
     TooLarge,
     Unknown,                                 // written, fate unresolved (closed/broke mid-flight): Resolve later
     NotSubmitted,

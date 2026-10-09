@@ -124,6 +124,8 @@ pub enum Refusal {
     },
     /// The request was decided for a different command.
     RequestReused(CommandRef),
+    /// The command's changes belong to another schema than the head's.
+    ForeignSchema,
     TooLarge,
     /// An entry carrying the command was written but its fate is unresolved;
     /// resolve the request later.
@@ -1013,7 +1015,17 @@ impl<R: Replica> Machine<R> {
             && self.install.is_none()
             && matches!(self.writer, Writer::Idle)
         {
-            if let Some(control) = self.controls.pop_front() {
+            if let Some(control) = self.controls.front() {
+                // A migration image may still be uploading for a lost flight;
+                // the next migration must not overwrite it meanwhile.
+                let uploading = self
+                    .io
+                    .values()
+                    .any(|purpose| matches!(purpose, Purpose::Upload));
+                if uploading && matches!(control, Control::Migrate(..)) {
+                    return;
+                }
+                let control = self.controls.pop_front().expect("a front control");
                 self.start(control);
                 continue;
             }
@@ -1059,31 +1071,34 @@ impl<R: Replica> Machine<R> {
         }
     }
 
-    /// Decide the queue against the head and write it as one entry.
+    /// Decide the queue against the head and write it as one entry. Nothing
+    /// is settled or taken from the queue unless every judgment succeeded.
     fn decide(&mut self) -> Result<(), CacheError> {
+        enum Fate {
+            Answered(Settled),
+            Decided(Verdict),
+        }
         let head = self.replica.head().expect("an open machine has a head");
-        let mut revision = head.revision;
+        let (schema, mut revision) = (head.schema, head.revision);
         let mut accepted = Vec::new();
-        let mut decided = Vec::new();
-        let mut batch = Vec::new();
+        let mut fates = Vec::new();
         let mut size = 0usize;
-        let mut queue = std::mem::take(&mut self.queue).into_iter();
-        for submission in queue.by_ref() {
+        for submission in &self.queue {
             let command = &submission.command;
             if let Some(receipt) = self.replica.receipt(command.request())? {
-                let settled = if receipt.command == command.reference() {
+                fates.push(Fate::Answered(if receipt.command == command.reference() {
                     Settled::Decided(receipt)
                 } else {
                     Settled::Refused(Refusal::RequestReused(receipt.command))
-                };
-                for ticket in submission.tickets {
-                    self.settle(ticket, settled.clone());
-                }
+                }));
+                continue;
+            }
+            if command.changes().schema() != schema {
+                fates.push(Fate::Answered(Settled::Refused(Refusal::ForeignSchema)));
                 continue;
             }
             let bytes = command.changes().as_bytes().len() + DECIDED_OVERHEAD;
             if size + bytes > self.config.max_entry_bytes {
-                self.queue.push(submission);
                 break;
             }
             size += bytes;
@@ -1107,13 +1122,27 @@ impl<R: Replica> Machine<R> {
                     Judgment::Rejected(evidence) => Verdict::InvariantRejected(evidence),
                 },
             };
-            decided.push(Decided {
-                command: command.reference(),
-                verdict,
-            });
-            batch.push(submission);
+            fates.push(Fate::Decided(verdict));
         }
-        self.queue.extend(queue);
+        let consumed: Vec<Submission> = self.queue.drain(..fates.len()).collect();
+        let mut decided = Vec::new();
+        let mut batch = Vec::new();
+        for (submission, fate) in consumed.into_iter().zip(fates) {
+            match fate {
+                Fate::Answered(settled) => {
+                    for ticket in submission.tickets {
+                        self.settle(ticket, settled.clone());
+                    }
+                }
+                Fate::Decided(verdict) => {
+                    decided.push(Decided {
+                        command: submission.command.reference(),
+                        verdict,
+                    });
+                    batch.push(submission);
+                }
+            }
+        }
         if !decided.is_empty() {
             self.launch(Body::Commands(decided.into()), Cargo::Commands(batch));
         }

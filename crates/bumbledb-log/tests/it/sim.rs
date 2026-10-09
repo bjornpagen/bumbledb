@@ -715,8 +715,25 @@ fn final_receipt(states: &[State], request: RequestId) -> Option<&Receipt> {
     states.last().and_then(|state| state.receipts.get(&request))
 }
 
+/// Every image object holds exactly the bytes its key names.
+fn check_images(world: &World) {
+    for (key, (bytes, _)) in &world.checkpoints {
+        let digest = *blake3::hash(bytes).as_bytes();
+        if let Some(checkpoint) = CheckpointKey::parse(key) {
+            assert_eq!(checkpoint.digest.0, digest, "checkpoint {key}");
+        } else {
+            assert_eq!(
+                *key,
+                image_key(bumbledb_log::ImageDigest(digest)),
+                "image {key}"
+            );
+        }
+    }
+}
+
 /// Verify every settled ticket and every live replica against the replay.
 pub fn check(world: &World) -> Vec<State> {
+    check_images(world);
     let states = replay(world);
     let mut decided_or_unclear: BTreeSet<RequestId> = BTreeSet::new();
     for (ticket, (_, ask)) in &world.asks {

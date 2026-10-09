@@ -355,3 +355,24 @@ fn bundles_must_be_nonempty() {
         Err(bumbledb_log::BundleError::Empty)
     ));
 }
+
+#[test]
+fn a_command_for_another_schema_is_refused_and_the_writer_goes_on() {
+    let schema = schema();
+    let mut world = opened(13, 1);
+    let foreign = Command::seal(
+        RequestId([1; 16]),
+        Precondition::None,
+        crate::support::tags(&crate::support::schema2(), &[(1, 1)]),
+    );
+    let refused = submit(&mut world, 0, foreign);
+    world.drain();
+    assert_eq!(
+        settled(&world, refused),
+        &Settled::Refused(Refusal::ForeignSchema)
+    );
+    let fine = submit(&mut world, 0, command(&schema, 2, &[(1, 1)]));
+    world.drain();
+    assert!(matches!(settled(&world, fine), Settled::Decided(_)));
+    check(&world);
+}

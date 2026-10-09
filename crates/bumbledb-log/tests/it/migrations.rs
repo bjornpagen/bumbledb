@@ -237,3 +237,59 @@ fn a_bundle_that_disagrees_with_the_ledger_refuses_to_open() {
         Settled::Refused(Refusal::MigrationsDiverged { index: 0 })
     );
 }
+
+#[test]
+fn a_new_migration_waits_for_a_lost_flights_image_upload() {
+    let mut world = World::with_bundles(29, vec![bundle2(), bundle2()], Faults::NONE);
+    open(&mut world, 0);
+    open(&mut world, 1);
+    let first = world.ticket(0, Ask::Migrate);
+    let lost = population(
+        migration_id("0001_tags"),
+        Seq::GENESIS,
+        tags(&schema2(), &[(1, 1)]),
+    );
+    world.input(0, Input::Migrate(first, lost));
+    let is_upload = |request: &bumbledb_log::IoRequest| request.key.starts_with("mig/");
+    assert!(world.find(0, is_upload).is_some());
+
+    // Another writer freezes at the slot the first flight wanted.
+    let frozen = world.ticket(1, Ask::Freeze);
+    world.input(1, Input::Freeze(frozen, 60_000));
+    while let Some(index) = world.find(1, |_| true) {
+        world.execute_as(index, crate::sim::Fate::Answered);
+    }
+    let sync = world.ticket(0, Ask::Sync);
+    world.input(0, Input::Sync(sync));
+    while let Some(index) = world.find(0, |request| !request.key.starts_with("mig/")) {
+        world.execute_as(index, crate::sim::Fate::Answered);
+    }
+    assert_eq!(
+        world.results[&first].settled,
+        Settled::Refused(Refusal::Stale {
+            head: Seq::new(2).unwrap()
+        })
+    );
+
+    let second = world.ticket(0, Ask::Migrate);
+    let retry = population(
+        migration_id("0001_tags"),
+        Seq::new(2).unwrap(),
+        tags(&schema2(), &[(2, 2)]),
+    );
+    world.input(0, Input::Migrate(second, retry));
+    assert_eq!(
+        world
+            .issued()
+            .filter(|(client, request)| *client == 0 && is_upload(request))
+            .count(),
+        1,
+        "the new image waits for the old upload"
+    );
+    world.drain();
+    assert_eq!(
+        world.results[&second].settled,
+        Settled::Migrated(Seq::new(3).unwrap())
+    );
+    check(&world);
+}
