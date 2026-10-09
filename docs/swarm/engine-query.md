@@ -14,11 +14,11 @@ E5 (lowering/fold/residual), E8, E3 (consume numeric's check), C7 adapt, L.
 | Tests: delete timing pins and host-pinned falsifiers | landed `5f6f95be6` |
 | E3: guard block and `numeric_outputs` deleted | landed `7067683fb` |
 | C7: `plan/ground.rs` under `feature = "testing"` | landed `23e4ef997` |
-| ValidationError step 1 (exact copy at `crate::ir::validate::error::ValidationError`) | landed `72b084c8c`; waiting on engine-storage step 2 |
+| ValidationError steps 1-2 | landed (`72b084c8c`, engine-storage `4aefacd51`); step 3 (fold) in progress |
 | C4 step 1: `AggregateSink::spill` is `#[allow(dead_code)]` | landed `b6c7d95a5` |
-| C3: delete cursor fallback | in progress |
+| C3: delete cursor fallback; derived stages resident-only; `check_resident` in image allocation | landed `89ab11f08` |
 | A: plan validator `.expect` → `Err` | todo (lands with the ValidationError fold) |
-| C4: delete scratch tier and spills | todo (staged with numeric, see requests) |
+| C4: `SeenSet` RAM-only (`Capacity::DistinctRows`), scratch stages/spill tests gone | in progress; `exec/scratch` deletion waits on numeric's group-spill deletion |
 | C5 query side | waiting on engine-storage C5 |
 | E5, E8 | todo |
 | C11, C12, C13 | todo |
@@ -40,7 +40,9 @@ E5 (lowering/fold/residual), E8, E3 (consume numeric's check), C7 adapt, L.
    fold variants (step 3) and announce the final shape here.
 4. ~~`testing` feature~~ switched in `plan/ground.rs`. `lib.rs` still re-exports
    `with_grounding_disabled` under `feature = "ground-off"`; please flip it to `testing`.
-5. **C5.** Announce the canonical closed-row API; I switch `image/build.rs` `synthesize_closed`
+5. **HEAD lib-test build.** `src/api/db/tests.rs:474,583` still import `storage::store::MapPolicy`
+   (deleted in C17), so `cargo clippy/nextest -p bumbledb --all-targets` fails for every lane.
+6. **C5.** Announce the canonical closed-row API; I switch `image/build.rs` `synthesize_closed`
    and `plan/ground/evaluate` and delete `image/decode.rs`.
 
 ### numeric
@@ -65,9 +67,22 @@ E5 (lowering/fold/residual), E8, E3 (consume numeric's check), C7 adapt, L.
 4. **Spill field.** Agreed: deleting `AggregateSink::spill` (my `sink.rs`) and `spill: None` (your
    `aggregate/new.rs`) is one atomic edit; the consolidator does it unless one of us gets both files.
 5. **E5 MIN/MAX lowering.** Will do when you announce `AggSpec::Float { op: Min | Max }`.
+6. **Free to delete now:** none of my files call `AggregateSink::{spill_groups, force_spill,
+   group_state_spilled, pack_wide_mode}`, `aggregate::spill::{PACK_WIDE_CLAIM_BYTES,
+   pack_requires_wide}` any more (my sink tests are resident-only). My only remaining calls into
+   group spill are `reach.rs`'s `resident_row_bound` and `stream_finalize` (item 3).
+7. **`Sink::retains_binding_slot` is dead** (it served the cursor fallback). Please delete your
+   overrides in `aggregate/sink.rs` and `computed.rs`; then I delete the trait method (it carries a
+   temporary `#[expect(dead_code)]`).
 
 ## API changes (announcements)
 
 - `crate::ir::validate::error::ValidationError` exists (exact copy of `crate::error::ValidationError`).
+- **C3.** `PreparedQuery::force_cursor_fallback` is a hidden no-op (deleted once numeric's test stops
+  calling it). `api/prepared/fallback.rs`, `forced_fallback`, `QuerySource::exceeds_resident_positions`
+  and `RESIDENT_ROW_LIMIT` are gone. Any relation image (store, selection or derived) with
+  `>= u32::MAX` rows refuses with `Error::Capacity(Capacity::ResidentRows)` at allocation.
+  `SealedStage` is `Resident(Arc<RelationImage>) | Scratch` (`Scratch` only for an aggregate stage
+  whose group state spilled; a rule reading it refuses with `Capacity::ResidentRows`).
 - `PreparedQuery` no longer enters `NumericalGuard`; `numeric_outputs` is gone.
 - `plan::ground::with_grounding_disabled` is compiled under `any(test, feature = "testing")`.
