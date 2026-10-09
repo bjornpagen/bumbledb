@@ -12,6 +12,7 @@ import type { Fault } from "../src/database/mem.ts"
 import { MemStore } from "../src/database/mem.ts"
 import { S3Store } from "../src/database/s3.ts"
 import { fakeS3 } from "./fixtures/fake-s3.ts"
+import { hostedConformance } from "./fixtures/hosted-conformance.ts"
 import { storeConformance } from "./fixtures/store-conformance.ts"
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-fsstore-"))
@@ -19,6 +20,8 @@ after(() => fs.rmSync(root, { recursive: true, force: true }))
 
 storeConformance("MemStore", () => MemStore.make(), "conformance")
 storeConformance("FsStore", () => FsStore.make(root), "conformance")
+hostedConformance("MemStore", () => MemStore.make())
+hostedConformance("FsStore", () => FsStore.make(fs.mkdtempSync(path.join(root, "hosted-"))))
 
 const options: ExecutorOptions = { timeout: "1 second", readRetry: Schedule.recurs(3) }
 const bytes = (text: string) => new TextEncoder().encode(text)
@@ -95,6 +98,16 @@ storeConformance(
 	() => S3Store.make({ client, log: { bucket: "log" }, checkpoints: { bucket: "ckpt" }, prefix: "db/" }),
 	"conformance"
 )
+let databases = 0
+hostedConformance("S3Store", () => {
+	databases += 1
+	return S3Store.make({
+		client,
+		log: { bucket: "log" },
+		checkpoints: { bucket: "ckpt" },
+		prefix: `hosted-${databases}/`
+	})
+})
 
 test("S3Store reports the store's Date header with each answer", async () => {
 	const store = S3Store.make({
