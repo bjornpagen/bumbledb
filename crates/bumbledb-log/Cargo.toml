@@ -4,5 +4,9 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[dependencies]
+bumbledb = { path = "../bumbledb" }
+blake3 = "1.8.7"
+
 [lints]
 workspace = true
