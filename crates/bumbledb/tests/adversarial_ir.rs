@@ -1,4 +1,6 @@
-//! measure abuse, param-id gaps) through validate → normalize → prepare
+//! Seeded hostile and mutated IR through validate → normalize → prepare: every
+//! query is accepted or refused with a typed error, never a panic. Seed ranges
+//! are sharded so each test stays short in debug builds.
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use bumbledb::{
@@ -29,8 +31,6 @@ bumbledb::schema! {
 
     Busy(kind) <= Kind(id);
 }
-
-const SWEEP: u64 = 12_000;
 
 struct Rng(u64);
 
@@ -299,8 +299,8 @@ fn random_rec(rng: &mut Rng) -> Rec {
     }
 }
 
-const BUSY: RelationId = Gauntlet::BUSY;
-const OOO: RelationId = Gauntlet::OOO;
+const BUSY: RelationId = Gauntlet::Busy.relation();
+const OOO: RelationId = Gauntlet::Ooo.relation();
 
 fn plausible_query(rng: &mut Rng) -> Query {
     let busy_atom = |bindings: Vec<(FieldId, Term)>| Atom {
@@ -325,13 +325,13 @@ fn plausible_query(rng: &mut Rng) -> Query {
     match rng.below(6) {
         0 => Query::single(projection(
             BUSY,
-            Gauntlet::BUSY_PERSON,
-            Gauntlet::BUSY_DURING,
+            Gauntlet::Busy.person,
+            Gauntlet::Busy.during,
         )),
 
         1 => {
-            let busy = projection(BUSY, Gauntlet::BUSY_PERSON, Gauntlet::BUSY_DURING);
-            let ooo = projection(OOO, Gauntlet::OOO_PERSON, Gauntlet::OOO_DURING);
+            let busy = projection(BUSY, Gauntlet::Busy.person, Gauntlet::Busy.during);
+            let ooo = projection(OOO, Gauntlet::Ooo.person, Gauntlet::Ooo.during);
             Query {
                 interiors: vec![],
                 head: busy.head(),
@@ -349,8 +349,8 @@ fn plausible_query(rng: &mut Rng) -> Query {
                 },
             ],
             atoms: vec![busy_atom(vec![
-                (Gauntlet::BUSY_PERSON, Term::Var(VarId(0))),
-                (Gauntlet::BUSY_OFFSET, Term::Var(VarId(1))),
+                (Gauntlet::Busy.person, Term::Var(VarId(0))),
+                (Gauntlet::Busy.offset, Term::Var(VarId(1))),
             ])],
             negated: vec![],
             conditions: vec![],
@@ -359,8 +359,8 @@ fn plausible_query(rng: &mut Rng) -> Query {
         3 => Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
             atoms: vec![busy_atom(vec![
-                (Gauntlet::BUSY_PERSON, Term::Var(VarId(0))),
-                (Gauntlet::BUSY_DURING, Term::Var(VarId(1))),
+                (Gauntlet::Busy.person, Term::Var(VarId(0))),
+                (Gauntlet::Busy.during, Term::Var(VarId(1))),
             ])],
             negated: vec![],
             conditions: vec![],
@@ -369,13 +369,13 @@ fn plausible_query(rng: &mut Rng) -> Query {
         _ => Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![busy_atom(vec![
-                (Gauntlet::BUSY_PERSON, Term::Var(VarId(0))),
-                (Gauntlet::BUSY_DURING, Term::Var(VarId(1))),
-                (Gauntlet::BUSY_KIND, Term::Literal(Value::U64(rng.below(3)))),
+                (Gauntlet::Busy.person, Term::Var(VarId(0))),
+                (Gauntlet::Busy.during, Term::Var(VarId(1))),
+                (Gauntlet::Busy.kind, Term::Literal(Value::U64(rng.below(3)))),
             ])],
             negated: vec![Atom {
                 source: bumbledb::AtomSource::Edb(OOO),
-                bindings: vec![(Gauntlet::OOO_PERSON, Term::Var(VarId(0)))],
+                bindings: vec![(Gauntlet::Ooo.person, Term::Var(VarId(0)))],
             }],
             conditions: vec![ConditionTree::Leaf(Comparison {
                 op: CmpOp::PointIn,
@@ -453,7 +453,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                 .and_then(|r| r.atoms.first_mut())
             {
                 atom.bindings
-                    .push((Gauntlet::BUSY_DURING, Term::Literal(Value::U64(u64::MAX))));
+                    .push((Gauntlet::Busy.during, Term::Literal(Value::U64(u64::MAX))));
             }
         }
 
@@ -500,7 +500,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                 .and_then(|r| r.atoms.first_mut())
             {
                 atom.bindings
-                    .push((Gauntlet::BUSY_NOTE, Term::Param(ParamId(7))));
+                    .push((Gauntlet::Busy.note, Term::Param(ParamId(7))));
             }
         }
 
@@ -559,16 +559,44 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
     }
 }
 
-#[test]
-fn adversarial_ir_never_panics() {
-    let dir = common::TempDir::new("adversarial-ir");
+fn gauntlet(name: &str) -> (common::TempDir, Db<Gauntlet>) {
+    let dir = common::TempDir::new(name);
     let db = Db::create(dir.path(), Gauntlet, common::work())
         .expect("create")
         .expect("accepted");
+    (dir, db)
+}
 
+/// Prepare one generated query: `Ok` or a typed refusal, never a panic.
+fn prepares_without_panicking(db: &Db<Gauntlet>, seed: u64, query: &Query) -> bool {
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        db.prepare(query, common::work()).map(|_| ())
+    }));
+    match outcome {
+        Ok(result) => result.is_ok(),
+        Err(panic) => panic!(
+            "prepare panicked on IR data (seed {seed}): {:?}\n{query:#?}",
+            panic.downcast_ref::<&str>()
+        ),
+    }
+}
+
+fn assert_mixed(seeds: &std::ops::Range<u64>, ok: u64) {
+    let total = seeds.end - seeds.start;
+    assert!(
+        ok > 0,
+        "no generated query validated in {seeds:?} — vacuous shard"
+    );
+    assert!(
+        ok < total,
+        "no generated query was rejected in {seeds:?} — vacuous shard"
+    );
+}
+
+fn sweep_rules(seeds: std::ops::Range<u64>) {
+    let (_dir, db) = gauntlet(&format!("adversarial-ir-{}", seeds.start));
     let mut ok = 0u64;
-    let mut rejected = 0u64;
-    for seed in 0..SWEEP {
+    for seed in seeds.clone() {
         let mut rng = Rng::new(seed);
         let query = if seed % 2 == 0 {
             random_query(&mut rng)
@@ -579,44 +607,15 @@ fn adversarial_ir_never_panics() {
             }
             query
         };
-        // The law under test: validate → normalize → prepare returns Ok
-
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            db.prepare(&query, crate::common::work()).map(|_| ())
-        }));
-
-        #[expect(
-            clippy::match_wild_err_arm,
-            reason = "the test intentionally rejects every non-target error uniformly"
-        )]
-        match outcome {
-            Ok(Ok(())) => ok += 1,
-            Ok(Err(_)) => rejected += 1,
-            Err(_) => panic!(
-                "prepare panicked on IR data (seed {seed}) — the trust-boundary law is \
-                 violated by:\n{query:#?}"
-            ),
-        }
+        ok += u64::from(prepares_without_panicking(&db, seed, &query));
     }
-
-    assert!(ok > 0, "no generated query validated — vacuous sweep");
-    assert!(
-        rejected > 0,
-        "no generated query was rejected — vacuous sweep"
-    );
-    assert_eq!(ok + rejected, SWEEP);
+    assert_mixed(&seeds, ok);
 }
 
-#[test]
-fn adversarial_query_with_interiors_never_panics() {
-    let dir = common::TempDir::new("adversarial-interiors");
-    let db = Db::create(dir.path(), Gauntlet, common::work())
-        .expect("create")
-        .expect("accepted");
-
+fn sweep_interiors(seeds: std::ops::Range<u64>) {
+    let (_dir, db) = gauntlet(&format!("adversarial-interiors-{}", seeds.start));
     let mut ok = 0u64;
-    let mut rejected = 0u64;
-    for seed in 0..SWEEP / 2 {
+    for seed in seeds.clone() {
         let mut rng = Rng::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
         let query = if seed % 2 == 0 {
             random_query(&mut rng)
@@ -651,41 +650,33 @@ fn adversarial_query_with_interiors_never_panics() {
             }
             query
         };
-        let rendered = format!("{query:#?}");
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            db.prepare(&query, crate::common::work()).map(|_| ())
-        }));
-        #[expect(
-            clippy::match_wild_err_arm,
-            reason = "the test intentionally rejects every non-target error uniformly"
-        )]
-        match outcome {
-            Ok(Ok(())) => ok += 1,
-            Ok(Err(err)) => {
-                let msg = format!("{err:?}");
-                assert!(
-                    !msg.contains("TooManyCtes"),
-                    "TooManyCtes must not return (seed {seed}): {err}"
-                );
-                rejected += 1;
-            }
-            Err(_) => panic!(
-                "prepare panicked on IR data (seed {seed}) — the trust-boundary law is \
-                 violated by:\n{rendered}\n{query:#?}"
-            ),
-        }
+        ok += u64::from(prepares_without_panicking(&db, seed, &query));
     }
-    assert!(ok > 0, "no generated query validated — vacuous sweep");
-    assert!(
-        rejected > 0,
-        "no generated query was rejected — vacuous sweep"
-    );
-    assert_eq!(ok + rejected, SWEEP / 2);
+    assert_mixed(&seeds, ok);
 }
 
-/// Must not panic.
+macro_rules! shards {
+    ($($name:ident => $sweep:ident($start:literal..$end:literal);)*) => {
+        $(
+            #[test]
+            fn $name() {
+                $sweep($start..$end);
+            }
+        )*
+    };
+}
+
+shards! {
+    rules_seeds_0 => sweep_rules(0..3_000);
+    rules_seeds_1 => sweep_rules(3_000..6_000);
+    rules_seeds_2 => sweep_rules(6_000..9_000);
+    rules_seeds_3 => sweep_rules(9_000..12_000);
+    interiors_seeds_0 => sweep_interiors(0..3_000);
+    interiors_seeds_1 => sweep_interiors(3_000..6_000);
+}
+
 #[test]
-fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
+fn a_hundred_thousand_interiors_validate_without_panicking() {
     use bumbledb::Theory;
     use bumbledb::schema::ValidateDescriptor as _;
     let schema = Gauntlet
@@ -696,7 +687,7 @@ fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             source: AtomSource::Edb(BUSY),
-            bindings: vec![(Gauntlet::BUSY_PERSON, Term::Var(VarId(0)))],
+            bindings: vec![(Gauntlet::Busy.person, Term::Var(VarId(0)))],
         }],
         negated: vec![],
         conditions: vec![],
@@ -728,33 +719,18 @@ fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
         }],
         rec: None,
     };
-    let result = catch_unwind(AssertUnwindSafe(|| {
+    catch_unwind(AssertUnwindSafe(|| {
         bumbledb::ir::validate::validate(&schema, &query).map(|_| ())
     }))
-    .unwrap_or_else(|_| panic!("validate panicked on interiors.len() == 100_000"));
-    match result {
-        Ok(()) => {}
-        Err(err) => {
-            let msg = format!("{err:?}");
-            assert!(
-                !msg.contains("TooManyCtes"),
-                "100_000 interiors must not invent TooManyCtes: {err:?}"
-            );
-        }
-    }
+    .unwrap_or_else(|_| panic!("validate panicked on interiors.len() == 100_000"))
+    .expect("a hundred thousand interiors are an ordinary query");
 }
 
-/// Hostile nesting alone, far past the sweep's per-query depth: a deep
-/// alternating And/Or chain is the typed `ConditionNestingTooDeep` — judged
-/// iteratively, so neither validation nor distribution ever recurses into it
-/// (the sweep's founding find: before the boundary check existed, this input
-/// exhausted the stack).
+/// A deep alternating And/Or chain is the typed `ConditionNestingTooDeep`,
+/// judged iteratively, so neither validation nor distribution recurses into it.
 #[test]
 fn deep_predicate_nesting_is_a_typed_rejection() {
-    let dir = common::TempDir::new("adversarial-ir-nesting");
-    let db = Db::create(dir.path(), Gauntlet, common::work())
-        .expect("create")
-        .expect("accepted");
+    let (_dir, db) = gauntlet("adversarial-ir-nesting");
     let leaf = || {
         ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
@@ -778,7 +754,7 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![Atom {
                 source: bumbledb::AtomSource::Edb(OOO),
-                bindings: vec![(Gauntlet::OOO_PERSON, Term::Var(VarId(0)))],
+                bindings: vec![(Gauntlet::Ooo.person, Term::Var(VarId(0)))],
             }],
             negated: vec![],
             conditions: vec![tree],
