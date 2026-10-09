@@ -815,20 +815,15 @@ impl<E> Judge<'_, '_, E> {
         }
         let mut offending = GroupedMap::default();
         let mut violated = false;
-        let mut previous: Option<u64> = None;
-        let mut prev_seq = 0u64;
+        let mut reach: Option<Reach> = None;
         spans.for_each(|key, _| {
             self.work.checkpoint()?;
             let (_, start, end, at) = parse_span_key(key);
-            if let Some(prev_end) = previous
-                && start < prev_end
-            {
+            if let Some(owner) = Reach::sweep(&mut reach, 0, start, end, at) {
                 violated = true;
-                offending.put(&prev_seq.to_be_bytes(), &[]);
+                offending.put(&owner.to_be_bytes(), &[]);
                 offending.put(&at.to_be_bytes(), &[]);
             }
-            previous = Some(end);
-            prev_seq = at;
             Ok(true)
         })?;
         if !violated {
@@ -949,8 +944,8 @@ impl<E> Judge<'_, '_, E> {
 
     /// Pointwise key: two rows with one determinant may coexist only with
     /// disjoint interval tails. Spans are staged in the transient map under
-    /// fixed-width `(group token, start, end, seq)` keys, whose exact byte
-    /// order IS the sweep order; adjacent overlap detects every violation.
+    /// fixed-width `(group token, start, end, seq)` keys, whose byte order is
+    /// the sweep order (see [`Reach`]).
     fn key_pointwise<S: CandidateFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -974,23 +969,17 @@ impl<E> Judge<'_, '_, E> {
             spans.put(&key, &[]);
             Ok(true)
         })?;
-        // Sweep in exact (token, start, end, seq) order: sorted by start
-        // within a group, any overlap is witnessed by an adjacent pair.
         let mut offending = GroupedMap::default();
         let mut violated = false;
-        let mut previous: Option<(u64, u64, u64)> = None; // token, end, seq
+        let mut reach: Option<Reach> = None;
         spans.for_each(|key, _| {
             self.work.checkpoint()?;
             let (token, start, end, seq) = parse_span_key(key);
-            if let Some((prev_token, prev_end, prev_seq)) = previous
-                && prev_token == token
-                && start < prev_end
-            {
+            if let Some(owner) = Reach::sweep(&mut reach, token, start, end, seq) {
                 violated = true;
-                offending.put(&prev_seq.to_be_bytes(), &[]);
+                offending.put(&owner.to_be_bytes(), &[]);
                 offending.put(&seq.to_be_bytes(), &[]);
             }
-            previous = Some((token, end, seq));
             Ok(true)
         })?;
         if !violated {
@@ -2336,6 +2325,32 @@ fn accumulate_capacity(
         },
     }
     totals.put_group_total(group, total, flag);
+}
+
+/// The furthest end a pointwise sweep has seen in one group, and the row
+/// that reaches it. Rows arrive sorted by start, so a row overlaps an earlier
+/// row of its group exactly when it starts before the reach, and then it
+/// overlaps the reach's owner; flagging both cites every row that overlaps
+/// any other.
+#[derive(Clone, Copy)]
+struct Reach {
+    token: u64,
+    end: u64,
+    seq: u64,
+}
+
+impl Reach {
+    /// Advances the sweep by one span; returns the reach owner it overlaps.
+    fn sweep(reach: &mut Option<Self>, token: u64, start: u64, end: u64, seq: u64) -> Option<u64> {
+        let Some(current) = reach.filter(|current| current.token == token) else {
+            *reach = Some(Self { token, end, seq });
+            return None;
+        };
+        if end > current.end {
+            *reach = Some(Self { token, end, seq });
+        }
+        (start < current.end).then_some(current.seq)
+    }
 }
 
 fn span_key(token: u64, start: u64, end: u64, seq: u64) -> [u8; 32] {

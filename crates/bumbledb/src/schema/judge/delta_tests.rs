@@ -929,19 +929,16 @@ fn citation_order_and_truncation_labels_match_under_every_budget() {
     }
 }
 
+/// A=[0,100), B=[10,20), C=[30,40) in one group: C overlaps A though its
+/// start-order predecessor B ends before it. Both judges cite all three.
 #[test]
-fn pointwise_offender_selection_is_the_reference_adjacent_pair_sweep() {
+fn pointwise_sweep_cites_every_row_inside_the_furthest_reach() {
     let schema = theory();
-    // Empty parent (trivially lawful); one delta proposes A[0,10), B[2,3),
-    // C[5,6) in one room group. Sorted by start the reference flags the
-    // adjacent pair (A, B) and NOT C (whose predecessor B ends before it),
-    // even though A covers C — the delta-local sweep must reproduce that
-    // exact offender selection, not merely the verdict.
     let parent = vec![(ROOM, room(7))];
     let adds = vec![
-        (BOOKING, booking(7, 0, 10)),
-        (BOOKING, booking(7, 2, 3)),
-        (BOOKING, booking(7, 5, 6)),
+        (BOOKING, booking(7, 0, 100)),
+        (BOOKING, booking(7, 10, 20)),
+        (BOOKING, booking(7, 30, 40)),
     ];
     let state = DeltaState::new(&parent, &adds, &[]);
     let verdict = assert_equivalent(&schema, &state, JudgeBudget::default());
@@ -956,10 +953,10 @@ fn pointwise_offender_selection_is_the_reference_adjacent_pair_sweep() {
     assert_eq!(
         spans,
         vec![
-            &Value::IntervalU64(Interval::new(0, 10).unwrap()),
-            &Value::IntervalU64(Interval::new(2, 3).unwrap()),
+            &Value::IntervalU64(Interval::new(0, 100).unwrap()),
+            &Value::IntervalU64(Interval::new(10, 20).unwrap()),
+            &Value::IntervalU64(Interval::new(30, 40).unwrap()),
         ],
-        "exactly the adjacent overlapping pair is cited, in state order"
     );
     assert!(!key.examples_truncated);
 }
