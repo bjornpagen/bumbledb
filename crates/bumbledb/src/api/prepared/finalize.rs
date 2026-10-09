@@ -44,9 +44,6 @@ pub(super) fn finalize(
                 // A sticky emit failure spoiled the execution: refuse
                 // before any answer publishes (Q-ATOMIC).
                 Err(error)
-            } else if sink.spilled() {
-                // The spilled drain is row-major across both tiers.
-                drain_spilled_answers(out, interner, memo, columns, sink, work)
             } else {
                 fill_resolved_answers(out, interner, memo, columns, sink, work)
             };
@@ -70,20 +67,6 @@ pub(super) fn finalize(
             })
         }
     }
-}
-
-fn drain_spilled_answers(
-    out: &mut Answers,
-    interner: &InternerHandle<'_>,
-    memo: &mut ResolveMemo,
-    columns: &[SignatureColumn],
-    sink: &mut ProjectionSink,
-    work: &WorkContext,
-) -> Result<()> {
-    sink.for_each_answer(&mut |answer| {
-        work.checkpoint().map_err(work_error)?;
-        push_resolved_answer(out, interner, memo, columns, answer)
-    })
 }
 
 fn fill_resolved_answers(

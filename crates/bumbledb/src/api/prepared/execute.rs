@@ -146,9 +146,6 @@ impl<S> PreparedQuery<S> {
         self.finish_sink(images, ran, out)
     }
 
-    #[doc(hidden)]
-    pub fn force_cursor_fallback(&mut self, _forced: bool) {}
-
     /// Drain the sink into `out` after the shared rule loop.
     pub(super) fn finish_sink(
         &mut self,

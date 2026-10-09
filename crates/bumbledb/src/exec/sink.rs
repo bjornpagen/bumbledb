@@ -2,7 +2,6 @@
 //! and aggregate folds with full-binding deduplication. Shared union spans
 //! identify bindings consistently across DNF rule layouts.
 use crate::encoding::encode_i64;
-use crate::exec::scratch::{ScratchAppend, ScratchMapId};
 use crate::exec::wordmap::WordMap;
 use std::num::NonZeroU32;
 
@@ -114,34 +113,30 @@ pub(in crate::exec::sink) fn classify_progress(error: &crate::error::Error) -> S
     }
 }
 
-/// A distinct-tuple set that starts as the measured RAM word table and
-/// continues in scratch only when the map's dense indices cannot grow —
-/// exact full-key semantics in both representations, insertion order on
-/// [`ScratchMapId::OrderLog`] of that same env when `ordered`. Errors are
-/// sticky: the executor's sink interface is infallible, so a scratch
-/// failure records itself, subsequent inserts drop, and finalize surfaces
-/// the error before any answer publishes (Q-ATOMIC).
+/// A distinct-tuple set over the RAM word table, insertion-ordered when
+/// `ordered`. Errors are sticky: the executor's sink interface is
+/// infallible, so a failure records itself, later inserts drop, and
+/// finalize surfaces the error before any answer publishes. A full index
+/// refuses with `Capacity::DistinctRows`.
 #[derive(Debug)]
-pub(in crate::exec::sink) struct SpillSet {
+pub(in crate::exec::sink) struct SeenSet {
     ordered: bool,
     ram: WordMap<()>,
-    /// Some only under an exact singleton-head uniqueness proof. The RAM
-    /// tier is a dense insertion-order log with the same cancellation
-    /// quantum and sticky failure handling.
+    /// Some only under an exact singleton-head uniqueness proof: a dense
+    /// insertion-order log with the same cancellation quantum and sticky
+    /// failure handling.
     unique_rows: Option<UniqueRows>,
-    spilled: Option<SpilledSet>,
     work: Option<crate::work::WorkContext>,
     error: Option<crate::error::Error>,
-    key_bytes: Vec<u8>,
-    /// Cancellation is polled in bounded quanta — the warm
-    /// path pays one branch and one counter increment per insert; the
-    /// context is polled every
-    /// [`STEP_QUANTUM`] rows, the published maximum unpolled quantum.
+    /// Inserts since the last cancellation poll; the context is polled
+    /// every [`STEP_QUANTUM`] rows.
     pending_steps: u32,
 }
 
-/// The maximum unpolled work quantum of a sink's RAM tier (chapter 12 §7:
-/// publish the quantum; cancellation is checked at bounded intervals).
+pub(in crate::exec::sink) type SpillSet = SeenSet;
+
+/// The maximum unpolled work quantum of a sink: cancellation is checked at
+/// bounded intervals.
 pub(crate) const STEP_QUANTUM: u32 = 256;
 
 #[derive(Debug, Default)]
@@ -181,23 +176,7 @@ impl UniqueRows {
     }
 }
 
-struct SpilledSet {
-    set: crate::exec::scratch::ScratchRelation,
-    /// Insertion-order log is [`ScratchMapId::OrderLog`] on [`Self::set`].
-    ordered: bool,
-    entries: u64,
-}
-
-impl std::fmt::Debug for SpilledSet {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SpilledSet")
-            .field("entries", &self.entries)
-            .field("ordered", &self.ordered)
-            .finish_non_exhaustive()
-    }
-}
-
-impl SpillSet {
+impl SeenSet {
     pub(in crate::exec::sink) fn with_capacity_hint(
         arity: usize,
         hint: usize,
@@ -207,10 +186,8 @@ impl SpillSet {
             ordered,
             ram: WordMap::with_capacity_hint(arity, hint),
             unique_rows: None,
-            spilled: None,
             work: None,
             error: None,
-            key_bytes: Vec::new(),
             pending_steps: 0,
         }
     }
@@ -232,21 +209,10 @@ impl SpillSet {
         }
     }
 
-    fn resident_len(&self) -> usize {
+    pub(in crate::exec::sink) fn len(&self) -> usize {
         self.unique_rows
             .as_ref()
             .map_or_else(|| self.ram.len(), |rows| rows.len)
-    }
-
-    pub(in crate::exec::sink) fn len(&self) -> usize {
-        self.resident_len()
-            + self.spilled.as_ref().map_or(0, |spilled| {
-                usize::try_from(spilled.set.len()).expect("64-bit targets")
-            })
-    }
-
-    pub(in crate::exec::sink) fn spilled(&self) -> bool {
-        self.spilled.is_some()
     }
 
     pub(in crate::exec::sink) fn clear(&mut self) {
@@ -254,7 +220,6 @@ impl SpillSet {
         if let Some(rows) = &mut self.unique_rows {
             rows.clear();
         }
-        self.spilled = None;
         self.error = None;
         self.pending_steps = 0;
     }
@@ -264,10 +229,8 @@ impl SpillSet {
         if let Some(rows) = &mut self.unique_rows {
             *rows = UniqueRows::default();
         }
-        self.spilled = None;
         self.work = None;
         self.error = None;
-        self.key_bytes = Vec::new();
         self.pending_steps = 0;
     }
 
@@ -294,16 +257,13 @@ impl SpillSet {
     }
 
     // Keep the two resident kernels separate: ordinary hashing must not
-    // carry dense-row allocation or a second resident-representation branch
-    // in its frame. Known-mode batches bypass the dynamic dispatcher.
+    // carry dense-row allocation in its frame. Known-mode batches bypass
+    // the dynamic dispatcher.
     #[inline(never)]
     fn insert_inner<const UNIQUE: bool>(&mut self, key: &[u64]) -> bool {
         debug_assert_eq!(self.unique_rows.is_some(), UNIQUE);
         if self.error.is_some() {
             return false;
-        }
-        if self.spilled.is_some() {
-            return self.insert_scratch(key);
         }
         if self.work.is_some() {
             self.pending_steps += 1;
@@ -312,10 +272,10 @@ impl SpillSet {
             }
         }
         if !UNIQUE && self.ram.remaining_rows() == 0 {
-            if self.ram.contains_key(key) {
-                return false;
+            if !self.ram.contains_key(key) {
+                self.refuse_full();
             }
-            return self.insert_scratch(key);
+            return false;
         }
         if UNIQUE {
             let rows = self.unique_rows.as_mut().expect("proved projection");
@@ -334,22 +294,23 @@ impl SpillSet {
         }
     }
 
+    #[cold]
+    #[inline(never)]
+    fn refuse_full(&mut self) {
+        self.error = Some(crate::error::Error::Capacity(
+            crate::error::Capacity::DistinctRows,
+        ));
+    }
+
     /// Insert a nonempty-width gathered projection in order. Amortize
-    /// resident bookkeeping only inside a prefix that cannot reach a
-    /// spill or poll boundary, even if every row adds a new key. Duplicates
-    /// may make the next prefix longer; boundary rows retain the ordinary
-    /// exact duplicate lookup and polling behavior.
+    /// bookkeeping only inside a prefix that cannot reach the index limit
+    /// or a poll boundary, even if every row adds a new key. Boundary rows
+    /// take the ordinary exact duplicate lookup and polling path.
     fn insert_hashed_rows(&mut self, mut words: &[u64]) {
         let arity = self.ram.arity();
         debug_assert!(self.unique_rows.is_none() && arity != 0);
         debug_assert_eq!(words.len() % arity, 0);
         while !words.is_empty() && self.error.is_none() {
-            if self.spilled.is_some() {
-                for row in words.chunks_exact(arity) {
-                    self.insert_inner::<false>(row);
-                }
-                return;
-            }
             let mut count = (words.len() / arity).min(self.ram.remaining_rows());
             if self.work.is_some() {
                 let before_poll = usize::try_from(STEP_QUANTUM - 1 - self.pending_steps)
@@ -372,8 +333,8 @@ impl SpillSet {
     }
 
     /// Generate proved-unique rows directly in their retained allocation.
-    /// Only prefixes before the next allocation, poll or spill boundary
-    /// are bulk-filled. Boundary rows use the ordinary insertion path.
+    /// Only prefixes before the next allocation or poll boundary are
+    /// bulk-filled. Boundary rows use the ordinary insertion path.
     ///
     /// # Safety
     /// `write(offset, words)` must initialize EVERY word before returning,
@@ -396,11 +357,7 @@ impl SpillSet {
         while offset < len && self.error.is_none() {
             let rows = self.unique_rows.as_mut().expect("proved projection");
             let spare = (rows.words.capacity() - rows.words.len()) / arity;
-            let mut count = if self.spilled.is_some() {
-                0
-            } else {
-                (len - offset).min(spare)
-            };
+            let mut count = (len - offset).min(spare);
             if self.work.is_some() {
                 // The polling row itself must use insert: append its
                 // preceding prefix BEFORE checking the work ledger.
@@ -434,9 +391,8 @@ impl SpillSet {
         }
     }
 
-    // Keep the ledger/error representation and scratch transaction frames
-    // out of every resident tuple's stack frame. The polling quantum and
-    // the conservative pre-insert spill threshold are unchanged.
+    // Keep the ledger/error representation out of every resident tuple's
+    // stack frame.
     #[cold]
     #[inline(never)]
     fn poll_steps(&mut self) -> bool {
@@ -451,98 +407,12 @@ impl SpillSet {
         }
     }
 
-    #[cold]
-    #[inline(never)]
-    fn insert_scratch(&mut self, key: &[u64]) -> bool {
-        if self.spilled.is_none()
-            && let Err(error) = self.spill()
-        {
-            self.error = Some(error);
-            return false;
-        }
-        let spilled = self.spilled.as_mut().expect("scratch tier is installed");
-        let key_bytes = &mut self.key_bytes;
-        key_bytes.clear();
-        for word in key {
-            key_bytes.extend_from_slice(&word.to_be_bytes());
-        }
-        match spilled.set.insert_if_absent(key_bytes, &[]) {
-            Ok(false) => false,
-            Ok(true) => {
-                if spilled.ordered {
-                    let seq = spilled.entries.to_be_bytes();
-                    let mut append = ScratchAppend::new(&mut spilled.set);
-                    if let Err(error) = append.append(ScratchMapId::OrderLog, &seq, key_bytes) {
-                        drop(append);
-                        self.error = Some(error);
-                        return false;
-                    }
-                    if let Err(error) = append.finish() {
-                        self.error = Some(error);
-                        return false;
-                    }
-                }
-                spilled.entries += 1;
-                true
-            }
-            Err(error) => {
-                self.error = Some(error);
-                false
-            }
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn spill(&mut self) -> crate::error::Result<()> {
-        let work = self.work.clone().unwrap_or_default();
-        let mut set = crate::exec::scratch::ScratchRelation::new(&work);
-        set.force_spill()?;
-        let mut entries: u64 = 0;
-        let mut key_bytes = Vec::new();
-        let mut append = ScratchAppend::new(&mut set);
-        let copied = (|| {
-            for key in self.ram_iter_since(0) {
-                key_bytes.clear();
-                for word in key {
-                    key_bytes.extend_from_slice(&word.to_be_bytes());
-                }
-                append.append(ScratchMapId::Default, &key_bytes, &[])?;
-                if self.ordered {
-                    append.append(ScratchMapId::OrderLog, &entries.to_be_bytes(), &key_bytes)?;
-                }
-                entries += 1;
-            }
-            Ok(())
-        })();
-        match copied {
-            Ok(()) => append.finish()?,
-            Err(error) => {
-                drop(append);
-                return Err(error);
-            }
-        }
-        // Ownership switches only after the copy completed.
-        self.ram.clear();
-        if let Some(rows) = &mut self.unique_rows {
-            rows.clear();
-        }
-        self.spilled = Some(SpilledSet {
-            set,
-            ordered: self.ordered,
-            entries,
-        });
-        Ok(())
-    }
-
-    /// RAM-tier insertion-order iteration — the warm drain/watermark path.
-    /// Callers branch on [`Self::spilled`] first.
+    /// Insertion-order iteration from `since`.
     pub(in crate::exec::sink) fn ram_iter_since(
         &self,
         since: usize,
     ) -> ResidentRows<impl Iterator<Item = &[u64]> + Clone, impl Iterator<Item = &[u64]> + Clone>
     {
-        debug_assert!(!self.spilled(), "spilled sets drain through for_each_since");
         match &self.unique_rows {
             Some(rows) => {
                 let arity = self.ram.arity();
@@ -553,10 +423,10 @@ impl SpillSet {
         }
     }
 
-    /// Insertion-ordered drain from `since`, across both tiers. Ordered
-    /// sets only. `Ok(false)` stops the walk; `Err` is immediate.
+    /// Insertion-ordered drain from `since`. Ordered sets only. `Ok(false)`
+    /// stops the walk; `Err` is immediate.
     /// # Errors
-    /// Scratch read failure, stopped work, or the visitor's failure.
+    /// The sticky set failure or the visitor's failure.
     pub(in crate::exec::sink) fn for_each_since(
         &mut self,
         since: usize,
@@ -566,31 +436,12 @@ impl SpillSet {
         if let Some(error) = self.error.take() {
             return Err(error);
         }
-        match &mut self.spilled {
-            None => {
-                for key in self.ram_iter_since(since) {
-                    if !visit(key)? {
-                        return Ok(());
-                    }
-                }
-                Ok(())
-            }
-            Some(spilled) => {
-                debug_assert!(spilled.ordered, "ordered sets keep the row log");
-                let mut words: Vec<u64> = Vec::new();
-                spilled.set.visit_map_from(
-                    ScratchMapId::OrderLog,
-                    &(since as u64).to_be_bytes(),
-                    &mut |_: &[u8], row: &[u8]| {
-                        words.clear();
-                        for chunk in row.as_chunks::<8>().0 {
-                            words.push(u64::from_be_bytes(*chunk));
-                        }
-                        visit(&words)
-                    },
-                )
+        for key in self.ram_iter_since(since) {
+            if !visit(key)? {
+                return Ok(());
             }
         }
+        Ok(())
     }
 }
 
@@ -608,14 +459,14 @@ pub(in crate::exec::sink) fn encode_stage_row(row: &[u64], out: &mut Vec<u8>) {
 #[derive(Debug)]
 pub(in crate::exec::sink) enum DedupState {
     Bindings {
-        seen: SpillSet,
+        seen: SeenSet,
     },
     Union {
-        seen: SpillSet,
+        seen: SeenSet,
         spans: Vec<(usize, usize)>,
     },
     DnfUnion {
-        seen: SpillSet,
+        seen: SeenSet,
         spans: Vec<(usize, usize)>,
     },
     Elided {
@@ -644,7 +495,7 @@ impl DedupState {
         }
     }
 
-    pub(in crate::exec::sink) fn seen(&self) -> Option<&SpillSet> {
+    pub(in crate::exec::sink) fn seen(&self) -> Option<&SeenSet> {
         match self {
             Self::Bindings { seen } | Self::Union { seen, .. } | Self::DnfUnion { seen, .. } => {
                 Some(seen)
@@ -653,7 +504,7 @@ impl DedupState {
         }
     }
 
-    pub(in crate::exec::sink) fn seen_mut(&mut self) -> Option<&mut SpillSet> {
+    pub(in crate::exec::sink) fn seen_mut(&mut self) -> Option<&mut SeenSet> {
         match self {
             Self::Bindings { seen } | Self::Union { seen, .. } | Self::DnfUnion { seen, .. } => {
                 Some(seen)
@@ -696,7 +547,7 @@ fn extend_sources(finds: &[SinkSpec], out: &mut Vec<usize>) {
 pub struct ProjectionSink {
     finds: Vec<SinkSpec>,
     sources: Vec<usize>,
-    seen: SpillSet,
+    seen: SeenSet,
     scratch: Vec<u64>,
     batch_route: projection::ProjectionRoute,
     /// Scan routing is independent of batch routing: pinned batches may

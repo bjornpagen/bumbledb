@@ -118,9 +118,8 @@ impl DerivedImages {
         Ok(count)
     }
 
-    /// Finalize small stages directly into columnar images, preserving
-    /// the Free Join path for their consumers. Larger/spilled stages
-    /// stream to one RAM-first scratch relation without reconstruction.
+    /// Finalize an aggregate stage into a columnar image. A stage whose group
+    /// state left RAM seals as [`SealedStage::Scratch`], which no rule joins.
     fn stash_aggregate(
         &mut self,
         id: usize,

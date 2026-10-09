@@ -50,6 +50,13 @@ impl<V: Copy> WordMap<V> {
         maximum - self.len
     }
 
+    /// Pretend every index slot is spoken for, so the next new key meets the
+    /// limit; existing keys stay probeable.
+    #[cfg(test)]
+    pub(crate) fn assume_full(&mut self) {
+        self.len += self.remaining_rows();
+    }
+
     #[must_use]
     pub(crate) const fn arity(&self) -> usize {
         self.arity

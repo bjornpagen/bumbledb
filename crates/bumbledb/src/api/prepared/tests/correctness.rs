@@ -721,50 +721,6 @@ fn rebinding_params_reselects_the_account_and_range() {
 }
 
 #[test]
-fn explicitly_spilled_projection_finalizes_exactly_and_reuses_its_plan() {
-    let store = posting_store(
-        "prepared-explicit-spill",
-        &[
-            (1, 3, "a", 10),
-            (2, 3, "b", 25),
-            (3, 7, "b", 25),
-            (4, 7, "d", 40),
-        ],
-    );
-    let mut prepared = store.prepare(&by_account_query()).unwrap();
-    for account in [3, 7, 3] {
-        let expected = store
-            .execute(&mut prepared, &[BindValue::U64(account), BindValue::I64(0)])
-            .unwrap();
-        let EitherSink::Projection(sink) = &mut prepared.sink else {
-            panic!("projection")
-        };
-        sink.force_spill().unwrap();
-        let work = crate::work::WorkContext::new();
-        let generation = prepared
-            .text_generation
-            .as_ref()
-            .unwrap()
-            .upgrade()
-            .unwrap();
-        let interner = crate::image::intern::InternerHandle::new(&generation, &work);
-        let mut actual = Answers::new();
-        actual.begin(prepared.signature.columns.len());
-        super::super::finalize::finalize(
-            &mut prepared.sink,
-            &mut prepared.answer_scratch,
-            &mut prepared.resolve_memo,
-            &interner,
-            &prepared.signature.columns,
-            &mut actual,
-            &work,
-        )
-        .unwrap();
-        assert_eq!(answers_of(&actual), answers_of(&expected));
-    }
-}
-
-#[test]
 fn execute_complete_seals_only_full_results_and_pages_them() {
     // C05: CompleteResult seals after full evaluation; the consuming
     // cursor delivers every row exactly once with a terminal frame.

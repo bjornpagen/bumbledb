@@ -116,7 +116,7 @@ fn release_preserves_dense_group_shape_and_exact_float_folds() {
 }
 
 #[test]
-fn release_closes_spill_and_forgets_cancelled_work_before_reuse() {
+fn release_forgets_cancelled_work_before_reuse() {
     let finds = [
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Pack { slot: 1 },
@@ -125,17 +125,8 @@ fn release_closes_spill_and_forgets_cancelled_work_before_reuse() {
     let mut sink = AggregateSink::new(finds, 4);
     sink.begin(Some(work.clone()));
     pack_rows(&mut sink, 32);
-    sink.spill_groups().unwrap();
-    assert!(sink.group_state_spilled());
-    let path = sink.spill.as_ref().unwrap().table.scratch_path().unwrap();
-    assert!(path.exists());
     work.cancel();
     sink.release_memory();
-    assert!(!sink.group_state_spilled());
-    assert!(
-        !path.exists(),
-        "explicit release closes private scratch storage"
-    );
     assert!(sink.work.is_none());
     assert!(sink.dedup.seen().unwrap().work.is_none());
     sink.reset();

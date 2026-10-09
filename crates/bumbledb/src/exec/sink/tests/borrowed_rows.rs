@@ -424,7 +424,7 @@ fn float_plan() -> ValidatedPlan {
 }
 
 #[test]
-fn borrowed_float_aliases_are_exact_across_layouts_and_partition_flushes() {
+fn borrowed_float_aliases_are_exact_across_layouts() {
     let plan = float_plan();
     let group = plan.slot_of(VarId(1));
     let value = plan.slot_of(VarId(2));
@@ -441,56 +441,48 @@ fn borrowed_float_aliases_are_exact_across_layouts_and_partition_flushes() {
         }),
         FindSpec::Agg(AggSpec::Count),
     ];
-    for flush in [false, true] {
-        let mut sink = AggregateSink::new_distinct(
-            &finds,
-            plan.slot_count(),
-            plan.distinct_witness().unwrap(),
-        );
-        sink.begin(Some(crate::api::db::test_operation()));
-        assert_eq!(sink.binding_scratch.capacity(), 0);
-        sink.binding_scratch.fill(u64::MAX);
-        let mut bindings = Bindings::new(plan.slot_count());
-        bindings.set(plan.slot_of(VarId(0)), 0);
-        assert_eq!(
-            sink.emit_batch(&LeafBatch {
-                keys: &[f(1e16), 7],
-                arity: 2,
-                survivors: &[0],
-                key_slots: &[value, group],
-                bindings: &bindings,
-            }),
-            Flow::Continue
-        );
-        if flush {
-            sink.force_spill().unwrap();
-        }
-        assert_eq!(
-            sink.emit_batch(&LeafBatch {
-                keys: &[7, f(1.0), 7, f(-1e16)],
-                arity: 2,
-                survivors: &[1, 0],
-                key_slots: &[group, value],
-                bindings: &bindings,
-            }),
-            Flow::Continue
-        );
-        assert_eq!(sink.float_accs.len(), 1, "Sum and Mean share one primary");
-        assert!(sink.binding_scratch.iter().all(|&word| word == u64::MAX));
-        assert_eq!(
-            sink.into_answers().unwrap(),
-            [vec![
-                7,
-                f(1.0),
-                crate::F64::from_bits(0x3fd5_5555_5555_5555).to_order_key(),
-                3,
-            ]]
-        );
-    }
+    let mut sink =
+        AggregateSink::new_distinct(&finds, plan.slot_count(), plan.distinct_witness().unwrap());
+    sink.begin(Some(crate::api::db::test_operation()));
+    assert_eq!(sink.binding_scratch.capacity(), 0);
+    sink.binding_scratch.fill(u64::MAX);
+    let mut bindings = Bindings::new(plan.slot_count());
+    bindings.set(plan.slot_of(VarId(0)), 0);
+    assert_eq!(
+        sink.emit_batch(&LeafBatch {
+            keys: &[f(1e16), 7],
+            arity: 2,
+            survivors: &[0],
+            key_slots: &[value, group],
+            bindings: &bindings,
+        }),
+        Flow::Continue
+    );
+    assert_eq!(
+        sink.emit_batch(&LeafBatch {
+            keys: &[7, f(1.0), 7, f(-1e16)],
+            arity: 2,
+            survivors: &[1, 0],
+            key_slots: &[group, value],
+            bindings: &bindings,
+        }),
+        Flow::Continue
+    );
+    assert_eq!(sink.float_accs.len(), 1, "Sum and Mean share one primary");
+    assert!(sink.binding_scratch.iter().all(|&word| word == u64::MAX));
+    assert_eq!(
+        sink.into_answers().unwrap(),
+        [vec![
+            7,
+            f(1.0),
+            crate::F64::from_bits(0x3fd5_5555_5555_5555).to_order_key(),
+            3,
+        ]]
+    );
 }
 
 #[test]
-fn borrowed_pack_reads_both_endpoints_across_layouts_and_partition_flushes() {
+fn borrowed_pack_reads_both_endpoints_across_layouts() {
     let schema = schema();
     let normalized = normalized(
         &schema,
@@ -501,44 +493,36 @@ fn borrowed_pack_reads_both_endpoints_across_layouts_and_partition_flushes() {
     let group = plan.slot_of(VarId(1));
     let start = plan.slot_of(VarId(2));
     let finds = [var_spec(&plan, 1), FindSpec::Pack { slot: start }];
-    for flush in [false, true] {
-        let mut sink = AggregateSink::new_distinct(
-            &finds,
-            plan.slot_count(),
-            plan.distinct_witness().unwrap(),
-        );
-        sink.begin(Some(crate::api::db::test_operation()));
-        assert_eq!(sink.binding_scratch.capacity(), 0);
-        sink.binding_scratch.fill(u64::MAX);
-        let mut bindings = Bindings::new(plan.slot_count());
-        bindings.set(plan.slot_of(VarId(0)), 0);
-        assert_eq!(
-            sink.emit_batch(&LeafBatch {
-                keys: &[i64_to_word(9), 7, i64_to_word(3)],
-                arity: 3,
-                survivors: &[0],
-                key_slots: &[start + 1, group, start],
-                bindings: &bindings,
-            }),
-            Flow::Continue
-        );
-        if flush {
-            sink.force_spill().unwrap();
-        }
-        assert_eq!(
-            sink.emit_batch(&LeafBatch {
-                keys: &[7, i64_to_word(1), i64_to_word(5)],
-                arity: 3,
-                survivors: &[0],
-                key_slots: &[group, start, start + 1],
-                bindings: &bindings,
-            }),
-            Flow::Continue
-        );
-        assert!(sink.binding_scratch.iter().all(|&word| word == u64::MAX));
-        assert_eq!(
-            sink.into_answers().unwrap(),
-            [vec![7, i64_to_word(1), i64_to_word(9)]]
-        );
-    }
+    let mut sink =
+        AggregateSink::new_distinct(&finds, plan.slot_count(), plan.distinct_witness().unwrap());
+    sink.begin(Some(crate::api::db::test_operation()));
+    assert_eq!(sink.binding_scratch.capacity(), 0);
+    sink.binding_scratch.fill(u64::MAX);
+    let mut bindings = Bindings::new(plan.slot_count());
+    bindings.set(plan.slot_of(VarId(0)), 0);
+    assert_eq!(
+        sink.emit_batch(&LeafBatch {
+            keys: &[i64_to_word(9), 7, i64_to_word(3)],
+            arity: 3,
+            survivors: &[0],
+            key_slots: &[start + 1, group, start],
+            bindings: &bindings,
+        }),
+        Flow::Continue
+    );
+    assert_eq!(
+        sink.emit_batch(&LeafBatch {
+            keys: &[7, i64_to_word(1), i64_to_word(5)],
+            arity: 3,
+            survivors: &[0],
+            key_slots: &[group, start, start + 1],
+            bindings: &bindings,
+        }),
+        Flow::Continue
+    );
+    assert!(sink.binding_scratch.iter().all(|&word| word == u64::MAX));
+    assert_eq!(
+        sink.into_answers().unwrap(),
+        [vec![7, i64_to_word(1), i64_to_word(9)]]
+    );
 }

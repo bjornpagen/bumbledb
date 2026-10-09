@@ -1,12 +1,8 @@
-//! D01 / D11 / D19 discriminators for bounded Pack and aggregate banks.
-//!
-//! The D11 oracle is [`crate::interval::sweep::sweep`], not the sink's
-//! resident `emit_pack_group`. Production `finalize_spilled` streams one
-//! group and fetches one header.
+//! Pack and exact float banks against independent oracles: Pack against
+//! [`crate::interval::sweep::sweep`], not the sink's own `emit_pack_group`.
 
 use crate::error::Error;
 use crate::exec::run::{Bindings, Sink as _};
-use crate::exec::sink::aggregate::spill::{PACK_WIDE_CLAIM_BYTES, pack_requires_wide};
 use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, SinkProgress};
 use crate::interval::sweep::{Continuation, sweep};
 use crate::work::WorkContext;
@@ -82,31 +78,21 @@ fn feed_pack(sink: &mut AggregateSink, slots: usize, claims: &[(Vec<u64>, u64, u
     }
 }
 
-fn spilled_pack(
+fn resident_pack(
     finds: Vec<FindSpec>,
     slots: usize,
-    partition: usize,
     claims: &[(Vec<u64>, u64, u64)],
 ) -> Vec<Vec<u64>> {
     let mut sink = AggregateSink::new(finds, slots);
     sink.begin(Some(work()));
-    for chunk in claims.chunks(partition) {
-        feed_pack(&mut sink, slots, chunk);
-        sink.spill_groups().unwrap();
-    }
-    assert!(sink.group_state_spilled());
+    feed_pack(&mut sink, slots, claims);
     let mut got = sink.into_answers().unwrap();
     got.sort();
     got
 }
 
-/// D11: reverse-start overlap across flushes unions to one maximal segment.
 #[test]
-fn d11_reverse_overlap_across_flushes_unions_to_one_segment() {
-    assert!(!pack_requires_wide(1));
-    assert!(pack_requires_wide(WIDE_WORDS));
-    assert_eq!(PACK_WIDE_CLAIM_BYTES, 24);
-
+fn reverse_start_overlap_unions_to_one_segment() {
     let finds = vec![
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Pack { slot: 1 },
@@ -114,38 +100,11 @@ fn d11_reverse_overlap_across_flushes_unions_to_one_segment() {
     let claims = vec![(vec![7], 10, 20), (vec![7], 0, 15)];
     let expected = independent_pack(&claims);
     assert_eq!(expected, vec![vec![7, 0, 20]]);
-
-    let mut resident = AggregateSink::new(finds.clone(), 4);
-    feed_pack(&mut resident, 4, &claims);
-    let mut resident_rows = resident.into_answers().expect("resident");
-    resident_rows.sort();
-    assert_eq!(resident_rows, expected);
-
-    for partition in [1usize, 2] {
-        let mut sink = AggregateSink::new(finds.clone(), 4);
-        sink.begin(Some(work()));
-        for chunk in claims.chunks(partition) {
-            feed_pack(&mut sink, 4, chunk);
-            sink.spill_groups().unwrap();
-        }
-        assert!(sink.group_state_spilled());
-        assert_eq!(sink.pack_wide_mode(), Some(false));
-        assert_eq!(sink.progress(), SinkProgress::Continue);
-        let mut got = Vec::new();
-        sink.finalize_into(&mut Vec::new(), |row| {
-            got.push(row.to_vec());
-            Ok(())
-        })
-        .expect("spilled reverse overlap");
-        got.sort();
-        assert_eq!(got, expected, "partition={partition}");
-        assert_eq!(sink.progress(), SinkProgress::Finish);
-    }
+    assert_eq!(resident_pack(finds, 4, &claims), expected);
 }
 
-/// D11: interleaved groups, adjacency, gaps, duplicate claims.
 #[test]
-fn d11_interleaved_adjacent_gapped_and_duplicate_claims() {
+fn interleaved_adjacent_gapped_and_duplicate_claims() {
     let finds = vec![
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Pack { slot: 1 },
@@ -173,49 +132,12 @@ fn d11_interleaved_adjacent_gapped_and_duplicate_claims() {
             vec![3, 20, 30],
         ]
     );
-
-    let mut resident = AggregateSink::new(finds.clone(), 4);
-    feed_pack(&mut resident, 4, &claims);
-    let mut resident_rows = resident.into_answers().expect("resident");
-    resident_rows.sort();
-    assert_eq!(resident_rows, expected);
-
-    let got = spilled_pack(finds, 4, 1, &claims);
-    assert_eq!(got, expected);
+    assert_eq!(resident_pack(finds, 4, &claims), expected);
 }
 
-/// D11: first encoded group word starts 0xFE — must stay narrow, never
-/// token-mode from the payload byte.
+/// Wide group heads with equal prefixes stay separate groups.
 #[test]
-fn d11_leading_0xfe_narrow_group_is_not_token_mode() {
-    let finds = vec![
-        FindSpec::Var { slot: 0, width: 1 },
-        FindSpec::Pack { slot: 1 },
-    ];
-    let fe = 0xFE00_0000_0000_0001;
-    let claims = vec![(vec![fe], 4, 9), (vec![fe], 1, 5)];
-    let expected = independent_pack(&claims);
-    assert_eq!(expected, vec![vec![fe, 1, 9]]);
-
-    let mut sink = AggregateSink::new(finds, 4);
-    sink.begin(Some(work()));
-    feed_pack(&mut sink, 4, &claims);
-    sink.spill_groups().unwrap();
-    assert!(sink.group_state_spilled());
-    assert_eq!(
-        sink.pack_wide_mode(),
-        Some(false),
-        "0xFE payload must not select wide mode"
-    );
-    let mut got = sink.into_answers().expect("0xFE narrow");
-    got.sort();
-    assert_eq!(got, expected);
-}
-
-/// D11: group heads past `MAX_INLINE_KEY` use scratch token tables; forced
-/// distinct keys that would share a hash bucket stay separate.
-#[test]
-fn d11_wide_groups_use_scratch_tokens_and_survive_collisions() {
+fn wide_group_heads_stay_separate() {
     let finds = vec![
         FindSpec::Var {
             slot: 0,
@@ -237,32 +159,13 @@ fn d11_wide_groups_use_scratch_tokens_and_survive_collisions() {
         (group_b, 50, 51),
     ];
     let expected = independent_pack(&claims);
-
-    let mut resident = AggregateSink::new(finds.clone(), slots);
-    feed_pack(&mut resident, slots, &claims);
-    let mut resident_rows = resident.into_answers().expect("resident wide");
-    resident_rows.sort();
-    assert_eq!(resident_rows, expected);
-
-    let mut sink = AggregateSink::new(finds, slots);
-    sink.begin(Some(work()));
-    feed_pack(&mut sink, slots, &claims);
-    sink.spill_groups().unwrap();
-    assert!(sink.group_state_spilled());
-    assert_eq!(
-        sink.pack_wide_mode(),
-        Some(true),
-        "49-word heads must take the checked wide regime"
-    );
-    let mut got = sink.into_answers().expect("wide token spill");
-    got.sort();
-    assert_eq!(got, expected);
+    assert_eq!(resident_pack(finds, slots, &claims), expected);
 }
 
-/// D11 / D19: canonical F64 endpoint order survives spill; set binding
-/// grain keeps a duplicate claim from changing the union.
+/// Canonical F64 endpoint order; set binding grain keeps a duplicate claim
+/// from changing the union.
 #[test]
-fn d11_d19_float_endpoints_keep_canonical_order_across_spills() {
+fn float_endpoints_keep_canonical_order() {
     let finds = vec![
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Pack { slot: 1 },
@@ -273,7 +176,7 @@ fn d11_d19_float_endpoints_keep_canonical_order_across_spills() {
     let d = F64::INFINITY.to_order_key();
     let claims = vec![(vec![1], b, d), (vec![1], a, c), (vec![1], b, d)];
     let expected = independent_pack(&claims);
-    let got = spilled_pack(finds, 4, 1, &claims);
+    let got = resident_pack(finds, 4, &claims);
     assert_eq!(got, expected);
     assert_eq!(
         got.len(),
@@ -282,10 +185,10 @@ fn d11_d19_float_endpoints_keep_canonical_order_across_spills() {
     );
 }
 
-/// D19: exact sum/count is not rounded until emit; spilled bits match an
-/// independent limb-bank oracle, including cancellation.
+/// Exact sum/count is not rounded until emit; the bits match an
+/// independent accumulator, including cancellation.
 #[test]
-fn d19_exact_sum_count_not_rounded_before_emit() {
+fn exact_sum_count_not_rounded_before_emit() {
     use crate::exec::kernel::numeric::ExactF64Accumulator;
 
     let finds = vec![
@@ -329,16 +232,9 @@ fn d19_exact_sum_count_not_rounded_before_emit() {
         }
     };
 
-    let mut resident = AggregateSink::new(finds.clone(), 2);
+    let mut resident = AggregateSink::new(finds, 2);
     feed(&mut resident);
     assert_eq!(resident.into_answers().expect("resident"), expected);
-
-    let mut spilled = AggregateSink::new(finds, 2);
-    spilled.begin(Some(work()));
-    feed(&mut spilled);
-    spilled.spill_groups().unwrap();
-    assert!(spilled.group_state_spilled());
-    assert_eq!(spilled.into_answers().expect("spilled"), expected);
 }
 
 #[test]
@@ -370,27 +266,6 @@ fn cancelled_pack_stops_at_its_poll_quantum_and_finalizes_no_rows() {
         error.as_ref(), crate::storage::store::StoreError::Work(crate::WorkError::Cancelled)
     )));
     assert_eq!(emitted, 0);
-}
-
-#[test]
-fn pack_spill_directory_is_owned_until_sink_release() {
-    let finds = [
-        FindSpec::Var { slot: 0, width: 1 },
-        FindSpec::Pack { slot: 1 },
-    ];
-    let mut sink = AggregateSink::new(finds, 4);
-    sink.begin(Some(work()));
-    feed_pack(&mut sink, 4, &[(vec![1], 0, 15), (vec![1], 10, 20)]);
-    sink.spill_groups().unwrap();
-    let path = sink.spill.as_ref().unwrap().table.scratch_path().unwrap();
-    assert!(path.exists());
-    assert_eq!(sink.progress(), SinkProgress::Continue);
-    let rows = sink.into_answers().unwrap();
-    assert_eq!(rows, vec![vec![1, 0, 20]]);
-    assert!(
-        !path.exists(),
-        "consuming the sink releases its private directory"
-    );
 }
 
 /// Finish is recorded only after a successful finalize.

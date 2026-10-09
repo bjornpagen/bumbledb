@@ -190,3 +190,22 @@ fn min_and_max_honor_logical_i64_order_across_the_sign_boundary() {
     let rows = sink.into_answers().expect("rows");
     assert_eq!(rows, vec![vec![i64_to_word(-100), i64_to_word(42)]]);
 }
+
+#[test]
+fn a_full_distinct_index_refuses_new_rows_with_capacity_and_keeps_deduplicating() {
+    let mut seen = SeenSet::with_capacity_hint(1, 4, true);
+    assert!(seen.insert(&[1]));
+    seen.ram.assume_full();
+    assert!(
+        !seen.insert(&[1]),
+        "a duplicate at the limit is still a duplicate"
+    );
+    assert_eq!(seen.progress(), SinkProgress::Continue);
+    assert!(!seen.insert(&[2]));
+    assert_eq!(seen.progress(), SinkProgress::Error);
+    assert!(!seen.insert(&[3]), "the refusal is sticky");
+    assert!(matches!(
+        seen.take_error(),
+        Some(Error::Capacity(crate::error::Capacity::DistinctRows))
+    ));
+}

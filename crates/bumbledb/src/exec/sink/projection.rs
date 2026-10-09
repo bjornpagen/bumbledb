@@ -119,12 +119,7 @@ mod tests {
 
     #[test]
     fn generated_resident_rows_preserve_mixed_columns_order_boundaries_and_reuse() {
-        assert_generated_scans(&[false]);
-    }
-
-    #[test]
-    fn generated_rows_preserve_mixed_columns_and_order_across_spill_and_reuse() {
-        assert_generated_scans(&[true]);
+        assert_generated_scans();
     }
 
     #[test]
@@ -165,7 +160,7 @@ mod tests {
         }
     }
 
-    fn assert_generated_scans(representations: &[bool]) {
+    fn assert_generated_scans() {
         use crate::exec::colt::SuffixRun;
         use crate::exec::run::{LeafScan, ScanOffer};
 
@@ -177,82 +172,76 @@ mod tests {
             panic!("word column")
         };
         let positions: Vec<u32> = (300..580).rev().collect();
-        for &disk in representations {
-            let mut dense = ProjectionSink::new(vec![0, 2, 1]);
-            dense.elide_output_hashing(witness);
-            let mut hashed = ProjectionSink::new(vec![0, 2, 1]);
-            for outer in [7, 9] {
-                let mut bindings = Bindings::new(3);
-                bindings.set(0, outer);
-                let scan = LeafScan {
-                    colt: &colt,
-                    level: 1,
-                    key_slots: &[1, 2],
-                    bindings: &bindings,
-                };
-                let pinned_keys: Vec<_> =
-                    (1000..1017u64).flat_map(|id| [id, outer, id % 2]).collect();
-                let survivors: Vec<u32> = (0..17).rev().collect();
-                let batch = LeafBatch {
-                    keys: &pinned_keys,
-                    arity: 3,
-                    survivors: &survivors,
-                    key_slots: &[2, 0, 1],
-                    bindings: &bindings,
-                };
-                for sink in [&mut dense, &mut hashed] {
-                    sink.reset();
-                    sink.begin(Some(crate::api::db::test_operation()));
-                    if disk {
-                        sink.seen.spill().unwrap();
-                    }
-                    sink.prepare_scan(scan.key_slots);
-                    assert_eq!(sink.begin_scan(&scan), ScanOffer::Open);
-                    sink.scan_run(&scan, SuffixRun::Identity { start: 3, len: 259 });
-                    // Combined/permuted pinned layout must use its own
-                    // route and retain its survivor order between scans.
-                    assert_eq!(sink.emit_batch(&batch), Flow::Continue);
-                    sink.scan_run(&scan, SuffixRun::Positions(&positions));
-                    assert_eq!(sink.end_scan(&scan), 539);
-                }
-                let source_row = |p: usize| vec![outer, ids[p], u64::from(flags[p])];
-                let expected: Vec<_> = (3..262)
-                    .map(source_row)
-                    .chain(survivors.iter().map(|&entry| {
-                        let id = 1000 + u64::from(entry);
-                        vec![outer, id, id % 2]
-                    }))
-                    .chain(positions.iter().map(|&p| source_row(p as usize)))
-                    .collect();
-                for sink in [&mut dense, &mut hashed] {
-                    let mut actual = Vec::new();
-                    sink.for_each_answer(&mut |row| {
-                        actual.push(row.to_vec());
-                        Ok(())
-                    })
-                    .unwrap();
-                    assert_eq!(actual, expected, "disk={disk}, outer={outer}");
-                }
-                assert_eq!(
-                    dense.scan_rows.capacity(),
-                    0,
-                    "proved scans allocate no intermediate batch"
-                );
-                assert!(
-                    hashed.scan_rows.capacity()
-                        <= crate::exec::sink::STEP_QUANTUM as usize * hashed.scratch.len(),
-                    "direct scan callers reuse at most one gather window"
-                );
-                // Both compiled representations must survive release and
-                // restore their scratch on the next reset, without re-aiming.
-                for sink in [&mut dense, &mut hashed] {
-                    sink.release_memory();
-                    assert_eq!(sink.scan_rows.capacity(), 0);
-                    assert_eq!(sink.scratch.capacity(), 0);
-                }
-                assert!(dense.output_hashing_is_elided());
-                assert!(!hashed.output_hashing_is_elided());
+        let mut dense = ProjectionSink::new(vec![0, 2, 1]);
+        dense.elide_output_hashing(witness);
+        let mut hashed = ProjectionSink::new(vec![0, 2, 1]);
+        for outer in [7, 9] {
+            let mut bindings = Bindings::new(3);
+            bindings.set(0, outer);
+            let scan = LeafScan {
+                colt: &colt,
+                level: 1,
+                key_slots: &[1, 2],
+                bindings: &bindings,
+            };
+            let pinned_keys: Vec<_> = (1000..1017u64).flat_map(|id| [id, outer, id % 2]).collect();
+            let survivors: Vec<u32> = (0..17).rev().collect();
+            let batch = LeafBatch {
+                keys: &pinned_keys,
+                arity: 3,
+                survivors: &survivors,
+                key_slots: &[2, 0, 1],
+                bindings: &bindings,
+            };
+            for sink in [&mut dense, &mut hashed] {
+                sink.reset();
+                sink.begin(Some(crate::api::db::test_operation()));
+                sink.prepare_scan(scan.key_slots);
+                assert_eq!(sink.begin_scan(&scan), ScanOffer::Open);
+                sink.scan_run(&scan, SuffixRun::Identity { start: 3, len: 259 });
+                // Combined/permuted pinned layout must use its own
+                // route and retain its survivor order between scans.
+                assert_eq!(sink.emit_batch(&batch), Flow::Continue);
+                sink.scan_run(&scan, SuffixRun::Positions(&positions));
+                assert_eq!(sink.end_scan(&scan), 539);
             }
+            let source_row = |p: usize| vec![outer, ids[p], u64::from(flags[p])];
+            let expected: Vec<_> = (3..262)
+                .map(source_row)
+                .chain(survivors.iter().map(|&entry| {
+                    let id = 1000 + u64::from(entry);
+                    vec![outer, id, id % 2]
+                }))
+                .chain(positions.iter().map(|&p| source_row(p as usize)))
+                .collect();
+            for sink in [&mut dense, &mut hashed] {
+                let mut actual = Vec::new();
+                sink.for_each_answer(&mut |row| {
+                    actual.push(row.to_vec());
+                    Ok(())
+                })
+                .unwrap();
+                assert_eq!(actual, expected, "outer={outer}");
+            }
+            assert_eq!(
+                dense.scan_rows.capacity(),
+                0,
+                "proved scans allocate no intermediate batch"
+            );
+            assert!(
+                hashed.scan_rows.capacity()
+                    <= crate::exec::sink::STEP_QUANTUM as usize * hashed.scratch.len(),
+                "direct scan callers reuse at most one gather window"
+            );
+            // Both compiled representations must survive release and
+            // restore their scratch on the next reset, without re-aiming.
+            for sink in [&mut dense, &mut hashed] {
+                sink.release_memory();
+                assert_eq!(sink.scan_rows.capacity(), 0);
+                assert_eq!(sink.scratch.capacity(), 0);
+            }
+            assert!(dense.output_hashing_is_elided());
+            assert!(!hashed.output_hashing_is_elided());
         }
     }
 

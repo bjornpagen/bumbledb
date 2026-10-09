@@ -1,7 +1,7 @@
 use crate::error::Result;
 use crate::exec::sink::aggregate::{parse_finds, parse_finds_into};
 use crate::exec::sink::{
-    FindSpec, ProjectionSink, ResidentRows, SpillSet, StageRowVisit, extend_sources, sources_of,
+    FindSpec, ProjectionSink, ResidentRows, SeenSet, StageRowVisit, extend_sources, sources_of,
 };
 
 impl ProjectionSink {
@@ -32,7 +32,7 @@ impl ProjectionSink {
         Self {
             finds: Vec::new(),
             sources,
-            seen: SpillSet::with_capacity_hint(arity, hint, true),
+            seen: SeenSet::with_capacity_hint(arity, hint, true),
             scratch: vec![0; arity],
             batch_route: super::ProjectionRoute::new(arity, slot_count),
             scan_route: super::ProjectionRoute::new(arity, slot_count),
@@ -62,9 +62,7 @@ impl ProjectionSink {
         );
     }
 
-    /// RAM-tier answers (the main sink's warm finalize fill). Spilled
-    /// sinks drain through [`Self::for_each_answer`]/[`Self::drain_since`],
-    /// never this iterator — callers branch on [`Self::spilled`] first.
+    /// Answers in insertion order (the main sink's warm finalize fill).
     pub fn answers(
         &self,
     ) -> ResidentRows<impl Iterator<Item = &[u64]> + Clone, impl Iterator<Item = &[u64]> + Clone>
@@ -72,10 +70,10 @@ impl ProjectionSink {
         self.seen.ram_iter_since(0)
     }
 
-    /// Insertion-ordered drain across both tiers (finalize's spilled arm).
+    /// Insertion-ordered fallible drain.
     /// # Errors
-    /// A sticky sink failure, scratch read failure, stopped work, or the
-    /// visitor's failure.
+    /// A sticky sink failure or the visitor's failure.
+    #[cfg(test)]
     pub(crate) fn for_each_answer(
         &mut self,
         visit: &mut dyn FnMut(&[u64]) -> Result<()>,
@@ -86,9 +84,8 @@ impl ProjectionSink {
         })
     }
 
-    /// Insertion-ordered drain from `since` across both tiers. Fallible
-    /// and early-stoppable (`Ok(false)`). L05 refill/seal must propagate
-    /// `Err` immediately — do not collect then write.
+    /// Insertion-ordered drain from `since`. Fallible and early-stoppable
+    /// (`Ok(false)`); stage refills propagate `Err` immediately.
     /// # Errors
     /// As [`Self::for_each_answer`].
     pub(crate) fn drain_since(&mut self, since: usize, visit: StageRowVisit<'_>) -> Result<()> {
@@ -98,17 +95,6 @@ impl ProjectionSink {
     /// Install this execution's cancellation context (None for standalone kernels).
     pub(crate) fn begin(&mut self, work: Option<crate::work::WorkContext>) {
         self.seen.begin(work);
-    }
-
-    #[must_use]
-    pub(crate) fn spilled(&self) -> bool {
-        self.seen.spilled()
-    }
-
-    /// Exercise the disk representation without inventing a resource policy.
-    #[cfg(test)]
-    pub(crate) fn force_spill(&mut self) -> crate::error::Result<()> {
-        self.seen.spill()
     }
 
     /// The sticky failure recorded by the infallible emit path, if any.
