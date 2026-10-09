@@ -161,6 +161,32 @@ lane_s3() {
 	pnpm --dir ts run test:s3
 }
 
+# Miri runs the engine's unit tests; tests that reach LMDB or are too slow
+# under the interpreter carry #[cfg_attr(miri, ignore)].
+lane_miri() {
+	cargo miri nextest run --locked -p bumbledb --lib
+}
+
+# BUMBLEDB_DEEP=1 widens the property and differential sweeps; the gate profile
+# gives release semantics, which also runs the release-only allocation gates.
+lane_deep() {
+	BUMBLEDB_DEEP=1 cargo nextest run --locked --workspace --cargo-profile gate --profile deep
+}
+
+lane_clippy() {
+	clippy
+}
+
+lane_udeps() {
+	cargo udeps --locked --workspace --all-targets --all-features
+}
+
+# The hand-tuned NEON kernels must stay free of scalar flag writers in the shipped build.
+lane_asm() {
+	cargo build --locked -p bumbledb-bench --release
+	scripts/check-asm.sh "$target_dir/release/bumbledb-bench"
+}
+
 lane=${1:-}
 if [ $# -ne 1 ] || ! declare -F "lane_$lane" >/dev/null; then
 	echo "usage: scripts/ci.sh <$(compgen -A function lane_ | sed 's/^lane_//' | paste -sd '|' -)>" >&2

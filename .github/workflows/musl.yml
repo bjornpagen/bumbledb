@@ -1,0 +1,62 @@
+# Static aarch64 musl: the core archive linked from C, every workspace binary
+# static, a fresh root and a full-system QEMU boot, then the workspace tests.
+name: musl
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  musl:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the musl toolchain image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: scripts/static-linux-arm64/Dockerfile
+          platforms: linux/arm64
+          load: true
+          tags: bumbledb-musl:ci
+          cache-from: type=gha,scope=bumbledb-musl
+          cache-to: type=gha,scope=bumbledb-musl,mode=max
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/bumbledb-musl-cache
+          key: musl-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'scripts/static-linux-arm64/Dockerfile') }}-${{ github.sha }}
+          restore-keys: |
+            musl-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'scripts/static-linux-arm64/Dockerfile') }}-
+      - name: Static build, QEMU boot and workspace tests
+        env:
+          CACHE: ${{ runner.temp }}/bumbledb-musl-cache
+          OUTPUT: ${{ runner.temp }}/bumbledb-musl-output
+        run: |
+          mkdir -p "$CACHE/target" "$CACHE/registry" "$CACHE/git" "$OUTPUT"
+          docker run --rm --platform linux/arm64 \
+            --mount "type=bind,src=$CACHE/target,dst=/workspace/target" \
+            --mount "type=bind,src=$CACHE/registry,dst=/root/.cargo/registry" \
+            --mount "type=bind,src=$CACHE/git,dst=/root/.cargo/git" \
+            --mount "type=bind,src=$OUTPUT,dst=/out" \
+            -e "BUMBLEDB_STATIC_REVISION=$GITHUB_SHA" \
+            bumbledb-musl:ci bash scripts/static-linux-arm64/check.sh /out
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bumbledb-static-linux-arm64
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/bumbledb-musl-output/*.json
+            ${{ runner.temp }}/bumbledb-musl-output/*.log
+            ${{ runner.temp }}/bumbledb-musl-output/*.map
+            ${{ runner.temp }}/bumbledb-musl-output/libbumbledb.a
+            ${{ runner.temp }}/bumbledb-musl-output/bumbledb-static-smoke
+            ${{ runner.temp }}/bumbledb-musl-output/vmlinuz-virt
+            ${{ runner.temp }}/bumbledb-musl-output/initramfs.cpio.gz
+            ${{ runner.temp }}/bumbledb-musl-output/notices.tar.gz
+            ${{ runner.temp }}/bumbledb-musl-output/SHA256SUMS

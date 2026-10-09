@@ -1,0 +1,108 @@
+# Nightly lanes too slow or too specialized for every pull request. Any red
+# lane opens (or comments on) the single "deep red" issue; a green night closes it.
+name: deep
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  miri:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install && rustup component add miri rust-src
+      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.148
+      - run: scripts/ci.sh miri
+
+  musl:
+    uses: ./.github/workflows/musl.yml
+
+  s3-aws:
+    uses: ./.github/workflows/s3-aws.yml
+    permissions:
+      contents: read
+      id-token: write
+
+  deep:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.148
+      - run: scripts/ci.sh deep
+
+  clippy-macos:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2.9.2
+      - run: scripts/ci.sh clippy
+
+  udeps:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-udeps
+      - run: scripts/ci.sh udeps
+
+  asm:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2.9.2
+      - run: scripts/ci.sh asm
+
+  report:
+    needs: [miri, musl, s3-aws, deep, clippy-macos, udeps, asm]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RED: ${{ contains(needs.*.result, 'failure') }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - run: |
+          issue=$(gh issue list --state open --search 'in:title "deep red"' --json number,title \
+            --jq '.[] | select(.title == "deep red") | .number' | head -n 1)
+          if [ "$RED" = true ]; then
+            if [ -n "$issue" ]; then
+              gh issue comment "$issue" --body "Still red: $RUN"
+            else
+              gh issue create --title "deep red" --body "Nightly deep lanes failed: $RUN"
+            fi
+          elif [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "Green: $RUN"
+          fi

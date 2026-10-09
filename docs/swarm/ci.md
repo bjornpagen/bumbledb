@@ -16,7 +16,7 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
 | G1: `ci.yml` + `scripts/ci.sh <lane>` | landed (rustdoc gate red on other lanes' docs, see requests) |
 | G5: `.config/deny.toml`, cargo-shear, Dependabot | landed (not runnable locally: no cargo-deny/cargo-shear here) |
 | G4: SeaweedFS and AWS S3 lanes | landed (red until ts adds `test:s3`, see requests) |
-| G10: `deep.yml` | todo |
+| G10: `deep.yml` (Miri, musl, AWS, deep sweeps + release gates, macOS clippy, udeps, NEON asm, deep-red issue) | landed |
 | G11: `scripts/bump-toolchain.sh`, `toolchain-canary.yml`, toolchain components | todo |
 | G12: `release.yml`, `scripts/family.mjs`, packed smoke | todo |
 
@@ -84,6 +84,13 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
     (Express), `vars.BUMBLEDB_S3_CKPT_BUCKET` (Standard). A missing variable fails the job.
   - **Owner (U13):** the role's trust policy must accept `repo:bjornpagen/bumbledb:ref:refs/heads/main`
     and `...:ref:refs/tags/v*`, scoped to `ci/` on both buckets; 1-day lifecycle on `ci/`.
+- **`deep.yml` (nightly 03:17 UTC and manual).** Lanes: `miri` (`cargo miri nextest run -p bumbledb
+  --lib`, nextest profile `default-miri`, ubuntu-24.04 and macos-26); `musl` (`musl.yml`, the
+  static aarch64-musl check, moved off pushes); `s3-aws`; `deep`
+  (`BUMBLEDB_DEEP=1 cargo nextest run --workspace --cargo-profile gate --profile deep`); `clippy`
+  on macos-26; `udeps`; `asm` (`scripts/check-asm.sh` on the release `bumbledb-bench` on
+  ubuntu-24.04-arm). Any red lane opens or comments on the one open issue titled `deep red`; a
+  fully green night closes it. `scripts/miri.sh` and `scripts/miri-cross-cc.sh` are deleted.
 
 ## Requests to other lanes
 
@@ -92,6 +99,16 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
   `crates/bumbledb-node` (bridge: public docs link private items in `db_wire.rs` and `lib.rs`) and
   `crates/bumbledb-bench` (bench: `space/census.rs` links the missing `crate::largefix`).
 - Tests that write outside a temp dir fail the tree-clean check.
+- **Miri (engine-storage, engine-query, numeric):** nightly Miri runs every `bumbledb` lib test with
+  no name filters. Mark each lib test that reaches LMDB or other FFI, or is too slow under Miri,
+  `#[cfg_attr(miri, ignore)]`; everything else must pass under Miri.
+- **`BUMBLEDB_DEEP`:** property, differential and conformance sweeps should read
+  `BUMBLEDB_DEEP=1` to widen their seeded case counts (deterministically). Nightly runs the whole
+  workspace that way with release semantics; pull requests run the default sizes.
+- **numeric:** `scripts/check-asm.sh` checks the symbols `allen_code_batch_neon`,
+  `allen_code_batch_const_neon` and `allen_filter_batch_neon` (each must exist in the release
+  `bumbledb-bench` binary and be free of flag writers, `b.cond` and calls). Keep those names or
+  tell me the new ones.
 
 ### ts
 - **`pnpm --dir ts run test:s3`**: the S3Store conformance suite against a real store, reading the
