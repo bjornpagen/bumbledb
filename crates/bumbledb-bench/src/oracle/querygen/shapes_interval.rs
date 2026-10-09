@@ -414,12 +414,20 @@ mod tests {
     use super::random_mask;
     use crate::worlds::corpus_gen::Rng;
 
+    /// Seeds whose first draw is the empty or the full mask reach both
+    /// repairs; every mask is neither empty nor full.
     #[test]
-    fn random_mask_is_total_on_constant_streams() {
-        let empty_tail = random_mask(&mut Rng::from_bytes(&[]));
-        assert!(!empty_tail.is_empty() && !empty_tail.is_full());
-        let full: Vec<u8> = 0x1FFFu64.to_le_bytes().repeat(4);
-        let full_tail = random_mask(&mut Rng::from_bytes(&full));
-        assert!(!full_tail.is_empty() && !full_tail.is_full());
+    fn random_mask_repairs_the_empty_and_full_draws() {
+        let mut repaired = [false; 2];
+        for seed in 0..1 << 16 {
+            match Rng::new(seed).range(1 << 13) {
+                0 => repaired[0] = true,
+                0x1FFF => repaired[1] = true,
+                _ => {}
+            }
+            let mask = random_mask(&mut Rng::new(seed));
+            assert!(!mask.is_empty() && !mask.is_full(), "seed {seed}");
+        }
+        assert_eq!(repaired, [true, true], "both repairs reached");
     }
 }

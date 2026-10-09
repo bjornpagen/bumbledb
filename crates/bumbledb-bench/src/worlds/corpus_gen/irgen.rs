@@ -323,23 +323,17 @@ mod tests {
     use crate::worlds::corpus_gen::Rng;
 
     #[test]
-    fn the_same_bytes_yield_the_same_query() {
-        let bytes: Vec<u8> = (1..=96u64)
-            .flat_map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15).to_le_bytes())
-            .collect();
-        let first = random_query(&mut Rng::from_bytes(&bytes));
+    fn one_seed_yields_one_query_and_seeds_steer_it() {
+        let first = random_query(&mut Rng::new(1));
         assert_eq!(
             first,
-            random_query(&mut Rng::from_bytes(&bytes)),
-            "same bytes, same query"
+            random_query(&mut Rng::new(1)),
+            "same seed, same query"
         );
-        let other: Vec<u8> = (1..=96u64)
-            .flat_map(|i| i.wrapping_mul(0xC2B2_AE3D_27D4_EB4F).to_le_bytes())
-            .collect();
         assert_ne!(
             first,
-            random_query(&mut Rng::from_bytes(&other)),
-            "bytes steer the query"
+            random_query(&mut Rng::new(2)),
+            "seeds steer the query"
         );
     }
 
