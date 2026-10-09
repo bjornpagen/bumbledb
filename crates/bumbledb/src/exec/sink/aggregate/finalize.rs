@@ -6,7 +6,8 @@ use crate::exec::sink::{
 use crate::interval::sweep::{Continuation, sweep};
 
 impl AggregateSink {
-    /// # Errors
+    /// Emits every group's answer row; refuses before the first row if the
+    /// execution recorded a failure.
     pub fn finalize_into(
         &mut self,
         answer_scratch: &mut Vec<u64>,
@@ -107,7 +108,6 @@ impl AggregateSink {
         )
     }
 
-    /// # Errors
     #[cfg(test)]
     pub fn into_answers(mut self) -> Result<Vec<Vec<u64>>> {
         let mut rows = Vec::with_capacity(self.groups.len());

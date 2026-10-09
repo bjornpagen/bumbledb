@@ -1,5 +1,5 @@
 //! Checked-in expectations come from exact Python Fraction arithmetic and a
-//! binary-search rounding oracle, never the production limb/guard routines.
+//! binary-search rounding oracle, never the production accumulator or arithmetic.
 use bumbledb::{F64, F64CastError, F64Math};
 
 fn bits(text: &str) -> u64 {

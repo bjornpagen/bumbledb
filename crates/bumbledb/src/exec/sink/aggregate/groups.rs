@@ -17,8 +17,8 @@ pub(super) fn load_group_key(
 }
 
 impl AggregateSink {
-    /// Check before accumulation: for at most `u64::MAX` inputs all I64/U64
-    /// exact totals fit the existing i128/u128 hot-path accumulators.
+    /// Checked before accumulation: with at most `u64::MAX` inputs every
+    /// I64/U64 total fits its i128/u128 accumulator.
     pub(super) fn advance_group(&mut self, group: usize, count: u64) -> bool {
         let Some(total) = self.group_counts[group].checked_add(count) else {
             self.cardinality_overflow = true;

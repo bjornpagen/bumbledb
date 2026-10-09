@@ -298,8 +298,8 @@ impl AggregateSink {
         self.dedup.seen().map(SeenSet::len)
     }
 
-    /// Only the single resident scalar rule may enable this. Keep the
-    /// ordinary seen-set intact for a later fallback or execution.
+    /// Only the single resident scalar rule may enable this. The ordinary
+    /// seen set stays intact for a later execution.
     pub(crate) fn set_physical_distinct(
         &mut self,
         witness: Option<crate::plan::fj::ScalarSetTraversal>,
@@ -325,7 +325,7 @@ impl AggregateSink {
         }
     }
 
-    /// Share this execution's cancellation context with deduplication and scratch.
+    /// Shares this execution's cancellation context with deduplication.
     pub(crate) fn begin(&mut self, work: Option<crate::work::WorkContext>) {
         if let Some(seen) = self.dedup.seen_mut() {
             seen.begin(work.clone());
@@ -346,7 +346,8 @@ impl AggregateSink {
         error
     }
 
-    /// L05 Continue/Stop/Error during emit; Finish after successful finalize.
+    /// Continue, Stop or Error while emitting; Finish after a successful
+    /// finalize.
     #[must_use]
     pub(crate) fn progress(&self) -> crate::exec::sink::SinkProgress {
         use crate::exec::sink::{SinkProgress, classify_progress};
