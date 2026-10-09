@@ -15,8 +15,8 @@ function assertNoTwin(name: string, value: object): void {
 }
 
 test("every core entry point constructs a lazy Effect (or Stream) — nothing runs at construction", function lazyConstruction() {
-	const create = Db.create("/tmp/never-used", Learning)
-	const open = Db.open("/tmp/never-used", Learning)
+	const create = Db.create("/tmp/never-used.bdb", Learning)
+	const open = Db.open("/tmp/never-used.bdb", Learning)
 	const builder = ChangeSet.builder(Learning)
 	for (const [name, value] of [
 		["Db.create", create],

@@ -47,7 +47,7 @@ export const runtimeOptions: BumbleOptions = {
 
 /** A fresh store directory per test; the caller's scope owns the database. */
 export function storeDir(tag: string): string {
-	const dir = path.join(os.tmpdir(), `bumbledb-effect-${tag}-${process.pid}`)
+	const dir = path.join(os.tmpdir(), `effect-${tag}-${process.pid}.bdb`)
 	fs.rmSync(dir, { recursive: true, force: true })
 	return dir
 }
