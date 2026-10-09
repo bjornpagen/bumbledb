@@ -9,7 +9,7 @@ pub mod run;
 #[cfg(test)]
 mod tests;
 
-pub use run::{CrudRow, run, run_with};
+pub use run::{run, run_with};
 
 bumbledb::schema! {
     pub CrudWorld;

@@ -273,10 +273,10 @@ fn queries() -> Vec<ScenarioQuery> {
     ]
 }
 
+/// The Allen kernel on its own turf: stabbing, overlap joins, mixed masks, rays, coalesce.
 fn build(rows: fn(u64) -> Rows) -> Scenario {
     Scenario {
         name: "temporal",
-        about: "the Allen kernel on its own turf: stabbing, overlap joins, mixed masks, rays, coalesce",
         schema,
         descriptor: || bumbledb::Theory::descriptor(Temporal),
         rows,

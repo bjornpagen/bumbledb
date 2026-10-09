@@ -173,9 +173,9 @@ pub struct ClosureFamily {
     pub query: fn() -> Query,
     pub params: fn(&GenConfig) -> Vec<Draw>,
     pub sql: &'static str,
-    pub param_policy: &'static str,
 }
 
+/// The chain head (chain-length rounds), the midpoint, the tail, + 1 miss.
 fn depth_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = ClosSizes::of(cfg.scale);
     vec![
@@ -186,6 +186,7 @@ fn depth_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
+/// The tree root (fanout^depth frontier), a depth-1 subtree, a leaf, + 1 miss.
 fn fanout_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = ClosSizes::of(cfg.scale);
     let base = sizes.tree_base();
@@ -206,7 +207,6 @@ pub fn all() -> &'static [ClosureFamily] {
             query: closure_query,
             params: depth_params,
             sql: CLOSURE_SQL,
-            param_policy: "The chain head (chain-length rounds), the midpoint, the tail, + 1 miss.",
         },
         ClosureFamily {
             name: "closure_fanout",
@@ -214,7 +214,6 @@ pub fn all() -> &'static [ClosureFamily] {
             query: closure_query,
             params: fanout_params,
             sql: CLOSURE_SQL,
-            param_policy: "The tree root (fanout^depth frontier), a depth-1 subtree, a leaf, + 1 miss.",
         },
     ]
 }

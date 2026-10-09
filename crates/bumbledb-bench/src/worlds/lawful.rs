@@ -10,8 +10,7 @@ pub mod run;
 #[cfg(test)]
 mod tests;
 
-pub use lanes::{AttemptOp, LawCursor};
-pub use run::{LawRow, run, run_with};
+pub use run::run;
 
 bumbledb::schema! {
     pub LawfulWorld;

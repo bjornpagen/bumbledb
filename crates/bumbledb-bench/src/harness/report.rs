@@ -111,7 +111,7 @@ pub use budget::within_budget;
 pub(crate) use json_out::push_provenance;
 pub use json_out::to_json;
 pub use markdown::to_markdown;
-pub use provenance::{git_rev, host_description, provenance, timestamp_iso8601};
+pub use provenance::{git_rev, provenance, timestamp_iso8601};
 pub use verdict::verdict;
 pub use write_artifacts::write_artifacts;
 

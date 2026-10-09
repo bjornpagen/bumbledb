@@ -355,7 +355,7 @@ mod tests {
         for seed in 0..512 {
             let query = random_query(&mut Rng::new(seed));
             saw_interiors |= !query.interiors().is_empty();
-            saw_rec |= matches!(query, Query { .. });
+            saw_rec |= query.rec.is_some();
             match db.prepare(&query, crate::harness::bench_work()) {
                 Ok(_) => accepted += 1,
                 Err(_) => rejected += 1,

@@ -13,11 +13,11 @@ use super::{
     ScenarioQuery, ids, schema,
 };
 
+/// JOB-style join-order stress: skewed fan-ins, correlated predicates.
 #[must_use]
 pub fn scenario() -> Scenario {
     Scenario {
         name: "joins",
-        about: "JOB-style join-order stress: skewed fan-ins, correlated predicates",
         schema,
         descriptor: || bumbledb::Theory::descriptor(super::Joins),
         rows: |seed| {

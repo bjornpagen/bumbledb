@@ -1,12 +1,11 @@
-//! Projection-arity coverage cases layered after the structurally-free before
-//! drawing one of these cases through a fresh [`Rng`] cursor.
+//! Projection-arity schema cases: a containment over every determinant arity
+//! and type mix the sweep covers, each with the verdict the schema validator
+//! must give it.
 use bumbledb::Value;
 use bumbledb::schema::{
     FieldDescriptor, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
 };
-
-use crate::oracle::naive::Delta;
 
 use super::super::Rng;
 
@@ -48,13 +47,6 @@ pub struct ArityCoverage {
 #[derive(Debug, Clone)]
 pub struct ArityDescriptorCase {
     pub descriptor: SchemaDescriptor,
-    pub coverage: ArityCoverage,
-}
-
-#[derive(Debug, Clone)]
-pub struct ArityOpsCase {
-    pub descriptor: SchemaDescriptor,
-    pub deltas: Vec<Delta>,
     pub coverage: ArityCoverage,
 }
 
@@ -116,39 +108,6 @@ pub fn random_valid_arity_descriptor(rng: &mut Rng) -> ArityDescriptorCase {
         1 + usize::try_from(rng.range(MAX_COVERED_ARITY as u64)).expect("arity fits usize")
     };
     arity_descriptor(arity, selection, equality)
-}
-
-#[must_use]
-pub fn random_valid_arity_ops(rng: &mut Rng) -> ArityOpsCase {
-    let case = random_valid_arity_descriptor(rng);
-    let arity = case.coverage.arity;
-    let source = fact(arity, 7, 0);
-    let target = fact(arity, 7, 0);
-    let mut colliding_target = target.clone();
-    colliding_target[arity + 2] = Value::U64(1);
-    let missing_source = fact(arity, 91, 0);
-    ArityOpsCase {
-        descriptor: case.descriptor,
-        deltas: vec![
-            Delta {
-                deletes: vec![],
-                inserts: vec![(SOURCE, source.clone()), (TARGET, target.clone())],
-            },
-            Delta {
-                deletes: vec![],
-                inserts: vec![(TARGET, colliding_target)],
-            },
-            Delta {
-                deletes: vec![],
-                inserts: vec![(SOURCE, missing_source)],
-            },
-            Delta {
-                deletes: vec![(TARGET, target)],
-                inserts: vec![],
-            },
-        ],
-        coverage: case.coverage,
-    }
 }
 
 fn build_case(
@@ -283,39 +242,6 @@ fn side(
                 bumbledb::schema::LiteralSet::One(Value::Bool(true)),
             )]) as Box<[_]>
         }),
-    }
-}
-
-fn fact(arity: usize, discriminator: u64, payload: u64) -> Vec<Value> {
-    let mut values: Vec<Value> = projection_types(arity)
-        .iter()
-        .enumerate()
-        .map(|(index, value_type)| value(value_type, discriminator, index))
-        .collect();
-    values.extend([Value::Bool(true), Value::Bool(true), Value::U64(payload)]);
-    values
-}
-
-fn value(value_type: &ValueType, discriminator: u64, index: usize) -> Value {
-    let salt = discriminator.wrapping_mul(257).wrapping_add(index as u64);
-    match value_type {
-        ValueType::Bool => Value::Bool(salt & 1 == 0),
-        ValueType::U64 => Value::U64(salt),
-        ValueType::I64 => Value::I64(i64::try_from(salt).expect("small generated value")),
-        ValueType::F64 => Value::F64(bumbledb::F64::from_bits(salt)),
-        ValueType::String => Value::String(format!("arity-{salt}").into()),
-        ValueType::FixedBytes { len } => {
-            Value::FixedBytes(vec![salt.to_le_bytes()[0]; usize::from(*len)].into())
-        }
-        ValueType::Uuid => {
-            let mut bytes = [0u8; 16];
-            bytes[..8].copy_from_slice(&salt.to_be_bytes());
-            bytes[8..].copy_from_slice(&salt.wrapping_mul(31).to_be_bytes());
-            Value::Uuid(bumbledb::Uuid::from_bytes(bytes))
-        }
-        ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
-            unreachable!("the arity mix is scalar")
-        }
     }
 }
 

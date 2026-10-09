@@ -1,8 +1,8 @@
 mod corpus_digest;
 mod digest_hex;
-pub mod irgen;
+#[cfg(test)]
+mod irgen;
 mod mandate;
-pub mod opgen;
 mod range_window;
 pub mod rng;
 mod row;
@@ -10,11 +10,12 @@ mod scale;
 mod sizes;
 #[cfg(test)]
 mod tests;
-pub mod theorygen;
+#[cfg(test)]
+mod theorygen;
 
 pub use corpus_digest::corpus_digest;
 pub use digest_hex::digest_hex;
-pub use mandate::{MANDATE_SEGMENTS, Segment, mandate_segments};
+pub use mandate::{MANDATE_SEGMENTS, mandate_segments};
 pub use range_window::range_window;
 pub use rng::Rng;
 pub use row::{relation_rows, row};

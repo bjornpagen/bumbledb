@@ -1,4 +1,4 @@
-use crate::worlds::families::{Kind, WriteFamily};
+use crate::worlds::families::WriteFamily;
 
 #[must_use]
 pub fn write_families() -> &'static [WriteFamily] {
@@ -6,7 +6,6 @@ pub fn write_families() -> &'static [WriteFamily] {
     &[
         WriteFamily {
             name: "commit_single",
-            kind: Kind::Report,
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,
@@ -14,7 +13,6 @@ pub fn write_families() -> &'static [WriteFamily] {
         },
         WriteFamily {
             name: "commit_witnessed",
-            kind: Kind::Report,
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,
@@ -22,7 +20,6 @@ pub fn write_families() -> &'static [WriteFamily] {
         },
         WriteFamily {
             name: "commit_batch",
-            kind: Kind::Report,
             protocol: Protocol {
                 warmups: 4,
                 samples: 32,
@@ -32,7 +29,6 @@ pub fn write_families() -> &'static [WriteFamily] {
         // `crate::worlds::capacity`) run commit_single's protocol.
         WriteFamily {
             name: "commit_window_baseline",
-            kind: Kind::Report,
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,
@@ -40,7 +36,6 @@ pub fn write_families() -> &'static [WriteFamily] {
         },
         WriteFamily {
             name: "commit_window_admission",
-            kind: Kind::Report,
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,
@@ -48,7 +43,6 @@ pub fn write_families() -> &'static [WriteFamily] {
         },
         WriteFamily {
             name: "commit_window_exclusion",
-            kind: Kind::Report,
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,
@@ -56,7 +50,6 @@ pub fn write_families() -> &'static [WriteFamily] {
         },
         WriteFamily {
             name: "commit_capacity_baseline",
-            kind: Kind::Report,
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,
@@ -64,7 +57,6 @@ pub fn write_families() -> &'static [WriteFamily] {
         },
         WriteFamily {
             name: "commit_capacity_sum",
-            kind: Kind::Report,
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,
@@ -72,7 +64,6 @@ pub fn write_families() -> &'static [WriteFamily] {
         },
         WriteFamily {
             name: "commit_capacity_duration",
-            kind: Kind::Report,
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,
@@ -80,7 +71,6 @@ pub fn write_families() -> &'static [WriteFamily] {
         },
         WriteFamily {
             name: "insert_stream",
-            kind: Kind::Report,
             protocol: Protocol {
                 warmups: 1,
                 samples: 8,
@@ -88,12 +78,10 @@ pub fn write_families() -> &'static [WriteFamily] {
         },
         WriteFamily {
             name: "cold_containment_walk",
-            kind: Kind::Report,
             protocol: Protocol::COLD,
         },
         WriteFamily {
             name: "cold_containment_walk_delete",
-            kind: Kind::Report,
             protocol: Protocol::COLD,
         },
     ]

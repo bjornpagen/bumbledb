@@ -223,11 +223,11 @@ fn size_band_params(_: u64) -> Vec<Vec<Value>> {
     ]
 }
 
+/// Key-value regime: point lookups, tiny fetches, per-query overhead.
 #[must_use]
 pub fn scenario() -> Scenario {
     Scenario {
         name: "points",
-        about: "key-value regime: point lookups, tiny fetches, per-query overhead",
         schema,
         descriptor: || bumbledb::Theory::descriptor(Points),
         rows: |seed| {
@@ -281,7 +281,7 @@ pub fn scenario() -> Scenario {
                         key: doc_key_statement,
                     },
                     params: keyed_get_params,
-                    about: "keyed get (0.5.0): the point read through Doc(key) -> Doc — determinant probe, no query machinery",
+                    about: "keyed get: the point read through Doc(key) -> Doc — determinant probe, no query machinery",
                     twin: Twin::Canonical,
                     cap: None,
                 },
@@ -290,6 +290,7 @@ pub fn scenario() -> Scenario {
     }
 }
 
+/// The keyed-get query alone over the smoke-scale points world.
 #[cfg(test)]
 fn scenario_smoke() -> Scenario {
     #[expect(
@@ -317,7 +318,6 @@ fn scenario_smoke() -> Scenario {
     }
     Scenario {
         name: "points",
-        about: "keyed-get smoke twin",
         schema,
         descriptor: || bumbledb::Theory::descriptor(Points),
         rows: rows_smoke,
@@ -330,7 +330,7 @@ fn scenario_smoke() -> Scenario {
                     key: doc_key_statement,
                 },
                 params: keyed_get_params_smoke,
-                about: "keyed get (0.5.0), smoke scale",
+                about: "keyed get, smoke scale",
                 twin: Twin::Canonical,
                 cap: None,
             }]

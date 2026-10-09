@@ -11,7 +11,6 @@ use crate::worlds::ledger::{Ledger, ids, schema};
 #[derive(Debug, Clone, Copy)]
 pub struct LoadStats {
     pub facts: u64,
-    pub wall: Duration,
     pub facts_per_sec: f64,
 }
 
@@ -21,7 +20,6 @@ impl LoadStats {
         let facts_per_sec = facts as f64 / wall.as_secs_f64().max(f64::EPSILON);
         Self {
             facts,
-            wall,
             facts_per_sec,
         }
     }

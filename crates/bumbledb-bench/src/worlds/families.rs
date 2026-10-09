@@ -60,16 +60,6 @@ pub fn param_args(draw: &[ParamValue]) -> Vec<ParamArg<'_>> {
 }
 
 #[must_use]
-pub fn scalar_values(draw: &[ParamValue]) -> Vec<BindValue<'_>> {
-    draw.iter()
-        .map(|arg| match arg {
-            ParamValue::Scalar(value) => bind_value(value),
-            ParamValue::Set(_) => panic!("a set param has no scalar position"),
-        })
-        .collect()
-}
-
-#[must_use]
 pub fn set_bindings(draw: &[ParamValue]) -> Vec<(ParamId, Vec<Value>)> {
     draw.iter()
         .enumerate()
@@ -81,13 +71,6 @@ pub fn set_bindings(draw: &[ParamValue]) -> Vec<(ParamId, Vec<Value>)> {
             ParamValue::Scalar(_) => None,
         })
         .collect()
-}
-
-#[must_use]
-pub fn has_sets(draws: &[Draw]) -> bool {
-    draws
-        .iter()
-        .any(|draw| draw.iter().any(|arg| matches!(arg, ParamValue::Set(_))))
 }
 
 /// Interval families' composite `(account, active_start, active_end)` comes
@@ -143,10 +126,8 @@ pub fn expected_indexes() -> Vec<(String, String)> {
     out
 }
 
-/// A write family: its name, its report-only classification, and its
-/// write-appropriate protocol.
+/// A write family: a report-only row with its write-appropriate protocol.
 pub struct WriteFamily {
     pub name: &'static str,
-    pub kind: Kind,
     pub protocol: crate::harness::Protocol,
 }

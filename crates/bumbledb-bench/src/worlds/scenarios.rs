@@ -72,7 +72,6 @@ pub struct ScenarioQuery {
 
 pub struct Scenario {
     pub name: &'static str,
-    pub about: &'static str,
 
     pub schema: fn() -> &'static Schema,
 

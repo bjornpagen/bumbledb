@@ -99,11 +99,6 @@ impl DispSizes {
     pub fn hub_image_bytes(&self) -> u64 {
         self.hubs * 2 * 8
     }
-
-    #[must_use]
-    pub fn spoke_image_bytes(&self) -> u64 {
-        self.spokes * 3 * 8
-    }
 }
 
 /// The bytes a hash map sized for `positions` grows to once `distinct` keys

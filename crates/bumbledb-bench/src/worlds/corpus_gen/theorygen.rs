@@ -1,3 +1,5 @@
+//! Random schema descriptors, valid and invalid, that the engine's schema
+//! validation must judge without panicking.
 use bumbledb::Value;
 use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, IntervalElement, RelationDescriptor, RelationId, Row,
@@ -7,12 +9,6 @@ use bumbledb::schema::{
 use super::Rng;
 
 mod arity;
-
-pub use arity::{
-    ARITY_COVERAGE_BYTES, ArityCoverage, ArityDescriptorCase, ArityExpectation, ArityOpsCase,
-    MAX_COVERED_ARITY, SelectionPlacement, arity_descriptor, random_arity_descriptor,
-    random_valid_arity_descriptor, random_valid_arity_ops,
-};
 
 const RELATION_NAMES: &[&str] = &[
     "Holder",

@@ -328,10 +328,10 @@ fn queries() -> Vec<ScenarioQuery> {
     ]
 }
 
+/// Hub near-bipartite graphs: cyclic joins expose the binary-join exponent.
 fn build(rows: fn(u64) -> Rows) -> Scenario {
     Scenario {
         name: "rings",
-        about: "hub near-bipartite graphs: cyclic joins expose the binary-join exponent",
         schema,
         descriptor: || bumbledb::Theory::descriptor(Rings),
         rows,

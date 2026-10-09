@@ -261,11 +261,11 @@ fn weighted_hop_params(seed: u64) -> Vec<Vec<Value>> {
     ]
 }
 
+/// Power-law directed graph: multi-hop fan-out, cycles.
 #[must_use]
 pub fn scenario() -> Scenario {
     Scenario {
         name: "graph",
-        about: "power-law directed graph: multi-hop fan-out, cycles",
         schema,
         descriptor: || bumbledb::Theory::descriptor(Graph),
         rows: |seed| {

@@ -329,11 +329,11 @@ fn brand_drill_params(seed: u64) -> Vec<Vec<Value>> {
     ]
 }
 
+/// Star-schema rollups: group-by aggregates over the fact table.
 #[must_use]
 pub fn scenario() -> Scenario {
     Scenario {
         name: "olap",
-        about: "star-schema rollups: group-by aggregates over the fact table",
         schema,
         descriptor: || bumbledb::Theory::descriptor(Olap),
         rows: |seed| {

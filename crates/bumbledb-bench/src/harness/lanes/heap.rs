@@ -13,8 +13,6 @@ use crate::json;
 use crate::worlds::corpus_gen::{self, GenConfig, MANDATE_SEGMENTS, Sizes};
 use crate::worlds::ledger::{Account, AccountById, AccountId, Ledger, ids};
 
-pub const DEFAULT_PREFIXES: [u64; 4] = [256, 1_024, 4_096, 16_384];
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeapReport {
     pub provenance: Provenance,
