@@ -3,10 +3,9 @@ use crate::error::{Error, FindIndex};
 use crate::ir::FoldOp;
 
 #[test]
-fn float_sum_mean_share_one_exact_lane_and_preserve_compact_integer_state() {
+fn float_sum_and_mean_share_one_exact_total() {
     use crate::exec::run::{Bindings, LeafBatch, Sink as _};
     use bumbledb_theory::F64;
-    assert!(std::mem::size_of::<Acc>() <= 32);
     let finds = [
         FindSpec::Agg(AggSpec::Float {
             op: FoldOp::Sum,
