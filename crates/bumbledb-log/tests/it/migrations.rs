@@ -293,3 +293,17 @@ fn a_new_migration_waits_for_a_lost_flights_image_upload() {
     );
     check(&world);
 }
+
+#[test]
+fn a_migration_carries_over_the_relations_it_leaves_unchanged() {
+    use crate::support::ITEM;
+    assert_eq!(&*bundle2().unchanged(1), [(ITEM, ITEM)]);
+    assert!(bundle2().unchanged(0).is_empty());
+    assert!(bundle2().unchanged(2).is_empty());
+    let reversed = Bundle::new(vec![
+        (migration_id("0000_init"), descriptor2()),
+        (migration_id("0001_drop_tags"), descriptor()),
+    ])
+    .unwrap();
+    assert_eq!(&*reversed.unchanged(1), [(ITEM, ITEM)]);
+}

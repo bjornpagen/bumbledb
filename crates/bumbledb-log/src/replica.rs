@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use bumbledb::schema::RelationDescriptor;
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::fingerprint::fingerprint;
 use bumbledb::{ChangeSet, RelationId, Schema, SchemaDescriptor, SchemaError, SchemaFingerprint};
@@ -79,6 +80,45 @@ impl Bundle {
     pub fn by_schema(&self, schema: SchemaFingerprint) -> Option<&BundledMigration> {
         self.steps.iter().find(|step| step.fingerprint == schema)
     }
+
+    /// The `(new, old)` relations migration `index` carries over unchanged
+    /// from the schema before it: same name, same fields, not closed.
+    #[must_use]
+    pub fn unchanged(&self, index: usize) -> Box<[(RelationId, RelationId)]> {
+        let Some(previous) = index
+            .checked_sub(1)
+            .and_then(|before| self.steps.get(before))
+        else {
+            return Box::new([]);
+        };
+        let Some(step) = self.steps.get(index) else {
+            return Box::new([]);
+        };
+        let old = writable(&previous.descriptor.relations);
+        writable(&step.descriptor.relations)
+            .into_iter()
+            .filter_map(|(new, relation)| {
+                old.iter()
+                    .find(|(_, before)| {
+                        before.name == relation.name && before.fields == relation.fields
+                    })
+                    .map(|(old, _)| (new, *old))
+            })
+            .collect()
+    }
+}
+
+/// The relations a change set may write (not closed), with their ids.
+fn writable(relations: &[RelationDescriptor]) -> Vec<(RelationId, &RelationDescriptor)> {
+    relations
+        .iter()
+        .enumerate()
+        .filter(|(_, relation)| relation.extension.is_none())
+        .map(|(id, relation)| {
+            let id = RelationId(u32::try_from(id).expect("relation ids fit u32"));
+            (id, relation)
+        })
+        .collect()
 }
 
 /// How one change set fares against the state it would apply to.

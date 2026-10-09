@@ -854,11 +854,12 @@ pub fn checkpoint_keys(world: &World) -> Vec<CheckpointKey> {
         .collect()
 }
 
+/// A population for the fixture's tag migration: `Item` carried over, `rows` added.
 pub fn population(step: bumbledb_log::MigrationId, base: Seq, rows: ChangeSet) -> Population {
     Population {
         step,
         base,
-        copy: vec![(crate::support::ITEM, crate::support::ITEM)].into(),
+        copy: crate::support::bundle2().unchanged(1),
         rows,
     }
 }

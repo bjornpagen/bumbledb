@@ -183,7 +183,11 @@ pub trait Replica {                          // the product impl is bumbledb_log
     fn migrate(&mut self, population: &Population, head: &Head) -> Result<Migrated, CacheError>;
 }
 pub struct MigrationId { pub name: Box<str>, pub hash: MigrationHash }
-impl Bundle { pub fn new(steps: Vec<(MigrationId, SchemaDescriptor)>) -> Result<Self, BundleError>; }
+impl Bundle {
+    pub fn new(steps: Vec<(MigrationId, SchemaDescriptor)>) -> Result<Self, BundleError>;
+    pub fn steps(&self) -> &[BundledMigration];   // { id, descriptor, schema, fingerprint }
+    pub fn unchanged(&self, index: usize) -> Box<[(RelationId, RelationId)]>;  // copyUnchanged pairs
+}
 // bundle[0] is the initial schema; a new database starts there and migrates forward.
 pub struct Population {
     pub step: MigrationId,                   // must be the next pending migration
