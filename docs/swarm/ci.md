@@ -146,9 +146,12 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
 ## Requests to other lanes
 
 ### all Rust lanes
-- `cargo doc --workspace --no-deps` runs with `-D warnings` in lint. Today it fails in
-  `crates/bumbledb-node` (bridge: public docs link private items in `db_wire.rs` and `lib.rs`) and
-  `crates/bumbledb-bench` (bench: `space/census.rs` links the missing `crate::largefix`).
+- `cargo doc --workspace --no-deps` runs with `-D warnings` in lint. At `f8d0bef79` it fails in
+  `crates/bumbledb/src/exec/kernel/{bench.rs, reference.rs, numeric.rs}` (numeric: the kernel seam's
+  public docs link private `super::*` items; `UnsupportedNumericalPlatform` docs link the private
+  `NonDefaultFloatEnvironment`), `exec/sink.rs` (engine-query), `storage/store/gate.rs`
+  (engine-storage) and `crates/bumbledb-node/src/lib.rs` (bridge). Reproduce with
+  `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --keep-going`.
 - Tests that write outside a temp dir fail the tree-clean check.
 - **Miri (engine-storage, engine-query, numeric):** nightly Miri runs every `bumbledb` lib test with
   no name filters. Mark each lib test that reaches LMDB or other FFI, or is too slow under Miri,
