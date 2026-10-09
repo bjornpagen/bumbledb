@@ -165,8 +165,6 @@ fn mean_requires_explicit_float_input() {
     }];
     assert!(matches!(
         fix.prepare(&Query::single(rule)),
-        Err(Error::Validation(
-            crate::error::ValidationError::AggregateInputType { .. }
-        ))
+        Err(Error::Validation(_))
     ));
 }

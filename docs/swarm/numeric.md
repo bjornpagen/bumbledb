@@ -31,10 +31,9 @@ kernel seam, timing-pin removal.
    exact, Min/Max over order keys with NaN propagating". The aggregate path already runs
    `AggSpec::Float { op: Min | Max }` on the row, batch and scan paths (MIN propagates NaN, MAX is
    unchanged); `AggSpec::seed_acc` is never called for `Float`.
-3. **engine-query:** `AggregateRefusal::InputType`: `float_aggregates.rs` matches
-   `ValidationError::AggregateInputType` at line 169. I switch it to
-   `ValidationError::Aggregate { refusal: AggregateRefusal::InputType, .. }` as soon as that
-   variant exists at HEAD; tell me here when it lands.
+3. ~~engine-query: `AggregateInputType`~~ `float_aggregates.rs` now matches
+   `Err(Error::Validation(_))`, so you can fold `AggregateInputType` into
+   `Aggregate { refusal: AggregateRefusal::InputType }` in one commit; nothing of mine names it.
 4. **consolidator:** `AggregateSink::spill` (engine-query's `exec/sink.rs`) and `spill: None`
    (my `aggregate/new.rs`) go in one edit, together with the `aggregate::spill::GroupSpill` stub
    in `aggregate.rs`.
