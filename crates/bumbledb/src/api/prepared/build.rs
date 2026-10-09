@@ -5,7 +5,7 @@ use super::{
 };
 
 use super::source::{PinnedSource, QuerySource};
-use crate::api::db::{OwnedInstance, ReadInstance};
+use crate::api::db::{OwnedInstance, ReadFrame};
 use crate::error::Result;
 use crate::exec::dispatch::classify;
 use crate::image::SourceImages;
@@ -25,7 +25,7 @@ use std::sync::Arc;
 /// Validation (including a plan the validator refuses), statistics-read
 /// storage failure or stopped work.
 pub(crate) fn prepare_on<S>(
-    instance: &ReadInstance<'_, S>,
+    instance: &ReadFrame<'_, S>,
     query: &Query,
 ) -> Result<PreparedQuery<S>> {
     let source = QuerySource::store(instance.snapshot(), instance.work());
@@ -33,15 +33,15 @@ pub(crate) fn prepare_on<S>(
 }
 
 impl<S> PreparedQuery<S> {
-    /// As [`ReadInstance::prepare`], under the CALLER's work context
+    /// As [`ReadFrame::prepare`], under the CALLER's work context
     /// instead of the lease's embedded one — the native runtime threads
     /// each wire operation's `WorkContext` through here so preparation,
     /// statistics reads and image construction observe that operation's
     /// cancellation, not the long-lived session lease's context. Embedders use
-    /// [`ReadInstance::prepare`].
+    /// [`ReadFrame::prepare`].
     #[doc(hidden)]
     pub fn prepare_with_work(
-        instance: &ReadInstance<'_, S>,
+        instance: &ReadFrame<'_, S>,
         work: &crate::work::WorkContext,
         query: &Query,
     ) -> Result<Self> {

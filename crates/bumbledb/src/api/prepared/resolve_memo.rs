@@ -67,8 +67,10 @@ impl ResolveMemo {
             };
 
             let range = (
-                u32::try_from(start).map_err(|_| Error::ResultBytesOverflow)?,
-                u32::try_from(len).map_err(|_| Error::ResultBytesOverflow)?,
+                u32::try_from(start)
+                    .map_err(|_| Error::Capacity(crate::error::Capacity::ResultBytes))?,
+                u32::try_from(len)
+                    .map_err(|_| Error::Capacity(crate::error::Capacity::ResultBytes))?,
             );
             Ok((range, len))
         })();

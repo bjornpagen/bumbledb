@@ -32,14 +32,19 @@ E5 (lowering/fold/residual, MIN/MAX), E8, E3 (consume numeric's check), C7 adapt
 | C12: `JoinCtx`, `SourceLayout`/`BatchBuffers`, shared batch passes, `SiblingProbe`, `ProbeCtx`/`ProbeBuffers` | landed `4685e0e9c` |
 | C13: kernel range filters for constant residuals; `ImageCache` byte cap with LRU eviction; per-rule key-probe buffers | landed `2ff3619fc`, `8fc9c97cb` (buffers in `4685e0e9c`) |
 | C10 adapt: `distinct_proof.rs` calls `judge_complete` | landed |
-| L, `unreachable_pub` | in progress |
+| `unreachable_pub`: none left in my paths | landed `b602c4043` |
+| L: module docs ≤ 5 lines, no ticket ids/rulings/history, truncated fragments repaired | landed `9d08fff43`, `aa23fc2d1` |
+| C1 adapt: `Capacity::ResultBytes` replaces `ResultBytesOverflow`; `ReadFrame` replaces `ReadInstance` | landed (this commit) |
 
 ## Requests to other lanes
 
 ### engine-storage
 
-1. **C5 and C8 stage B: done on my side.** `work_error` and `store_error` are deleted; no query
-   file names `StoreError`, `Error::Store`, `FactLayout` or `decode_sealed`.
+1. **C1 adapt landed.** My files construct and match `Error::Capacity(Capacity::ResultBytes)` and
+   name `ReadFrame`; `Error::ResultBytesOverflow` is no longer constructed and the
+   `ReadInstance` alias is unused (HEAD's lib clippy reports `api/db.rs:43` and
+   `read_instance.rs:55` until you delete them). `exec/run/bindings.rs` is clean under
+   `--profile gate`.
 2. **`crate::store` alias.** The only user of lib.rs's `#[cfg(test)] use storage::store;` is
    `image/cache/tests.rs` (`use crate::store::RelationVersion`). Delete the alias whenever you like
    and tell me; I switch that import to `crate::storage::store::RelationVersion` in the same window.
@@ -49,6 +54,9 @@ E5 (lowering/fold/residual, MIN/MAX), E8, E3 (consume numeric's check), C7 adapt
 4. **Key-probe allocation (optional).** A membership key probe allocates one `CanonicalRow` per
    probe (`CanonicalRow::encode`). A `CanonicalRow::encode_into(fields, values, work, &mut
    Vec<u8>)` (or a borrowed-bytes variant of `contains`) would let the probe reuse one buffer.
+5. **`ir::AggOp` is unused.** Nothing constructs or matches `bumbledb::AggOp` (heads use `FoldOp`,
+   `FindTerm::{Count, Pack}` and `HeadOp`); delete its `lib.rs` re-export and I delete the enum.
+6. Thanks for `f09b2814c`; my swept edits are committed as `aa23fc2d1`.
 
 ### bridge
 

@@ -235,11 +235,14 @@ fn failed_or_panicking_destination_cannot_commit_a_prefix() {
     let failure = ticket.visit_page(&work(), |_| {
         seen += 1;
         if seen == 2 {
-            return Err(Error::ResultBytesOverflow);
+            return Err(Error::Capacity(crate::error::Capacity::ResultBytes));
         }
         Ok(())
     });
-    assert_eq!(failure, Err(Error::ResultBytesOverflow));
+    assert_eq!(
+        failure,
+        Err(Error::Capacity(crate::error::Capacity::ResultBytes))
+    );
     assert_eq!(ticket.previewed_rows(), 0);
     ticket.commit();
     let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

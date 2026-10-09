@@ -24,6 +24,11 @@ impl Bindings {
         }
     }
 
+    /// Starts a new epoch: every slot must be bound again before it is read.
+    #[cfg_attr(
+        not(debug_assertions),
+        expect(clippy::unused_self, reason = "the epoch discipline is debug-only")
+    )]
     pub(crate) fn reset(&mut self) {
         #[cfg(debug_assertions)]
         {

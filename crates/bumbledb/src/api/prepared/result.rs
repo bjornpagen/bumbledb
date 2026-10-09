@@ -309,7 +309,7 @@ impl<S> super::PreparedQuery<S> {
     #[doc(hidden)]
     pub fn execute_complete<'p, P: super::BindArgs<'p>>(
         &mut self,
-        instance: &crate::api::db::ReadInstance<'_, S>,
+        instance: &crate::api::db::ReadFrame<'_, S>,
         params: P,
     ) -> Result<CompleteResult> {
         self.execute_complete_with_work(instance, instance.work(), params)
@@ -322,7 +322,7 @@ impl<S> super::PreparedQuery<S> {
     #[doc(hidden)]
     pub fn execute_complete_with_work<'p, P: super::BindArgs<'p>>(
         &mut self,
-        instance: &crate::api::db::ReadInstance<'_, S>,
+        instance: &crate::api::db::ReadFrame<'_, S>,
         work: &WorkContext,
         params: P,
     ) -> Result<CompleteResult> {

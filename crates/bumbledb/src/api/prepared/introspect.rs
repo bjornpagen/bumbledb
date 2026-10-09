@@ -1,12 +1,12 @@
 use super::{Answers, ParamArg, PreparedQuery};
 
-use crate::api::db::ReadInstance;
+use crate::api::db::ReadFrame;
 use crate::error::Result;
 
 impl<S> PreparedQuery<S> {
     pub(crate) fn introspect(
         &mut self,
-        instance: &ReadInstance<'_, S>,
+        instance: &ReadFrame<'_, S>,
         params: &[ParamArg<'_>],
     ) -> Result<(Answers, String)> {
         let mut out = Answers::new();

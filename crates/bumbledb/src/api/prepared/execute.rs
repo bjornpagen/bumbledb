@@ -5,7 +5,7 @@ use super::run_join::{RuleCtx, RuleScratch, SinkUse, run_rule};
 use super::source::QuerySource;
 use super::{Answers, PreparedPipeline, PreparedQuery, ValueType};
 
-use crate::api::db::{OwnedInstance, ReadInstance};
+use crate::api::db::{OwnedInstance, ReadFrame};
 use crate::error::Result;
 use crate::exec::run::{Counters, NoopCounters};
 use crate::image::SourceImages;
@@ -19,7 +19,7 @@ impl<S> PreparedQuery<S> {
     /// Only on programmer-invariant violations (plan/executor pairing).
     pub(crate) fn execute<'p, P: super::BindArgs<'p>>(
         &mut self,
-        instance: &ReadInstance<'_, S>,
+        instance: &ReadFrame<'_, S>,
         params: P,
         out: &mut Answers,
     ) -> Result<()> {
@@ -31,7 +31,7 @@ impl<S> PreparedQuery<S> {
     /// As [`Self::execute`].
     pub(crate) fn execute_collect<'p, P: super::BindArgs<'p>>(
         &mut self,
-        instance: &ReadInstance<'_, S>,
+        instance: &ReadFrame<'_, S>,
         params: P,
     ) -> Result<Answers> {
         self.execute_collect_with_work(instance, instance.work(), params)
@@ -65,7 +65,7 @@ impl<S> PreparedQuery<S> {
     #[doc(hidden)]
     pub fn execute_collect_with_work<'p, P: super::BindArgs<'p>>(
         &mut self,
-        instance: &ReadInstance<'_, S>,
+        instance: &ReadFrame<'_, S>,
         work: &crate::work::WorkContext,
         params: P,
     ) -> Result<Answers> {

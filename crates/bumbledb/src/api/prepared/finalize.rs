@@ -54,11 +54,10 @@ pub(super) fn finalize(
             result
         }
         EitherSink::Aggregate(sink) => {
-            out.cells.reserve(
-                sink.group_count()
-                    .checked_mul(columns.len())
-                    .ok_or(crate::error::Error::ResultBytesOverflow)?,
-            );
+            out.cells
+                .reserve(sink.group_count().checked_mul(columns.len()).ok_or(
+                    crate::error::Error::Capacity(crate::error::Capacity::ResultBytes),
+                )?);
             sink.finalize_into(answer_scratch, |answer| {
                 work.checkpoint()?;
                 push_resolved_answer(out, interner, memo, columns, answer)?;
@@ -106,7 +105,9 @@ fn fill_resident_rows<'a>(
     let base = out.cells.len();
     let additional = rows
         .checked_mul(arity)
-        .ok_or(crate::error::Error::ResultBytesOverflow)?;
+        .ok_or(crate::error::Error::Capacity(
+            crate::error::Capacity::ResultBytes,
+        ))?;
     out.cells.reserve(additional);
     let mut offset = 0;
     for (col, column) in columns.iter().enumerate() {
@@ -174,7 +175,9 @@ fn fill_fixed_column<'a>(
     };
     let batch_cells = arity
         .checked_mul(crate::exec::sink::STEP_QUANTUM as usize)
-        .ok_or(crate::error::Error::ResultBytesOverflow)?;
+        .ok_or(crate::error::Error::Capacity(
+            crate::error::Capacity::ResultBytes,
+        ))?;
     for batch in cells.chunks_mut(batch_cells) {
         work.checkpoint()?;
         let filled_width = fill_fixed_chunk(batch, arity, col, ty, offset, &mut answers)?;
