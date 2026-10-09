@@ -12,13 +12,16 @@ impl<S> PreparedQuery<S> {
     ) -> Result<(Answers, String)> {
         let mut out = Answers::new();
         self.execute(instance, params, &mut out)?;
-        let report = format!("query:\n{}\nsignature: {}\n", self.rendered, self.signature);
+        let report = format!(
+            "query:\n{}\nsignature: {}\n",
+            self.program.rendered, self.program.signature
+        );
         Ok((out, report))
     }
 
     #[must_use]
     pub fn rendered_query(&self) -> &str {
-        &self.rendered
+        &self.program.rendered
     }
 
     #[must_use]
@@ -36,6 +39,6 @@ impl<S> PreparedQuery<S> {
 
     #[must_use]
     pub fn signature(&self) -> &crate::ir::validate::Signature {
-        &self.signature
+        &self.program.signature
     }
 }

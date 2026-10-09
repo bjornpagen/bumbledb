@@ -144,7 +144,7 @@ fn the_empty_query_builds_no_image_and_binds_no_view() {
         .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 0);
-    assert_eq!(prepared.cache.image_count(), 0);
+    assert_eq!(prepared.program.cache.image_count(), 0);
     assert!(prepared.pipeline.main_rules().is_empty());
 }
 

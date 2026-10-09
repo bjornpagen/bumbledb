@@ -36,7 +36,7 @@ fn literal_bytes_survive_trim_and_cache_clear_across_rebinds() {
     let mut alpha = fix.prepare(&literal_query("alpha")).expect("alpha plan");
     let mut beta = fix.prepare(&literal_query("beta")).expect("beta plan");
     assert!(
-        !alpha.no_text_probe && !beta.no_text_probe,
+        !alpha.program.no_text_probe && !beta.program.no_text_probe,
         "Free Join retains eager text generation binding"
     );
     for round in 0..2 {

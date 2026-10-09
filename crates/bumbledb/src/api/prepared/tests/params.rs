@@ -8,7 +8,7 @@ fn changing_text_parameters_do_not_retain_their_entire_history() {
         amounts_of(&fix.execute(&mut prepared, &memo_param("live")).unwrap()),
         [10]
     );
-    let generation = prepared.cache.cache_generation();
+    let generation = prepared.program.cache.cache_generation();
     let payload = "x".repeat(1024);
     let mut first = String::new();
     for turn in 0..128 {
@@ -22,13 +22,13 @@ fn changing_text_parameters_do_not_retain_their_entire_history() {
                 .is_empty()
         );
     }
-    let owner = prepared.cache.acquire();
+    let owner = prepared.program.cache.acquire();
     let retained = owner.lock_resolver().retained_bytes();
     eprintln!(
         "text parameter churn: 128 distinct ~1KiB parameters, retained interner bytes={retained}"
     );
     assert_eq!(
-        prepared.cache.cache_generation(),
+        prepared.program.cache.cache_generation(),
         generation,
         "churn must not globally rotate unrelated caches"
     );
@@ -77,15 +77,15 @@ fn scalar_parameter_memo_shares_the_canonical_string_and_release_drops_its_owner
             .unwrap()
             .is_empty()
     );
-    let generation = prepared.cache.acquire();
-    let Const::Text(parameter) = &prepared.resolved_params[0] else {
+    let generation = prepared.program.cache.acquire();
+    let Const::Text(parameter) = &prepared.bound.resolved_params[0] else {
         panic!("owned text parameter")
     };
     let canonical = generation.resolver().owned_text(parameter.word).unwrap();
     assert!(std::sync::Arc::ptr_eq(&canonical, &parameter.text));
     assert!(std::sync::Arc::ptr_eq(
         &canonical,
-        prepared.param_word_memo[0].text.as_ref().unwrap()
+        prepared.bound.param_word_memo[0].text.as_ref().unwrap()
     ));
     let weak = std::sync::Arc::downgrade(&canonical);
     drop(canonical);
@@ -180,7 +180,7 @@ fn uuid_param_slot_reuses_words_across_hits_misses_and_type_errors() {
     fix.execute_into(&mut prepared, &[BindValue::Uuid(ids[0])], &mut out)
         .unwrap();
     assert_eq!(out.get(0, 0), AnswerValue::U64(11));
-    let Const::Words(initial) = &prepared.resolved_params[0] else {
+    let Const::Words(initial) = &prepared.bound.resolved_params[0] else {
         panic!("UUID bind uses two words");
     };
     assert_eq!(
@@ -199,7 +199,7 @@ fn uuid_param_slot_reuses_words_across_hits_misses_and_type_errors() {
             }
             None => assert!(out.is_empty()),
         }
-        let Const::Words(words) = &prepared.resolved_params[0] else {
+        let Const::Words(words) = &prepared.bound.resolved_params[0] else {
             panic!("UUID slot retains its word representation");
         };
         assert_eq!(
@@ -220,7 +220,7 @@ fn uuid_param_slot_reuses_words_across_hits_misses_and_type_errors() {
         matches!(err, Error::ParamTypeMismatch { param, expected: ValueType::Uuid } if param.0 == 0)
     );
     assert!(out.is_empty(), "a refused bind clears the preceding answer");
-    let Const::Words(words) = &prepared.resolved_params[0] else {
+    let Const::Words(words) = &prepared.bound.resolved_params[0] else {
         panic!("refusal cannot replace the retained slot");
     };
     assert_eq!(words.as_ptr(), address);
@@ -391,8 +391,8 @@ impl<'a, P: BindArgs<'a>> BindArgs<'a> for RotateAfterBind<P> {
         work: &crate::work::WorkContext,
     ) -> crate::error::Result<()> {
         self.0.bind(prepared, work)?;
-        prepared.cache.clear();
-        let generation = prepared.cache.acquire();
+        prepared.program.cache.clear();
+        let generation = prepared.program.cache.acquire();
         let interner = crate::image::intern::InternerHandle::new(&generation, work);
         assert_eq!(interner.intern("beta")?.word, 0);
         Ok(())
@@ -454,7 +454,7 @@ fn param_word_memo_preserves_tokens_across_rebinds_and_new_rows() {
     let mut prepared = fix.prepare(&by_memo_query()).expect("prepare");
     let run = |prepared: &mut PreparedQuery<T>, text: &str| {
         let out = fix.execute(prepared, &memo_param(text)).expect("execute");
-        let memo = &prepared.param_word_memo[0];
+        let memo = &prepared.bound.param_word_memo[0];
         assert_eq!(memo.text.as_deref(), Some(text));
         (amounts_of(&out), memo.word.expect("bound token"))
     };

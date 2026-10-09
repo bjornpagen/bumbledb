@@ -296,7 +296,7 @@ fn finalize_materializes_each_distinct_intern_once() {
         let out = fix
             .execute(prepared, &[BindValue::U64(account), BindValue::I64(-1)])
             .expect("execute");
-        let count = prepared.resolve_memo.ranges.len();
+        let count = prepared.runtime.resolve_memo.ranges.len();
         (out, count)
     };
 

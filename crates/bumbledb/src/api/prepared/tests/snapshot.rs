@@ -33,20 +33,20 @@ fn query_release_and_database_cache_clear_preserve_answers() {
     let params = [BindValue::U64(7), BindValue::I64(-100)];
     let before = answers_of(&fix.execute(&mut prepared, &params).expect("execute"));
     assert!(
-        prepared.cache.image_count() > 0,
+        prepared.program.cache.image_count() > 0,
         "executions retain built images"
     );
-    let warmed = prepared.cache.image_count();
+    let warmed = prepared.program.cache.image_count();
 
     prepared.release_memory();
     assert_eq!(
-        prepared.cache.image_count(),
+        prepared.program.cache.image_count(),
         warmed,
         "query release does not clear shared cache"
     );
     fix.db.clear_cache();
     assert!(
-        prepared.cache.image_count() < warmed,
+        prepared.program.cache.image_count() < warmed,
         "database clear released the unpinned generation-keyed images"
     );
     let after = answers_of(&fix.execute(&mut prepared, &params).expect("re-execute"));
@@ -77,8 +77,8 @@ fn database_clear_invalidates_warm_text_views_before_finalization() {
 fn prepare_leaves_the_image_cache_empty_until_execution() {
     let fix = posting_store("prepared-snapshot-noimage", &[(1, 7, "a", 10)]);
     let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
-    assert_eq!(prepared.cache.image_count(), 0);
+    assert_eq!(prepared.program.cache.image_count(), 0);
     fix.execute(&mut prepared, &[BindValue::U64(7), BindValue::I64(-100)])
         .expect("execute");
-    assert_eq!(prepared.cache.image_count(), 1);
+    assert_eq!(prepared.program.cache.image_count(), 1);
 }

@@ -11,7 +11,7 @@ fn id_amount_pairs(answers: &Answers) -> Vec<(u64, i64)> {
 }
 
 fn output_hashing_is_elided(prepared: &PreparedQuery<T>) -> bool {
-    match &prepared.sink {
+    match &prepared.runtime.sink {
         EitherSink::Projection(sink) => sink.output_hashing_is_elided(),
         _ => false,
     }
@@ -233,7 +233,7 @@ fn store_keyed_range_installs_append_and_matches_forced_hash_control() {
     );
     let mut hashed = store.prepare(&query).unwrap();
     let rule = &hashed.pipeline.main_rules()[0];
-    hashed.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
+    hashed.runtime.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
         rule.finds(),
         rule.slot_count(),
         0,

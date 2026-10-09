@@ -18,6 +18,7 @@ impl<S> PreparedQuery<S> {
     #[inline]
     pub(super) fn bind_text_generation(&mut self, generation: &crate::work::GenerationHandle) {
         if self
+            .bound
             .text_generation
             .as_ref()
             .is_some_and(|previous| previous.identity() == generation.identity())
@@ -40,13 +41,13 @@ impl<S> PreparedQuery<S> {
             forget_resolved_text(arm);
             arm.memo.invalidate();
         });
-        self.derived = super::reach::DerivedImages::default();
-        self.resolve_memo.clear();
-        for memo in &mut self.param_word_memo {
+        self.runtime.derived = super::reach::DerivedImages::default();
+        self.runtime.resolve_memo.clear();
+        for memo in &mut self.bound.param_word_memo {
             memo.text = None;
             memo.word = None;
         }
-        self.text_generation = Some(generation.downgrade());
+        self.bound.text_generation = Some(generation.downgrade());
     }
 
     #[doc(hidden)]
@@ -64,7 +65,7 @@ impl<S> PreparedQuery<S> {
 
     /// Foreign snapshot is a typed error before anything else runs.
     pub(super) fn check_identity(&self, source: super::source::PinnedSource) -> Result<()> {
-        if self.pinned == source {
+        if self.program.pinned == source {
             Ok(())
         } else {
             Err(Error::ForeignPreparedQuery)
@@ -99,18 +100,19 @@ impl<S> PreparedQuery<S> {
     }
 
     fn begin_bind(&mut self, supplied: usize) -> Result<()> {
-        if supplied != self.params.len() {
+        if supplied != self.program.params.len() {
             return Err(Error::ParamCountMismatch {
                 mismatch: Mismatch {
                     witnessed: supplied,
-                    required: self.params.len(),
+                    required: self.program.params.len(),
                 },
             });
         }
-        if self.resolved_params.len() != supplied {
-            self.resolved_params.resize(supplied, Const::Word(0));
-            self.missed_params.resize(supplied, false);
-            self.param_word_memo
+        if self.bound.resolved_params.len() != supplied {
+            self.bound.resolved_params.resize(supplied, Const::Word(0));
+            self.bound.missed_params.resize(supplied, false);
+            self.bound
+                .param_word_memo
                 .resize(supplied, super::ParamWordMemo::default());
         }
         Ok(())
@@ -124,7 +126,7 @@ impl<S> PreparedQuery<S> {
         value: BindValue<'_>,
     ) -> Result<()> {
         let param = param_id(idx);
-        match &self.params[idx] {
+        match &self.program.params[idx] {
             ParamSpec::Set { .. } => Err(Error::ParamSetExpected { param }),
             ParamSpec::Scalar { ty, point } => {
                 if let ValueType::FixedBytes { len } = ty {
@@ -143,37 +145,37 @@ impl<S> PreparedQuery<S> {
                         return Err(Error::PointParamAtCeiling { param });
                     }
                     if count == 1 {
-                        self.resolved_params[idx] = Const::Word(words[0]);
-                    } else if let Const::Words(slot) = &mut self.resolved_params[idx]
+                        self.bound.resolved_params[idx] = Const::Word(words[0]);
+                    } else if let Const::Words(slot) = &mut self.bound.resolved_params[idx]
                         && slot.len() == count
                     {
                         slot.copy_from_slice(&words[..count]);
                     } else {
-                        self.resolved_params[idx] = Const::Words(words[..count].into());
+                        self.bound.resolved_params[idx] = Const::Words(words[..count].into());
                     }
-                    self.missed_params[idx] = false;
+                    self.bound.missed_params[idx] = false;
                     return Ok(());
                 }
 
                 if let (ValueType::Uuid, BindValue::Uuid(id)) = (ty, value)
-                    && let Const::Words(slot) = &mut self.resolved_params[idx]
+                    && let Const::Words(slot) = &mut self.bound.resolved_params[idx]
                     && slot.len() == 2
                 {
                     slot.copy_from_slice(&uuid_words(id));
-                    self.missed_params[idx] = false;
+                    self.bound.missed_params[idx] = false;
                     return Ok(());
                 }
 
                 if matches!(ty, ValueType::String)
                     && let BindValue::Str(text) = value
-                    && let Some(resolved) = self.param_word_memo[idx].resolved(text)
+                    && let Some(resolved) = self.bound.param_word_memo[idx].resolved(text)
                 {
-                    self.resolved_params[idx] = resolved;
-                    self.missed_params[idx] = false;
+                    self.bound.resolved_params[idx] = resolved;
+                    self.bound.missed_params[idx] = false;
                     return Ok(());
                 }
-                let owner = &self.text_generation;
-                let cache = &self.cache;
+                let owner = &self.bound.text_generation;
+                let cache = &self.program.cache;
                 let Some(resolved) = convert_scalar(value, ty, |text| {
                     let generation = owner
                         .as_ref()
@@ -189,14 +191,14 @@ impl<S> PreparedQuery<S> {
                     });
                 };
                 if let (BindValue::Str(_), ValueType::String) = (value, ty) {
-                    self.param_word_memo[idx].remember(&resolved);
+                    self.bound.param_word_memo[idx].remember(&resolved);
                 }
 
                 if *point && matches!(resolved, Const::Word(u64::MAX)) {
                     return Err(Error::PointParamAtCeiling { param });
                 }
-                self.resolved_params[idx] = resolved;
-                self.missed_params[idx] = false;
+                self.bound.resolved_params[idx] = resolved;
+                self.bound.missed_params[idx] = false;
                 Ok(())
             }
         }
@@ -204,7 +206,7 @@ impl<S> PreparedQuery<S> {
 
     fn bind_set_slot(&mut self, work: &WorkContext, idx: usize, values: &[Value]) -> Result<()> {
         let param = param_id(idx);
-        let (expected, point) = match &self.params[idx] {
+        let (expected, point) = match &self.program.params[idx] {
             ParamSpec::Set { elem, point } => (elem, *point),
             ParamSpec::Scalar { .. } => {
                 return Err(Error::ParamScalarExpected { param });
@@ -217,17 +219,18 @@ impl<S> PreparedQuery<S> {
             _ => 1,
         };
 
-        let mut words = match std::mem::replace(&mut self.resolved_params[idx], Const::Word(0)) {
-            Const::WordSet(mut words) => {
-                words.clear();
-                words
-            }
-            _ => Box::default(),
-        };
+        let mut words =
+            match std::mem::replace(&mut self.bound.resolved_params[idx], Const::Word(0)) {
+                Const::WordSet(mut words) => {
+                    words.clear();
+                    words
+                }
+                _ => Box::default(),
+            };
         // Numeric sets never need a text generation. String sets acquire it
         // once, lazily, and keep the same resolver for every element.
-        let owner = &self.text_generation;
-        let cache = &self.cache;
+        let owner = &self.bound.text_generation;
+        let cache = &self.program.cache;
         let generation = std::cell::LazyCell::new(|| {
             owner
                 .as_ref()
@@ -244,7 +247,7 @@ impl<S> PreparedQuery<S> {
 
                 words.clear();
                 let expected = *expected;
-                self.resolved_params[idx] = Const::WordSet(words);
+                self.bound.resolved_params[idx] = Const::WordSet(words);
                 return Err(Error::ParamElementTypeMismatch {
                     param,
                     element,
@@ -255,7 +258,7 @@ impl<S> PreparedQuery<S> {
 
             if point && words.words.last() == Some(&u64::MAX) {
                 words.clear();
-                self.resolved_params[idx] = Const::WordSet(words);
+                self.bound.resolved_params[idx] = Const::WordSet(words);
                 return Err(Error::PointParamAtCeiling { param });
             }
         }
@@ -279,8 +282,8 @@ impl<S> PreparedQuery<S> {
 
         // The empty set matches nothing under Eq on a positive occurrence;
         // the miss short-circuit machinery carries exactly that.
-        self.missed_params[idx] = words.words.is_empty();
-        self.resolved_params[idx] = Const::WordSet(words);
+        self.bound.missed_params[idx] = words.words.is_empty();
+        self.bound.resolved_params[idx] = Const::WordSet(words);
         Ok(())
     }
 }

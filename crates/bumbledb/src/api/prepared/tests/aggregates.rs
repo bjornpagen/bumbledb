@@ -87,7 +87,7 @@ fn physical_scalar_folds_drop_hidden_fact_multiplicity_across_reexecution() {
             .collect();
         rows.sort_unstable();
         assert_eq!(rows, vec![(10, 5, 1), (20, 12, 2)]);
-        let EitherSink::Aggregate(sink) = &prepared.sink else {
+        let EitherSink::Aggregate(sink) = &prepared.runtime.sink else {
             panic!("aggregate sink")
         };
         assert!(!sink.seen_elided(), "the semantic witness was never forged");
@@ -215,7 +215,7 @@ fn a_closed_group_key_takes_the_dense_table() {
         conditions: vec![],
     });
     let mut prepared = fix.prepare(&query).expect("prepare");
-    let EitherSink::Aggregate(sink) = &prepared.sink else {
+    let EitherSink::Aggregate(sink) = &prepared.runtime.sink else {
         panic!("folds build the aggregate sink");
     };
     assert!(
@@ -261,7 +261,7 @@ fn a_closed_group_key_takes_the_dense_table() {
         conditions: vec![],
     });
     let prepared = fix.prepare(&open).expect("prepare");
-    let EitherSink::Aggregate(sink) = &prepared.sink else {
+    let EitherSink::Aggregate(sink) = &prepared.runtime.sink else {
         panic!("folds build the aggregate sink");
     };
     assert!(!sink.dense_group_table(), "open domains keep the map");

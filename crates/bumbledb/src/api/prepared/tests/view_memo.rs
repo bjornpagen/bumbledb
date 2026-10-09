@@ -62,7 +62,7 @@ fn heap_executions_use_fresh_view_epochs_without_resident_cache_entries() {
         };
         assert!(matches!(bound.epoch, crate::image::ViewEpoch::Heap(_)));
         epochs.push(bound.epoch);
-        assert_eq!(prepared.cache.image_count(), 0);
+        assert_eq!(prepared.program.cache.image_count(), 0);
     }
     assert_ne!(
         epochs[0], epochs[1],
@@ -110,8 +110,8 @@ fn query_release_deallocates_active_join_pools_without_clearing_shared_cache() {
     };
     let warm_bytes = retained(&prepared);
     assert!(warm_bytes > 8192, "fixture must grow the join pools");
-    let generation = prepared.cache.cache_generation();
-    let images = prepared.cache.image_count();
+    let generation = prepared.program.cache.cache_generation();
+    let images = prepared.program.cache.image_count();
     prepared.release_memory();
     eprintln!(
         "join pool bytes: warm={warm_bytes}, released={}",
@@ -122,8 +122,8 @@ fn query_release_deallocates_active_join_pools_without_clearing_shared_cache() {
         0,
         "release must drop active pool capacity"
     );
-    assert_eq!(prepared.cache.cache_generation(), generation);
-    assert_eq!(prepared.cache.image_count(), images);
+    assert_eq!(prepared.program.cache.cache_generation(), generation);
+    assert_eq!(prepared.program.cache.image_count(), images);
     let after = answers_of(
         &fix.execute(&mut prepared, &params)
             .expect("reuse prepared plan"),

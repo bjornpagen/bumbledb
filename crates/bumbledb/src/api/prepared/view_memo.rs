@@ -1,4 +1,4 @@
-use super::{Binding, Bound, FilterPredicate, OccMemo, Parked, ViewMemo};
+use super::{Binding, BoundView, FilterPredicate, OccMemo, Parked, ViewMemo};
 use crate::exec::colt::Colt;
 use crate::image::ViewEpoch;
 
@@ -103,7 +103,7 @@ impl ViewMemo {
                 bound.last_used = self.tick;
             }
             Binding::Unbound | Binding::Derived => {
-                self.occs[occ].active = Binding::Bound(Bound {
+                self.occs[occ].active = Binding::Bound(BoundView {
                     epoch,
                     filters: filters.to_vec(),
                     selections: selections.map(<[crate::image::view::ResolvedWords]>::to_vec),
@@ -185,7 +185,7 @@ impl ViewMemo {
                 };
                 let fresh = colt.unbound_sibling();
                 occ_memo.parked[empty] = Some(Parked {
-                    bound: Bound {
+                    bound: BoundView {
                         last_used: tick,
                         ..bound
                     },

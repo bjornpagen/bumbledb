@@ -54,7 +54,7 @@ fn answers_own_their_text_beyond_release_and_cache_clear() {
     let mut prepared = fix.prepare(&query(vec![FindTerm::Var(VarId(1))])).unwrap();
     let answers = fix.execute(&mut prepared, &[] as &[BindValue<'_>]).unwrap();
     prepared.release_memory();
-    prepared.cache.clear();
+    prepared.program.cache.clear();
     let mut actual: Vec<_> = (0..answers.len())
         .map(|i| {
             let AnswerValue::String(text) = answers.get(i, 0) else {

@@ -193,11 +193,11 @@ impl<S> PreparedQuery<S> {
                 usize::try_from(*derived_count).expect("derived_count stored at validate")
             }
         };
-        self.derived.begin(derived_count);
+        self.runtime.derived.begin(derived_count);
 
         // Arcs; drop them before refill so TransientImage can get_mut.
         {
-            let retired = &mut self.derived.retired;
+            let retired = &mut self.runtime.derived.retired;
             for rule in self.pipeline.main_rules_mut() {
                 if let PreparedRule::FreeJoin(fj) = rule {
                     unbind_interior_rule(fj, retired);
@@ -207,11 +207,11 @@ impl<S> PreparedQuery<S> {
         let mut ran = false;
         let interner = images.interner();
         let ctx = RuleCtx {
-            schema: self.schema.as_ref(),
+            schema: self.program.schema.as_ref(),
             images,
             interner: &interner,
-            params: &self.resolved_params,
-            missed: &self.missed_params,
+            params: &self.bound.resolved_params,
+            missed: &self.bound.missed_params,
         };
 
         let n_interiors = self.pipeline.interiors().len();
@@ -219,7 +219,7 @@ impl<S> PreparedQuery<S> {
             for i in 0..n_interiors {
                 {
                     let interiors = self.pipeline.interiors_mut();
-                    unbind_interior_views(&mut interiors[i], &mut self.derived.retired);
+                    unbind_interior_views(&mut interiors[i], &mut self.runtime.derived.retired);
                     interiors[i].sink.reset();
                     // Main, interior and recursive sinks share cancellation.
                     interiors[i]
@@ -230,10 +230,10 @@ impl<S> PreparedQuery<S> {
                 for rule_idx in 0..rule_count {
                     fill_finished_images(
                         &self.pipeline.interiors()[i].rules[rule_idx],
-                        &mut self.derived,
+                        &mut self.runtime.derived,
                     );
-                    let occ_images = std::mem::take(&mut self.derived.occ_images);
-                    let mut retired = std::mem::take(&mut self.derived.retired);
+                    let occ_images = std::mem::take(&mut self.runtime.derived.occ_images);
+                    let mut retired = std::mem::take(&mut self.runtime.derived.retired);
                     let interior = &mut self.pipeline.interiors_mut()[i];
                     let sink_use = if interior.units > 1 {
                         SinkUse::Shared
@@ -243,8 +243,8 @@ impl<S> PreparedQuery<S> {
                     let result = run_rule(
                         &ctx,
                         &mut RuleScratch {
-                            bindings: &mut self.bindings,
-                            key_scratch: &mut self.key_scratch,
+                            bindings: &mut self.runtime.bindings,
+                            key_scratch: &mut self.runtime.key_scratch,
                             occ_images: &occ_images,
                             retired: &mut retired,
                         },
@@ -253,8 +253,8 @@ impl<S> PreparedQuery<S> {
                         &mut interior.sink,
                         counters,
                     );
-                    self.derived.occ_images = occ_images;
-                    self.derived.retired = retired;
+                    self.runtime.derived.occ_images = occ_images;
+                    self.runtime.derived.retired = retired;
                     ran |= result?;
                 }
                 // Seal the stage: aggregate/computed stages finalize HERE,
@@ -266,8 +266,8 @@ impl<S> PreparedQuery<S> {
                     seal_interior(
                         &mut interiors[i],
                         i,
-                        &mut self.derived,
-                        &mut self.answer_scratch,
+                        &mut self.runtime.derived,
+                        &mut self.runtime.answer_scratch,
                         images.source().work(),
                         images.generation(),
                     )?
@@ -282,10 +282,10 @@ impl<S> PreparedQuery<S> {
                     &ctx,
                     driver,
                     rec_id,
-                    &mut self.derived,
-                    &mut self.bindings,
-                    &mut self.key_scratch,
-                    &mut self.execution_texts,
+                    &mut self.runtime.derived,
+                    &mut self.runtime.bindings,
+                    &mut self.runtime.key_scratch,
+                    &mut self.runtime.execution_texts,
                     counters,
                 )?
             }
@@ -298,10 +298,10 @@ impl<S> PreparedQuery<S> {
 
     pub(super) fn fill_main_images(&mut self, rule_idx: usize) {
         let Some(plan) = main_plan(self.pipeline.main_rules(), rule_idx) else {
-            self.derived.occ_images.clear();
+            self.runtime.derived.occ_images.clear();
             return;
         };
-        fill_plan_images(plan, &mut self.derived);
+        fill_plan_images(plan, &mut self.runtime.derived);
     }
 }
 

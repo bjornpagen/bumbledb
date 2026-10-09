@@ -246,98 +246,70 @@ pub struct Answer<'a> {
 /// require_sync::<bumbledb::PreparedQuery<()>>();
 /// ```
 pub struct PreparedQuery<S> {
-    schema: Arc<Schema>,
-    /// The preparing source's identity: plan, statistics, view memo and
-    /// interner tokens all belong to it, so execution against any other
-    /// environment's snapshot is `Error::ForeignPreparedQuery` — checked
-    /// first at every execution entry. Heap-prepared queries pin `Heap`
-    /// and rebuild their images per execution (no durable identity).
-    pinned: source::PinnedSource,
-    /// The prepared query's relation-image cache plus the one text
-    /// interner its images, binds, latches and answers share. Arc-shared
-    /// so an execution can bind images while `&mut self` runs the rules.
-    cache: Arc<crate::image::cache::ImageCache>,
-    /// Heap executions count up; each tick is a fresh `ViewEpoch::Heap`,
-    /// so no image or view memo can outlive the instance it was read from.
-    heap_tick: u64,
-    /// Text retained by the recursive accumulator. Resident rules retain
-    /// their source images in the view memo.
-    execution_texts: crate::image::TextOwners,
-    /// Interiors then rec then main, as one pipeline sum: interiors
-    /// live inside each arm, never as a sidecar. Dead main is
-    /// `Cq { rules: [] }` — Empty is not a variant. Main rules share
-    /// the ONE sink below
-    /// rule loop): the sink resets once per execution, never per rule,
-    /// and its seen-set spanning rules is the entire implementation of
-    /// ∪ — no merge node, no concat-then-dedup pass exists.
+    program: Program,
+    /// Interiors, then rec, then main. Main rules share one sink, reset once
+    /// per execution; its seen set spanning rules is the union.
     pub(crate) pipeline: PreparedPipeline,
-    /// Finished derived images (interiors then rec) plus per-occurrence
-    /// bind scratch for `run_join`'s Interior arm.
-    derived: crate::api::prepared::reach::DerivedImages,
-    /// The signature the query defines, sealed at validation and cloned
-    /// here at prepare. It sits beside the pipeline because a dead-main
-    /// Cq still has an arity and buffer types (the empty path's
-    /// `out.arity` reads it).
-    signature: Signature,
-    /// Dense per-param bind contracts (validation rejects id gaps): one
-    /// sum carries scalar/set/mask shape, element type, and point-domain
-    /// status without parallel flags.
-    params: Vec<ParamSpec>,
-    /// Bind-time resolved constants, reused across executions — pooled
-    /// storage: a set param's slot holds a [`Const::WordSet`] whose `Vec`
-    /// is rebound in place (sorted, deduplicated words; capacity
-    /// retained across differently-sized warm re-binds).
-    resolved_params: Vec<Const>,
-    /// Every memoized resident word belongs to this resolver. Executions
-    /// keep a strong owner locally; idle plans keep only this weak stamp.
-    /// A changed owner invalidates token-bearing views and resolutions.
-    text_generation: Option<crate::work::cache::WeakGenerationHandle>,
-    /// Per param slot: the last successful String resolution — the
-    /// canonical shared text and its word (`bind.rs`). Hits are valid only
-    /// within `text_generation`.
-    param_word_memo: Vec<ParamWordMemo>,
-    /// Per param: whether this execution's value missed the dictionary
-    /// (String/Bytes only; for a set, whether NO element survived — the
-    /// empty set rides the same short-circuit machinery). A missed value
-    /// under `Eq` on a positive occurrence short-circuits to an empty
-    /// result; under `Ne` the sentinel word matches everything; on a
-    /// negated occurrence it just matches nothing.
-    missed_params: Vec<bool>,
-    /// The sink, reset once per execution with capacities retained —
-    /// **one** sink configuration, owned by the head (its shape is the
-    /// head's: projection vs aggregate, arity, distinctness). Its
-    /// find-spec slot tables are re-aimed per rule as the rule loop
-    /// switches plans (`run_rule`); the dedup keys are head-shaped —
-    /// projected tuples, or head projections under the multi-rule
-    /// aggregate regime — so the seen-set spanning rules is the union.
-    sink: EitherSink,
-    /// The rule-shared binding-slot scratch (`40-execution.md` § the
-    /// rule loop): written in place by each rule's recursion, re-sized
-    /// to the rule's slot layout at rule entry — capacity is the
-    /// high-water across all rules.
-    bindings: Bindings,
-    /// Aggregate-finalization answer scratch.
-    answer_scratch: Vec<u64>,
-    /// The per-finalize intern-resolution memo.
-    resolve_memo: ResolveMemo,
-    /// `KeyProbe` resolved-key word scratch.
-    key_scratch: crate::image::view::ResolvedWords,
-    /// Source-visit census of the last execute (D10).
-    #[cfg(test)]
-    last_visits: usize,
-    /// Sealed only for a direct probe whose complete row, every parameter
-    /// and every result are text-free. Such execution uses the shared
-    /// decoder/predicate machinery without acquiring a text generation.
-    no_text_probe: bool,
-    /// The query in the rule notation ([`crate::ir::render`]), rendered
-    /// once at prepare — the introspection report's header and the
-    /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
-    /// on diagnostic surfaces, never on the warm path.
-    rendered: String,
-    /// Marker: a prepared query is single-threaded scratch (`Cell` makes
-    /// it `!Sync`), pinned to schema `S` (`fn() -> S` keeps auto-traits
+    bound: Bound,
+    runtime: Runtime,
+    /// A prepared query is single-threaded scratch (`Cell` makes it
+    /// `!Sync`), pinned to schema `S` (`fn() -> S` keeps auto-traits
     /// independent of `S`).
     marker: std::marker::PhantomData<PreparedMarker<S>>,
+}
+
+/// What prepare sealed: fixed for the prepared query's lifetime.
+struct Program {
+    schema: Arc<Schema>,
+    /// The preparing source's identity: execution against any other
+    /// environment is `Error::ForeignPreparedQuery`, checked first.
+    pinned: source::PinnedSource,
+    /// The relation-image cache and the one text interner its images,
+    /// binds and answers share.
+    cache: Arc<crate::image::cache::ImageCache>,
+    /// The query's output signature (a dead-main Cq still has an arity).
+    signature: Signature,
+    /// Dense per-param bind contracts.
+    params: Vec<ParamSpec>,
+    /// A direct probe whose row, parameters and results are text-free runs
+    /// without acquiring a text generation.
+    no_text_probe: bool,
+    /// The query in rule notation, for introspection.
+    rendered: String,
+}
+
+/// What the last bind resolved, reused across executions.
+struct Bound {
+    /// Resolved constants; a set param's `Const::WordSet` is rebound in
+    /// place, keeping its capacity.
+    resolved_params: Vec<Const>,
+    /// The resolver every memoized word belongs to; a changed owner
+    /// invalidates token-bearing views and resolutions.
+    text_generation: Option<crate::work::cache::WeakGenerationHandle>,
+    /// Per param slot: the last String resolution, valid within
+    /// `text_generation`.
+    param_word_memo: Vec<ParamWordMemo>,
+    /// Per param: the value missed the dictionary (for a set, no element
+    /// survived). Under `Eq` on a positive occurrence the rule is empty.
+    missed_params: Vec<bool>,
+}
+
+/// Execution scratch, reset per execution with capacities retained.
+struct Runtime {
+    /// Heap executions count up; each tick is a fresh `ViewEpoch::Heap`.
+    heap_tick: u64,
+    /// Text retained by the recursive accumulator.
+    execution_texts: crate::image::TextOwners,
+    derived: crate::api::prepared::reach::DerivedImages,
+    /// The main sink, aimed at each main rule in turn.
+    sink: EitherSink,
+    /// Rule-shared binding slots, resized at each rule's entry.
+    bindings: Bindings,
+    answer_scratch: Vec<u64>,
+    resolve_memo: ResolveMemo,
+    key_scratch: crate::image::view::ResolvedWords,
+    #[cfg(test)]
+    last_visits: usize,
 }
 
 /// One named interior's prepared artifact: its rule loop and stage sink
@@ -540,8 +512,8 @@ impl<S> PreparedQuery<S> {
     /// drops it, so the next execution allocates scratch again. Shared database
     /// caches and independently owned results or snapshots are unaffected.
     pub fn release_memory(&mut self) {
-        self.execution_texts = crate::image::TextOwners::default();
-        self.derived = reach::DerivedImages::default();
+        self.runtime.execution_texts = crate::image::TextOwners::default();
+        self.runtime.derived = reach::DerivedImages::default();
         self.visit_rules_mut(|rule| match rule {
             PreparedRule::FreeJoin(rule) => rule.release_memory(),
             PreparedRule::KeyProbe(rule) => rule.row.release_memory(),
@@ -564,21 +536,21 @@ impl<S> PreparedQuery<S> {
                 driver.frontier = crate::image::TransientImage::default();
             }
         }
-        self.sink.release_memory();
-        self.bindings = Bindings::new(0);
-        self.answer_scratch = Vec::new();
-        self.resolve_memo = ResolveMemo::new();
-        self.key_scratch = crate::image::view::ResolvedWords::default();
-        self.resolved_params = Vec::new();
-        self.param_word_memo = Vec::new();
-        self.missed_params = Vec::new();
-        self.text_generation = None;
+        self.runtime.sink.release_memory();
+        self.runtime.bindings = Bindings::new(0);
+        self.runtime.answer_scratch = Vec::new();
+        self.runtime.resolve_memo = ResolveMemo::new();
+        self.runtime.key_scratch = crate::image::view::ResolvedWords::default();
+        self.bound.resolved_params = Vec::new();
+        self.bound.param_word_memo = Vec::new();
+        self.bound.missed_params = Vec::new();
+        self.bound.text_generation = None;
     }
 
     #[cfg(test)]
     #[must_use]
     pub(crate) fn last_visits(&self) -> usize {
-        self.last_visits
+        self.runtime.last_visits
     }
 }
 
@@ -671,7 +643,7 @@ const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
 /// One executed binding: a real epoch, residual filters and image coverage.
 /// Active and parked slots move this shape; the COLT lives
 /// on [`ViewMemo::colts`] (active) or [`Parked::colt`] (parked).
-struct Bound {
+struct BoundView {
     epoch: crate::image::ViewEpoch,
     filters: Vec<FilterPredicate>,
     /// None covers the whole relation; Some covers only this occurrence's
@@ -686,13 +658,13 @@ enum Binding {
     Unbound,
     /// Interior occurrence: lives outside the epoch-keyed memo.
     Derived,
-    Bound(Bound),
+    Bound(BoundView),
 }
 
-/// A parked [`Bound`] plus the COLT it owns. The kernel only sees
+/// A parked [`BoundView`] plus the COLT it owns. The kernel only sees
 /// [`ViewMemo::colts`]; this COLT is off the slice until unparked.
 struct Parked {
-    bound: Bound,
+    bound: BoundView,
     colt: Colt,
 }
 
@@ -715,7 +687,7 @@ struct ViewMemo {
     /// (over [`View::Unbound`] until the first execution — prepare pins
     /// no image). The kernel takes `&mut [Colt]`; this vector stays.
     colts: Vec<Colt>,
-    /// One slot per occurrence: active [`Binding`], parked [`Bound`]s,
+    /// One slot per occurrence: active [`Binding`], parked [`BoundView`]s,
     /// spare survivor buffer.
     occs: Vec<OccMemo>,
     /// The LRU clock, ticked once per execution.

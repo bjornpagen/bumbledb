@@ -59,12 +59,12 @@ fn indexed_image_rotation_is_bucket_shaped_and_never_shared_as_full() {
             .collect();
         assert_eq!(answers_of(&actual), expected);
         assert!(
-            matches!(prepared.last_visits, 0 | 32),
+            matches!(prepared.runtime.last_visits, 0 | 32),
             "one bucket body walk, or a memo hit: {}",
-            prepared.last_visits
+            prepared.runtime.last_visits
         );
         assert_eq!(
-            prepared.cache.image_count(),
+            prepared.program.cache.image_count(),
             0,
             "partial images cannot impersonate whole relations"
         );
@@ -93,7 +93,7 @@ fn indexed_image_rotation_is_bucket_shaped_and_never_shared_as_full() {
             .len(),
         32
     );
-    assert_eq!(fresh.last_visits, 0);
+    assert_eq!(fresh.runtime.last_visits, 0);
     let [PreparedRule::FreeJoin(rule)] = fresh.pipeline.main_rules() else {
         panic!("Free Join")
     };
@@ -117,8 +117,8 @@ fn selection_diversity_promotes_once_instead_of_thrashing_the_bounded_memo() {
             .len(),
             32
         );
-        assert_eq!(prepared.last_visits, 32);
-        assert_eq!(prepared.cache.image_count(), 0);
+        assert_eq!(prepared.runtime.last_visits, 32);
+        assert_eq!(prepared.program.cache.image_count(), 0);
     }
     assert_eq!(
         fix.execute(&mut prepared, &[BindValue::U64(4), BindValue::I64(-1)])
@@ -127,10 +127,10 @@ fn selection_diversity_promotes_once_instead_of_thrashing_the_bounded_memo() {
         32
     );
     assert_eq!(
-        prepared.last_visits, 256,
+        prepared.runtime.last_visits, 256,
         "fifth distinct selection promotes once"
     );
-    assert_eq!(prepared.cache.image_count(), 1);
+    assert_eq!(prepared.program.cache.image_count(), 1);
     for account in [0, 3, 4, 7, 99, 2, 1] {
         assert_eq!(
             fix.execute(
@@ -142,7 +142,7 @@ fn selection_diversity_promotes_once_instead_of_thrashing_the_bounded_memo() {
             if account < 8 { 32 } else { 0 }
         );
         assert_eq!(
-            prepared.last_visits, 0,
+            prepared.runtime.last_visits, 0,
             "promoted image covers every selection"
         );
     }
@@ -183,7 +183,7 @@ fn indexed_image_coverage_survives_old_snapshots_refusal_and_generation_rotation
         out.is_empty(),
         "a failed bucket count never publishes partial answers"
     );
-    assert_eq!(prepared.cache.image_count(), 0);
+    assert_eq!(prepared.program.cache.image_count(), 0);
     assert_eq!(
         answers_of(&fix.execute(&mut prepared, &params).unwrap()),
         expected
@@ -209,13 +209,13 @@ fn cancelled_selected_image_publishes_no_cache_entry() {
     work.cancel();
     let pin = fix.db.owned_read().unwrap();
     let source = super::super::source::QuerySource::store(pin.snapshot(), &work);
-    let images = crate::image::SourceImages::bind(&source, &prepared.cache);
+    let images = crate::image::SourceImages::bind(&source, &prepared.program.cache);
     let [PreparedRule::FreeJoin(rule)] = prepared.pipeline.main_rules() else {
         panic!("Free Join")
     };
     let error = images
         .selection_image(
-            &prepared.schema,
+            &prepared.program.schema,
             POSTING,
             &rule.plan.occurrences()[0].selections,
             &[vec![0].into()],
@@ -226,7 +226,7 @@ fn cancelled_selected_image_publishes_no_cache_entry() {
         crate::Error::Store(error) if matches!(*error,
             StoreError::Work(WorkError::Cancelled))
     ));
-    assert_eq!(prepared.cache.image_count(), 0);
+    assert_eq!(prepared.program.cache.image_count(), 0);
 }
 
 #[test]
@@ -333,8 +333,8 @@ fn dense_selection_uses_one_sequential_scan_without_prefetching_bucket_bodies() 
         .unwrap();
     assert_eq!(actual.len(), 288);
     assert_eq!(
-        prepared.last_visits, 512,
+        prepared.runtime.last_visits, 512,
         "counting index entries never fetches row bodies"
     );
-    assert_eq!(prepared.cache.image_count(), 1);
+    assert_eq!(prepared.program.cache.image_count(), 1);
 }

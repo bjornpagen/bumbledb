@@ -1,7 +1,7 @@
 use super::*;
 
 fn elided(prepared: &PreparedQuery<T>) -> bool {
-    matches!(&prepared.sink, EitherSink::Projection(sink) if sink.output_hashing_is_elided())
+    matches!(&prepared.runtime.sink, EitherSink::Projection(sink) if sink.output_hashing_is_elided())
 }
 
 fn id_rule() -> Rule {
@@ -127,7 +127,7 @@ fn hidden_instrument_key_string_filter_matches_forced_hash_in_order() {
         );
         let mut hashed = fix.prepare(&query).unwrap();
         let rule = &hashed.pipeline.main_rules()[0];
-        hashed.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
+        hashed.runtime.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
             rule.finds(),
             rule.slot_count(),
             0,
@@ -207,7 +207,7 @@ fn uuid_keyed_join_with_negative_guard_preserves_order_across_sink_tiers() {
     assert!(elided(&append));
     let mut hashed = fix.prepare(&query).unwrap();
     let rule = &hashed.pipeline.main_rules()[0];
-    hashed.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
+    hashed.runtime.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
         rule.finds(),
         rule.slot_count(),
         0,

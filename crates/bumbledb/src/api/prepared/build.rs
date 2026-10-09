@@ -260,28 +260,34 @@ fn prepare_witnessed<S>(
     };
     let no_text_probe = seal_no_text_probe(&pipeline, &schema, &params);
     Ok(PreparedQuery {
-        schema,
-        pinned: pinned_source,
-        cache,
-        heap_tick: 0,
-        execution_texts: crate::image::TextOwners::default(),
+        program: super::Program {
+            schema,
+            pinned: pinned_source,
+            cache,
+            signature,
+            params,
+            no_text_probe,
+            rendered,
+        },
         pipeline,
-        derived: super::reach::DerivedImages::default(),
-        signature,
-        params,
-        resolved_params: Vec::new(),
-        text_generation: None,
-        param_word_memo: Vec::new(),
-        missed_params: Vec::new(),
-        sink,
-        bindings,
-        answer_scratch: Vec::new(),
-        resolve_memo: ResolveMemo::new(),
-        key_scratch: crate::image::view::ResolvedWords::default(),
-        no_text_probe,
-        rendered,
-        #[cfg(test)]
-        last_visits: 0,
+        bound: super::Bound {
+            resolved_params: Vec::new(),
+            text_generation: None,
+            param_word_memo: Vec::new(),
+            missed_params: Vec::new(),
+        },
+        runtime: super::Runtime {
+            heap_tick: 0,
+            execution_texts: crate::image::TextOwners::default(),
+            derived: super::reach::DerivedImages::default(),
+            sink,
+            bindings,
+            answer_scratch: Vec::new(),
+            resolve_memo: ResolveMemo::new(),
+            key_scratch: crate::image::view::ResolvedWords::default(),
+            #[cfg(test)]
+            last_visits: 0,
+        },
         marker: std::marker::PhantomData,
     })
 }

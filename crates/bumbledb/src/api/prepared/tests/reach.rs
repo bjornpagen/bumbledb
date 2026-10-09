@@ -145,7 +145,7 @@ fn release_preserves_recursive_and_interior_plans_and_owned_answers() {
         let expected = fix.execute(&mut prepared, &[BindValue::U64(0)]).unwrap();
         for _ in 0..3 {
             prepared.release_memory();
-            assert!(prepared.derived.published.is_empty());
+            assert!(prepared.runtime.derived.published.is_empty());
             assert_eq!(node_ids(&expected), [1, 2, 3]);
             let actual = fix.execute(&mut prepared, &[BindValue::U64(0)]).unwrap();
             assert_eq!(node_ids(&actual), node_ids(&expected));

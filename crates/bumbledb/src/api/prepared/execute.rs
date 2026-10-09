@@ -48,9 +48,12 @@ impl<S> PreparedQuery<S> {
         params: P,
         out: &mut Answers,
     ) -> Result<()> {
-        self.heap_tick += 1;
-        let source =
-            QuerySource::heap(instance, self.heap_tick, super::source::heap_default_work());
+        self.runtime.heap_tick += 1;
+        let source = QuerySource::heap(
+            instance,
+            self.runtime.heap_tick,
+            super::source::heap_default_work(),
+        );
         self.execute_source(&source, params, out)
     }
 
@@ -85,20 +88,20 @@ impl<S> PreparedQuery<S> {
         self.check_identity(source.pinned())?;
         // Previous raw sink contents are invalid for this new execution;
         // completed Answers own their payload independently.
-        self.execution_texts.clear();
-        let generation = if self.no_text_probe {
-            debug_assert!(self.text_generation.is_none());
+        self.runtime.execution_texts.clear();
+        let generation = if self.program.no_text_probe {
+            debug_assert!(self.bound.text_generation.is_none());
             None
         } else {
-            let generation = self.cache.acquire();
+            let generation = self.program.cache.acquire();
             self.bind_text_generation(&generation);
             Some(generation)
         };
         #[cfg(test)]
         {
-            self.last_visits = 0;
+            self.runtime.last_visits = 0;
         }
-        out.begin(self.signature.columns.len());
+        out.begin(self.program.signature.columns.len());
         params.bind(self, source.work())?;
         let result = if matches!(self.pipeline, PreparedPipeline::PointProbe { .. }) {
             // Direct probes consume rows and this execution's resolver,
@@ -106,7 +109,7 @@ impl<S> PreparedQuery<S> {
             // and finalization without retaining an unused cache owner.
             self.execute_key_probe_direct(source, generation.as_ref(), out)
         } else {
-            let cache = Arc::clone(&self.cache);
+            let cache = Arc::clone(&self.program.cache);
             let images = SourceImages::with_generation(
                 source,
                 &cache,
@@ -116,7 +119,7 @@ impl<S> PreparedQuery<S> {
         };
         #[cfg(test)]
         {
-            self.last_visits = source.visit_count();
+            self.runtime.last_visits = source.visit_count();
         }
         let result = result.and_then(|()| {
             source
@@ -126,7 +129,7 @@ impl<S> PreparedQuery<S> {
         });
         if result.is_err() {
             out.clear();
-            self.resolve_memo.clear();
+            self.runtime.resolve_memo.clear();
         }
         result
     }
@@ -137,7 +140,8 @@ impl<S> PreparedQuery<S> {
         }
         // Only pipelines that consume the main sink retain its cancellation context.
         // Point probes copy directly into Answers; empty CQs emit nothing.
-        self.sink
+        self.runtime
+            .sink
             .begin_execution(Some(images.source().work().clone()));
         let ran = self.run_rules(images, &mut NoopCounters)?;
         self.finish_sink(images, ran, out)
@@ -155,11 +159,11 @@ impl<S> PreparedQuery<S> {
         }
         let interner = images.interner();
         finalize(
-            &mut self.sink,
-            &mut self.answer_scratch,
-            &mut self.resolve_memo,
+            &mut self.runtime.sink,
+            &mut self.runtime.answer_scratch,
+            &mut self.runtime.resolve_memo,
             &interner,
-            &self.signature.columns,
+            &self.program.signature.columns,
             out,
             images.source().work(),
         )
@@ -179,7 +183,7 @@ impl<S> PreparedQuery<S> {
         if self.pipeline.main_rules().is_empty() {
             return Ok(false);
         }
-        self.sink.reset();
+        self.runtime.sink.reset();
         let mut ran = false;
         let rule_count = self.pipeline.main_rules().len();
         for rule_idx in 0..rule_count {
@@ -195,15 +199,15 @@ impl<S> PreparedQuery<S> {
         counters: &mut Cnt,
     ) -> Result<bool> {
         self.fill_main_images(rule_idx);
-        let occ_images = std::mem::take(&mut self.derived.occ_images);
-        let mut retired = std::mem::take(&mut self.derived.retired);
+        let occ_images = std::mem::take(&mut self.runtime.derived.occ_images);
+        let mut retired = std::mem::take(&mut self.runtime.derived.retired);
         let interner = images.interner();
         let ctx = RuleCtx {
-            schema: self.schema.as_ref(),
+            schema: self.program.schema.as_ref(),
             images,
             interner: &interner,
-            params: &self.resolved_params,
-            missed: &self.missed_params,
+            params: &self.bound.resolved_params,
+            missed: &self.bound.missed_params,
         };
         let rules = self.pipeline.main_rules_mut();
         let sink_use = if rules.len() > 1 {
@@ -214,18 +218,18 @@ impl<S> PreparedQuery<S> {
         let ran = run_rule(
             &ctx,
             &mut RuleScratch {
-                bindings: &mut self.bindings,
-                key_scratch: &mut self.key_scratch,
+                bindings: &mut self.runtime.bindings,
+                key_scratch: &mut self.runtime.key_scratch,
                 occ_images: &occ_images,
                 retired: &mut retired,
             },
             &mut rules[rule_idx],
             sink_use,
-            &mut self.sink,
+            &mut self.runtime.sink,
             counters,
         );
-        self.derived.occ_images = occ_images;
-        self.derived.retired = retired;
+        self.runtime.derived.occ_images = occ_images;
+        self.runtime.derived.retired = retired;
         ran
     }
 
@@ -243,7 +247,7 @@ impl<S> PreparedQuery<S> {
             unreachable!("PointProbe arm sealed at build");
         };
         let key_probe = &rule.plan;
-        self.resolve_memo.clear();
+        self.runtime.resolve_memo.clear();
         let interner = match generation {
             Some(generation) => {
                 crate::image::intern::InternerHandle::new(generation, source.work())
@@ -254,11 +258,11 @@ impl<S> PreparedQuery<S> {
         let hit = crate::exec::dispatch::key_probe_row(
             key_probe,
             source,
-            self.schema.as_ref(),
+            self.program.schema.as_ref(),
             &interner,
-            &self.resolved_params,
+            &self.bound.resolved_params,
             row,
-            &mut self.key_scratch,
+            &mut self.runtime.key_scratch,
         )?;
         if !hit {
             return Ok(());
@@ -281,7 +285,7 @@ impl<S> PreparedQuery<S> {
             }
             match ty {
                 ValueType::String => {
-                    out.push_word(&interner, ty, words[0], &mut self.resolve_memo)?;
+                    out.push_word(&interner, ty, words[0], &mut self.runtime.resolve_memo)?;
                 }
                 _ => out.cells.push(Answers::word_cell(ty, words[0])?),
             }

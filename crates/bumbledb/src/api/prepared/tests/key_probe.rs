@@ -127,7 +127,7 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
     });
     let mut prepared = fix.prepare(&query).expect("prepares");
     assert!(
-        !prepared.no_text_probe,
+        !prepared.program.no_text_probe,
         "a row containing text needs its resolver"
     );
     let PreparedPipeline::PointProbe { rule, finds } = &prepared.pipeline else {
@@ -148,7 +148,7 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
     assert_eq!(out.get(0, 0), AnswerValue::U64(8));
     assert_eq!(out.get(0, 1), AnswerValue::String("memo-b"));
     assert_eq!(out.get(0, 2), AnswerValue::I64(42));
-    assert!(prepared.text_generation.is_some());
+    assert!(prepared.bound.text_generation.is_some());
     let PreparedPipeline::PointProbe { rule, .. } = &prepared.pipeline else {
         unreachable!("point probe");
     };
@@ -194,7 +194,7 @@ fn cancelled_missing_scalar_probe_refuses_and_clears_reused_answers() {
     let active = crate::api::db::test_operation();
     let mut prepared = pin.prepare(&query, &active).unwrap();
     assert!(
-        !prepared.no_text_probe,
+        !prepared.program.no_text_probe,
         "unprojected memo text still gets decoded"
     );
     assert!(matches!(
@@ -267,12 +267,12 @@ fn a_key_probe_prepare_and_execute_build_no_image() {
         "the fast lane classified"
     );
     let mut out = Answers::new();
-    assert_eq!(prepared.cache.image_count(), 0);
+    assert_eq!(prepared.program.cache.image_count(), 0);
     fix.execute_into(&mut prepared, &[BindValue::U64(1)], &mut out)
         .expect("hit");
     assert_eq!(out.len(), 1);
     assert_eq!(
-        prepared.cache.image_count(),
+        prepared.program.cache.image_count(),
         0,
         "point probes build no images"
     );
@@ -346,7 +346,7 @@ fn text_free_probe_uses_shared_execution_without_acquiring_a_resolver() {
     });
     let mut prepared = store.prepare(&query).unwrap();
     let mut oracle = heap.prepare(&query).unwrap();
-    assert!(prepared.no_text_probe && oracle.no_text_probe);
+    assert!(prepared.program.no_text_probe && oracle.program.no_text_probe);
     let PreparedPipeline::PointProbe { rule, .. } = &prepared.pipeline else {
         unreachable!()
     };
@@ -365,11 +365,11 @@ fn text_free_probe_uses_shared_execution_without_acquiring_a_resolver() {
             point: false,
         },
     ] {
-        let mut params = prepared.params.clone();
+        let mut params = prepared.program.params.clone();
         params.push(extra);
         assert!(!super::super::build::seal_no_text_probe(
             &prepared.pipeline,
-            &prepared.schema,
+            &prepared.program.schema,
             &params
         ));
     }
@@ -382,7 +382,7 @@ fn text_free_probe_uses_shared_execution_without_acquiring_a_resolver() {
         if owner == 2 {
             assert_eq!(actual.get(0, 0), expected.get(0, 0));
         }
-        assert!(prepared.text_generation.is_none() && oracle.text_generation.is_none());
+        assert!(prepared.bound.text_generation.is_none() && oracle.bound.text_generation.is_none());
         prepared.release_memory();
     }
     let pin = store.db.owned_read().unwrap();
@@ -402,7 +402,7 @@ fn text_free_probe_uses_shared_execution_without_acquiring_a_resolver() {
             .execute(&mut prepared, &[BindValue::Str("wrong")])
             .is_err()
     );
-    assert!(prepared.text_generation.is_none());
+    assert!(prepared.bound.text_generation.is_none());
 }
 
 fn booking_descriptor() -> SchemaDescriptor {
@@ -677,7 +677,7 @@ fn an_unstored_text_param_on_the_fast_path_is_empty_not_an_error() {
     });
     let mut prepared = docs.prepare(&query).expect("prepare");
     assert!(
-        !prepared.no_text_probe,
+        !prepared.program.no_text_probe,
         "String parameters require the ordinary pinned namespace"
     );
     assert!(
@@ -700,7 +700,7 @@ fn an_unstored_text_param_on_the_fast_path_is_empty_not_an_error() {
         .execute(&mut prepared, &[BindValue::Str("alice")])
         .unwrap();
     assert_eq!(rebound.get(0, 0), AnswerValue::U64(7));
-    assert!(prepared.text_generation.is_some());
+    assert!(prepared.bound.text_generation.is_some());
     let generation_after = docs
         .db
         .read(crate::api::db::test_operation(), |instance| {

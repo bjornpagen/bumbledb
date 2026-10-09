@@ -105,7 +105,7 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
     };
     let mut prepared = fix.prepare(&query).expect("prepare");
     assert!(!prepared.distinct_bindings(), "unions always retain dedup");
-    let EitherSink::Aggregate(sink) = &prepared.sink else {
+    let EitherSink::Aggregate(sink) = &prepared.runtime.sink else {
         panic!("Sum builds the aggregate sink");
     };
     assert!(!sink.seen_elided(), "the spanning seen-set exists");
@@ -114,7 +114,7 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
-        prepared.sink.distinct_seen(),
+        prepared.runtime.sink.distinct_seen(),
         Some(4),
         "all four head projections inhabit the spanning set"
     );
