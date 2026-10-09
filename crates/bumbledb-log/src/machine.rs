@@ -596,26 +596,26 @@ impl<R: Replica> Machine<R> {
         }
     }
 
+    /// Install a downloaded checkpoint. One that cannot be installed (a
+    /// damaged download, an image this platform or bundle cannot open) only
+    /// costs replaying the log from the current head instead.
     fn install_checkpoint(&mut self, key: CheckpointKey) {
         if self.replica.head().is_some_and(|head| head.seq >= key.seq) {
             return;
         }
         let database = self.replica.head().map(|head| head.database);
         let path = self.replica.download_path();
-        match self.replica.install(&path, key.digest, key.schema) {
-            Ok(()) => {
-                let head = self.replica.head().expect("an installed image has a head");
-                if head.seq != key.seq
-                    || head.schema != key.schema
-                    || database.is_some_and(|database| database != head.database)
-                {
-                    return self.break_down(Refusal::Corrupt(key.seq));
-                }
-                self.tail = Tail::default();
-            }
-            Err(CacheError::Digest | CacheError::UnknownSchema(_)) => {}
-            Err(error) => self.break_down(Refusal::Cache(error)),
+        if self.replica.install(&path, key.digest, key.schema).is_err() {
+            return;
         }
+        let head = self.replica.head().expect("an installed image has a head");
+        if head.seq != key.seq
+            || head.schema != key.schema
+            || database.is_some_and(|database| database != head.database)
+        {
+            return self.break_down(Refusal::Corrupt(key.seq));
+        }
+        self.tail = Tail::default();
     }
 
     fn install_migration(&mut self, seq: Seq, entry: &Entry, lost: Option<Box<Flight>>) {

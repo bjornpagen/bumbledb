@@ -368,7 +368,21 @@ fn a_cold_cache_installs_a_checkpoint_and_refuses_a_corrupt_one() {
     let newest = store.checkpoints.keys().next().unwrap().clone();
     store.checkpoints.get_mut(&newest).unwrap().0[100] ^= 0xff;
     let corrupt = TempDir::new("cache-corrupt");
-    let (reader, opened) = Solo::open(&mut store, corrupt.path(), bundle(), config);
+    let (reader, opened) = Solo::open(&mut store, corrupt.path(), bundle(), config.clone());
+    assert_eq!(opened, Settled::Opened { pending: 0 });
+    assert_same(&cache_state(reader.machine.replica()), &expected);
+
+    // An image whose digest matches but which LMDB cannot open.
+    let garbage = b"not an LMDB environment".to_vec();
+    let key = bumbledb_log::CheckpointKey {
+        seq: Seq::new(9).unwrap(),
+        schema: bundle().initial().fingerprint,
+        digest: bumbledb_log::ImageDigest(*blake3::hash(&garbage).as_bytes()),
+    };
+    store.checkpoints.clear();
+    store.checkpoints.insert(key.format(), (garbage, 1));
+    let unopenable = TempDir::new("cache-unopenable");
+    let (reader, opened) = Solo::open(&mut store, unopenable.path(), bundle(), config);
     assert_eq!(opened, Settled::Opened { pending: 0 });
     assert_same(&cache_state(reader.machine.replica()), &expected);
 }

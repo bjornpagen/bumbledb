@@ -166,7 +166,8 @@ impl Replica for Model {
         if self.bundle.by_schema(schema).is_none() {
             return Err(CacheError::UnknownSchema(schema));
         }
-        let state = decode_image(&bytes).ok_or(CacheError::Digest)?;
+        let state =
+            decode_image(&bytes).ok_or_else(|| CacheError::Local("not an image".to_owned()))?;
         if state.head.schema != schema {
             return Err(CacheError::Digest);
         }
