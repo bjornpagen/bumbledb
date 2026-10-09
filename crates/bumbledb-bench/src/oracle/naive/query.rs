@@ -721,7 +721,9 @@ impl NaiveDb {
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
                     )),
-                    FindTerm::Aggregate { op, .. } => fold_position(*op, index, group),
+                    FindTerm::Aggregate { op, .. } => {
+                        fold(*op, group.iter().map(|row| &row.0[index]), index)
+                    }
                     FindTerm::Pack { .. } => {
                         unreachable!("validated: Pack heads take the segment path")
                     }
@@ -1246,7 +1248,11 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
                     )),
-                    FindTerm::Aggregate { op, over } => fold(*op, *over, group, index),
+                    FindTerm::Aggregate { op, over } => fold(
+                        *op,
+                        group.iter().map(|row| &row.0[usize::from(over.0)]),
+                        index,
+                    ),
                     FindTerm::Pack { .. } => {
                         unreachable!("validated: Pack heads take the segment path")
                     }
@@ -1258,71 +1264,36 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
     Ok(rows)
 }
 
-fn fold_position(op: FoldOp, index: usize, group: &[&Tuple]) -> Result<Value, QueryError> {
-    let values = || group.iter().map(move |row| &row.0[index]);
-    if matches!(op, FoldOp::Sum | FoldOp::Mean) && matches!(values().next(), Some(Value::F64(_))) {
-        return Ok(Value::F64(crate::oracle::float::reduce(
-            values().map(|value| {
-                let Value::F64(value) = value else {
-                    unreachable!("typed float group")
-                };
-                *value
-            }),
-            op == FoldOp::Mean,
-        )));
+/// One aggregate over a nonempty group. F64 SUM and MEAN reduce exactly; F64
+/// MIN and MAX propagate NaN; an integer SUM outside its type refuses.
+fn fold<'a>(
+    op: FoldOp,
+    values: impl Iterator<Item = &'a Value> + Clone,
+    find: usize,
+) -> Result<Value, QueryError> {
+    if let Some(Value::F64(_)) = values.clone().next() {
+        let floats = values.map(|value| {
+            let Value::F64(value) = value else {
+                unreachable!("typed float group")
+            };
+            *value
+        });
+        let compare = |a: &F64, b: &F64| crate::oracle::float::compare(*a, *b);
+        return Ok(Value::F64(match op {
+            FoldOp::Sum | FoldOp::Mean => crate::oracle::float::reduce(floats, op == FoldOp::Mean),
+            _ if floats.clone().any(|value| value.to_f64().is_nan()) => F64::NAN,
+            FoldOp::Min => floats.min_by(compare).expect("groups are nonempty"),
+            FoldOp::Max => floats.max_by(compare).expect("groups are nonempty"),
+        }));
     }
     match op {
         FoldOp::Mean => unreachable!("validated: Mean requires F64"),
         FoldOp::Sum => {
-            let total: i128 = values()
+            let total: i128 = values
+                .clone()
                 .map(|value| point(value).expect("validated: Sum takes integers"))
                 .sum();
-            match values().next().expect("groups are nonempty") {
-                Value::U64(_) => u64::try_from(total)
-                    .map(Value::U64)
-                    .map_err(|_| QueryError::Overflow { find: index }),
-                Value::I64(_) => i64::try_from(total)
-                    .map(Value::I64)
-                    .map_err(|_| QueryError::Overflow { find: index }),
-                other => panic!("validated: Sum takes integers, got {other:?}"),
-            }
-        }
-        FoldOp::Min | FoldOp::Max => {
-            let picked = values()
-                .max_by(|a, b| {
-                    let ordering = cmp_value(a, b);
-                    if matches!(op, FoldOp::Max) {
-                        ordering
-                    } else {
-                        ordering.reverse()
-                    }
-                })
-                .expect("groups are nonempty");
-            Ok(picked.clone())
-        }
-    }
-}
-
-fn fold(op: FoldOp, over: VarId, group: &[&Tuple], find: usize) -> Result<Value, QueryError> {
-    let values = || group.iter().map(move |b| &b.0[usize::from(over.0)]);
-    if matches!(op, FoldOp::Sum | FoldOp::Mean) && matches!(values().next(), Some(Value::F64(_))) {
-        return Ok(Value::F64(crate::oracle::float::reduce(
-            values().map(|value| {
-                let Value::F64(value) = value else {
-                    unreachable!("typed float group")
-                };
-                *value
-            }),
-            op == FoldOp::Mean,
-        )));
-    }
-    match op {
-        FoldOp::Mean => unreachable!("validated: Mean requires F64"),
-        FoldOp::Sum => {
-            let total: i128 = values()
-                .map(|value| point(value).expect("validated: Sum takes integers"))
-                .sum();
-            match values().next().expect("groups are nonempty") {
+            match values.clone().next().expect("groups are nonempty") {
                 Value::U64(_) => u64::try_from(total)
                     .map(Value::U64)
                     .map_err(|_| QueryError::Overflow { find }),
@@ -1332,19 +1303,14 @@ fn fold(op: FoldOp, over: VarId, group: &[&Tuple], find: usize) -> Result<Value,
                 other => panic!("validated: Sum takes integers, got {other:?}"),
             }
         }
-        FoldOp::Min | FoldOp::Max => {
-            let picked = values()
-                .max_by(|a, b| {
-                    let ordering = cmp_value(a, b);
-                    if matches!(op, FoldOp::Max) {
-                        ordering
-                    } else {
-                        ordering.reverse()
-                    }
-                })
-                .expect("groups are nonempty");
-            Ok(picked.clone())
-        }
+        FoldOp::Min => Ok(values
+            .min_by(|a, b| cmp_value(a, b))
+            .expect("groups are nonempty")
+            .clone()),
+        FoldOp::Max => Ok(values
+            .max_by(|a, b| cmp_value(a, b))
+            .expect("groups are nonempty")
+            .clone()),
     }
 }
 

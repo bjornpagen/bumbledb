@@ -35,8 +35,14 @@ pub(super) fn translate_rules(
         )
     });
     let mut arms: Vec<String> = Vec::new();
+    let mut never_nan = vec![true; rules[0].finds.len()];
     for rule in rules {
         let b = rule_core(rule, schema, sets, params)?;
+        for (position, find) in rule.finds.iter().enumerate() {
+            if let FindTerm::Aggregate { over, .. } = find {
+                never_nan[position] &= b.never_nan.contains(over);
+            }
+        }
         arms.push(if aggregated {
             head_projection_sql(rule, &b)?
         } else {
@@ -44,7 +50,7 @@ pub(super) fn translate_rules(
         });
     }
     if aggregated {
-        union_fold_sql(&rules[0].finds, &arms)
+        union_fold_sql(&rules[0].finds, &arms, &never_nan)
     } else {
         Ok(arms.join(" UNION "))
     }
@@ -188,18 +194,30 @@ fn head_projection_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
     ))
 }
 
-fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String> {
+/// IEEE/JS `MIN` propagates NaN; SQLite's `MIN` over the ordered F64 blobs
+/// sorts it last. NaN's blob is the greatest, so a group holds NaN exactly
+/// when its `MAX` is NaN.
+fn min_sql(column: &str, never_nan: bool) -> String {
+    if never_nan {
+        format!("MIN({column})")
+    } else {
+        let nan = crate::oracle::float::sql_literal(bumbledb::F64::NAN);
+        format!("CASE WHEN MAX({column}) = {nan} THEN {nan} ELSE MIN({column}) END")
+    }
+}
+
+fn union_fold_sql(
+    finds: &[FindTerm],
+    arms: &[String],
+    never_nan: &[bool],
+) -> Result<String, String> {
     let union = arms.join(" UNION ");
     let mut group: Vec<String> = Vec::new();
     let mut outer: Vec<String> = Vec::new();
     for (position, find) in finds.iter().enumerate() {
         match find {
             FindTerm::Var(_) => {
-                let names = if matches!(find, FindTerm::Var(_)) {
-                    head_group_names(arms, position)
-                } else {
-                    vec![format!("h{position}")]
-                };
+                let names = head_group_names(arms, position);
                 group.extend(names.iter().cloned());
                 outer.extend(names);
             }
@@ -207,14 +225,13 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
             FindTerm::Aggregate { op, .. } => outer.push(match op {
                 FoldOp::Sum => format!("SUM(h{position})"),
                 FoldOp::Mean => return Err("exact F64 Mean has no SQLite numerical oracle".into()),
-                FoldOp::Min => format!("MIN(h{position})"),
+                FoldOp::Min => min_sql(&format!("h{position}"), never_nan[position]),
                 FoldOp::Max => format!("MAX(h{position})"),
             }),
             FindTerm::Compute(_) | FindTerm::Segments { .. } => {
                 return Err("computed heads are not translated to SQL".into());
             }
             FindTerm::Pack { .. } => {
-                // routes Pack heads to the naive lane before translation.
                 return Err("Pack is naive-only (no SQL coalesce)".to_owned());
             }
         }
@@ -283,16 +300,13 @@ fn fold_sql(
                 outer.extend(names);
             }
             FindTerm::Count => outer.push("COUNT(*)".to_owned()),
-            FindTerm::Aggregate { op, over } => outer.push({
-                let agg = match op {
-                    FoldOp::Sum => "SUM",
-                    FoldOp::Mean => {
-                        return Err("exact F64 Mean has no SQLite numerical oracle".into());
-                    }
-                    FoldOp::Min => "MIN",
-                    FoldOp::Max => "MAX",
-                };
-                format!("{agg}(v{})", over.0)
+            FindTerm::Aggregate { op, over } => outer.push(match op {
+                FoldOp::Sum => format!("SUM(v{})", over.0),
+                FoldOp::Mean => {
+                    return Err("exact F64 Mean has no SQLite numerical oracle".into());
+                }
+                FoldOp::Min => min_sql(&format!("v{}", over.0), b.never_nan.contains(over)),
+                FoldOp::Max => format!("MAX(v{})", over.0),
             }),
             FindTerm::Compute(_) | FindTerm::Segments { .. } => {
                 return Err("computed heads are not translated to SQL".into());
