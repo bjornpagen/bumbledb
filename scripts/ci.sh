@@ -51,6 +51,58 @@ build_addon() {
 	cp "$target_dir/addon/bumbledb.$platform.node" "ts/bumbledb.$platform.node"
 }
 
+require_env() {
+	local name missing=
+	for name; do
+		[ -n "${!name:-}" ] || missing="$missing $name"
+	done
+	if [ -n "$missing" ]; then
+		echo "ci.sh: missing configuration:$missing" >&2
+		return 1
+	fi
+}
+
+s3api() {
+	aws s3api --region "$BUMBLEDB_S3_REGION" ${BUMBLEDB_S3_ENDPOINT:+--endpoint-url "$BUMBLEDB_S3_ENDPOINT"} "$@"
+}
+
+# Contract probe: 32 racing creates of one key. Exactly one wins, every loser
+# is refused as a conditional-write conflict, and the stored bytes are the winner's.
+s3_race() {
+	local bucket=$1 key="${BUMBLEDB_S3_PREFIX}race" dir i winner= pids=()
+	dir=$(mktemp -d)
+	for i in $(seq 1 32); do
+		printf 'contender %s\n' "$i" > "$dir/$i.body"
+		s3api put-object --bucket "$bucket" --key "$key" --body "$dir/$i.body" --if-none-match '*' \
+			> /dev/null 2> "$dir/$i.err" &
+		pids+=($!)
+	done
+	for i in $(seq 1 32); do
+		if wait "${pids[$((i - 1))]}"; then
+			if [ -n "$winner" ]; then
+				echo "s3 race on $bucket: contenders $winner and $i both created $key" >&2
+				return 1
+			fi
+			winner=$i
+		elif ! grep -Eq 'PreconditionFailed|ConditionalRequestConflict' "$dir/$i.err"; then
+			echo "s3 race on $bucket: contender $i failed without a conditional-write refusal:" >&2
+			cat "$dir/$i.err" >&2
+			return 1
+		fi
+	done
+	if [ -z "$winner" ]; then
+		echo "s3 race on $bucket: no contender created $key" >&2
+		return 1
+	fi
+	s3api get-object --bucket "$bucket" --key "$key" "$dir/stored" > /dev/null
+	if ! cmp -s "$dir/stored" "$dir/$winner.body"; then
+		echo "s3 race on $bucket: the stored object is not the winner's" >&2
+		return 1
+	fi
+	rm -rf "$dir"
+	echo "s3 race on $bucket: 1 of 32 creates won"
+}
+
 lane_lint() {
 	cargo fmt --all --check
 	clippy
@@ -80,6 +132,33 @@ lane_addon() {
 	ts_install
 	pnpm --dir ts test
 	tree_clean
+}
+
+# Real-store conformance. BUMBLEDB_S3_TARGET is seaweedfs (BUMBLEDB_S3_ENDPOINT
+# required) or aws (the log bucket is an S3 Express directory bucket). Both need
+# BUMBLEDB_S3_REGION, BUMBLEDB_S3_LOG_BUCKET, BUMBLEDB_S3_CKPT_BUCKET, a fresh
+# BUMBLEDB_S3_PREFIX ending in "/", and AWS credentials in the environment.
+lane_s3() {
+	require_env BUMBLEDB_S3_TARGET BUMBLEDB_S3_REGION BUMBLEDB_S3_LOG_BUCKET BUMBLEDB_S3_CKPT_BUCKET BUMBLEDB_S3_PREFIX
+	case "$BUMBLEDB_S3_TARGET:${BUMBLEDB_S3_ENDPOINT:+endpoint}" in
+	seaweedfs:endpoint) ;;
+	aws:)
+		case "$BUMBLEDB_S3_LOG_BUCKET" in
+		*--x-s3) ;;
+		*) echo "ci.sh: BUMBLEDB_S3_LOG_BUCKET must be an S3 Express directory bucket (*--x-s3)" >&2; return 1 ;;
+		esac
+		;;
+	*) echo "ci.sh: BUMBLEDB_S3_TARGET must be seaweedfs (with BUMBLEDB_S3_ENDPOINT) or aws (without)" >&2; return 1 ;;
+	esac
+	case "$BUMBLEDB_S3_PREFIX" in
+	*/) ;;
+	*) echo "ci.sh: BUMBLEDB_S3_PREFIX must end in /" >&2; return 1 ;;
+	esac
+	s3_race "$BUMBLEDB_S3_LOG_BUCKET"
+	s3_race "$BUMBLEDB_S3_CKPT_BUCKET"
+	build_addon addon-ci
+	ts_install
+	pnpm --dir ts run test:s3
 }
 
 lane=${1:-}

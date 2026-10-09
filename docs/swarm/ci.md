@@ -15,7 +15,7 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
 | G13/L: delete release bureaucracy scripts and config; musl image on alpine 3.24.2 + prebuilt nextest 0.9.148 | landed |
 | G1: `ci.yml` + `scripts/ci.sh <lane>` | landed (rustdoc gate red on other lanes' docs, see requests) |
 | G5: `.config/deny.toml`, cargo-shear, Dependabot | landed (not runnable locally: no cargo-deny/cargo-shear here) |
-| G4: SeaweedFS and AWS S3 lanes | todo |
+| G4: SeaweedFS and AWS S3 lanes | landed (red until ts adds `test:s3`, see requests) |
 | G10: `deep.yml` | todo |
 | G11: `scripts/bump-toolchain.sh`, `toolchain-canary.yml`, toolchain components | todo |
 | G12: `release.yml`, `scripts/family.mjs`, packed smoke | todo |
@@ -67,6 +67,23 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
   Note for the consolidator: this nightly's cargo already warns `cargo::unused_dependencies`
   (`fearless_simd` in `bumbledb`, `bumbledb` in `bumbledb-query` today); setting
   `[workspace.lints.cargo] unused_dependencies = "deny"` would let lint drop `cargo shear`.
+- **S3 lanes (`scripts/ci.sh s3`).** Environment contract:
+  - `BUMBLEDB_S3_TARGET`: `seaweedfs` (with `BUMBLEDB_S3_ENDPOINT`) or `aws` (no endpoint; the log
+    bucket is an S3 Express directory bucket, `*--x-s3`);
+  - `BUMBLEDB_S3_REGION`, `BUMBLEDB_S3_LOG_BUCKET` (`log/`), `BUMBLEDB_S3_CKPT_BUCKET` (`ckpt/`),
+    `BUMBLEDB_S3_PREFIX` (fresh per run, ends in `/`, e.g. `ci/<run>-<attempt>/`);
+  - credentials through the standard AWS environment (`AWS_ACCESS_KEY_ID`, ...).
+  The lane first runs a contract probe on both buckets with the AWS CLI: 32 racing
+  `put-object --if-none-match '*'` on one key; exactly one wins, every loser is refused with
+  `PreconditionFailed`/`ConditionalRequestConflict`, and the stored bytes are the winner's. Then it
+  builds the addon (`addon-ci`) and runs `pnpm --dir ts run test:s3`.
+  - `ci.yml` `s3-seaweedfs` (pull requests): `chrislusf/seaweedfs:4.48` (`weed mini`) service,
+    endpoint `http://127.0.0.1:8333`, buckets `bumbledb-log` and `bumbledb-ckpt`.
+  - `s3-aws.yml` (reusable; `ci.yml` calls it on pushes to `main`; deep and release call it too):
+    OIDC role `vars.BUMBLEDB_AWS_ROLE_ARN`, `vars.BUMBLEDB_S3_REGION`, `vars.BUMBLEDB_S3_LOG_BUCKET`
+    (Express), `vars.BUMBLEDB_S3_CKPT_BUCKET` (Standard). A missing variable fails the job.
+  - **Owner (U13):** the role's trust policy must accept `repo:bjornpagen/bumbledb:ref:refs/heads/main`
+    and `...:ref:refs/tags/v*`, scoped to `ci/` on both buckets; 1-day lifecycle on `ci/`.
 
 ## Requests to other lanes
 
@@ -77,6 +94,12 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
 - Tests that write outside a temp dir fail the tree-clean check.
 
 ### ts
+- **`pnpm --dir ts run test:s3`**: the S3Store conformance suite against a real store, reading the
+  S3 environment contract above. With `BUMBLEDB_S3_ENDPOINT` set use `forcePathStyle: true`.
+  Every variable is required: a missing one throws (never skips). Keys go under
+  `BUMBLEDB_S3_PREFIX`; never delete under `log/`. The CI lane already runs the racing-create probe
+  before the suite, so the suite need not repeat it. It may load the addon (the lane installs it as
+  the dev addon).
 - `ts/scripts/stage.ts` and `ts/scripts/build.ts` call `scripts/release-results.mjs`
   (`--candidate-digest`, `--specification-revision`, `--write-native-provenance`) and read
   `scripts/version-roster.txt`; both are deleted. Drop pack provenance (`pack-provenance.json` in
