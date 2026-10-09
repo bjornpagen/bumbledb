@@ -142,24 +142,6 @@ impl<S> PreparedQuery<S> {
         // Point probes copy directly into Answers; empty CQs emit nothing.
         self.sink
             .begin_execution(Some(images.source().work().clone()));
-        // ONE numerical guard per whole engine operation:
-        // queries with computed scalar outputs establish the canonical FPU
-        // environment here, hold it across every rule/derived stage and
-        // finalization, and restore the host state when the operation
-        // ends — never per tuple, never per arithmetic node. No host
-        // callback runs while the guard is live (the engine calls none).
-        let _numeric_guard = match self.numeric_outputs {
-            Some(find) => Some(
-                crate::exec::kernel::numeric::NumericalGuard::enter().map_err(|_| {
-                    crate::error::Error::Scalar {
-                        find,
-                        source: crate::ScalarError::UnsupportedPlatform,
-                    }
-                })?,
-            ),
-            None => None,
-        };
-
         let ran = self.run_rules(images, &mut NoopCounters)?;
         self.finish_sink(images, ran, out)
     }

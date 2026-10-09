@@ -331,14 +331,6 @@ pub struct PreparedQuery<S> {
     /// Source-visit census of the last execute (D10).
     #[cfg(test)]
     last_visits: usize,
-    /// `Some(first computed find)` when any rule carries a computed
-    /// scalar output: execution enters ONE [`NumericalGuard`] for the
-    /// whole engine operation (chapter 11 §3 — never per tuple). The
-    /// find index names the diagnostic position for an unsupported
-    /// numerical platform.
-    ///
-    /// [`NumericalGuard`]: crate::exec::kernel::numeric::NumericalGuard
-    numeric_outputs: Option<crate::error::FindIndex>,
     /// Sealed only for a direct probe whose complete row, every parameter
     /// and every result are text-free. Such execution uses the shared
     /// decoder/predicate machinery without acquiring a text generation.

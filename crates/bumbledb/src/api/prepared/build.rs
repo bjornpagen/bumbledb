@@ -247,32 +247,6 @@ fn prepare_witnessed<S>(
             .max(rec_max),
     );
 
-    let numeric_outputs = {
-        let first_compute = |finds: &[FindSpec]| {
-            finds.iter().find_map(|spec| match spec {
-                FindSpec::Compute(program) => Some(crate::error::FindIndex(program.find)),
-                _ => None,
-            })
-        };
-        rules
-            .iter()
-            .map(PreparedRule::finds)
-            .chain(
-                interiors
-                    .iter()
-                    .flat_map(|interior| interior.rules.iter().map(PreparedRule::finds)),
-            )
-            .chain(match &reach {
-                PreparedReach::Cq => Vec::new(),
-                PreparedReach::Reach { driver, .. } => driver
-                    .base
-                    .iter()
-                    .map(PreparedRule::finds)
-                    .chain(driver.rec.iter().map(|rule| rule.finds.as_slice()))
-                    .collect(),
-            })
-            .find_map(first_compute)
-    };
     let pipeline = match reach {
         PreparedReach::Cq => seal_cq_pipeline(interiors, rules, &signature.columns),
         PreparedReach::Reach {
@@ -308,7 +282,6 @@ fn prepare_witnessed<S>(
         answer_scratch: Vec::new(),
         resolve_memo: ResolveMemo::new(),
         key_scratch: crate::image::view::ResolvedWords::default(),
-        numeric_outputs,
         no_text_probe,
         rendered,
         #[cfg(test)]
