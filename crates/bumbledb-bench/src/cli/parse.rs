@@ -352,8 +352,19 @@ fn parse_app_perf(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
 fn parse_micro(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     use crate::harness::micro::{Levels, MicroArgs};
     let mut args = MicroArgs::default();
+    let mut first = true;
     while let Some(flag) = tokens.next() {
         let flag = flag.to_owned();
+        if std::mem::take(&mut first) && flag == "--compare" {
+            let old = PathBuf::from(tokens.value(&flag)?);
+            let new = PathBuf::from(tokens.value(&flag)?);
+            return match tokens.next() {
+                None => Ok(Cmd::MicroCompare { old, new }),
+                Some(extra) => Err(format!(
+                    "`micro --compare` takes exactly two reports, got `{extra}`"
+                )),
+            };
+        }
         match flag.as_str() {
             "--levels" => {
                 args.levels = match tokens.value(&flag)? {

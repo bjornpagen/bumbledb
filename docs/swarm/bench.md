@@ -35,6 +35,10 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
   `docs/perf/runs/2.0.0/micro.json`); `micro.md` lands beside it. JSON:
   `{provenance, seed, elements, float_rows, samples, kernels: [{kernel, level, level_p50_ns,
   twin_p50_ns, speedup}], float_stats: [{family, about, answers, ours}]}`. Non-asserting.
+- New: `micro --compare OLD NEW` prints both reports side by side as Markdown (per kernel × level:
+  old/new p50, change, old/new speedup; per float family: old/new p50, change). For ci's
+  `bump-toolchain.sh`: `micro --levels all --out <file.json>` on each nightly, then
+  `micro --compare <old.json> <new.json>`.
 - Deleted commands: `merge`, `corpus-float`, `hash-probe`.
 - Deleted flags: `bench --proxy-per-rep`, `bench --alloc`, `scenarios --alloc`, `writes --lanes`,
   `app-perf --plan`, `app-perf --dir`, `storage --profile/--rows/--samples` (home-costs).
@@ -57,10 +61,8 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 
 ### engine-storage
 
-- `crates/bumbledb/src/lib.rs` re-exports `with_grounding_disabled` under `ground-off`, but since
-  `23e4ef997` it exists only under `testing`, so a `ground-off` build fails. The bench no longer
-  uses it or `create_store_without_admission`; nothing outside the engine names `ground-off` now.
-- E2 needs numeric's requested `#[doc(hidden)] pub mod kernels` re-export in `lib.rs`.
+- `bumbledb-bench` names no engine feature any more (`alloc-counter`, `ground-off`,
+  `collision-probe` and `testing` are all unused by the bench): delete them whenever you like.
 
 ### ci
 

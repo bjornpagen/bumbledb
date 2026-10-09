@@ -114,6 +114,7 @@ pub fn help() -> String {
          \x20 --dir PATH     scratch root             (default bench-data)\n\
          \x20 --out PATH     JSON report path; micro.md lands beside it\n\
          \x20                (default bench-out/<timestamp>-micro/micro.json)\n\
+         \x20 micro --compare OLD NEW  two micro.json reports as a Markdown table\n\
          \n\
          APP-PERF:\n\
          \x20 --scale S|M|L   corpus scale             (default S)\n\

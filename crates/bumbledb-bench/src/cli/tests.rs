@@ -542,3 +542,23 @@ fn micro_parses_levels_and_sizes() {
         assert!(parse(&argv(&args)).is_err(), "accepted {args:?}");
     }
 }
+
+#[test]
+fn micro_compare_takes_exactly_two_reports() {
+    assert_eq!(
+        parse(&argv(&["micro", "--compare", "old.json", "new.json"])),
+        Ok(Cmd::MicroCompare {
+            old: PathBuf::from("old.json"),
+            new: PathBuf::from("new.json"),
+        })
+    );
+    assert!(
+        !Cmd::MicroCompare {
+            old: PathBuf::new(),
+            new: PathBuf::new(),
+        }
+        .runs_measurements()
+    );
+    assert!(parse(&argv(&["micro", "--compare", "old.json"])).is_err());
+    assert!(parse(&argv(&["micro", "--compare", "a", "b", "c"])).is_err());
+}

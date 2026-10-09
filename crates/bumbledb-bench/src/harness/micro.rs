@@ -567,6 +567,129 @@ pub fn run(args: &MicroArgs) -> Result<i32, String> {
     Ok(0)
 }
 
+/// `(kernel, level) -> (level p50, speedup)` and `family -> p50` of one report.
+type Cells = (
+    std::collections::BTreeMap<(String, String), (f64, f64)>,
+    std::collections::BTreeMap<String, f64>,
+);
+
+fn cells(path: &Path) -> Result<Cells, String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let report = json::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let field = |row: &json::Value, key: &str| {
+        row.get(key)
+            .ok_or_else(|| format!("{}: a row lacks `{key}`", path.display()))
+            .cloned()
+    };
+    let text_of = |row: &json::Value, key: &str| -> Result<String, String> {
+        field(row, key)?
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("{}: `{key}` is not a string", path.display()))
+    };
+    let number_of = |row: &json::Value, key: &str| -> Result<f64, String> {
+        field(row, key)?
+            .as_f64()
+            .ok_or_else(|| format!("{}: `{key}` is not a number", path.display()))
+    };
+    let rows = |key: &str| -> Result<Vec<json::Value>, String> {
+        report
+            .get(key)
+            .and_then(json::Value::as_arr)
+            .map(<[json::Value]>::to_vec)
+            .ok_or_else(|| format!("{}: no `{key}` array", path.display()))
+    };
+    let mut kernels = std::collections::BTreeMap::new();
+    for row in rows("kernels")? {
+        kernels.insert(
+            (text_of(&row, "kernel")?, text_of(&row, "level")?),
+            (
+                number_of(&row, "level_p50_ns")?,
+                number_of(&row, "speedup")?,
+            ),
+        );
+    }
+    let mut floats = std::collections::BTreeMap::new();
+    for row in rows("float_stats")? {
+        let p50 = field(&row, "ours")?
+            .get("p50")
+            .and_then(json::Value::as_f64)
+            .ok_or_else(|| format!("{}: a float row lacks `ours.p50`", path.display()))?;
+        floats.insert(text_of(&row, "family")?, p50);
+    }
+    Ok((kernels, floats))
+}
+
+fn cell(value: Option<f64>) -> String {
+    value.map_or_else(|| "-".to_owned(), |v| format!("{v:.0}"))
+}
+
+fn change(old: Option<f64>, new: Option<f64>) -> String {
+    match (old, new) {
+        (Some(old), Some(new)) if old > 0.0 => format!("{:+.1}%", (new / old - 1.0) * 100.0),
+        _ => "-".to_owned(),
+    }
+}
+
+/// A Markdown comparison of two `micro.json` reports, row by row. Never a
+/// verdict: a timing difference between two runs is a report.
+/// # Errors
+/// When either report is unreadable or malformed.
+pub fn compare(old: &Path, new: &Path) -> Result<String, String> {
+    let (old_kernels, old_floats) = cells(old)?;
+    let (new_kernels, new_floats) = cells(new)?;
+    let mut out = format!(
+        "# micro: {} → {}\n\n\
+         | kernel | level | old p50 ns | new p50 ns | change | old speedup | new speedup |\n\
+         |---|---|---:|---:|---:|---:|---:|\n",
+        old.display(),
+        new.display()
+    );
+    let keys: std::collections::BTreeSet<_> = old_kernels
+        .keys()
+        .chain(new_kernels.keys())
+        .cloned()
+        .collect();
+    for key in keys {
+        let old_cell = old_kernels.get(&key);
+        let new_cell = new_kernels.get(&key);
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} | {} | {} |",
+            key.0,
+            key.1,
+            cell(old_cell.map(|c| c.0)),
+            cell(new_cell.map(|c| c.0)),
+            change(old_cell.map(|c| c.0), new_cell.map(|c| c.0)),
+            old_cell.map_or_else(|| "-".to_owned(), |c| format!("{:.2}x", c.1)),
+            new_cell.map_or_else(|| "-".to_owned(), |c| format!("{:.2}x", c.1)),
+        );
+    }
+    out.push_str(
+        "\n| float_stats family | old p50 ns | new p50 ns | change |\n|---|---:|---:|---:|\n",
+    );
+    let families: std::collections::BTreeSet<_> = old_floats
+        .keys()
+        .chain(new_floats.keys())
+        .cloned()
+        .collect();
+    for family in families {
+        let (old_p50, new_p50) = (
+            old_floats.get(&family).copied(),
+            new_floats.get(&family).copied(),
+        );
+        let _ = writeln!(
+            out,
+            "| {family} | {} | {} | {} |",
+            cell(old_p50),
+            cell(new_p50),
+            change(old_p50, new_p50)
+        );
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -619,5 +742,34 @@ mod tests {
             .expect("float rows");
         assert_eq!(floats.len(), float_stats::families().len());
         assert!(out.with_extension("md").exists());
+    }
+
+    #[test]
+    fn compare_lines_up_two_reports_row_by_row() {
+        let dir = crate::fixture::TempDir::new("micro-compare");
+        std::fs::create_dir_all(dir.path()).expect("scratch");
+        let report = |p50: u64, speedup: f64| {
+            format!(
+                "{{\"kernels\":[{{\"kernel\":\"fold_sum_u64\",\"level\":\"neon\",\
+                 \"level_p50_ns\":{p50},\"twin_p50_ns\":400,\"speedup\":{speedup}}}],\
+                 \"float_stats\":[{{\"family\":\"float_filter_gt\",\"about\":\"\",\
+                 \"answers\":1,\"ours\":{{\"p50\":{p50}}}}}]}}"
+            )
+        };
+        let old = dir.path().join("old.json");
+        let new = dir.path().join("new.json");
+        std::fs::write(&old, report(100, 4.0)).expect("old");
+        std::fs::write(&new, report(150, 2.67)).expect("new");
+        let markdown = compare(&old, &new).expect("compares");
+        assert!(
+            markdown.contains("| fold_sum_u64 | neon | 100 | 150 | +50.0% | 4.00x | 2.67x |"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("| float_filter_gt | 100 | 150 | +50.0% |"),
+            "{markdown}"
+        );
+        std::fs::write(&new, "{}").expect("malformed");
+        assert!(compare(&old, &new).is_err());
     }
 }

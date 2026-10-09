@@ -88,6 +88,12 @@ pub enum Cmd {
     /// `float_stats` families.
     Micro(crate::harness::micro::MicroArgs),
 
+    /// Two `micro` JSON reports side by side, as Markdown.
+    MicroCompare {
+        old: PathBuf,
+        new: PathBuf,
+    },
+
     /// The app-perf regime lane over the ledger corpus (report-class).
     AppPerf(AppPerfArgs),
 }
@@ -111,7 +117,8 @@ impl Cmd {
             | Self::Queries
             | Self::Gen(_)
             | Self::Verify { .. }
-            | Self::VerifyStore(_) => false,
+            | Self::VerifyStore(_)
+            | Self::MicroCompare { .. } => false,
         }
     }
 }

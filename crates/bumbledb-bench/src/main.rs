@@ -27,6 +27,10 @@ fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
         cli::Cmd::Curves(args) => lanes::curves::run(args),
         cli::Cmd::Heap(args) => lanes::heap::run(args),
         cli::Cmd::Micro(args) => micro::run(args),
+        cli::Cmd::MicroCompare { old, new } => micro::compare(old, new).map(|markdown| {
+            print!("{markdown}");
+            0
+        }),
         cli::Cmd::AppPerf(args) => appperf::run(args),
     }
 }
