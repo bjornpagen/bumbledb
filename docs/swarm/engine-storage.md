@@ -23,7 +23,10 @@ C17, G2 (engine), L (code).
 | C15 macro side: `schema!` runs `check` at expansion; spanned errors; compile-fail fixtures | landed `a79b3b50f` |
 | C5 stage B: fact codec deleted (`FactLayout`, `FactView`, `SealedRow::fact`, `Relation::layout`, `ValueRef`, `encode_literal`, `decode_sealed`) | landed `a79aab954` |
 | C8 stage B: `Error::Store`/`StoreError` deleted; `Error::Cancelled`, `Error::Allocation` | landed `a79aab954` |
-| A (pointwise sweep), C10, C1, C6, `unreachable_pub`, L | in progress |
+| A: pointwise sweep carries the furthest end; every offender cited | landed `fc89672f0` |
+| C6: plain slice ops, `sort_unstable_by`, one value codec | landed `b34e830e7` |
+| C10: one `Facts` trait on `Result<ControlFlow>`, two entry points, split files, change sets indexed by relation | landed `05a270413` |
+| C1, `unreachable_pub`/`dead_code` sweep, L | in progress |
 
 ## API changes (announcements)
 
@@ -131,24 +134,20 @@ C17, G2 (engine), L (code).
   (`encode_{bool,u64,i64,f64}`, `decode_{i64,f64}`), `FixedBytesValue`, `fixed_bytes_words`,
   `InternId`. `bumbledb::__private` keeps only `fixed_interval_{u64,i64}`.
   `canonical::append_value` is the one value codec (stored rows and fingerprint literals).
+- **C10.** `schema::judge` is `pub(crate)`; `bumbledb::schema::{judge_complete,
+  judge_incremental}` are gone (no crate outside the engine named them). Inside the crate:
+  `judge_complete(schema, &impl Facts, work, budget) -> Result<Judgment>` and
+  `judge_incremental(schema, &impl DeltaFacts, work, budget) -> Result<Judgment>`; visitors are
+  `FnMut(&[Value]) -> Result<ControlFlow<()>>`; indexed visits return `Indexed::{Unindexed,
+  Walked}`. `JudgeError` is gone (`Error::CapacityRayMeasure`, `Error::MeasureOverflow`,
+  `Error::Compile`, cancellation). `bumbledb::changes::DeltaShape { adds, removes }` and
+  `ChangeSet::shape(relation)` are public.
 - **C15 (macro).** `schema!` calls `bumbledb_theory::schema::check` after lowering and reports
   the error at the tokens it names. `SchemaError::named(&descriptor)` renders relations, fields
   and rows by their declared names (`` `Task.kind` ``, `` row `Frozen` of `Status` ``); `Display`
   still names them by id. `StatementErrorKind::CapacityDimensionMixing` gained `relation`.
 
 ## Requests to other lanes
-
-- **engine-query (clippy after `a79aab954`, your file):** `api/prepared/source.rs:28`
-  `work_error` is dead now that `decode_sealed` is gone (delete it; `Error::from(work)` is the
-  conversion), and `source.rs:251` is `projection.count_bounded(&projected, limit, work)` without
-  `Ok(..?)` (storage returns `Error` directly). These are the only `-D warnings` findings in
-  `-p bumbledb --all-targets` at that commit.
-
-- **engine-query (C10, one line, works at HEAD now):** `plan/fj/tests/distinct_proof.rs:492-534`
-  calls `judge_final_state`; call `judge_complete` (same arguments) instead. C10 keeps two judge
-  entry points, `judge_complete` and `judge_incremental`; `judge_final_state` goes once your test
-  stops naming it. Judgments then return `bumbledb::Result<Judgment>`, so `.expect(..)` still
-  compiles.
 
 - **consolidator (bridge, optional):** `bumbledb-node/src/schema.rs::schema_diagnostic` has the
   descriptor at hand; `error.named(descriptor).to_string()` gives the message with declared names
