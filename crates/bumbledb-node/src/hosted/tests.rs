@@ -320,3 +320,201 @@ fn malformed_open_documents_cite_their_path() {
     .unwrap_err();
     assert!(refused.message.contains("extra"), "{refused:?}");
 }
+
+const SPEC_WITH_TAGS: &str = r#"{"relations":[
+    {"name":"Item","fields":[
+      {"name":"id","valueType":{"kind":"U64"}},
+      {"name":"label","valueType":{"kind":"String"}}]},
+    {"name":"Tag","fields":[{"name":"id","valueType":{"kind":"U64"}}]}],
+  "statements":[{"kind":"Fd","relation":"Item","projection":["id"]}]}"#;
+
+fn admit_hosted(runtime: &Arc<Runtime>, opened: HostedOpened) -> RegistryAdmission {
+    RegistryAdmission::admit(
+        Arc::clone(runtime),
+        NativeKind::Hosted,
+        Payload::Hosted(opened.hosted),
+    )
+    .unwrap()
+}
+
+fn close_hosted(runtime: &Arc<Runtime>, hosted: RegistryAdmission, store: &mut Store) {
+    let closing = wait(runtime, |notify| {
+        step(&hosted, notify, Input::Close).unwrap()
+    });
+    drive(runtime, &hosted, store, closing);
+    let (sender, receiver) = channel();
+    crate::db_wire::close_admitted(
+        hosted.runtime(),
+        hosted.cap(),
+        Box::new(move |report| sender.send(report).unwrap()),
+    );
+    assert_eq!(
+        receiver.recv_timeout(Duration::from_secs(10)).unwrap(),
+        CloseReport::Closed
+    );
+}
+
+#[test]
+fn a_migration_carries_unchanged_relations_and_reads_switch_to_the_new_schema() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = std::env::temp_dir().join(format!(
+        "bumbledb-node-hosted-migrate-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+    let owner = acquire(&runtime, &base.join("cache"));
+    let reference = owner.reference();
+    let root = reference.child_path("db").unwrap();
+    let mut store = Store::default();
+
+    let first = open_hosted(
+        reference.clone(),
+        &root,
+        bundle(),
+        open_config(),
+        reference.lease().unwrap(),
+    )
+    .unwrap();
+    let initial = Arc::clone(&first.hosted.schemas[0]);
+    let hosted = admit_hosted(&runtime, first);
+    let open = wait(&runtime, |notify| {
+        step(&hosted, notify, Input::Open(Ticket(1))).unwrap()
+    });
+    drive(&runtime, &hosted, &mut store, open);
+    let rows = crate::db_wire::ChangesHandle::from_admission(
+        RegistryAdmission::admit(
+            Arc::clone(&runtime),
+            NativeKind::Changes,
+            changes(&initial, &[(7, "kept")]),
+        )
+        .unwrap(),
+    );
+    let submitted = wait(&runtime, |notify| {
+        step_with_changes(&hosted, &rows, notify, |changes, _| {
+            Ok(Input::Submit(
+                Ticket(2),
+                Command::seal(RequestId([1; 16]), Precondition::None, changes),
+            ))
+        })
+        .unwrap()
+    });
+    let done = drive(&runtime, &hosted, &mut store, submitted);
+    assert!(matches!(
+        done.as_slice(),
+        [DoneOut {
+            settled: SettledOut::Decided { .. },
+            ..
+        }]
+    ));
+    close_hosted(&runtime, hosted, &mut store);
+
+    let mut steps = bundle();
+    steps.push(
+        crate::input::decode(&format!(
+            r#"{{"name":"0001_tags","hash":"{}","schema":{SPEC_WITH_TAGS}}}"#,
+            "cd".repeat(32)
+        ))
+        .unwrap(),
+    );
+    let second = open_hosted(
+        reference.clone(),
+        &root,
+        steps,
+        open_config(),
+        reference.lease().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        second.unchanged[1]
+            .iter()
+            .map(|pair| (pair.target, pair.source))
+            .collect::<Vec<_>>(),
+        [(0, 0)]
+    );
+    let tagged = Arc::clone(&second.hosted.schemas[1]);
+    let reads = Arc::clone(&second.hosted.reads);
+    let hosted = admit_hosted(&runtime, second);
+    let Output::HostedStep(opened) = wait(&runtime, |notify| {
+        step(&hosted, notify, Input::Open(Ticket(3))).unwrap()
+    }) else {
+        panic!("expected a step")
+    };
+    let mut head = opened.head.as_ref().map(|head| head.seq);
+    let done = drive(&runtime, &hosted, &mut store, Output::HostedStep(opened));
+    assert!(matches!(
+        done.as_slice(),
+        [DoneOut {
+            settled: SettledOut::Opened { pending: 1 },
+            ..
+        }]
+    ));
+    let Output::HostedStep(synced) = wait(&runtime, |notify| {
+        step(&hosted, notify, Input::Sync(Ticket(4))).unwrap()
+    }) else {
+        panic!("expected a step")
+    };
+    head = synced.head.as_ref().map(|head| head.seq).or(head);
+    drive(&runtime, &hosted, &mut store, Output::HostedStep(synced));
+    let empty = crate::db_wire::ChangesHandle::from_admission(
+        RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Changes, {
+            let changes = bumbledb::ChangeSet::builder(&tagged.schema, WorkContext::new())
+                .finish()
+                .unwrap();
+            Payload::Changes {
+                fingerprint: crate::schema::hex(&changes.schema().0),
+                changes,
+                schema: Arc::clone(&tagged.schema),
+            }
+        })
+        .unwrap(),
+    );
+    let base_seq = Seq::new(head.expect("an open database has a head")).unwrap();
+    let migrated = wait(&runtime, |notify| {
+        step_with_changes(&hosted, &empty, notify, move |rows, hosted| {
+            let step = hosted.machine.replica().bundle().steps()[1].id.clone();
+            Ok(Input::Migrate(
+                Ticket(5),
+                Population {
+                    step,
+                    base: base_seq,
+                    copy: Box::new([(RelationId(0), RelationId(0))]),
+                    rows,
+                },
+            ))
+        })
+        .unwrap()
+    });
+    let done = drive(&runtime, &hosted, &mut store, migrated);
+    assert!(matches!(
+        done.as_slice(),
+        [DoneOut {
+            ticket: 5,
+            settled: SettledOut::Migrated { .. }
+        }]
+    ));
+
+    let Output::Session(opened) = wait(&runtime, |notify| snapshot(&reads, notify).unwrap()) else {
+        panic!("expected a snapshot")
+    };
+    assert_eq!(opened.schema.fingerprint, tagged.fingerprint);
+    assert_eq!(
+        read_label(&runtime, &opened.session, 7).as_deref(),
+        Some("kept")
+    );
+    drop(opened);
+    close_hosted(&runtime, hosted, &mut store);
+    drop((reads, rows, empty));
+    let (sender, receiver) = channel();
+    owner.drain(Box::new(move |report| sender.send(report).unwrap()));
+    assert_eq!(
+        receiver.recv_timeout(Duration::from_secs(10)).unwrap(),
+        CloseReport::Closed
+    );
+    let (sender, receiver) = channel();
+    runtime.drain(None, Box::new(move |report| sender.send(report).unwrap()));
+    assert_eq!(
+        receiver.recv_timeout(Duration::from_secs(10)).unwrap(),
+        CloseReport::Closed
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
