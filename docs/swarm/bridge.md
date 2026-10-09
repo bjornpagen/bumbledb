@@ -7,7 +7,7 @@ Owns: `crates/bumbledb-node/**`, `ts/src/native/binding.d.ts`, `docs/swarm/bridg
 | Item | State |
 |---|---|
 | D: delete the old log wire (`log.rs`, `log_wire*`, `log-identities.json`, `Output::Log/Machine`, population payloads, ordered payload sequence, control lane) | done |
-| Brittle tests: exact allocation transcriptions, pinned fingerprint twin, `tags.json` golden | in progress |
+| Brittle tests deleted: exact allocation transcriptions, the `alloc-counter` feature, the pinned fingerprint twin (`fingerprint_lock.rs`), the cross-lane `tags.json` golden, duplicate idle-shutdown test | done |
 | F8: serde JSON cold inputs (`SchemaSpec`, query IR, runtime options) with `{path, message}` diagnostics | in progress |
 | D17: sync `compileSchema` / `validateQuery` / `schemaBindings` returning branded handles | in progress |
 | F7: generated outputs (`#[napi(object)]`, `_tag` unions), committed `ts/src/native/binding.d.ts` | planned |

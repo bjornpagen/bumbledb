@@ -15,8 +15,6 @@ use napi_derive::napi;
 
 mod bindings;
 pub mod db_wire;
-#[cfg(test)]
-mod fingerprint_lock;
 mod marshal;
 mod runtime;
 pub mod runtime_wire;

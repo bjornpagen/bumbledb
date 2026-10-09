@@ -7,9 +7,6 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-[features]
-alloc-counter = ["bumbledb/alloc-counter"]
-
 [dependencies]
 bumbledb = { path = "../bumbledb" }
 napi = { version = "3.14", default-features = true, features = ["napi8"] }

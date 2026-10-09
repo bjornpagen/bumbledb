@@ -397,18 +397,7 @@ fn suspended_owner_fences_a_second_acquire() {
 }
 
 #[test]
-fn d18_idle_shutdown_wakes_sleeping_pool_without_reentering_state() {
-    // D18: drain an idle pool. lane_send must not re-lock runtime.state
-    // from begin_close/drain (std Mutex deadlock / hang).
-    let runtime = Runtime::start(options()).unwrap();
-    assert_eq!(runtime.inspect().active, 0);
-    assert_eq!(runtime.inspect().phase, Phase::Open);
-    assert_eq!(close(&runtime), CloseReport::Closed);
-    assert_eq!(runtime.inspect().phase, Phase::Closed);
-}
-
-#[test]
-fn d29_worker_inbox_wakeup_reaches_a_sleeping_pool() {
+fn worker_inbox_wakeup_reaches_a_sleeping_pool() {
     // D24/D29 sensitivity: a sleeping worker must observe an admitted inbox
     // item (lane_send holds the bookkeeping lock across notify; the wait
     // path try_recv's before Condvar::wait). One ready job after idle

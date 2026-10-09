@@ -258,7 +258,7 @@ fn submit_publish(runtime: &Arc<Runtime>, cap: Capability) -> Result<Output, Run
 }
 
 #[test]
-fn d12_cancelled_pull_refuses_and_retry_delivers_same_row() {
+fn cancelled_pull_refuses_and_retry_delivers_same_row() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("oversized-retry");
     std::fs::create_dir_all(&base).unwrap();
@@ -302,7 +302,7 @@ fn d12_cancelled_pull_refuses_and_retry_delivers_same_row() {
 }
 
 #[test]
-fn d25_abort_retry_same_row_then_commit_keeps_queued_owner() {
+fn abort_retry_same_row_then_commit_keeps_queued_owner() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("abort-retry");
     std::fs::create_dir_all(&base).unwrap();
@@ -336,7 +336,7 @@ fn d25_abort_retry_same_row_then_commit_keeps_queued_owner() {
 }
 
 #[test]
-fn d25_delivery_batches_include_multiple_rows() {
+fn delivery_batches_include_multiple_rows() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("multirow");
     std::fs::create_dir_all(&base).unwrap();
@@ -368,7 +368,7 @@ fn d25_delivery_batches_include_multiple_rows() {
 }
 
 #[test]
-fn d12_arm_cancel_after_page_retries_same_first_row() {
+fn arm_cancel_after_page_retries_same_first_row() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("arm-cancel");
     std::fs::create_dir_all(&base).unwrap();
@@ -408,7 +408,7 @@ fn d12_arm_cancel_after_page_retries_same_first_row() {
 }
 
 #[test]
-fn d12_reject_keeps_row_accept_advances() {
+fn reject_keeps_row_accept_advances() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("accept-reject");
     std::fs::create_dir_all(&base).unwrap();
@@ -457,7 +457,7 @@ fn d12_reject_keeps_row_accept_advances() {
 }
 
 #[test]
-fn d12_publication_boundary_cannot_skip_or_duplicate() {
+fn publication_boundary_cannot_skip_or_duplicate() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("pub-boundary");
     std::fs::create_dir_all(&base).unwrap();
@@ -513,7 +513,7 @@ fn d12_publication_boundary_cannot_skip_or_duplicate() {
 }
 
 #[test]
-fn d12_native_conversion_refusal_retries_same_first_row() {
+fn native_conversion_refusal_retries_same_first_row() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("overlap-reserve");
     std::fs::create_dir_all(&base).unwrap();
@@ -558,7 +558,7 @@ fn d12_native_conversion_refusal_retries_same_first_row() {
 }
 
 #[test]
-fn d12_adopt_and_abort_cannot_be_committed_by_a_fresh_ticket() {
+fn adopt_and_abort_cannot_be_committed_by_a_fresh_ticket() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("adopt-abort");
     std::fs::create_dir_all(&base).unwrap();
@@ -601,7 +601,7 @@ fn d12_adopt_and_abort_cannot_be_committed_by_a_fresh_ticket() {
 }
 
 #[test]
-fn d12_backing_failure_stays_terminal() {
+fn backing_failure_stays_terminal() {
     let store = RuntimeError::Engine {
         diagnostic: None,
         kind: crate::tags::error_family::STORE,
@@ -677,7 +677,7 @@ fn draft_chunks_accumulate_without_quotas_and_cancellation_releases_the_prefix()
 }
 
 #[test]
-fn d07_draft_finish_normalizes_add_wins_and_spends() {
+fn draft_finish_normalizes_add_wins_and_spends() {
     let ctx = work();
     let mut payload = Payload::Draft(draft_payload());
     let row = vec![vec![Value::U64(7), Value::U64(70)]];
@@ -774,7 +774,7 @@ fn sealed_result(runtime: &Arc<Runtime>, db: &ManagedDb) -> (Payload, u64) {
 }
 
 #[test]
-fn d18_sealed_results_outlive_their_session_and_cancelled_collection() {
+fn sealed_results_outlive_their_session_and_cancelled_collection() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("collect");
     std::fs::create_dir_all(&base).unwrap();
@@ -807,146 +807,61 @@ fn d18_sealed_results_outlive_their_session_and_cancelled_collection() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-#[cfg(feature = "alloc-counter")]
 #[test]
-fn native_collection_allocates_only_the_final_scalar_rows() {
-    use bumbledb::alloc_counter;
-
-    let runtime = Runtime::start(options()).unwrap();
-    let base = unique_dir("collect-allocations");
-    std::fs::create_dir_all(&base).unwrap();
-    let owner = acquire(&runtime, &base.join("tenant"));
-    let db = attach(&owner, &Mini.descriptor());
-    let input: Vec<_> = (0..512).map(|i| [i, i * 10]).collect();
-    insert_rows(&db, &input);
-    let (mut payload, count) = sealed_result(&runtime, &db);
-    drop(db);
-    drop(owner);
-    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
-    // The completed result is independent. Stop background workers before
-    // the process-global counter window; nextest isolates this test process.
-    let ctx = work();
-    for _ in 0..2 {
-        alloc_counter::reset();
-        let output = collect_from_payload(&mut payload, &ctx).expect("collect completed rows");
-        let allocated = alloc_counter::snapshot().window;
-        let Output::Rows(queued) = output else {
-            panic!("expected rows");
-        };
-        eprintln!("native scalar collect: {allocated:?}");
-        assert_eq!(queued.rows.len() as u64, count);
-        assert!(matches!(
-            queued.rows[511].as_slice(),
-            [ValueOut::U64(511), ValueOut::U64(5110)]
-        ));
-        assert_eq!(
-            allocated.allocs,
-            count + 1,
-            "one outer vector and one final vector per row; no intermediate Answers"
-        );
-        assert_eq!(
-            allocated.alloc_bytes,
-            count * (size_of::<Vec<ValueOut>>() + 2 * size_of::<ValueOut>()) as u64
-        );
-        let before_drop = alloc_counter::snapshot().window;
-        drop(queued);
-        let after_drop = alloc_counter::snapshot().window;
-        assert_eq!(
-            after_drop.dealloc_bytes - before_drop.dealloc_bytes,
-            allocated.alloc_bytes
-        );
-        assert_eq!(after_drop.deallocs - before_drop.deallocs, allocated.allocs);
-    }
-    drop(payload);
-    let _ = std::fs::remove_dir_all(&base);
-}
-
-#[test]
-fn native_text_collection_owns_one_copy_for_small_and_large_results() {
+fn native_text_collection_owns_its_rows_after_every_engine_owner_is_gone() {
     bumbledb::schema! {
         pub TextRows;
         relation Item { a: u64, b: str }
     }
-    // The larger fixture exceeds 8 MiB without changing result representation.
-    // These are delivery allocations, not execution or RSS measurements.
-    for (count, text_bytes) in [(128u64, 1024usize), (129, 65536)] {
-        let runtime = Runtime::start(options()).unwrap();
-        let base = unique_dir("collect-text");
-        std::fs::create_dir_all(&base).unwrap();
-        let owner = acquire(&runtime, &base.join("tenant"));
-        let descriptor = TextRows.descriptor();
-        let db = attach(&owner, &descriptor);
-        let text = "\u{1f41d}".repeat(text_bytes / 4);
-        {
-            let lease = db.access().unwrap();
-            for id in 0..count {
-                let admitted = lease
-                    .db()
-                    .write(work(), |tx| {
-                        let rows = bumbledb::AcceptedCollection::from_value_rows(
-                            RelationId(0),
-                            &descriptor.relations[0].fields,
-                            [[Value::U64(id), Value::String(text.clone().into())]],
-                        )
-                        .unwrap();
-                        tx.insert_accepted(&rows).map(|_| ())
-                    })
-                    .unwrap();
-                assert!(matches!(admitted, bumbledb::Admission::Accepted(_)));
-            }
-        }
-        let (mut payload, actual_count) = sealed_result(&runtime, &db);
-        assert_eq!(actual_count, count);
-        drop(db);
-        drop(owner);
-        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
-
-        #[cfg(feature = "alloc-counter")]
-        let expected_bytes =
-            count * (size_of::<Vec<ValueOut>>() + 2 * size_of::<ValueOut>() + text_bytes) as u64;
-        let refused = work();
-        refused.cancel();
-        assert!(matches!(
-            collect_from_payload(&mut payload, &refused),
-            Err(RuntimeError::Work(WorkError::Cancelled))
-        ));
-        let mut last = None;
-        for _ in 0..2 {
-            let delivery = work();
-            #[cfg(feature = "alloc-counter")]
-            bumbledb::alloc_counter::reset();
-            let output = collect_from_payload(&mut payload, &delivery).unwrap();
-            #[cfg(feature = "alloc-counter")]
-            let allocated = bumbledb::alloc_counter::snapshot().window;
-            let Output::Rows(queued) = output else {
-                panic!("expected rows");
-            };
-
-            assert_eq!(queued.rows.len() as u64, count);
-            #[cfg(feature = "alloc-counter")]
-            {
-                eprintln!("native text collect ({count} x {text_bytes}): {allocated:?}");
-                assert_eq!(allocated.allocs, count * 2 + 1);
-                assert_eq!(allocated.alloc_bytes, expected_bytes);
-            }
-            last = Some(queued);
-        }
-        drop(payload);
-        // All engine/session/result owners are gone. The queued output owns
-        // complete UTF-8 and exact integers, ready for JavaScript transfer.
-        let queued = last.unwrap();
-        for (index, row) in queued.rows.iter().enumerate() {
-            assert!(
-                matches!(row.as_slice(), [ValueOut::U64(id), ValueOut::Text(value)] if *id == index as u64 && value == &text)
-            );
-        }
-        drop(queued);
-        let _ = std::fs::remove_dir_all(&base);
+    let count = 8u64;
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("collect-text");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let descriptor = TextRows.descriptor();
+    let db = attach(&owner, &descriptor);
+    let text = "\u{1f41d}".repeat(256);
+    {
+        let lease = db.access().unwrap();
+        let rows = bumbledb::AcceptedCollection::from_value_rows(
+            RelationId(0),
+            &descriptor.relations[0].fields,
+            (0..count).map(|id| [Value::U64(id), Value::String(text.clone().into())]),
+        )
+        .unwrap();
+        let admitted = lease
+            .db()
+            .write(work(), |tx| tx.insert_accepted(&rows).map(|_| ()))
+            .unwrap();
+        assert!(matches!(admitted, bumbledb::Admission::Accepted(_)));
     }
+    let (mut payload, actual_count) = sealed_result(&runtime, &db);
+    assert_eq!(actual_count, count);
+    drop(db);
+    drop(owner);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+
+    let refused = work();
+    refused.cancel();
+    assert!(matches!(
+        collect_from_payload(&mut payload, &refused),
+        Err(RuntimeError::Work(WorkError::Cancelled))
+    ));
+    let Output::Rows(queued) = collect_from_payload(&mut payload, &work()).unwrap() else {
+        panic!("expected rows");
+    };
+    drop(payload);
+    assert_eq!(queued.rows.len() as u64, count);
+    for (index, row) in queued.rows.iter().enumerate() {
+        assert!(
+            matches!(row.as_slice(), [ValueOut::U64(id), ValueOut::Text(value)] if *id == index as u64 && value == &text)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]
-fn d12_one_shot_transfer_spends_and_second_use_refuses() {
+fn one_shot_transfer_spends_and_second_use_refuses() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("transfer");
     std::fs::create_dir_all(&base).unwrap();
@@ -977,7 +892,7 @@ fn d12_one_shot_transfer_spends_and_second_use_refuses() {
 }
 
 #[test]
-fn d18_queued_output_close_drains_without_wrapper_authority() {
+fn queued_output_close_drains_without_wrapper_authority() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("queued-close");
     std::fs::create_dir_all(&base).unwrap();
@@ -1258,7 +1173,7 @@ fn the_row_codec_borrows_decoded_values_and_refuses_foreign_records() {
 }
 
 #[test]
-fn row_codec_outputs_own_payloads_and_release_their_storage() {
+fn row_codec_outputs_own_their_payloads() {
     use bumbledb::schema::ValidateDescriptor as _;
     bumbledb::schema! {
         pub PayloadRows;
@@ -1285,20 +1200,6 @@ fn row_codec_outputs_own_payloads_and_release_their_storage() {
     );
     assert!(matches!(&decoded.rows[1][1], ValueOut::Text(value) if value == &text));
     assert!(matches!(&decoded.rows[1][2], ValueOut::Bytes(value) if value.as_slice() == [8; 16]));
-    #[cfg(feature = "alloc-counter")]
-    let before_drop = bumbledb::alloc_counter::snapshot().window;
-    drop(decoded);
-    #[cfg(feature = "alloc-counter")]
-    {
-        let after_drop = bumbledb::alloc_counter::snapshot().window;
-        let owned_bytes =
-            2 * (size_of::<Vec<ValueOut>>() + 3 * size_of::<ValueOut>() + 36 + text.len() + 16);
-        assert_eq!(
-            after_drop.dealloc_bytes - before_drop.dealloc_bytes,
-            owned_bytes as u64
-        );
-        assert_eq!(after_drop.deallocs - before_drop.deallocs, 9);
-    }
 }
 
 #[test]
@@ -1353,20 +1254,13 @@ fn input_rows_use_checked_capacity_and_preserve_cancellation() {
 
 #[test]
 fn empty_native_output_needs_no_allocation() {
-    let ctx = work();
-    #[cfg(feature = "alloc-counter")]
-    let before = bumbledb::alloc_counter::snapshot().window;
-    let output = crate::marshal::result_rows(&ctx, 0).unwrap();
-    #[cfg(feature = "alloc-counter")]
-    let after = bumbledb::alloc_counter::snapshot().window;
+    let output = crate::marshal::result_rows(&work(), 0).unwrap();
     assert!(output.rows.is_empty());
     assert_eq!(output.rows.capacity(), 0);
-    #[cfg(feature = "alloc-counter")]
-    assert_eq!(after.allocs, before.allocs);
 }
 
 #[test]
-fn point_read_output_outlives_its_decoded_row_and_releases_owned_storage() {
+fn point_read_output_outlives_its_decoded_row() {
     bumbledb::schema! {
         pub OutputRow;
         relation Entry { id: u64, text: str, bytes: bytes<16> }
@@ -1392,18 +1286,6 @@ fn point_read_output_outlives_its_decoded_row_and_releases_owned_storage() {
     drop(encoded);
     assert!(matches!(&output.values[1], ValueOut::Text(text) if text == "payload"));
     assert!(matches!(&output.values[2], ValueOut::Bytes(bytes) if bytes.as_slice() == [9; 16]));
-    #[cfg(feature = "alloc-counter")]
-    let before_drop = bumbledb::alloc_counter::snapshot().window;
-    drop(output);
-    #[cfg(feature = "alloc-counter")]
-    {
-        let after_drop = bumbledb::alloc_counter::snapshot().window;
-        assert_eq!(
-            after_drop.dealloc_bytes - before_drop.dealloc_bytes,
-            (3 * size_of::<ValueOut>() + 7 + 16) as u64
-        );
-        assert_eq!(after_drop.deallocs - before_drop.deallocs, 3);
-    }
 }
 
 #[test]

@@ -943,55 +943,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "alloc-counter")]
-    fn measure_prepared_reuse(runtime: &Arc<Runtime>, prepared: &SnapshotSession) {
-        use bumbledb::alloc_counter::{self, AllocWindow};
-
-        fn measured(jobs: Vec<SnapshotWork>, access: &mut SnapshotAccess<'_>) -> AllocWindow {
-            // Match native operation lifetimes without counting fixture/IR
-            // construction. All engine preparation and execution is counted.
-            let contexts: Vec<_> = jobs.iter().map(|_| policy()).collect();
-            alloc_counter::reset();
-            for (job, context) in jobs.into_iter().zip(&contexts) {
-                let Output::CompleteResult(result) = job(context, access).unwrap() else {
-                    panic!("expected completed result");
-                };
-                assert_eq!(result.len(), 512);
-                drop(result);
-            }
-            alloc_counter::snapshot().window
-        }
-
-        run_read(runtime, prepared, |_| {
-            Ok(Box::new(|context, access| {
-                // Warm the actual retained plan before the compared windows.
-                drop(crate::db_wire::execute_prepared_work(vec![])(
-                    context, access,
-                )?);
-                let one_shot = measured(
-                    (0..16)
-                        .map(|_| crate::db_wire::execute_complete_work(item_query(), vec![]))
-                        .collect(),
-                    access,
-                );
-                let reused = measured(
-                    (0..16)
-                        .map(|_| crate::db_wire::execute_prepared_work(vec![]))
-                        .collect(),
-                    access,
-                );
-                eprintln!("16 native 512-row queries: one-shot={one_shot:?}; prepared={reused:?}");
-                assert!(
-                    reused.allocs < one_shot.allocs,
-                    "explicit preparation must save actual engine allocations"
-                );
-                assert!(reused.alloc_bytes < one_shot.alloc_bytes);
-                Ok(Output::Ready)
-            }))
-        })
-        .unwrap();
-    }
-
     #[test]
     fn prepared_queries_reuse_one_plan_and_close_independently() {
         let runtime = Runtime::start(options()).unwrap();
@@ -1023,8 +974,6 @@ mod tests {
         let second = prepare_items(&runtime, &snapshot);
         let address = prepared_address(&runtime, &second);
         assert_ne!(address, prepared_address(&runtime, &first));
-        #[cfg(feature = "alloc-counter")]
-        measure_prepared_reuse(&runtime, &second);
         let retained_result = execute_items(&runtime, &first);
         assert_eq!(retained_result.len(), 512);
         assert_eq!(drain_session(&first), CloseReport::Closed);
@@ -1216,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn d24_one_worker_open_read_close_and_idle_snapshots_share_the_pool() {
+    fn one_worker_open_read_close_and_idle_snapshots_share_the_pool() {
         // D24: workers=1, open/read/close; more idle snapshots than workers;
         // sleeping worker then an opening job on that same worker. Ready
         // after reactor-exit / missing inbox wakeup must fail this schedule.
@@ -1277,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn d18_close_drains_while_js_tokens_stay_reachable_and_queue_is_full() {
+    fn close_drains_while_js_tokens_stay_reachable_and_queue_is_full() {
         // D18: keep wrappers reachable; fill the ordinary queue; close still
         // drains. QueueFull must not strand teardown. Counters match release.
         let runtime = Runtime::start(options()).unwrap();
@@ -1343,7 +1292,7 @@ mod tests {
     }
 
     #[test]
-    fn d24_js_thread_admit_returns_without_waiting_on_busy_worker() {
+    fn js_thread_admit_returns_without_waiting_on_busy_worker() {
         // D24: JS-thread admit/install must return while the only worker
         // is blocked. A ready_rx / thread-join on take fails this schedule.
         let runtime = Runtime::start(options()).unwrap();
@@ -1401,7 +1350,7 @@ mod tests {
     }
 
     #[test]
-    fn d18_close_of_uninstalled_route_does_not_leave_a_row() {
+    fn close_of_uninstalled_route_does_not_leave_a_row() {
         // D18: reserve + async install, then close before the worker
         // inserts. The route must drain; QueueFull cannot apply; no leftover
         // row or handle slot.
@@ -1468,7 +1417,7 @@ mod tests {
     }
 
     #[test]
-    fn d18_idle_shutdown_wakes_sleeping_pool_without_reentering_state() {
+    fn idle_shutdown_wakes_sleeping_pool_without_reentering_state() {
         // D18: idle pool (active==0) then runtime drain. Re-locking
         // runtime.state from lane_send during begin_close/drain hangs.
         let runtime = Runtime::start(options()).unwrap();
@@ -1481,7 +1430,7 @@ mod tests {
     }
 
     #[test]
-    fn d18_close_during_busy_snapshot_drains_after_job() {
+    fn close_during_busy_snapshot_drains_after_job() {
         // D18: close while a snapshot job holds the table entry. Destruction
         // after WorkerContext::with returns; a nested with() panics.
         let runtime = Runtime::start(options()).unwrap();
@@ -1539,7 +1488,7 @@ mod tests {
     }
 
     #[test]
-    fn d12_arm_publication_cancel_drops_unregistered_page() {
+    fn arm_publication_cancel_drops_unregistered_page() {
         // D12/D25: arm, then work returns a page. The one-shot must fail
         // before operation.output; retry on the same cap delivers the page.
         let runtime = Runtime::start(options()).unwrap();
@@ -1613,7 +1562,7 @@ mod tests {
     }
 
     #[test]
-    fn d12_dispatch_payload_registers_page_before_post_checkpoint() {
+    fn dispatch_payload_registers_page_before_post_checkpoint() {
         // D12: publication is dispatch_payload_message, not an L13 helper.
         // Predelivery Err leaves the cap retryable. A live (not cancelled)
         // page stays registered for take; cancel-without-take is the
@@ -1679,7 +1628,7 @@ mod tests {
     }
 
     #[test]
-    fn d12_publication_boundary_cancel_does_not_skip_or_duplicate_rows() {
+    fn publication_boundary_cancel_does_not_skip_or_duplicate_rows() {
         // D12: native publication-boundary cancel cannot skip or duplicate
         // rows. The armed reject drops the local page before accept; retry
         // delivers the same two rows, not a later page or a doubled page.
@@ -1765,7 +1714,7 @@ mod tests {
     }
 
     #[test]
-    fn d12_abandoned_publication_reclaims_on_cancel_close_without_js_take() {
+    fn abandoned_publication_reclaims_on_cancel_close_without_js_take() {
         // D12: pause after native publication, before the JS callback.
         // Interrupt, retain wrappers, cancel+close must finish and release
         // native resources without a JavaScript take.
@@ -1826,7 +1775,7 @@ mod tests {
     }
 
     #[test]
-    fn d12_cancelled_queued_page_reclaims_open_without_waiter() {
+    fn cancelled_queued_page_reclaims_open_without_waiter() {
         // Cancel/close with queued Page/Rows, no waiter, Phase::Open.
         // Supervise must drop the delivery copy; JS take count stays 0;
         // committed facts stay (no second no rewind).
@@ -1885,7 +1834,7 @@ mod tests {
     }
 
     #[test]
-    fn d18_close_during_busy_payload_drains_after_job() {
+    fn close_during_busy_payload_drains_after_job() {
         // D18: close while a payload job holds the table entry. Same
         // nested-borrow failure as the snapshot schedule.
         let runtime = Runtime::start(options()).unwrap();
@@ -2013,7 +1962,7 @@ mod tests {
     }
 
     #[test]
-    fn d29_failed_admission_rolls_back_and_history_does_not_accumulate() {
+    fn failed_admission_rolls_back_and_history_does_not_accumulate() {
         // D29: failed admission before insertion leaves no payload/row/slot.
         // Long create/revoke returns to the admitted baseline. No tombstones.
         let runtime = Runtime::start(options()).unwrap();
