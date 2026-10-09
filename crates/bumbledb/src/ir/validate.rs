@@ -15,6 +15,7 @@ use crate::ir::{FindTerm, InteriorId, ParamId, Value, VarId};
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
 mod context;
+pub mod error;
 mod finds;
 #[expect(
     clippy::module_inception,
