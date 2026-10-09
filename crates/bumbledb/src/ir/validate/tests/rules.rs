@@ -1,5 +1,6 @@
 use super::*;
 use crate::error::{FindIndex, Mismatch, RuleIndex};
+use crate::ir::validate::error::{HeadMismatch, Limit, ParamRefusal};
 use crate::ir::{CmpOp, Comparison, HeadTerm, MAX_RULES, ParamId, Rule, Value};
 
 fn account_rule(var: u16) -> Rule {
@@ -51,7 +52,10 @@ fn projection_heads_admit_variables_and_computations_in_either_order() {
     };
     assert!(matches!(
         expect_err(&query),
-        ValidationError::HeadTypeMismatch { .. }
+        ValidationError::Head {
+            mismatch: HeadMismatch::Type,
+            ..
+        }
     ));
 }
 
@@ -83,7 +87,8 @@ fn the_rule_cap_is_rejected_one_past_the_line() {
     };
     assert_eq!(
         expect_err(&over),
-        ValidationError::TooManyRules {
+        ValidationError::TooMany {
+            limit: Limit::Rules,
             count: MAX_RULES + 1
         }
     );
@@ -134,9 +139,10 @@ fn head_aggregate_mismatch_names_the_position() {
     };
     assert_eq!(
         expect_err(&query),
-        ValidationError::HeadAggregateMismatch {
+        ValidationError::Head {
             rule: RuleIndex(1),
-            position: FindIndex(0)
+            position: FindIndex(0),
+            mismatch: HeadMismatch::Aggregate
         }
     );
 }
@@ -157,9 +163,10 @@ fn head_aggregate_op_kind_mismatch_is_the_same_error() {
     };
     assert_eq!(
         expect_err(&query),
-        ValidationError::HeadAggregateMismatch {
+        ValidationError::Head {
             rule: RuleIndex(1),
-            position: FindIndex(0)
+            position: FindIndex(0),
+            mismatch: HeadMismatch::Aggregate
         }
     );
 }
@@ -174,9 +181,10 @@ fn head_type_mismatch_names_rule_and_position() {
     };
     assert_eq!(
         expect_err(&query),
-        ValidationError::HeadTypeMismatch {
+        ValidationError::Head {
             rule: RuleIndex(1),
-            position: FindIndex(0)
+            position: FindIndex(0),
+            mismatch: HeadMismatch::Type
         }
     );
 }
@@ -237,7 +245,10 @@ fn params_are_query_global_and_unify_across_rules() {
     };
     assert_eq!(
         expect_err(&conflict),
-        ValidationError::ParamTypeConflict { param: ParamId(0) }
+        ValidationError::Param {
+            param: ParamId(0),
+            refusal: ParamRefusal::TypeConflict
+        }
     );
 }
 

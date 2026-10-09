@@ -20,13 +20,10 @@ use crate::plan::fj::{
 use crate::plan::planner::plan as plan_order;
 use std::sync::Arc;
 
-/// Prepare against one committed snapshot lease (the C05 entry
-/// `ReadInstance::prepare` calls).
+/// Prepare against one committed snapshot lease.
 /// # Errors
-/// Validation, statistics-read storage failure or stopped work.
-/// # Panics
-/// Only on programmer-invariant violations (`binary2fj` + `factor` +
-/// `fold_split` + `gj_split` construct valid plans by construction).
+/// Validation (including a plan the validator refuses), statistics-read
+/// storage failure or stopped work.
 pub(crate) fn prepare_on<S>(
     instance: &ReadInstance<'_, S>,
     query: &Query,
@@ -712,7 +709,9 @@ fn prepare_rule(
     let sink_vars = rule.sink_vars();
     let plan =
         crate::plan::fj::validate_with_signatures(&fj, normalized, schema, signatures, &sink_vars)
-            .expect("binary2fj + factor + fold_split + gj_split construct valid plans");
+            .map_err(|_| {
+                crate::error::Error::Validation(crate::error::ValidationError::Unplannable)
+            })?;
 
     let finds = find_specs(rule, &plan);
     let executor = Executor::new(&plan);

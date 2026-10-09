@@ -1,6 +1,10 @@
 use super::*;
 use crate::error::{AtomIndex, FindIndex};
 use crate::ir::FoldOp;
+use crate::ir::validate::error::{
+    AggregateRefusal, ComparisonRefusal, FieldRefusal, Limit, ParamRefusal, Unordered,
+    VariableRefusal,
+};
 use crate::ir::{CmpOp, Comparison, Value};
 use bumbledb_theory::schema::FixedIntervalElement;
 
@@ -27,9 +31,10 @@ fn rejects_unknown_field() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::UnknownField {
+        ValidationError::Field {
             atom: AtomIndex(0),
-            field: FieldId(9)
+            field: FieldId(9),
+            refusal: FieldRefusal::Unknown
         }
     ));
 }
@@ -42,9 +47,10 @@ fn rejects_duplicate_field_binding() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::DuplicateFieldBinding {
+        ValidationError::Field {
             atom: AtomIndex(0),
-            field: FieldId(0)
+            field: FieldId(0),
+            refusal: FieldRefusal::DuplicateBinding
         }
     ));
 }
@@ -57,7 +63,10 @@ fn rejects_variable_type_conflict() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::VariableTypeConflict { var: VarId(0) }
+        ValidationError::Variable {
+            var: VarId(0),
+            refusal: VariableRefusal::TypeConflict
+        }
     ));
 }
 
@@ -72,9 +81,10 @@ fn rejects_literal_type_mismatch() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::LiteralTypeMismatch {
+        ValidationError::Field {
             atom: AtomIndex(0),
-            field: FieldId(2)
+            field: FieldId(2),
+            refusal: FieldRefusal::LiteralType
         }
     ));
 }
@@ -94,7 +104,10 @@ fn rejects_conflicting_param_anchors() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::ParamTypeConflict { param: ParamId(0) }
+        ValidationError::Param {
+            param: ParamId(0),
+            refusal: ParamRefusal::TypeConflict
+        }
     ));
 }
 
@@ -120,7 +133,10 @@ fn rejects_order_comparison_on_string_in_both_written_orders() {
         });
         assert_eq!(
             expect_err(&query),
-            ValidationError::OrderComparisonOnString { index: 0 }
+            ValidationError::Comparison {
+                index: 0,
+                refusal: ComparisonRefusal::Unordered(Unordered::String)
+            }
         );
     }
 }
@@ -139,7 +155,10 @@ fn rejects_self_comparison() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::SelfComparison { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::SelfComparison
+        }
     ));
 }
 
@@ -244,7 +263,10 @@ fn rejects_order_comparison_on_a_closed_reference() {
     });
     assert_eq!(
         closed_expect_err(&query),
-        ValidationError::OrderComparisonOnClosedReference { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::Unordered(Unordered::ClosedReference)
+        }
     );
 }
 
@@ -266,7 +288,10 @@ fn rejects_point_membership_of_a_closed_reference() {
     });
     assert_eq!(
         closed_expect_err(&query),
-        ValidationError::OrderComparisonOnClosedReference { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::Unordered(Unordered::ClosedReference)
+        }
     );
 }
 
@@ -284,7 +309,10 @@ fn rejects_cross_type_comparison() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::IllegalComparison { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::IllegalTypes
+        }
     ));
 }
 
@@ -302,7 +330,10 @@ fn rejects_constant_comparison() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::ConstantComparison { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::Constant
+        }
     ));
 }
 
@@ -314,7 +345,10 @@ fn rejects_unbound_find_variable() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::UnboundFindVariable { var: VarId(7) }
+        ValidationError::Variable {
+            var: VarId(7),
+            refusal: VariableRefusal::UnboundFind
+        }
     ));
 }
 
@@ -332,7 +366,10 @@ fn rejects_comparison_only_variable() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::ComparisonOnlyVariable { var: VarId(9) }
+        ValidationError::Variable {
+            var: VarId(9),
+            refusal: VariableRefusal::ComparisonOnly
+        }
     ));
 }
 
@@ -446,7 +483,10 @@ fn rejects_aggregate_over_group_key() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::AggregateOverGroupKey { find: FindIndex(1) }
+        ValidationError::Aggregate {
+            find: FindIndex(1),
+            refusal: AggregateRefusal::OverGroupKey
+        }
     ));
 }
 
@@ -473,7 +513,9 @@ fn rejects_more_atoms_than_the_planner_cap_at_the_boundary() {
         negated: vec![],
         conditions: vec![],
     });
-    assert!(matches!(expect_err(&query), ValidationError::TooManyAtoms { count } if count == over));
+    assert!(
+        matches!(expect_err(&query), ValidationError::TooMany { limit: Limit::Atoms, count } if count == over)
+    );
 }
 
 #[test]
@@ -505,7 +547,10 @@ fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
     let err = validate(&wide, &query).unwrap_err();
     assert!(matches!(
         err,
-        ValidationError::TooManyVariables { count: 129 }
+        ValidationError::TooMany {
+            limit: Limit::Variables,
+            count: 129
+        }
     ));
 }
 
@@ -519,7 +564,7 @@ fn negated_occurrences_count_toward_the_occurrence_cap() {
         conditions: vec![],
     });
     assert!(
-        matches!(expect_err(&query), ValidationError::TooManyAtoms { count } if count == cap + 1)
+        matches!(expect_err(&query), ValidationError::TooMany { limit: Limit::Atoms, count } if count == cap + 1)
     );
 }
 
@@ -539,7 +584,10 @@ fn order_operator_on_an_interval_gets_the_dedicated_diagnostic() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::OrderComparisonOnInterval { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::Unordered(Unordered::Interval)
+        }
     ));
 }
 
@@ -560,7 +608,10 @@ fn order_operator_on_two_bivalent_interval_variables() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::OrderComparisonOnInterval { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::Unordered(Unordered::Interval)
+        }
     ));
 }
 
@@ -580,7 +631,10 @@ fn order_operator_on_fixed_bytes_gets_the_dedicated_diagnostic() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::OrderComparisonOnFixedBytes { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::Unordered(Unordered::FixedBytes)
+        }
     ));
 }
 
@@ -612,8 +666,9 @@ fn rejects_a_wrong_width_fixed_bytes_literal() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::LiteralTypeMismatch {
+        ValidationError::Field {
             atom: AtomIndex(0),
+            refusal: FieldRefusal::LiteralType,
             ..
         }
     ));
@@ -633,7 +688,10 @@ fn rejects_param_set_under_ne() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::ParamSetComparison { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::ParamSet
+        }
     ));
 }
 
@@ -648,7 +706,10 @@ fn rejects_a_param_id_used_both_scalar_and_set() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::ParamScalarAndSet { param: ParamId(0) }
+        ValidationError::Param {
+            param: ParamId(0),
+            refusal: ParamRefusal::ScalarAndSet
+        }
     ));
 }
 
@@ -666,7 +727,10 @@ fn rejects_a_membership_only_variable() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::MembershipOnlyVariable { var: VarId(1) }
+        ValidationError::Variable {
+            var: VarId(1),
+            refusal: VariableRefusal::MembershipOnly
+        }
     ));
 }
 
@@ -680,7 +744,10 @@ fn rejects_a_negated_atom_variable_unbound_by_positive_atoms() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::NegatedVariableUnbound { var: VarId(1) }
+        ValidationError::Variable {
+            var: VarId(1),
+            refusal: VariableRefusal::NegatedUnbound
+        }
     ));
 }
 
@@ -698,7 +765,10 @@ fn a_param_position_does_not_bind_a_negated_variable_even_when_written_after_it(
     });
     assert_eq!(
         expect_err(&query),
-        ValidationError::NegatedVariableUnbound { var: VarId(1) }
+        ValidationError::Variable {
+            var: VarId(1),
+            refusal: VariableRefusal::NegatedUnbound
+        }
     );
 }
 
@@ -719,7 +789,10 @@ fn an_aggregate_output_does_not_bind_a_negated_variable_even_when_written_after_
     });
     assert_eq!(
         expect_err(&query),
-        ValidationError::NegatedVariableUnbound { var: VarId(1) }
+        ValidationError::Variable {
+            var: VarId(1),
+            refusal: VariableRefusal::NegatedUnbound
+        }
     );
 }
 
@@ -734,9 +807,10 @@ fn rejects_a_point_literal_at_the_ceiling_in_a_membership_binding() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::PointLiteralAtCeiling {
+        ValidationError::Field {
             atom: AtomIndex(0),
-            field: FieldId(VALIDITY)
+            field: FieldId(VALIDITY),
+            refusal: FieldRefusal::PointLiteralAtCeiling
         }
     ));
 }
@@ -755,7 +829,10 @@ fn rejects_a_point_literal_at_the_ceiling_under_point_in() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::ComparisonPointLiteralAtCeiling { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::PointLiteralAtCeiling
+        }
     ));
 }
 
@@ -773,7 +850,10 @@ fn rejects_an_interval_typed_param_set_anchor() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::IntervalParamSet { param: ParamId(0) }
+        ValidationError::Param {
+            param: ParamId(0),
+            refusal: ParamRefusal::IntervalSet
+        }
     ));
 }
 
@@ -795,7 +875,10 @@ fn rejects_the_empty_allen_mask() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::EmptyAllenMask { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::EmptyAllenMask
+        }
     ));
 }
 
@@ -818,7 +901,10 @@ fn rejects_the_full_allen_mask() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::FullAllenMask { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::FullAllenMask
+        }
     ));
 }
 
@@ -838,7 +924,10 @@ fn rejects_allen_over_non_interval_sides() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::IllegalComparison { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::IllegalTypes
+        }
     ));
 }
 
@@ -859,7 +948,10 @@ fn rejects_point_in_between_two_intervals() {
     });
     assert!(matches!(
         expect_err(&query),
-        ValidationError::IllegalComparison { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::IllegalTypes
+        }
     ));
 
     let literal = Query::single(Rule {
@@ -876,7 +968,10 @@ fn rejects_point_in_between_two_intervals() {
     });
     assert!(matches!(
         expect_err(&literal),
-        ValidationError::IllegalComparison { index: 0 }
+        ValidationError::Comparison {
+            index: 0,
+            refusal: ComparisonRefusal::IllegalTypes
+        }
     ));
 }
 
@@ -897,7 +992,10 @@ fn rejects_a_second_pack_term() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::MultiplePackTerms { find: FindIndex(2) }
+        ValidationError::Aggregate {
+            find: FindIndex(2),
+            refusal: AggregateRefusal::MultiplePack
+        }
     ));
 }
 
@@ -914,7 +1012,10 @@ fn rejects_pack_beside_a_fold_aggregate() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::MixedPackAndFold { find: FindIndex(2) }
+        ValidationError::Aggregate {
+            find: FindIndex(2),
+            refusal: AggregateRefusal::MixedPackAndFold
+        }
     ));
 }
 
@@ -926,7 +1027,10 @@ fn rejects_pack_over_a_non_interval_variable() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::PackInputType { find: FindIndex(1) }
+        ValidationError::Aggregate {
+            find: FindIndex(1),
+            refusal: AggregateRefusal::PackInputType
+        }
     ));
 }
 
@@ -938,7 +1042,10 @@ fn rejects_pack_over_a_group_key_variable() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::AggregateOverGroupKey { find: FindIndex(1) }
+        ValidationError::Aggregate {
+            find: FindIndex(1),
+            refusal: AggregateRefusal::OverGroupKey
+        }
     ));
 }
 
@@ -995,7 +1102,10 @@ fn rejects_an_allen_pair_across_element_domains_whatever_the_widths() {
     });
     assert!(matches!(
         validate(&cross_domain_schema(), &query).expect_err("cross-domain Allen must reject"),
-        ValidationError::IllegalComparison { .. }
+        ValidationError::Comparison {
+            refusal: ComparisonRefusal::IllegalTypes,
+            ..
+        }
     ));
 }
 
@@ -1018,8 +1128,9 @@ fn rejects_a_wrong_width_interval_literal_at_a_fixed_width_field() {
     );
     assert!(matches!(
         validate(&cross_domain_schema(), &query).expect_err("wrong width must reject"),
-        ValidationError::LiteralTypeMismatch {
+        ValidationError::Field {
             atom: AtomIndex(0),
+            refusal: FieldRefusal::LiteralType,
             ..
         }
     ));
@@ -1045,8 +1156,9 @@ fn rejects_a_width_matched_ray_literal_at_a_fixed_width_field() {
     );
     assert!(matches!(
         validate(&cross_domain_schema(), &query).expect_err("the width-matched ray must reject"),
-        ValidationError::LiteralTypeMismatch {
+        ValidationError::Field {
             atom: AtomIndex(0),
+            refusal: FieldRefusal::LiteralType,
             ..
         }
     ));

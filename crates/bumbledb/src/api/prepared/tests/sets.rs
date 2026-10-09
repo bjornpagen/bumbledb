@@ -2,6 +2,7 @@ use super::*;
 use crate::api::prepared::ParamArg;
 use crate::error::AtomIndex;
 use crate::ir::ParamId;
+use crate::ir::validate::error::FieldRefusal;
 
 fn by_account_set_query() -> Query {
     Query::single(Rule {
@@ -392,9 +393,10 @@ fn membership_of_the_last_point_in_a_ray_is_true_and_the_ceiling_rejects() {
     assert!(
         matches!(
             err,
-            Error::Validation(crate::error::ValidationError::PointLiteralAtCeiling {
+            Error::Validation(crate::error::ValidationError::Field {
                 atom: AtomIndex(0),
                 field: FieldId(1),
+                refusal: FieldRefusal::PointLiteralAtCeiling
             })
         ),
         "got {err:?}"

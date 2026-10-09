@@ -5,6 +5,7 @@ use super::{
 };
 use crate::error::{Exceeded, FindIndex, Mismatch, RuleIndex, ValidationError};
 use crate::ir::normalize::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
+use crate::ir::validate::error::{HeadMismatch, Limit, ParamRefusal, RecRefusal};
 use crate::ir::{
     FindTerm, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, Rec, RecRule, RecStep,
     VarId,
@@ -36,7 +37,10 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
 
 fn overflow(derived: usize) -> Result<(), ValidationError> {
     if u32::try_from(derived).is_err() {
-        Err(ValidationError::InteriorIdOverflow { count: derived })
+        Err(ValidationError::TooMany {
+            limit: Limit::DerivedTables,
+            count: derived,
+        })
     } else {
         Ok(())
     }
@@ -108,9 +112,10 @@ fn validate_reach(
         if let Some(position) =
             (0..row.columns.len()).find(|&i| row.columns[i] != rec_signature.columns[i])
         {
-            return Err(ValidationError::HeadTypeMismatch {
+            return Err(ValidationError::Head {
                 rule: RuleIndex(rule_idx),
                 position: FindIndex(position),
+                mismatch: HeadMismatch::Type,
             });
         }
     }
@@ -244,9 +249,10 @@ fn type_rules(
         if rule_idx == 0 {
             signature = row;
         } else if let Err(position) = signature.meet(&row, !rec_body) {
-            return Err(ValidationError::HeadTypeMismatch {
+            return Err(ValidationError::Head {
                 rule: RuleIndex(rule_idx),
                 position: FindIndex(position),
+                mismatch: HeadMismatch::Type,
             });
         }
         params.unify(ctx)?;
@@ -258,10 +264,10 @@ fn type_rules(
 fn refuse_self_in_base(rec: &Rec, rec_id: InteriorId) -> Result<(), ValidationError> {
     let is_self = |atom: &crate::ir::Atom| atom.source.interior() == Some(rec_id);
     if rec.base.iter().any(|rule| rule.atoms.iter().any(is_self)) {
-        return Err(ValidationError::SelfInBase);
+        return Err(ValidationError::Rec(RecRefusal::SelfInBase));
     }
     if rec.rec.iter().any(|step| step.atoms.iter().any(is_self)) {
-        return Err(ValidationError::NonlinearRecArm);
+        return Err(ValidationError::Rec(RecRefusal::NonlinearArm));
     }
     Ok(())
 }
@@ -272,7 +278,10 @@ fn lower_rec_pool(
 ) -> Result<(Vec<LoweredRule>, Vec<LoweredRule>), ValidationError> {
     let count = rec.base.len() + rec.rec.len();
     if count > MAX_RULES {
-        return Err(ValidationError::TooManyRules { count });
+        return Err(ValidationError::TooMany {
+            limit: Limit::Rules,
+            count,
+        });
     }
     let head = rec.head();
     if head.is_empty() {
@@ -313,10 +322,10 @@ fn lower_rec_pool(
     let rec_low = distribute_list(&rec_rules);
 
     if base.is_empty() {
-        return Err(ValidationError::EmptyRecursiveBase);
+        return Err(ValidationError::Rec(RecRefusal::EmptyBase));
     }
     if rec_low.is_empty() {
-        return Err(ValidationError::EmptyRecursiveStep);
+        return Err(ValidationError::Rec(RecRefusal::EmptyStep));
     }
     Ok((base, rec_low))
 }
@@ -351,7 +360,10 @@ fn lower_rules(
         return Err(empty);
     }
     if rules.len() > MAX_RULES {
-        return Err(ValidationError::TooManyRules { count: rules.len() });
+        return Err(ValidationError::TooMany {
+            limit: Limit::Rules,
+            count: rules.len(),
+        });
     }
     if head.is_empty() {
         return Err(ValidationError::EmptyFinds);
@@ -442,9 +454,10 @@ fn check_head_alignment(
             _ => false,
         };
         if !agrees {
-            return Err(ValidationError::HeadAggregateMismatch {
+            return Err(ValidationError::Head {
                 rule: RuleIndex(rule_idx),
                 position: FindIndex(position),
+                mismatch: HeadMismatch::Aggregate,
             });
         }
     }
@@ -462,7 +475,10 @@ fn validate_rule(
     }
     let occurrences = rule.atoms.len() + rule.negated.len();
     if occurrences > crate::plan::planner::MAX_OCCURRENCES {
-        return Err(ValidationError::TooManyAtoms { count: occurrences });
+        return Err(ValidationError::TooMany {
+            limit: Limit::Atoms,
+            count: occurrences,
+        });
     }
     for (index, term) in rule.finds.iter().enumerate() {
         if rule.finds[..index].contains(term) {
@@ -488,7 +504,8 @@ fn validate_rule(
         .collect();
     ctx.check_finds(rule, &group_key)?;
     if ctx.var_types.len() > crate::plan::planner::MAX_DISTINCT_VARS {
-        return Err(ValidationError::TooManyVariables {
+        return Err(ValidationError::TooMany {
+            limit: Limit::Variables,
             count: ctx.var_types.len(),
         });
     }
@@ -530,7 +547,10 @@ impl ParamTables {
             };
             match self.param_types.get(&param) {
                 Some(existing) if *existing != value_type => {
-                    return Err(ValidationError::ParamTypeConflict { param });
+                    return Err(ValidationError::Param {
+                        param,
+                        refusal: ParamRefusal::TypeConflict,
+                    });
                 }
                 Some(_) => {}
                 None => {
@@ -541,7 +561,10 @@ impl ParamTables {
         for (param, kind) in ctx.param_kinds {
             match self.param_kinds.get(&param) {
                 Some(existing) if *existing != kind => {
-                    return Err(ValidationError::ParamScalarAndSet { param });
+                    return Err(ValidationError::Param {
+                        param,
+                        refusal: ParamRefusal::ScalarAndSet,
+                    });
                 }
                 Some(_) => {}
                 None => {

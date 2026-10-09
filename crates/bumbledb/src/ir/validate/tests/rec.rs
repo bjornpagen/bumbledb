@@ -1,5 +1,6 @@
 use super::*;
 use crate::error::{FindIndex, RuleIndex};
+use crate::ir::validate::error::{HeadMismatch, Limit, RecRefusal};
 use crate::ir::{
     AtomSource, ConditionTree, HeadTerm, Interior, InteriorId, NonEmpty, ProjectionRule, Rec,
     RecRule, RecStep,
@@ -108,7 +109,10 @@ fn a_rec_step_whose_dnf_is_empty_is_empty_recursive_step() {
             vec![interior_atom(0, vec![(0, var(0))])],
         ),
     );
-    assert_eq!(expect_err(&query), ValidationError::EmptyRecursiveStep);
+    assert_eq!(
+        expect_err(&query),
+        ValidationError::Rec(RecRefusal::EmptyStep)
+    );
 }
 
 #[test]
@@ -124,7 +128,10 @@ fn rejects_self_in_base() {
             vec![interior_atom(0, vec![(0, var(0))])],
         ),
     );
-    assert_eq!(expect_err(&query), ValidationError::SelfInBase);
+    assert_eq!(
+        expect_err(&query),
+        ValidationError::Rec(RecRefusal::SelfInBase)
+    );
 }
 
 #[test]
@@ -144,7 +151,10 @@ fn rejects_nonlinear_rec_arm() {
             vec![interior_atom(0, vec![(0, var(0))])],
         ),
     );
-    assert_eq!(expect_err(&query), ValidationError::NonlinearRecArm);
+    assert_eq!(
+        expect_err(&query),
+        ValidationError::Rec(RecRefusal::NonlinearArm)
+    );
 }
 
 #[test]
@@ -188,9 +198,10 @@ fn recursive_arms_align_against_the_base_row() {
     );
     assert_eq!(
         expect_err(&query),
-        ValidationError::HeadTypeMismatch {
+        ValidationError::Head {
             rule: RuleIndex(0),
-            position: FindIndex(0)
+            position: FindIndex(0),
+            mismatch: HeadMismatch::Type
         }
     );
 }
@@ -213,7 +224,10 @@ fn rec_pool_caps_base_plus_rec() {
     );
     assert_eq!(
         expect_err(&query),
-        ValidationError::TooManyRules { count: 17 }
+        ValidationError::TooMany {
+            limit: Limit::Rules,
+            count: 17
+        }
     );
 }
 

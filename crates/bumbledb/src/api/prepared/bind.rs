@@ -332,7 +332,7 @@ fn element_words(
             1
         }
         Const::Interval { .. } => {
-            unreachable!("validated: no interval-typed param sets (IntervalParamSet)")
+            unreachable!("validated: no interval-typed param sets")
         }
         Const::Text(text) => {
             out.push_text(text);

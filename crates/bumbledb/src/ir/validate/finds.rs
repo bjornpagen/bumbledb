@@ -4,6 +4,7 @@
 use super::{AggKind, Context, RuleTyping, Signature, SignatureColumn};
 use crate::error::{FindIndex, ValidationError};
 use crate::ir::normalize::LoweredRule;
+use crate::ir::validate::error::{AggregateRefusal, VariableRefusal};
 use crate::ir::{FindTerm, FoldOp, VarId};
 use bumbledb_theory::schema::ValueType;
 use std::collections::BTreeSet;
@@ -102,7 +103,10 @@ impl Context {
                 FindTerm::Segments { left, right, .. } => {
                     for var in [left, right] {
                         if !self.atom_vars.contains(var) {
-                            return Err(ValidationError::UnboundFindVariable { var: *var });
+                            return Err(ValidationError::Variable {
+                                var: *var,
+                                refusal: VariableRefusal::UnboundFind,
+                            });
                         }
                     }
                     let left = self.resolved_var_type(*left).interval_element();
@@ -140,28 +144,43 @@ impl Context {
                     }
                     for var in expr.variables() {
                         if !self.atom_vars.contains(&var) {
-                            return Err(ValidationError::UnboundFindVariable { var });
+                            return Err(ValidationError::Variable {
+                                var,
+                                refusal: VariableRefusal::UnboundFind,
+                            });
                         }
                     }
                 }
                 FindTerm::Var(var) => {
                     if !self.atom_vars.contains(var) {
-                        return Err(ValidationError::UnboundFindVariable { var: *var });
+                        return Err(ValidationError::Variable {
+                            var: *var,
+                            refusal: VariableRefusal::UnboundFind,
+                        });
                     }
                 }
                 FindTerm::Count => {
                     fold_seen = true;
                     if pack_seen {
-                        return Err(ValidationError::MixedPackAndFold { find });
+                        return Err(ValidationError::Aggregate {
+                            find,
+                            refusal: AggregateRefusal::MixedPackAndFold,
+                        });
                     }
                 }
                 FindTerm::Aggregate { op, over } => {
                     fold_seen = true;
                     if !self.atom_vars.contains(over) {
-                        return Err(ValidationError::UnboundFindVariable { var: *over });
+                        return Err(ValidationError::Variable {
+                            var: *over,
+                            refusal: VariableRefusal::UnboundFind,
+                        });
                     }
                     if group_key.contains(over) {
-                        return Err(ValidationError::AggregateOverGroupKey { find });
+                        return Err(ValidationError::Aggregate {
+                            find,
+                            refusal: AggregateRefusal::OverGroupKey,
+                        });
                     }
                     let admitted = match self.resolved_var_type(*over) {
                         ValueType::F64 => true,
@@ -172,28 +191,49 @@ impl Context {
                         return Err(ValidationError::AggregateInputType { find });
                     }
                     if self.closed_vars.contains_key(over) {
-                        return Err(ValidationError::AggregateOverClosedReference { find });
+                        return Err(ValidationError::Aggregate {
+                            find,
+                            refusal: AggregateRefusal::ClosedReference,
+                        });
                     }
                     if pack_seen {
-                        return Err(ValidationError::MixedPackAndFold { find });
+                        return Err(ValidationError::Aggregate {
+                            find,
+                            refusal: AggregateRefusal::MixedPackAndFold,
+                        });
                     }
                 }
                 FindTerm::Pack { over } => {
                     if pack_seen {
-                        return Err(ValidationError::MultiplePackTerms { find });
+                        return Err(ValidationError::Aggregate {
+                            find,
+                            refusal: AggregateRefusal::MultiplePack,
+                        });
                     }
                     pack_seen = true;
                     if !self.atom_vars.contains(over) {
-                        return Err(ValidationError::UnboundFindVariable { var: *over });
+                        return Err(ValidationError::Variable {
+                            var: *over,
+                            refusal: VariableRefusal::UnboundFind,
+                        });
                     }
                     if group_key.contains(over) {
-                        return Err(ValidationError::AggregateOverGroupKey { find });
+                        return Err(ValidationError::Aggregate {
+                            find,
+                            refusal: AggregateRefusal::OverGroupKey,
+                        });
                     }
                     if !self.resolved_var_type(*over).is_interval() {
-                        return Err(ValidationError::PackInputType { find });
+                        return Err(ValidationError::Aggregate {
+                            find,
+                            refusal: AggregateRefusal::PackInputType,
+                        });
                     }
                     if fold_seen {
-                        return Err(ValidationError::MixedPackAndFold { find });
+                        return Err(ValidationError::Aggregate {
+                            find,
+                            refusal: AggregateRefusal::MixedPackAndFold,
+                        });
                     }
                 }
             }

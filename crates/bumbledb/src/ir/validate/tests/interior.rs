@@ -1,5 +1,6 @@
 use super::*;
 use crate::error::AtomIndex;
+use crate::ir::validate::error::{FieldRefusal, ParamRefusal, VariableRefusal};
 use crate::ir::{AtomSource, HeadTerm, Interior, InteriorId, ProjectionRule};
 
 fn interior_atom(id: u32, bindings: Vec<(u16, Term)>) -> crate::ir::Atom {
@@ -123,9 +124,10 @@ fn rejects_interior_column_out_of_range() {
     );
     assert_eq!(
         expect_err(&query),
-        ValidationError::InteriorColumnOutOfRange {
+        ValidationError::Field {
             atom: AtomIndex(0),
-            field: FieldId(4)
+            field: FieldId(4),
+            refusal: FieldRefusal::InteriorColumnOutOfRange
         }
     );
 }
@@ -203,7 +205,10 @@ fn interior_anchors_resolve_against_sealed_columns() {
     };
     assert_eq!(
         expect_err(&query),
-        ValidationError::VariableTypeConflict { var: VarId(0) }
+        ValidationError::Variable {
+            var: VarId(0),
+            refusal: VariableRefusal::TypeConflict
+        }
     );
 }
 
@@ -271,7 +276,10 @@ fn query_global_params_unify_across_interiors() {
     };
     assert_eq!(
         expect_err(&query),
-        ValidationError::ParamTypeConflict { param: ParamId(0) }
+        ValidationError::Param {
+            param: ParamId(0),
+            refusal: ParamRefusal::TypeConflict
+        }
     );
 }
 

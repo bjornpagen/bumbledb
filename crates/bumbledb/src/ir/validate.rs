@@ -5,6 +5,7 @@
 //! checked off in code order below — it is exhaustive by contract.
 //! The query shape first (rules are validated one at a time; every
 //! across rules after each rule's own fixpoint):
+use crate::ir::validate::error::FieldRefusal;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::allen::AllenMask;
@@ -304,9 +305,10 @@ impl InteriorSignatures<'_> {
             .columns
             .get(usize::from(field.0))
             .map(SignatureColumn::ty)
-            .ok_or(ValidationError::InteriorColumnOutOfRange {
+            .ok_or(ValidationError::Field {
                 atom: AtomIndex(atom),
                 field,
+                refusal: FieldRefusal::InteriorColumnOutOfRange,
             })
     }
 }
@@ -334,8 +336,8 @@ impl ValidatedInterior {
 
 pub(crate) use crate::ir::NonEmpty;
 
-/// One lowered rec *base* arm: the rule plus its typing. Base arms
-/// cannot name self ([`ValidationError::SelfInBase`]).
+/// One lowered rec *base* arm: the rule plus its typing. Base arms cannot
+/// name the rec.
 #[derive(Debug)]
 pub struct ValidatedBaseArm {
     rule: LoweredRule,

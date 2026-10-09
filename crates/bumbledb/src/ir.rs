@@ -18,14 +18,9 @@ pub use bumbledb_theory::Value;
 /// against the naive model's direct tree evaluation.
 pub use normalize::{LoweredRule, distribute};
 
-/// The rule-count cap: each `Interior.rules` list and the main
-/// `Query.rules` independently, and the rec SCC as one pool
-/// (`base.len + rec.len`), rejected at validation
-/// (`ValidationError::TooManyRules`). Counted independently of the
-/// per-rule occurrence cap (`MAX_OCCURRENCES` in the planner):
-/// rules are planned one at a time, so the roster bounds each
-/// rule-list's breadth here and each rule's width there. There is no
-/// interior-count cap.
+/// The rule-count cap, applied to each `Interior.rules` list, the main
+/// `Query.rules`, and the rec component as one pool (`base.len + rec.len`).
+/// Independent of the per-rule occurrence cap: rules are planned one at a time.
 pub const MAX_RULES: usize = 16;
 
 /// The condition-tree nesting cap: a [`ConditionTree`] deeper than this
@@ -41,14 +36,10 @@ pub const MAX_CONDITION_DEPTH: usize = 64;
 /// Dense derived-table id: an index into `Query::interiors`. The recursive
 /// component occupies the next index. This identity is separate from stored
 /// `RelationId`; schema statements quantify over stored relations only.
-/// An interior count exceeding u32 produces `ValidationError::InteriorIdOverflow`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InteriorId(pub u32);
 
 impl InteriorId {
-    /// # Panics
-    /// is 64-bit only; this is a programmer invariant, not an IR
-    /// overflow (`InteriorIdOverflow` is judged before any
     #[must_use]
     pub(crate) fn index(self) -> usize {
         usize::try_from(self.0).expect("crate is 64-bit")

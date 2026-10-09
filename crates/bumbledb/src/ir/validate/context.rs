@@ -2,6 +2,9 @@ use super::{ClassifiedComparison, Context, ParamKind, SealedConst, TypeSlot};
 use crate::error::{AtomIndex, ValidationError};
 use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
+use crate::ir::validate::error::{
+    ComparisonRefusal, FieldRefusal, ParamRefusal, Unordered, VariableRefusal,
+};
 use crate::ir::{CmpOp, Comparison, ParamId, Term, Value, VarId};
 use crate::schema::Schema;
 use bumbledb_theory::allen::AllenMask;
@@ -62,9 +65,10 @@ fn check_interval_field_literal(
     match (value, element) {
         (Value::U64(_), IntervalElement::U64) | (Value::I64(_), IntervalElement::I64) => {
             if at_domain_ceiling(value) {
-                Err(ValidationError::PointLiteralAtCeiling {
+                Err(ValidationError::Field {
                     atom: AtomIndex(atom),
                     field,
+                    refusal: FieldRefusal::PointLiteralAtCeiling,
                 })
             } else {
                 Ok(())
@@ -81,14 +85,16 @@ fn check_interval_field_literal(
         | (Value::IntervalI64(_), IntervalElement::I64)
         | (Value::IntervalF64(_), IntervalElement::F64) => match literal_matches(value, interval) {
             Ok(()) => Ok(()),
-            Err(_) => Err(ValidationError::LiteralTypeMismatch {
+            Err(_) => Err(ValidationError::Field {
                 atom: AtomIndex(atom),
                 field,
+                refusal: FieldRefusal::LiteralType,
             }),
         },
-        _ => Err(ValidationError::LiteralTypeMismatch {
+        _ => Err(ValidationError::Field {
             atom: AtomIndex(atom),
             field,
+            refusal: FieldRefusal::LiteralType,
         }),
     }
 }
@@ -258,11 +264,18 @@ fn sealed_mask(mask: AllenMask, mirrored: bool) -> MaskConst {
 /// dedicated diagnostic before accepted comparison classification.
 fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(), ValidationError> {
     match operand {
-        Some(ty) if ty.is_interval() => Err(ValidationError::OrderComparisonOnInterval { index }),
-        Some(ValueType::FixedBytes { .. }) => {
-            Err(ValidationError::OrderComparisonOnFixedBytes { index })
-        }
-        Some(ValueType::String) => Err(ValidationError::OrderComparisonOnString { index }),
+        Some(ty) if ty.is_interval() => Err(ValidationError::Comparison {
+            index,
+            refusal: ComparisonRefusal::Unordered(Unordered::Interval),
+        }),
+        Some(ValueType::FixedBytes { .. }) => Err(ValidationError::Comparison {
+            index,
+            refusal: ComparisonRefusal::Unordered(Unordered::FixedBytes),
+        }),
+        Some(ValueType::String) => Err(ValidationError::Comparison {
+            index,
+            refusal: ComparisonRefusal::Unordered(Unordered::String),
+        }),
         _ => Ok(()),
     }
 }
@@ -272,7 +285,10 @@ impl Context {
     /// them is refused exactly as the enum's ordinal order was, judged
     fn screen_order_closed(&self, index: usize, var: VarId) -> Result<(), ValidationError> {
         if self.closed_vars.contains_key(&var) {
-            return Err(ValidationError::OrderComparisonOnClosedReference { index });
+            return Err(ValidationError::Comparison {
+                index,
+                refusal: ComparisonRefusal::Unordered(Unordered::ClosedReference),
+            });
         }
         Ok(())
     }
@@ -280,7 +296,10 @@ impl Context {
     fn bind_var_mono(&mut self, var: VarId, value_type: &ValueType) -> Result<(), ValidationError> {
         match self.var_slots.get(&var) {
             Some(TypeSlot::Mono(existing)) if existing != value_type => {
-                Err(ValidationError::VariableTypeConflict { var })
+                Err(ValidationError::Variable {
+                    var,
+                    refusal: VariableRefusal::TypeConflict,
+                })
             }
             Some(TypeSlot::Mono(_)) => Ok(()),
             Some(TypeSlot::Bivalent { interval }) => {
@@ -288,7 +307,10 @@ impl Context {
                     self.var_slots.insert(var, TypeSlot::Mono(*value_type));
                     Ok(())
                 } else {
-                    Err(ValidationError::VariableTypeConflict { var })
+                    Err(ValidationError::Variable {
+                        var,
+                        refusal: VariableRefusal::TypeConflict,
+                    })
                 }
             }
             None => {
@@ -308,14 +330,20 @@ impl Context {
                 if bivalent_admits(interval, existing) {
                     Ok(())
                 } else {
-                    Err(ValidationError::VariableTypeConflict { var })
+                    Err(ValidationError::Variable {
+                        var,
+                        refusal: VariableRefusal::TypeConflict,
+                    })
                 }
             }
             Some(TypeSlot::Bivalent { interval: existing }) => {
                 if existing == interval {
                     Ok(())
                 } else {
-                    Err(ValidationError::VariableTypeConflict { var })
+                    Err(ValidationError::Variable {
+                        var,
+                        refusal: VariableRefusal::TypeConflict,
+                    })
                 }
             }
             None => {
@@ -337,7 +365,10 @@ impl Context {
     ) -> Result<(), ValidationError> {
         match self.param_slots.get(&param) {
             Some(TypeSlot::Mono(existing)) if existing != value_type => {
-                Err(ValidationError::ParamTypeConflict { param })
+                Err(ValidationError::Param {
+                    param,
+                    refusal: ParamRefusal::TypeConflict,
+                })
             }
             Some(TypeSlot::Mono(_)) => Ok(()),
             Some(TypeSlot::Bivalent { interval }) => {
@@ -345,7 +376,10 @@ impl Context {
                     self.param_slots.insert(param, TypeSlot::Mono(*value_type));
                     Ok(())
                 } else {
-                    Err(ValidationError::ParamTypeConflict { param })
+                    Err(ValidationError::Param {
+                        param,
+                        refusal: ParamRefusal::TypeConflict,
+                    })
                 }
             }
             None => {
@@ -365,14 +399,20 @@ impl Context {
                 if bivalent_admits(interval, existing) {
                     Ok(())
                 } else {
-                    Err(ValidationError::ParamTypeConflict { param })
+                    Err(ValidationError::Param {
+                        param,
+                        refusal: ParamRefusal::TypeConflict,
+                    })
                 }
             }
             Some(TypeSlot::Bivalent { interval: existing }) => {
                 if existing == interval {
                     Ok(())
                 } else {
-                    Err(ValidationError::ParamTypeConflict { param })
+                    Err(ValidationError::Param {
+                        param,
+                        refusal: ParamRefusal::TypeConflict,
+                    })
                 }
             }
             None => {
@@ -389,9 +429,10 @@ impl Context {
 
     fn note_param_kind(&mut self, param: ParamId, kind: ParamKind) -> Result<(), ValidationError> {
         match self.param_kinds.get(&param) {
-            Some(existing) if *existing != kind => {
-                Err(ValidationError::ParamScalarAndSet { param })
-            }
+            Some(existing) if *existing != kind => Err(ValidationError::Param {
+                param,
+                refusal: ParamRefusal::ScalarAndSet,
+            }),
             Some(_) => Ok(()),
             None => {
                 self.param_kinds.insert(param, kind);
@@ -438,18 +479,20 @@ impl Context {
             }
             for (binding_idx, (field, term)) in atom.bindings.iter().enumerate() {
                 if atom.bindings[..binding_idx].iter().any(|(f, _)| f == field) {
-                    return Err(ValidationError::DuplicateFieldBinding {
+                    return Err(ValidationError::Field {
                         atom: AtomIndex(occ_idx),
                         field: *field,
+                        refusal: FieldRefusal::DuplicateBinding,
                     });
                 }
                 let field_type = match atom.source {
                     crate::ir::AtomSource::Edb(relation_id) => {
                         let relation = schema.relation(relation_id);
                         if usize::from(field.0) >= relation.fields().len() {
-                            return Err(ValidationError::UnknownField {
+                            return Err(ValidationError::Field {
                                 atom: AtomIndex(occ_idx),
                                 field: *field,
+                                refusal: FieldRefusal::Unknown,
                             });
                         }
                         &relation.field(*field).value_type
@@ -480,7 +523,10 @@ impl Context {
         }
         for var in &self.negated_vars {
             if !self.atom_vars.contains(var) {
-                return Err(ValidationError::NegatedVariableUnbound { var: *var });
+                return Err(ValidationError::Variable {
+                    var: *var,
+                    refusal: VariableRefusal::NegatedUnbound,
+                });
             }
         }
         Ok(())
@@ -551,9 +597,10 @@ impl Context {
             Term::Literal(value) => match literal_matches(value, field_type) {
                 Ok(()) => {}
                 Err(LiteralMismatch::Type) => {
-                    return Err(ValidationError::LiteralTypeMismatch {
+                    return Err(ValidationError::Field {
                         atom: AtomIndex(occ_idx),
                         field,
+                        refusal: FieldRefusal::LiteralType,
                     });
                 }
             },
@@ -595,16 +642,23 @@ impl Context {
 
         if let OpClass::Allen { mask } = class {
             if mask.is_empty() {
-                return Err(ValidationError::EmptyAllenMask { index });
+                return Err(ValidationError::Comparison {
+                    index,
+                    refusal: ComparisonRefusal::EmptyAllenMask,
+                });
             }
             if mask.is_full() {
-                return Err(ValidationError::FullAllenMask { index });
+                return Err(ValidationError::Comparison {
+                    index,
+                    refusal: ComparisonRefusal::FullAllenMask,
+                });
             }
         }
         match (lhs, rhs) {
-            (Term::Var(l), Term::Var(r)) if l == r => {
-                Err(ValidationError::SelfComparison { index })
-            }
+            (Term::Var(l), Term::Var(r)) if l == r => Err(ValidationError::Comparison {
+                index,
+                refusal: ComparisonRefusal::SelfComparison,
+            }),
             (Term::Var(l), Term::Var(r)) => {
                 self.comparison_var(*l)?;
                 self.comparison_var(*r)?;
@@ -659,7 +713,10 @@ impl Context {
                 }
                 self.note_param_kind(*param, ParamKind::Set)?;
                 if !matches!(class, OpClass::Equality { negated: false }) {
-                    return Err(ValidationError::ParamSetComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::ParamSet,
+                    });
                 }
                 if !var_on_left {
                     self.comparison_var(*var)?;
@@ -673,7 +730,10 @@ impl Context {
             (
                 Term::Param(_) | Term::ParamSet(_) | Term::Literal(_),
                 Term::Param(_) | Term::ParamSet(_) | Term::Literal(_),
-            ) => Err(ValidationError::ConstantComparison { index }),
+            ) => Err(ValidationError::Comparison {
+                index,
+                refusal: ComparisonRefusal::Constant,
+            }),
         }
     }
 
@@ -681,7 +741,10 @@ impl Context {
         if self.var_slots.contains_key(&var) {
             Ok(())
         } else {
-            Err(ValidationError::ComparisonOnlyVariable { var })
+            Err(ValidationError::Variable {
+                var,
+                refusal: VariableRefusal::ComparisonOnly,
+            })
         }
     }
 
@@ -785,7 +848,10 @@ impl Context {
             Shaped::EqVarVar { negated, lhs, rhs } => {
                 let lhs_type = *self.resolved_var_type(*lhs);
                 if *self.resolved_var_type(*rhs) != lhs_type {
-                    return Err(ValidationError::IllegalComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::IllegalTypes,
+                    });
                 }
                 Ok(if lhs_type.is_interval() {
                     ClassifiedComparison::AllenVarVar {
@@ -827,7 +893,10 @@ impl Context {
             Shaped::EqVarSet { var, set } => {
                 let var_type = *self.resolved_var_type(*var);
                 if var_type.is_interval() {
-                    return Err(ValidationError::IntervalParamSet { param: *set });
+                    return Err(ValidationError::Param {
+                        param: *set,
+                        refusal: ParamRefusal::IntervalSet,
+                    });
                 }
                 self.anchor_param_mono(*set, &var_type)?;
                 Ok(ClassifiedComparison::VarInSet {
@@ -851,10 +920,16 @@ impl Context {
                         | ValueType::Bool
                         | ValueType::Uuid
                 ) {
-                    return Err(ValidationError::IllegalComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::IllegalTypes,
+                    });
                 }
                 if *self.resolved_var_type(*rhs) != lhs_type {
-                    return Err(ValidationError::IllegalComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::IllegalTypes,
+                    });
                 }
                 Ok(ClassifiedComparison::VarVar {
                     op: (*op).into(),
@@ -888,7 +963,10 @@ impl Context {
                         | ValueType::Bool
                         | ValueType::Uuid
                 ) {
-                    return Err(ValidationError::IllegalComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::IllegalTypes,
+                    });
                 }
                 let value = self.check_const(index, constant, &var_type)?;
                 Ok(ClassifiedComparison::VarConst {
@@ -900,13 +978,22 @@ impl Context {
 
             Shaped::AllenVarVar { mask, lhs, rhs } => {
                 let Some(lhs_element) = self.resolved_var_type(*lhs).interval_element() else {
-                    return Err(ValidationError::IllegalComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::IllegalTypes,
+                    });
                 };
                 let Some(rhs_element) = self.resolved_var_type(*rhs).interval_element() else {
-                    return Err(ValidationError::IllegalComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::IllegalTypes,
+                    });
                 };
                 if lhs_element != rhs_element {
-                    return Err(ValidationError::IllegalComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::IllegalTypes,
+                    });
                 }
                 Ok(ClassifiedComparison::AllenVarVar {
                     lhs: *lhs,
@@ -921,7 +1008,10 @@ impl Context {
                 constant,
             } => {
                 let Some(element) = self.resolved_var_type(*var).interval_element() else {
-                    return Err(ValidationError::IllegalComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::IllegalTypes,
+                    });
                 };
 
                 let other = self.check_const(index, constant, &ValueType::Interval { element })?;
@@ -935,10 +1025,16 @@ impl Context {
             Shaped::PointInVarVar { lhs, rhs } => {
                 self.screen_order_closed(index, *rhs)?;
                 let Some(element) = self.resolved_var_type(*lhs).interval_element() else {
-                    return Err(ValidationError::IllegalComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::IllegalTypes,
+                    });
                 };
                 if *self.resolved_var_type(*rhs) != element_type(element) {
-                    return Err(ValidationError::IllegalComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::IllegalTypes,
+                    });
                 }
                 Ok(ClassifiedComparison::PointInVarVar {
                     interval: *lhs,
@@ -948,7 +1044,10 @@ impl Context {
             }
             Shaped::PointInVarConst { var, constant } => {
                 let Some(element) = self.resolved_var_type(*var).interval_element() else {
-                    return Err(ValidationError::IllegalComparison { index });
+                    return Err(ValidationError::Comparison {
+                        index,
+                        refusal: ComparisonRefusal::IllegalTypes,
+                    });
                 };
                 let dense = matches!(element, IntervalElement::F64);
                 match constant {
@@ -965,8 +1064,9 @@ impl Context {
                         (Value::U64(_), IntervalElement::U64)
                         | (Value::I64(_), IntervalElement::I64) => {
                             if at_domain_ceiling(value) {
-                                return Err(ValidationError::ComparisonPointLiteralAtCeiling {
+                                return Err(ValidationError::Comparison {
                                     index,
+                                    refusal: ComparisonRefusal::PointLiteralAtCeiling,
                                 });
                             }
                             Ok(ClassifiedComparison::PointInVarPoint {
@@ -985,7 +1085,10 @@ impl Context {
                                 dense,
                             })
                         }
-                        _ => Err(ValidationError::IllegalComparison { index }),
+                        _ => Err(ValidationError::Comparison {
+                            index,
+                            refusal: ComparisonRefusal::IllegalTypes,
+                        }),
                     },
                 }
             }
@@ -995,7 +1098,12 @@ impl Context {
                         ValueType::U64 => IntervalElement::U64,
                         ValueType::I64 => IntervalElement::I64,
                         ValueType::F64 => IntervalElement::F64,
-                        _ => return Err(ValidationError::IllegalComparison { index }),
+                        _ => {
+                            return Err(ValidationError::Comparison {
+                                index,
+                                refusal: ComparisonRefusal::IllegalTypes,
+                            });
+                        }
                     };
 
                     self.anchor_param_mono(*param, &ValueType::Interval { element })?;
@@ -1007,10 +1115,16 @@ impl Context {
                 }
                 ConstSide::Literal(value) => {
                     let Some(element) = literal_anchor_type(value).interval_element() else {
-                        return Err(ValidationError::IllegalComparison { index });
+                        return Err(ValidationError::Comparison {
+                            index,
+                            refusal: ComparisonRefusal::IllegalTypes,
+                        });
                     };
                     if *self.resolved_var_type(*var) != element_type(element) {
-                        return Err(ValidationError::IllegalComparison { index });
+                        return Err(ValidationError::Comparison {
+                            index,
+                            refusal: ComparisonRefusal::IllegalTypes,
+                        });
                     }
                     Ok(ClassifiedComparison::VarWithin {
                         var: *var,
@@ -1062,7 +1176,10 @@ impl Context {
     ) -> Result<(), ValidationError> {
         match literal_matches(value, expected) {
             Ok(()) => Ok(()),
-            Err(LiteralMismatch::Type) => Err(ValidationError::IllegalComparison { index }),
+            Err(LiteralMismatch::Type) => Err(ValidationError::Comparison {
+                index,
+                refusal: ComparisonRefusal::IllegalTypes,
+            }),
         }
     }
 
@@ -1072,7 +1189,10 @@ impl Context {
                 continue;
             }
             if self.atom_vars.contains(var) && !self.scalar_bound_vars.contains(var) {
-                return Err(ValidationError::MembershipOnlyVariable { var: *var });
+                return Err(ValidationError::Variable {
+                    var: *var,
+                    refusal: VariableRefusal::MembershipOnly,
+                });
             }
         }
         Ok(())
