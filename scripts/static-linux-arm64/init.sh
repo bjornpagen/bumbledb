@@ -4,7 +4,7 @@ set -eu
 [ "$$" -eq 1 ] || { echo "static init must be guest PID1" >&2; exit 2; }
 /bin/busybox mount -t proc proc /proc
 case "$(/bin/busybox cat /proc/cmdline)" in
-    *bumbledb.static-probe=1*) ;;
+    *bdb.static-probe=1*) ;;
     *) echo "static init requires the explicit guest boot marker" >&2; exit 2 ;;
 esac
 

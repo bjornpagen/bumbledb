@@ -1,0 +1,80 @@
+# A v* tag publishes the npm package family once ci, musl and the AWS lane pass
+# on the tagged commit and the release environment approves.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      id-token: write
+
+  musl:
+    uses: ./.github/workflows/musl.yml
+
+  s3-aws:
+    uses: ./.github/workflows/s3-aws.yml
+    permissions:
+      contents: read
+      id-token: write
+
+  publish:
+    needs: [ci, musl, s3-aws]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: The tag is on main and names the workspace and package versions
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          cargo=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          for found in "$cargo" $(for m in ts/package.json ts/npm/*/package.json; do node -p "require('./$m').version"; done); do
+            if [ "$found" != "$version" ]; then
+              echo "::error::tag $GITHUB_REF_NAME, but a manifest says $found"
+              exit 1
+            fi
+          done
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          package_json_file: ts/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+          cache-dependency-path: ts/pnpm-lock.yaml
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: bdb.*.node
+          path: natives
+          merge-multiple: true
+      - run: pnpm --dir ts install --frozen-lockfile
+      - run: node scripts/family.mjs pack natives family
+      - run: node scripts/family.mjs smoke family
+      - name: Publish with npm trusted publishing, platform packages first
+        run: |
+          core="family/bjornpagen-bumbledb-${GITHUB_REF_NAME#v}.tgz"
+          for tarball in family/*.tgz; do
+            if [ "$tarball" != "$core" ]; then
+              npm publish "$tarball" --access public
+            fi
+          done
+          npm publish "$core" --access public
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" family/*.tgz family/SHA256SUMS --verify-tag --title "$GITHUB_REF_NAME" --generate-notes

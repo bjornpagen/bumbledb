@@ -24,7 +24,7 @@ def main():
                "-accel", "tcg,thread=multi", "-smp", "2", "-m", "2048",
                "-nodefaults", "-display", "none", "-serial", "stdio", "-monitor", "none",
                "-nic", "none", "-no-reboot", "-kernel", str(kernel), "-initrd", str(initramfs),
-               "-append", "console=ttyAMA0 rdinit=/init panic=-1 bumbledb.static-probe=1"]
+               "-append", "console=ttyAMA0 rdinit=/init panic=-1 bdb.static-probe=1"]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=args.timeout)
     except subprocess.TimeoutExpired as error:

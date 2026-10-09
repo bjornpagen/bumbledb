@@ -35,7 +35,7 @@ tree_clean() {
 	fi
 }
 
-# Builds the addon with cargo profile $1 into $target_dir/addon/bumbledb.<platform>.node
+# Builds the addon with cargo profile $1 into $target_dir/addon/bdb.<platform>.node
 # and installs it as the dev addon that ts/src/native/load.ts prefers.
 build_addon() {
 	local profile=$1 platform library
@@ -47,8 +47,8 @@ build_addon() {
 	*) echo "ci.sh: no addon for $platform" >&2; return 1 ;;
 	esac
 	mkdir -p "$target_dir/addon"
-	cp "$target_dir/$profile/$library" "$target_dir/addon/bumbledb.$platform.node"
-	cp "$target_dir/addon/bumbledb.$platform.node" "ts/bumbledb.$platform.node"
+	cp "$target_dir/$profile/$library" "$target_dir/addon/bdb.$platform.node"
+	cp "$target_dir/addon/bdb.$platform.node" "ts/bdb.$platform.node"
 }
 
 require_env() {
@@ -126,11 +126,15 @@ lane_test() {
 }
 
 # BUMBLEDB_ADDON_PROFILE picks the cargo profile: addon-ci by default,
-# release (fat LTO) for the artifacts main and releases ship.
+# release (fat LTO) for the artifacts main and releases ship. The host's
+# package family is packed and smoke-tested from its tarballs.
 lane_addon() {
 	build_addon "${BUMBLEDB_ADDON_PROFILE:-addon-ci}"
 	ts_install
 	pnpm --dir ts test
+	rm -rf "$target_dir/family"
+	node scripts/family.mjs pack "$target_dir/addon" "$target_dir/family"
+	node scripts/family.mjs smoke "$target_dir/family"
 	tree_clean
 }
 

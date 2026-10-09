@@ -97,8 +97,8 @@ jobs:
       - if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
-          name: bumbledb.${{ matrix.platform }}.node
-          path: target/addon/bumbledb.${{ matrix.platform }}.node
+          name: bdb.${{ matrix.platform }}.node
+          path: target/addon/bdb.${{ matrix.platform }}.node
           if-no-files-found: error
 
   # SeaweedFS holds a per-key lock for conditional creates, so racing losers get 412.

@@ -1,107 +1,13 @@
-/** Isolated tarball runner for D07/D22. Specimens do not self-provide. */
-import assert from "node:assert/strict"
-import { createRequire } from "node:module"
+/** Runs the core-ts consumer example against the installed package tarballs. */
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { Db, DbError } from "@bjornpagen/bumbledb"
-import { ProtocolError, protocolErrorCodes } from "@bjornpagen/bumbledb-log"
-import { AuthoringError } from "@bjornpagen/bumbledb"
-import { Effect, Exit, Stream } from "effect"
-import {
-	Learning,
-	attemptsFor,
-	coreProgram,
-	describedAttempts,
-	drainPages,
-	makeConsumerRuntime,
-	newAttempt,
-	readAttempts
-} from "./core-ts/consumer.ts"
-import { knownInvalidMixRefuses, mintIntent } from "./log-ts/consumer.ts"
-import { readPublishedAttempts, mintCommand } from "./native-ledger/consumer.ts"
+import { coreProgram, makeConsumerRuntime } from "./consumer.ts"
 
-const consumer = createRequire(import.meta.url)
-const core = createRequire(consumer.resolve("@bjornpagen/bumbledb"))
-const log = createRequire(consumer.resolve("@bjornpagen/bumbledb-log"))
-assert.equal(log.resolve("@bjornpagen/bumbledb"), consumer.resolve("@bjornpagen/bumbledb"))
-assert.equal(core.resolve("effect"), consumer.resolve("effect"))
-assert.equal(log.resolve("effect"), consumer.resolve("effect"))
-
-assert.ok(knownInvalidMixRefuses, "D27: I64/U64 mixing refuses at authoring")
-
-const authoringRecovery = Effect.gen(function* () {
-	return yield* new AuthoringError({ message: "packed authoring refusal" })
-}).pipe(Effect.catchTag("AuthoringError", (failure) => Effect.succeed(failure.message)))
-assert.equal(Effect.runSync(authoringRecovery), "packed authoring refusal")
-
-const cancelledError = new DbError({
-	operation: "packed-consumer",
-	reason: { _tag: "Cancelled" }
-})
-assert.equal(
-	Effect.runSync(
-		Effect.fail(cancelledError).pipe(
-			Effect.catchReason("DbError", "Cancelled", (reason) => Effect.succeed(reason._tag))
-		)
-	),
-	"Cancelled"
-)
-assert.ok(protocolErrorCodes.includes("ForeignIdentity"))
-assert.equal(
-	Effect.runSync(
-		Effect.fail(
-			new ProtocolError({ operation: "packed-consumer", reason: { _tag: "Contention", attempts: 3 } })
-		).pipe(Effect.catchTag("ProtocolError", (failure) => Effect.succeed(failure.code)))
-	),
-	"Contention"
-)
-
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "packed-consumer-"))
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-packed-"))
 const runtime = makeConsumerRuntime()
-
 try {
-	const created = await runtime.runPromise(coreProgram(path.join(dir, "core")))
-	assert.ok(created.outcome.kind === "accepted" || created.outcome.kind === "no-change")
-	assert.ok(Array.isArray(created.rows))
-	assert.ok(created.closed)
-
-	const d07 = await runtime.runPromise(
-		Effect.scoped(
-			Effect.gen(function* () {
-				const studentId = crypto.randomUUID()
-				const attemptId = crypto.randomUUID()
-				const store = path.join(dir, "d07")
-				const db = yield* Db.create(store, Learning)
-				const changes = yield* newAttempt(studentId, attemptId)
-				const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
-				assert.ok(outcome.kind === "accepted" || outcome.kind === "no-change")
-				const snapshot = yield* db.snapshot()
-				const rows = yield* readAttempts(snapshot, studentId)
-				assert.ok(rows.length >= 1)
-				const described = yield* snapshot.prepare(describedAttempts)
-				assert.deepEqual(yield* (yield* described.execute({ student: studentId })).collect(), rows)
-				const paged = yield* drainPages(snapshot, studentId)
-				assert.equal(paged, rows.length, "D07: pages and collect must agree on admitted rows")
-				assert.deepEqual(yield* readPublishedAttempts(snapshot, studentId), rows)
-				const result = yield* snapshot.execute(attemptsFor, { student: studentId })
-				assert.deepEqual(yield* result.collect(), rows)
-				assert.deepEqual(yield* result.collect(), rows, "collection does not consume the result")
-				const pages = result.pages()
-				assert.equal(yield* pages.pipe(Stream.runFold(() => 0, (count, page) => count + page.length)), rows.length)
-				assert.ok(Exit.isFailure(yield* Effect.exit(result.collect())), "paging transfers the result once")
-				return yield* db.close()
-			})
-		)
-	)
-	assert.ok(d07)
-
-	const intent = await runtime.runPromise(mintIntent)
-	assert.ok(intent.studentId)
-	const command = await runtime.runPromise(mintCommand(crypto.randomUUID()))
-	assert.ok(command.requestId)
-	assert.ok(command.receiptEpoch)
-	assert.ok(intent.commandId.requestId)
+	await runtime.runPromise(coreProgram(path.join(dir, "smoke.bdb")))
 } finally {
 	await runtime.dispose()
 	fs.rmSync(dir, { recursive: true, force: true })

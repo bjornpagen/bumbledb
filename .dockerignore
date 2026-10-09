@@ -12,5 +12,5 @@ bench-data
 .claude
 .idea
 .vscode
-ts/bumbledb.*.node
-ts/npm/**/bumbledb.node
+ts/bdb.*.node
+ts/npm/**/bdb.node

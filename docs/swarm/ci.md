@@ -18,7 +18,7 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
 | G4: SeaweedFS and AWS S3 lanes | landed (red until ts adds `test:s3`, see requests) |
 | G10: `deep.yml` (Miri, musl, AWS, deep sweeps + release gates, macOS clippy, udeps, NEON asm, deep-red issue) | landed |
 | G11: `scripts/bump-toolchain.sh`, `toolchain-canary.yml`, toolchain components | landed (micro report needs bench, see requests) |
-| G12: `release.yml`, `scripts/family.mjs`, packed smoke | todo |
+| G12: `release.yml`, `scripts/family.mjs`, packed smoke | landed (needs ts `build.ts dist` and the D20 addon names, see requests) |
 
 ## API changes (announcements)
 
@@ -105,6 +105,30 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
   App token (`vars.BUMBLEDB_BOT_CLIENT_ID`, `secrets.BUMBLEDB_BOT_PRIVATE_KEY`) and opens or
   updates the `bot/toolchain` pull request; a red run opens or comments on the issue
   `toolchain canary red`.
+- **D20 names:** the addon artifacts are `bdb.<platform>-<arch>.node` (`target/addon/`, CI artifact
+  names, the dev addon `ts/bdb.<platform>-<arch>.node`) and `bdb.node` inside a platform package.
+  The musl QEMU guest marker is `bdb.static-probe=1`.
+- **`scripts/family.mjs`** replaces `build-family.mjs` and the `packed-*` scripts (deleted:
+  `build-family.mjs`, `build-family.test.mjs`, `packed-import.sh`, `packed-project.mjs`,
+  `packed-project.test.mjs`, `packed-pure-authoring.ts`):
+  - `node scripts/family.mjs pack <natives-dir> <out-dir>`: installs each
+    `bdb.<platform>.node` as `ts/npm/<platform>/bdb.node` (removing every other addon there),
+    runs `node ts/scripts/build.ts dist` then `node ts/scripts/build.ts stage <out-dir>`, checks
+    the tarball set is exactly the core plus those platforms, writes `SHA256SUMS`.
+  - `node scripts/family.mjs smoke <out-dir>`: a fresh pnpm project installs the core and host
+    tarballs (other platform packages overridden to `-`), typechecks
+    `scripts/packed-consumer.ts` + `examples/consumers/core-ts/consumer.ts` with strict `tsc`, and
+    runs `coreProgram(<tmp>/smoke.bdb)` under `makeConsumerRuntime()`.
+  - The `addon` lane packs and smokes the host family on every pull request and push.
+- **`release.yml`** (tags `v*`): calls `ci.yml`, `musl.yml` and `s3-aws.yml`; then `publish` in the
+  `release` environment checks the tag is on `main` and equals the workspace, core and every
+  platform package version, downloads the three `bdb.<platform>.node` artifacts from the ci call,
+  packs and smokes the family, `npm publish`es each tarball with trusted publishing (platform
+  packages first, no token), and runs `gh release create --verify-tag` with the tarballs and
+  `SHA256SUMS`.
+  - **Owner:** create the `release` environment with required reviewers, and register
+    `release.yml` + environment `release` as the npm trusted publisher of
+    `@bjornpagen/bumbledb` and the three platform packages.
 
 ## Requests to other lanes
 
@@ -141,6 +165,17 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
   (`--candidate-digest`, `--specification-revision`, `--write-native-provenance`) and read
   `scripts/version-roster.txt`; both are deleted. Drop pack provenance (`pack-provenance.json` in
   `files`) and the roster check.
+- **`node ts/scripts/build.ts dist`**: please add a dist-only mode (today `release` also rebuilds
+  the addon; the release job packs the three CI-built addons and must not rebuild one).
+- **D20 in the addon paths:** the dev addon `ts/bdb.<platform>-<arch>.node`, platform package
+  `main`/`files` `bdb.node`, `ts/.gitignore` (`bdb.*.node`, `npm/*/bdb.node`), and `stage` packing
+  platform dirs that hold `bdb.node`. Also drop `pack-provenance.json` from the platform
+  packages' `files`.
+- The packed smoke imports `coreProgram(localPath)` and `makeConsumerRuntime()` from
+  `examples/consumers/core-ts/consumer.ts` and only requires that the program completes. Keep
+  those two exports (or tell me their replacements).
+- `release.yml` refuses a tag unless `ts/package.json`, every `ts/npm/*/package.json` and the
+  Cargo workspace version all equal it.
 - `scripts/static-linux-arm64/smoke.rs` includes `examples/consumers/rust/src/main.rs` as a module
   and calls `consumer::run() -> Result<(), E: Display>`: the musl lane links that consumer into
   the static C probe. Keep that file and signature (or tell me what replaces it).
