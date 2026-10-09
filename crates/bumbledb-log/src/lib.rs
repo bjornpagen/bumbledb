@@ -3,6 +3,7 @@
 //! step. [`Machine`] runs the protocol without doing I/O; a [`Replica`]
 //! holds the decided state; checkpoint images bound replay.
 
+mod cache;
 mod command;
 mod entry;
 mod fold;
@@ -14,6 +15,7 @@ mod machine;
 mod receipt;
 mod replica;
 
+pub use cache::{Cache, CacheDb};
 pub use command::{Command, CommandRef, Precondition};
 pub use entry::{Body, Decided, Entry, Freeze, Genesis, Migration, MigrationId, Thaw, Verdict};
 pub use fold::{Folded, Misplaced, fold, migrated_head};

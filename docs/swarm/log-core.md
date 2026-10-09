@@ -9,9 +9,10 @@ Owns: `crates/bumbledb-log/**`, `docs/swarm/log-core.md`.
 | Delete the old log machine, its tests, conformance fixtures, bins, the bench dev-dependency, object_store/tokio/futures/once_cell_try | done |
 | Core types, one frame codec, `Command`, `Entry`, `Receipt`, `Head`, `fold` | landed |
 | Sans-IO `Machine` (U11) + seeded fault-injection simulation over a reference replica | landed |
-| LMDB `Cache` (the product `Replica`) over the engine | in progress (on `bumbledb::integration` until `bumbledb::host` lands) |
-| Checkpoints (policy, images, cold open) | in the machine; cache side in progress |
-| Migrations (D6/D7): ledger, four-way comparison, Freeze/Migration/Thaw, population | in the machine; cache side in progress |
+| LMDB `Cache` (the product `Replica`) over the engine | landed on today's `bumbledb::integration`; moves to `bumbledb::host` when it lands |
+| Checkpoints (policy, images, cold open, pruning, digest-verified install) | landed |
+| Migrations (D6/D7): ledger, four-way comparison, Freeze/Migration/Thaw, population, sticky rejection, `SchemaAdvanced` | landed |
+| D20 `bdb` names: frames `bdb.<kind>.v1`, images `*.bdb`, cache generations `<n>.bdb` | landed |
 
 The bridge and the swarm gate: the engine at HEAD currently warns in `exec/scratch.rs`
 (engine-query), so this lane lints with `cargo clippy -p bumbledb-log --no-deps`.
@@ -143,6 +144,23 @@ pub enum IoResult {
 Keys are relative (`log/00000000000000000042`, `ckpt/…`, `mig/…`); TS prepends its prefix. TS may
 retry GET/LIST/DELETE itself and must report a PUT's first non-200 as `Occupied` (412) or
 `Failed`.
+
+### The cache
+
+```rust
+pub type CacheDb = bumbledb::Db<SchemaDescriptor>;
+impl Cache {
+    pub fn open(root: &Path, bundle: Bundle) -> Result<Cache, CacheError>;  // discards anything unusable
+    pub fn db(&self) -> Option<&Arc<CacheDb>>;   // reads; replaced when an image installs
+}
+impl Replica for Cache { .. }
+```
+
+Layout under `root`: `CURRENT` (`"<generation> <schema hex>"`), the live `<generation>.bdb/`
+LMDB directory, and scratch `incoming.bdb`, `outgoing.bdb/`, `migration.bdb/`, `stage.bdb/`.
+Receipts are host records `r‖request id`; the head is the attachment. Create, image install and
+migration build a new generation and swap `CURRENT`. When a machine is replaced, abandon the old
+machine's outstanding requests (a stale download could land in `incoming.bdb`).
 
 ### Replica and migrations
 
