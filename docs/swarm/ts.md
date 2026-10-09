@@ -16,14 +16,22 @@ Owns: `ts/**` (except `ts/src/native/binding.d.ts`), `ts-log/**`, `examples/**`.
 | D6 stores (MemStore with faults, FsStore, S3Store), I/O executor, machine driver | landed |
 | D6/F9 `Database.make/layer/pool`, submit, consistency, migrations on open | landed |
 | D7 `bumbledb generate / check / migrate` | landed |
-| D8 notes | after D6/D7 |
+| G12/D20 TS: `bdb.<platform>-<arch>.node` dev addon, `bdb.node` platform packages, `build.ts dist`, per-test timeout | landed `83338ad35` |
+| D8 notes on the hosted API (pool, migrations, `pnpm migrate`, `.bdb/`, no backup/restore) | landed `7a335ec21` |
+| D6: `S3Store` takes a structural `S3Sender` (packed types need no AWS SDK); README documents `Database` | landed `ee7817f71` |
+| D8 consumers: core-ts on the merged package; Rust consumer on `WriteOutcome`/`ErrorKind` | landed `ad90b8bc7` |
+| G4 `test:s3`: ObjectStore conformance plus a hosted `Database` contract against real S3 | landed `3bf9357f7` |
+
+Gate at the last commit (sandbox, HEAD addon): `biome check`, `tsc --noEmit`, `node --test` 283/283;
+notes `typecheck`, `test` 8/8, `migrations:check`, `next build`; `scripts/family.mjs pack` + `smoke` with
+the host addon; the Rust consumer runs and is clippy-clean.
 
 ## How TS loads the addon (for bridge)
 
 `ts/src/native/load.ts` loads, in order:
-1. `ts/bumbledb.<platform>-<arch>.node` (dev build; gitignored; written by `ts/scripts/build.ts dev`,
+1. `ts/bdb.<platform>-<arch>.node` (dev build; gitignored; written by `ts/scripts/build.ts dev`,
    which runs `cargo build -p bumbledb-node` and copies the cdylib);
-2. the platform package `@bjornpagen/bumbledb-<platform>-<arch>`.
+2. the platform package `@bjornpagen/bumbledb-<platform>-<arch>` (`main: bdb.node`).
 
 TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `import type`.
 
@@ -103,7 +111,7 @@ TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `impo
   deleted. All native types come from `ts/src/native/binding.d.ts` through `ts/src/native/addon.ts`.
 - Public outcome unions are the generated wire types: `Db.apply(changes, expected?)` and
   `Db.judge(changes, expected?)` (`expected` is a `Witness`, omitted means current) return
-  `ApplyOutcome` (`Committed | NoChange | Rejected | Moved`) and `JudgeOutcome`
+  `ApplyOutcome` (`Committed { generation, changed } | Rejected | Moved`) and `JudgeOutcome`
   (`Admitted | Rejected | Moved`); violations are `ViolationOut`; `ChangeRecord.kind` is
   `"Add" | "Remove"`; `DbInspection` is `{ schemaId, generation, diskBytes, retainedOperations }`.
   `DbError.reason` mirrors the addon's `RuntimeError` union; `CloseFailure.report` is `CloseOut`.
@@ -130,9 +138,51 @@ TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `impo
   (default export: the app's `Database` options) with `onOpen: "migrate"`. A migration hash is
   sha256 over `id + "\n" + schema.json`. `@effect/platform-node` is no longer a dependency.
 
+- Addon files (D20): the dev addon is `ts/bdb.<platform>-<arch>.node`; each platform package's
+  `main` and only file is `bdb.node` (no `pack-provenance.json`); `ts/.gitignore` ignores
+  `bdb.*.node` and `npm/*/bdb.node`. `node scripts/build.ts dist` compiles `dist/` alone;
+  `release` builds the host addon into `npm/<platform>-<arch>/bdb.node` plus `dist/`; `stage <out>`
+  packs the core and every platform directory holding `bdb.node`.
+- `pnpm test` and `pnpm test:s3` run `node --test --test-timeout=120000`: a hung test fails its file.
+- `S3StoreOptions.client` is `S3Sender` (`send(command: never, { abortSignal }) => Promise<unknown>`,
+  exported), which an AWS SDK v3 `S3Client` satisfies; no published `.d.ts` imports `@aws-sdk/*`.
+- `ts/test/fixtures/hosted-conformance.ts`: `hostedConformance(name, store)` (cold open from
+  another process's checkpoint; migrations once, read by later processes), run over MemStore,
+  FsStore and the fake S3 in `pnpm test` and over real S3 in `pnpm test:s3`.
+- `pnpm test:s3` (`ts/test-s3/`): every `BUMBLEDB_S3_*` variable of the ci contract is required (a
+  missing one fails the run); `seaweedfs` uses `forcePathStyle`; each suite writes under a fresh
+  `<BUMBLEDB_S3_PREFIX><suite>-<uuid>/`, and only `delete`s checkpoint keys. The client keeps the
+  AWS SDK's default checksums, as applications do (the in-process fake S3 cannot parse aws-chunked
+  bodies, so the regular suite's client uses `WHEN_REQUIRED`).
+- Notes (`examples/notes`): installs `@bjornpagen/bumbledb` as `file:../../ts` and the platform
+  packages as optional `file:../../ts/npm/<platform>` dependencies (pnpm copies them into
+  `node_modules`, so `next build` keeps them external and traces `bdb.node`). Its `pnpm-lock.yaml`
+  is committed. Setup: `node ts/scripts/build.ts release` (or put any host addon at
+  `ts/npm/<host>/bdb.node` plus `node ts/scripts/build.ts dist`), then
+  `pnpm --dir examples/notes install --frozen-lockfile`; gate: `typecheck`, `test`,
+  `migrations:check`, `BUMBLEDB_TARGET=<host> build`. Data dir `.bdb/`; Lambda cache `/tmp/bdb`.
+
 ### For ci
 - `examples/consumers/{log-ts,native-ledger}` are deleted (they used bumbledb-log).
   `examples/consumers/core-ts/consumer.ts` imports `Db` from `@bjornpagen/bumbledb/engine`.
   `examples/consumers/rust/src/main.rs` stays with `consumer::run()`; I adapt it to engine API
   changes as they land.
 - The packed smoke can run `node ts/scripts/build.ts release && node ts/scripts/build.ts stage <dir>`.
+
+## Replies
+
+- ci, all requests done: `test:s3` (above; it was already present, now with the hosted contract),
+  `--test-timeout`, `build.ts dist`, the D20 addon paths and platform manifests, `coreProgram` and
+  `makeConsumerRuntime` kept, `examples/consumers/rust/src/main.rs` keeps `pub fn run() ->
+  Result<(), Box<dyn Error>>`. `scripts/family.mjs pack` + `smoke` pass locally with the host addon.
+- bridge: the C9 write surface (opaque witness, generation-based outcomes) is consumed (`f2d84bbaa`);
+  the hosted verbs follow the generated `binding.d.ts` shapes.
+
+## Open (owner or consolidator)
+
+- Versions are still 1.3.1 in `ts/package.json` and `ts/npm/*/package.json`; the consolidator bumps
+  them with the workspace to 2.0.0.
+- U10: `examples/notes/alchemy.run.ts` deploys on `nodejs24.x`, the newest runtime Alchemy 2.0.0-beta.81
+  accepts, while the package requires Node 26. Deploying needs a Node 26 runtime (container image or
+  custom runtime) once Alchemy or Lambda offers one.
+- Notes is not in CI; the consolidator's gate runs it as listed above.
