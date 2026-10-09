@@ -91,7 +91,7 @@ pub use error::{
     Exceeded, HostKeyFault, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation,
     Violations,
 };
-pub use exec::kernel::numeric::{F64Math, FloatCardinalityOverflow, UnsupportedNumericalPlatform};
+pub use exec::kernel::numeric::{F64Math, FloatCardinalityOverflow, NonDefaultFloatEnvironment};
 pub use interval::{Discrete, Element, FloatMeasureError, Interval};
 /// The grounding off switch, for dependent crates' differential tests.
 #[cfg(feature = "testing")]
@@ -132,14 +132,14 @@ pub use schema::{
 
 /// The declarative schema surface: `schema! { pub Name; ... }` declares a
 /// theory type implementing [`Theory`] and one typed fact struct per
-/// relation. Names resolve to ids at expansion; a field is
-/// `name: type` or `name: type as NewType`:
+/// relation. Names resolve to ids at expansion. The theory's name comes
+/// first:
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     relation Holder { id: u64 as HolderId }
 /// }
 /// ```
-/// Field modifiers do not exist
+/// A field is `name: type` or `name: type as NewType`; modifiers do not exist
 /// (``schema!: unknown field modifier `autoincrement` — a field is `name: type` or `name: type as NewType` ``):
 /// ```compile_fail
 /// bumbledb::schema! {

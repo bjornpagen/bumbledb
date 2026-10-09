@@ -8,7 +8,10 @@
 mod convert;
 mod display;
 
-pub use crate::ir::validate::error::ValidationError;
+pub use crate::ir::validate::error::{
+    AggregateRefusal, ComparisonRefusal, FieldRefusal, HeadMismatch, Limit, ParamRefusal,
+    RecRefusal, Unordered, ValidationError, VariableRefusal,
+};
 
 use std::path::PathBuf;
 

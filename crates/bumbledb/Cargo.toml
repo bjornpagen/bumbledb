@@ -7,19 +7,16 @@ publish = false
 [features]
 # Test support for dependent crates' test suites. Never enabled by a product build.
 testing = []
-# Empty; deleted once bumbledb-bench's manifest stops naming them.
-alloc-counter = []
-ground-off = []
 
 [dependencies]
 blake3 = "1.8.7"
 fearless_simd = "1.1"
 bumbledb-macros = { path = "../bumbledb-macros" }
-
 bumbledb-theory = { path = "../bumbledb-theory" }
-heed = { version = "0.22", default-features = false } 
+heed = { version = "0.22", default-features = false }
 
-# On Apple platforms LMDB's default lock implementation is SysV semaphores,
+# On Apple platforms LMDB's default locks are SysV semaphores, whose keys
+# collide across directories and outlive a crashed owner; POSIX semaphores do not.
 [target.'cfg(target_os = "macos")'.dependencies]
 heed = { version = "0.22", default-features = false, features = ["posix-sem"] }
 
