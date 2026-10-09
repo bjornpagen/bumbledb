@@ -1,7 +1,7 @@
 import { Effect, Option, Stream } from "effect"
-import type { CursorHandle, ResultHandle } from "./db-native.ts"
-import { dbNative } from "./db-native.ts"
 import type { DbError } from "./errors.ts"
+import type { CursorRef, ResultRef } from "./native/addon.ts"
+import { addon } from "./native/addon.ts"
 import { call, scoped } from "./native/op.ts"
 import type { FindColumn } from "./query/atom.ts"
 import { decodeAnswers } from "./query/run.ts"
@@ -23,10 +23,10 @@ function decodePage<A>(finds: readonly FindColumn[], rows: readonly (readonly Ce
 }
 
 class CompleteResultLive<A> implements CompleteResult<A> {
-	readonly #handle: ResultHandle
+	readonly #handle: ResultRef
 	readonly #finds: readonly FindColumn[]
 
-	constructor(handle: ResultHandle, finds: readonly FindColumn[]) {
+	constructor(handle: ResultRef, finds: readonly FindColumn[]) {
 		this.#handle = handle
 		this.#finds = finds
 	}
@@ -36,8 +36,8 @@ class CompleteResultLive<A> implements CompleteResult<A> {
 		const finds = this.#finds
 		return call(
 			"CompleteResult.collect",
-			(done) => dbNative.runtimeResultCollect(handle, done),
-			(lease) => decodePage<A>(finds, dbNative.runtimeRowsTake(lease))
+			(done) => addon.runtimeResultCollect(handle, done),
+			(lease) => decodePage<A>(finds, addon.runtimeRowsTake(lease))
 		).pipe(Effect.withSpan("CompleteResult.collect"))
 	}
 
@@ -46,21 +46,13 @@ class CompleteResultLive<A> implements CompleteResult<A> {
 		const finds = this.#finds
 		return Stream.unwrap(
 			Effect.gen(function* () {
-				const cursor: CursorHandle = yield* scoped(
+				const cursor: CursorRef = yield* scoped(
 					"ResultCursor.release",
-					call(
-						"CompleteResult.pages",
-						(done) => dbNative.runtimeResultCursor(handle, done),
-						dbNative.runtimeCursorTake
-					),
-					(owned) => (done) => dbNative.runtimeCursorClose(owned, done)
+					call("CompleteResult.pages", (done) => addon.runtimeResultCursor(handle, done), addon.runtimeCursorTake),
+					(owned) => (done) => addon.runtimeCursorClose(owned, done)
 				)
 				return Stream.paginate(undefined, () =>
-					call(
-						"CompleteResult.page",
-						(done) => dbNative.runtimeCursorNext(cursor, done),
-						dbNative.runtimePageTake
-					).pipe(
+					call("CompleteResult.page", (done) => addon.runtimeCursorNext(cursor, done), addon.runtimePageTake).pipe(
 						Effect.map((page) =>
 							page === null
 								? ([[], Option.none<undefined>()] as const)
@@ -73,7 +65,7 @@ class CompleteResultLive<A> implements CompleteResult<A> {
 	}
 
 	/** The native result behind `value`, when `value` is a result this SDK made. */
-	static handle(value: object): ResultHandle | undefined {
+	static handle(value: object): ResultRef | undefined {
 		return #handle in value ? (value as CompleteResultLive<unknown>).#handle : undefined
 	}
 }

@@ -27,17 +27,15 @@ describe("query Compute (variable leaves, shared roster)", function queryCompute
 		assert.throws(refused, /operand kinds differ \(u64 vs i64\)/)
 	})
 
-	test("query lowering converts shared literals to ValueSpec wire", function wireLiteral() {
+	test("query lowering spells shared literals as JSON values", function wireLiteral() {
 		const q = query(Learning).rule(function rule(r) {
 			const { id, units } = v(Attempt)
 			return r.match(Attempt, { id, units }).find({ id, doubled: Compute.multiply(units, Compute.u64(2n)) })
 		})
 		const term = lowerQuery(q).rules[0]?.finds[1]
-		assert.equal(term?.kind, "compute")
-		assert.ok(term?.kind === "compute")
-		assert.equal(term.expr.kind, "multiply")
-		assert.ok(term.expr.kind === "multiply")
-		assert.deepEqual(term.expr.right, { kind: "literal", value: { kind: "u64", value: 2n } })
+		assert.ok(term?.kind === "Compute")
+		assert.ok(term.expr.kind === "Multiply")
+		assert.deepEqual(term.expr.right, { kind: "Literal", value: { kind: "U64", value: "2" } })
 	})
 })
 

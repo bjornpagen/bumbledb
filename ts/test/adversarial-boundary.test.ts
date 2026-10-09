@@ -1,48 +1,41 @@
 /**
- * Hostile capability inputs across the actual Rust/Node boundary.
- * Forged and kind-confused tokens, one-shot take, retained wrappers after
- * close, close/drain under load. Deleted writer/parked-session verbs are
- * not part of this roster — snapshot/session attacks use the db-native
- * capability path.
+ * Hostile inputs across the actual addon boundary: forged and kind-confused handles, one-shot
+ * takes, retained wrappers after close, and close under load.
  */
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { test } from "node:test"
-import type { SnapshotHandle } from "../src/db-native.ts"
-import { dbNative } from "../src/db-native.ts"
+import { compiledOf } from "../src/compile.ts"
 import { u64 } from "../src/fields.ts"
-import { lower } from "../src/lower.ts"
+import type { OperationRef, RuntimeRef, SnapshotRef } from "../src/native/addon.ts"
+import { addon } from "../src/native/addon.ts"
+import type { CloseOut } from "../src/native/binding.d.ts"
 import { relation } from "../src/relation.ts"
-import type { DirectoryHandle, OperationHandle, OptionsWire, RuntimeHandle } from "../src/runtime-native.ts"
-import { runtimeNative } from "../src/runtime-native.ts"
 import { schema } from "../src/schema.ts"
 import { key } from "../src/statements.ts"
 
-const wire: OptionsWire = {
+const wire = JSON.stringify({
 	workers: 2,
 	queueCapacity: 16,
 	cleanupCapacity: 16,
 	ownerCapacity: 16,
 	nativeHandleCapacity: 64,
 	cleanupTimeoutMs: 2000
-}
+})
 const Row = relation("Row", { id: u64 })
 const Boundary = schema("Boundary", { Row }, [key(Row, ["id"])])
-const spec = lower(Boundary)
+const compiled = compiledOf(Boundary).handle
 
 function tempDir(tag: string): string {
-	return fs.mkdtempSync(path.join(os.tmpdir(), `bdb-p12-boundary-${tag}-`))
+	return fs.mkdtempSync(path.join(os.tmpdir(), `bumbledb-boundary-${tag}-`))
 }
 
 const typedRefusal = (error: unknown): boolean =>
-	typeof error === "object" &&
-	error !== null &&
-	"_tag" in error &&
-	typeof (error as { _tag: unknown })._tag === "string"
+	typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string"
 
-const close = (handle: RuntimeHandle) => new Promise((resolve) => runtimeNative.runtimeClose(handle, resolve))
+const close = (handle: RuntimeRef) => new Promise<CloseOut>((resolve) => addon.runtimeClose(handle, resolve))
 
 function started<Value>(start: (callback: () => void) => Value): {
 	readonly lease: Value
@@ -53,158 +46,124 @@ function started<Value>(start: (callback: () => void) => Value): {
 	return { lease, done: pending.promise }
 }
 
-test("forged externals fail conversion and kind-confused capabilities refuse typed", async () => {
-	const runtime = runtimeNative.runtimeOpen(wire)
+async function openDb(runtime: RuntimeRef, dir: string, create: boolean) {
+	const acquire = started((callback) => addon.runtimeDirectoryAcquire(runtime, dir, callback))
+	await acquire.done
+	const owner = addon.runtimeDirectoryTake(acquire.lease)
+	const open = started((callback) => addon.runtimeDirectoryDbOpen(owner, "store", compiled, create, callback))
+	await open.done
+	const opened = addon.runtimeDbTake(open.lease)
+	assert.equal(opened._tag, "Opened")
+	if (opened._tag !== "Opened") throw new Error("unreachable")
+	return { owner, db: opened.db }
+}
+
+test("forged and kind-confused handles are refused at conversion", async () => {
+	const runtime = addon.runtimeOpen(wire)
 	try {
-		const forgedRuntime = { __runtime: Symbol("forged") } as unknown as RuntimeHandle
-		const conversionRefusal = { message: "Failed to get external value" }
-		assert.throws(() => runtimeNative.runtimeInspect(forgedRuntime), conversionRefusal)
-		assert.throws(() => runtimeNative.runtimeHash(forgedRuntime, new Uint8Array(1), () => {}), conversionRefusal)
-		const forgedOperation = {} as unknown as OperationHandle
-		assert.throws(() => runtimeNative.runtimeTake(forgedOperation), conversionRefusal)
-		const forgedSnapshot = {} as unknown as SnapshotHandle
-		assert.throws(() => dbNative.runtimeSnapshotGet(forgedSnapshot, 0, 0, [], () => {}), conversionRefusal)
+		assert.throws(() => addon.runtimeInspect({} as unknown as RuntimeRef))
+		assert.throws(() => addon.runtimeReady({} as unknown as RuntimeRef, () => {}))
+		assert.throws(() => addon.runtimeTake({} as unknown as OperationRef))
+		assert.throws(() => addon.runtimeSnapshotGet({} as unknown as SnapshotRef, 0, 0, [], () => {}))
 		const dir = tempDir("kind")
-		const acquire = started((callback) => runtimeNative.runtimeDirectoryAcquire(runtime, dir, callback))
+		const acquire = started((callback) => addon.runtimeDirectoryAcquire(runtime, dir, callback))
 		await acquire.done
-		const owner: DirectoryHandle = runtimeNative.runtimeDirectoryTake(acquire.lease)
+		const owner = addon.runtimeDirectoryTake(acquire.lease)
+		assert.throws(() => addon.runtimeTake(owner as unknown as OperationRef), "a directory owner is not an operation")
 		assert.throws(
-			() => runtimeNative.runtimeTake(owner as unknown as OperationHandle),
-			{ message: /OperationHandle.*not the type of wrapped object/ },
-			"a directory owner is not an operation lease"
-		)
-		assert.throws(
-			() => dbNative.runtimeSnapshotGet(owner as unknown as SnapshotHandle, 0, 0, [], () => {}),
-			{ message: /SnapshotHandle.*not the type of wrapped object/ },
+			() => addon.runtimeSnapshotGet(owner as unknown as SnapshotRef, 0, 0, [], () => {}),
 			"a directory owner is not a snapshot"
 		)
-		await new Promise((resolve) => runtimeNative.runtimeDirectoryClose(owner, false, resolve))
-		assert.equal(runtimeNative.runtimeInspect(runtime).phase, "open")
+		await new Promise((resolve) => addon.runtimeDirectoryClose(owner, false, resolve))
+		assert.equal(addon.runtimeInspect(runtime).phase, "Open")
+		fs.rmSync(dir, { recursive: true, force: true })
 	} finally {
 		await close(runtime)
 	}
 })
 
 test("takes are one-shot: a completed operation yields its value exactly once", async () => {
-	const runtime = runtimeNative.runtimeOpen(wire)
+	const runtime = addon.runtimeOpen(wire)
 	try {
-		const input = new Uint8Array([1, 2, 3, 4])
-		const hash = started((callback) => runtimeNative.runtimeHash(runtime, input, callback))
-		await hash.done
-		const first = runtimeNative.runtimeTake(hash.lease)
-		assert.ok(first instanceof Uint8Array && first.length > 0, "the completed take yields the digest")
-		let second: Uint8Array | null | "refused" = "refused"
-		try {
-			second = runtimeNative.runtimeTake(hash.lease)
-		} catch (error) {
-			assert.ok(typedRefusal(error))
-		}
-		assert.ok(second === "refused" || second === null, "a one-shot take never double-delivers")
-		assert.equal(runtimeNative.runtimeInspect(runtime).retained, 0n)
+		const encode = started((callback) => addon.runtimeEncodeRows(runtime, compiled, 0, 1n, [7n], callback))
+		await encode.done
+		const first = addon.runtimeBytesTake(encode.lease)
+		assert.ok(first.length > 0)
+		assert.throws(() => addon.runtimeBytesTake(encode.lease), typedRefusal)
+		assert.equal(addon.runtimeInspect(runtime).retained, 0n)
 	} finally {
 		await close(runtime)
 	}
 })
 
 test("retained wrappers cannot reach native resources after close", async () => {
-	const runtime = runtimeNative.runtimeOpen(wire)
+	const runtime = addon.runtimeOpen(wire)
 	const dir = tempDir("retained")
-	const acquire = started((callback) => runtimeNative.runtimeDirectoryAcquire(runtime, dir, callback))
-	await acquire.done
-	const owner = runtimeNative.runtimeDirectoryTake(acquire.lease)
-	const open = started((callback) => runtimeNative.runtimeDirectoryDbOpen(owner, "store", spec, true, callback))
-	await open.done
-	const outcome = runtimeNative.runtimeDbTake(open.lease)
-	assert.equal(outcome.tag, "accepted")
-	if (outcome.tag !== "accepted") return
-	const db = outcome.db
+	const { owner, db } = await openDb(runtime, dir, true)
+	await new Promise((resolve) => addon.runtimeManagedDbClose(db, resolve))
+	await new Promise((resolve) => addon.runtimeDirectoryClose(owner, false, resolve))
+	assert.deepEqual(await close(runtime), { _tag: "Closed" })
 
-	await new Promise((resolve) => runtimeNative.runtimeManagedDbClose(db, resolve))
-	await new Promise((resolve) => runtimeNative.runtimeDirectoryClose(owner, false, resolve))
-	const report = await close(runtime)
-	assert.deepEqual(report, { kind: "closed" }, "the drained close reports real reclamation")
+	assert.throws(() => addon.runtimeDbSnapshot(db, () => {}), typedRefusal)
+	assert.throws(() => addon.runtimeDirectoryBegin(owner), typedRefusal)
+	assert.equal(addon.runtimeInspect(runtime).phase, "Closed")
 
-	assert.throws(() => dbNative.runtimeDbSnapshot(db, () => {}), typedRefusal)
-	assert.throws(() => runtimeNative.runtimeDirectoryBegin(owner), typedRefusal)
-	assert.equal(runtimeNative.runtimeInspect(runtime).phase, "closed")
-
-	const successor = runtimeNative.runtimeOpen(wire)
+	const successor = addon.runtimeOpen(wire)
 	try {
-		const reacquire = started((callback) => runtimeNative.runtimeDirectoryAcquire(successor, dir, callback))
-		await reacquire.done
-		const newOwner = runtimeNative.runtimeDirectoryTake(reacquire.lease)
-		const reopen = started((callback) => runtimeNative.runtimeDirectoryDbOpen(newOwner, "store", spec, false, callback))
-		await reopen.done
-		const reopened = runtimeNative.runtimeDbTake(reopen.lease)
-		assert.equal(reopened.tag, "accepted", "the released store reopens under a successor")
-		if (reopened.tag === "accepted") {
-			await new Promise((resolve) => runtimeNative.runtimeManagedDbClose(reopened.db, resolve))
-		}
-		await new Promise((resolve) => runtimeNative.runtimeDirectoryClose(newOwner, false, resolve))
+		const reopened = await openDb(successor, dir, false)
+		await new Promise((resolve) => addon.runtimeManagedDbClose(reopened.db, resolve))
+		await new Promise((resolve) => addon.runtimeDirectoryClose(reopened.owner, false, resolve))
 	} finally {
 		await close(successor)
 	}
 	fs.rmSync(dir, { recursive: true, force: true })
 })
 
-test("close under load drains in-flight operations and refuses new admission", { timeout: 30_000 }, async () => {
-	const runtime = runtimeNative.runtimeOpen(wire)
-	const input = new Uint8Array(500_000)
-	const leases = []
-	for (let index = 0; index < 6; index++) {
-		leases.push(started((callback) => runtimeNative.runtimeHash(runtime, input, callback)))
-	}
-	const report = (await close(runtime)) as { kind: string }
-	assert.ok(report.kind === "closed" || report.kind === "incomplete", "close reports reality under load")
-	assert.throws(() => runtimeNative.runtimeHash(runtime, input, () => {}), typedRefusal)
+test("close under load reports what it drained and refuses new admission", async () => {
+	const runtime = addon.runtimeOpen(wire)
+	const leases = Array.from({ length: 6 }, () => started((callback) => addon.runtimeReady(runtime, callback)))
+	const report = await close(runtime)
+	assert.ok(report._tag === "Closed" || report._tag === "Incomplete")
+	assert.throws(() => addon.runtimeReady(runtime, () => {}), typedRefusal)
 	await Promise.allSettled(leases.map((entry) => entry.done))
 })
 
-test("owned results taken before close are frozen against native teardown", async () => {
-	const runtime = runtimeNative.runtimeOpen(wire)
-	const input = new Uint8Array([9, 9, 9])
-	const hash = started((callback) => runtimeNative.runtimeHash(runtime, input, callback))
-	await hash.done
-	const digest = runtimeNative.runtimeTake(hash.lease)
-	assert.ok(digest instanceof Uint8Array)
-	const copy = Uint8Array.from(digest ?? [])
+test("bytes taken before close are owned and untouched by teardown", async () => {
+	const runtime = addon.runtimeOpen(wire)
+	const encode = started((callback) => addon.runtimeEncodeRows(runtime, compiled, 0, 1n, [9n], callback))
+	await encode.done
+	const bytes = addon.runtimeBytesTake(encode.lease)
+	const copy = Uint8Array.from(bytes)
 	await close(runtime)
-	assert.deepEqual(Uint8Array.from(digest), copy, "the owned result is untouched by teardown")
+	assert.deepEqual(Uint8Array.from(bytes), copy)
 })
 
-test("a stale snapshot handle and a foreign relation id miss typed on the live db", async () => {
-	const runtime = runtimeNative.runtimeOpen(wire)
+test("a foreign relation id is refused typed; an absent key is null", async () => {
+	const runtime = addon.runtimeOpen(wire)
 	const dir = tempDir("snapshot")
 	try {
-		const acquire = started((callback) => runtimeNative.runtimeDirectoryAcquire(runtime, dir, callback))
-		await acquire.done
-		const owner = runtimeNative.runtimeDirectoryTake(acquire.lease)
-		const open = started((callback) => runtimeNative.runtimeDirectoryDbOpen(owner, "store", spec, true, callback))
-		await open.done
-		const outcome = runtimeNative.runtimeDbTake(open.lease)
-		assert.equal(outcome.tag, "accepted")
-		if (outcome.tag !== "accepted") return
-		const snapOp = started((callback) => dbNative.runtimeDbSnapshot(outcome.db, callback))
-		await snapOp.done
-		const opened = dbNative.runtimeSnapshotTake(snapOp.lease)
+		const { owner, db } = await openDb(runtime, dir, true)
+		const snapshot = started((callback) => addon.runtimeDbSnapshot(db, callback))
+		await snapshot.done
+		const opened = addon.runtimeSnapshotTake(snapshot.lease)
 
 		let foreignRefused = false
 		try {
-			const get = started((callback) => dbNative.runtimeSnapshotGet(opened.snapshot, 4096, 0, [], callback))
+			const get = started((callback) => addon.runtimeSnapshotGet(opened.snapshot, 4096, 0, [], callback))
 			await get.done
-			dbNative.runtimeRowTake(get.lease)
+			addon.runtimeRowTake(get.lease)
 		} catch (error) {
 			foreignRefused = typedRefusal(error)
 		}
-		assert.ok(foreignRefused, "a foreign relation id refuses typed")
+		assert.ok(foreignRefused)
 
-		const live = started((callback) => dbNative.runtimeSnapshotGet(opened.snapshot, 0, 0, [0n], callback))
+		const live = started((callback) => addon.runtimeSnapshotGet(opened.snapshot, 0, 0, [0n], callback))
 		await live.done
-		assert.equal(dbNative.runtimeRowTake(live.lease), null)
+		assert.equal(addon.runtimeRowTake(live.lease), null)
 
-		await new Promise((resolve) => dbNative.runtimeSnapshotClose(opened.snapshot, resolve))
-		await new Promise((resolve) => runtimeNative.runtimeManagedDbClose(outcome.db, resolve))
-		await new Promise((resolve) => runtimeNative.runtimeDirectoryClose(owner, false, resolve))
+		await new Promise((resolve) => addon.runtimeSnapshotClose(opened.snapshot, resolve))
+		await new Promise((resolve) => addon.runtimeManagedDbClose(db, resolve))
+		await new Promise((resolve) => addon.runtimeDirectoryClose(owner, false, resolve))
 	} finally {
 		await close(runtime)
 		fs.rmSync(dir, { recursive: true, force: true })

@@ -135,8 +135,8 @@ const program = Effect.scoped(
 		])
 		const changes = yield* draft.finish()
 
-		const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
-		if (outcome.kind !== "accepted" && outcome.kind !== "no-change") {
+		const outcome = yield* db.apply(changes)
+		if (outcome._tag !== "Committed" && outcome._tag !== "NoChange") {
 			return outcome
 		}
 		const snapshot = yield* db.snapshot()
@@ -217,21 +217,6 @@ and query representations.
   `f64` are deterministic with one final rounding), named intermediate
   results, nonrecursive composition of query templates, and linear
   recursive reachability.
-- `describeQuery(q)` returns owned logical IR, result names, intermediate
-  table names, and parameter names. `queryFromDescription(S, description,
-  resultFields)` checks a generated description through the same rule builder,
-  scalar grammar, lowering, and execution paths. The result-field record is
-  checked against the derived head and infers the returned row type; it is
-  not an unchecked cast. Generated parameters are validated by their uses at
-  execution. Ordinals refer to the supplied schema's ordered declarations;
-  variable ordinals are local to each rule. Native preparation still checks
-  engine semantics. The description contains plain values, including bigint
-  and byte arrays, rather than native resources or a JSON encoding.
-  Query `data` and `schema`, and compiled-schema inspection properties,
-  return detached snapshots: editing their byte buffers cannot change the
-  query or compilation. Checked immutable branches may be shared. Structural
-  declarations with byte payloads are copied when consumed; JavaScript byte
-  buffers themselves are mutable and are never treated as immutable cache keys.
 - Operational failure is the one `DbError` tagged-reason class in the
   Effect error channel; interruption and finalizer problems stay in
   `Cause`. Resource owners are scoped and report honest `CloseReport`s;

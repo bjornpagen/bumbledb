@@ -11,7 +11,6 @@ import {
 	capacity,
 	ChangeSet,
 	contained,
-	describeQuery,
 	f64,
 	i64,
 	Uuid,
@@ -22,7 +21,6 @@ import {
 	type BumbleOptions,
 	on,
 	query,
-	queryFromDescription,
 	ref,
 	relation,
 	schema,
@@ -67,7 +65,6 @@ export const attemptsFor = query(Learning).rule((r) => {
 })
 
 /** Generated logical descriptions use the same checked schema and typed result fields. */
-export const describedAttempts = queryFromDescription(Learning, describeQuery(attemptsFor), Attempt.fields)
 
 export const attemptStats = query(Learning)
 	.rule((r) => {
@@ -128,8 +125,8 @@ export const coreProgram = (localPath: string) =>
 			const studentId = yield* Effect.sync(() => randomUUID())
 			const attemptId = yield* Effect.sync(() => randomUUID())
 			const changes = yield* newAttempt(studentId, attemptId)
-			const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
-			if (outcome.kind !== "accepted" && outcome.kind !== "no-change") {
+			const outcome = yield* db.apply(changes)
+			if (outcome._tag !== "Committed" && outcome._tag !== "NoChange") {
 				return { outcome, rows: [] as const }
 			}
 			const snapshot = yield* db.snapshot()
@@ -156,7 +153,7 @@ export const correctScore = (localPath: string, attemptId: Uuid) =>
 			yield* draft.delete(Attempt, [observed.previous])
 			yield* draft.insert(Attempt, [{ ...observed.previous, score: 0.95 }])
 			const changes = yield* draft.finish()
-			return yield* db.apply(changes, { expected: { kind: "exact", at: observed.at } })
+			return yield* db.apply(changes, observed.at)
 		})
 	)
 

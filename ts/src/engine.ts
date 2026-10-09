@@ -4,14 +4,11 @@
  */
 export type {
 	ApplyOutcome,
-	CoreWitness,
 	DbInspection,
 	JudgeOutcome,
 	PreparedQuery,
 	QueryReader,
 	Snapshot,
-	StorageInspection,
-	WriteExpected,
-	WriteOptions
+	Witness
 } from "./db.ts"
 export { Db } from "./db.ts"

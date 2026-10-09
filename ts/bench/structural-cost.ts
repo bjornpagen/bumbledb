@@ -102,7 +102,7 @@ try {
 									Row,
 									Array.from({ length: count }, (_, i) => fact(i))
 								)
-								yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })
+								yield* db.apply(yield* draft.finish())
 								const snap = yield* db.snapshot()
 								const results: Record<string, unknown> = {
 									count,

@@ -1,19 +1,5 @@
 import { regex } from "arkregex"
 
-type ValueTypeSpec =
-	| { readonly kind: "bool" }
-	| { readonly kind: "u64" }
-	| { readonly kind: "i64" }
-	| { readonly kind: "f64" }
-	| { readonly kind: "uuid" }
-	| { readonly kind: "string" }
-	| { readonly kind: "fixedBytes"; readonly len: number }
-	| {
-			readonly kind: "interval"
-			readonly element: "u64" | "i64" | "f64"
-			readonly width: bigint | undefined
-	  }
-
 type ValueSpec =
 	| { readonly kind: "bool"; readonly value: boolean }
 	| { readonly kind: "u64"; readonly value: bigint }
@@ -26,6 +12,11 @@ type ValueSpec =
 	| { readonly kind: "intervalI64"; readonly start: bigint; readonly end: bigint }
 	| { readonly kind: "intervalF64"; readonly start: number; readonly end: number }
 
+/** A tagged value on the data plane: a query param, or a member of a set param. */
+type TaggedValue = ValueSpec
+
+type QueryParam = TaggedValue | { readonly kind: "set"; readonly values: readonly TaggedValue[] }
+
 type LiteralSpec =
 	| { readonly kind: "value"; readonly value: ValueSpec }
 	| { readonly kind: "handle"; readonly handle: string }
@@ -33,12 +24,6 @@ type LiteralSpec =
 type LiteralSetSpec =
 	| { readonly kind: "one"; readonly literal: LiteralSpec }
 	| { readonly kind: "many"; readonly literals: readonly LiteralSpec[] }
-
-interface SideSpec {
-	readonly relation: string
-	readonly projection: readonly string[]
-	readonly selection: ReadonlyArray<readonly [string, LiteralSetSpec]>
-}
 
 type CapacityBoundSpec =
 	| { readonly kind: "lit"; readonly value: bigint }
@@ -54,64 +39,6 @@ type CapacityWindowSpec =
 	| { readonly kind: "exact"; readonly n: CapacityBoundSpec }
 	| { readonly kind: "range"; readonly lo: CapacityBoundSpec; readonly hi: CapacityBoundSpec }
 	| { readonly kind: "floor"; readonly lo: CapacityBoundSpec }
-
-/**
- * One field: name, structural type, and host newtype label. There is no
- * `fresh` mark: the database issues no identity, and key laws are declared
- * statements.
- */
-interface FieldSpec {
-	readonly name: string
-	readonly valueType: ValueTypeSpec
-	readonly newtype: string | undefined
-}
-
-interface RowSpec {
-	readonly handle: string
-	readonly values: readonly LiteralSpec[]
-}
-
-/**
- * A relation's closedness as ONE sum (ruled 2026-07-23, R7): the handle
- * newtype and the ground axioms travel together — the two illegal states
- * (a roster without its newtype, a newtype without its roster) are
- * unspellable on the wire exactly as they are unrepresentable in the
- * fused Rust `RelationSpec`. `newtype` is the id's law-computed generator
- * class (`` `${name}.id` `` — the same label every referencing field
- * carries by law), which is how the engine resolves a handle literal back
- * to its roster.
- */
-interface ClosedSpec {
-	readonly newtype: string
-	readonly rows: readonly RowSpec[]
-}
-
-interface RelationSpec {
-	readonly name: string
-	readonly fields: readonly FieldSpec[]
-	readonly closed: ClosedSpec | undefined
-}
-
-type StatementSpec =
-	| { readonly kind: "fd"; readonly relation: string; readonly projection: readonly string[] }
-	| {
-			readonly kind: "containment"
-			readonly source: SideSpec
-			readonly target: SideSpec
-			readonly bidirectional: boolean
-	  }
-	| {
-			readonly kind: "capacity"
-			readonly target: SideSpec
-			readonly weight: WeightSpec
-			readonly window: CapacityWindowSpec
-			readonly source: SideSpec
-	  }
-
-interface SchemaSpec {
-	readonly relations: readonly RelationSpec[]
-	readonly statements: readonly StatementSpec[]
-}
 
 const NON_PRINTABLE = regex("[\\p{C}\\p{Z}]", "u")
 
@@ -263,16 +190,11 @@ function renderWeight(weight: WeightSpec): string {
 export type {
 	CapacityBoundSpec,
 	CapacityWindowSpec,
-	FieldSpec,
 	LiteralSetSpec,
 	LiteralSpec,
-	RelationSpec,
-	RowSpec,
-	SchemaSpec,
-	SideSpec,
-	StatementSpec,
+	QueryParam,
+	TaggedValue,
 	ValueSpec,
-	ValueTypeSpec,
 	WeightSpec
 }
 export { f64BitsHex, renderCapacityWindow, renderLiteral, renderLiteralSet, renderWeight }

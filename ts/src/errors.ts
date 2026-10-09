@@ -4,9 +4,6 @@
  * close that does not drain cleanly is a `CloseFailure` defect.
  */
 import { Schema } from "effect"
-import { runtimeErrorCodes } from "./runtime-codes.ts"
-
-export { runtimeErrorCodes } from "./runtime-codes.ts"
 
 /** Where an authoring refusal points and what was expected there. */
 export const AuthoringDiagnostic = Schema.Struct({
@@ -36,19 +33,21 @@ export class NativeLoadError extends Schema.TaggedError<NativeLoadError>()("Nati
 	cause: Schema.Unknown
 }) {}
 
-const ResourceLimit = Schema.Struct({
-	_tag: Schema.Literal("ResourceLimit"),
-	dimension: Schema.String,
-	used: Schema.BigInt,
-	requested: Schema.BigInt,
-	limit: Schema.BigInt
-})
 const PlainReason = Schema.Struct({
-	_tag: Schema.Literals(
-		runtimeErrorCodes.filter(
-			(code) => code !== "ResourceLimit" && code !== "Io" && code !== "Engine" && code !== "InvalidArgument"
-		)
-	)
+	_tag: Schema.Literals([
+		"RuntimeAlreadyLive",
+		"ForeignRuntime",
+		"ClosedHandle",
+		"HandleBusy",
+		"SpentHandle",
+		"QueueFull",
+		"Internal",
+		"DirectoryBusy",
+		"WriterBusy",
+		"InvalidPath",
+		"Cancelled",
+		"OutOfMemory"
+	])
 })
 const InvalidArgument = Schema.Struct({
 	_tag: Schema.Literal("InvalidArgument"),
@@ -59,25 +58,22 @@ const InvalidArgument = Schema.Struct({
 		})
 	)
 })
-const Io = Schema.Struct({
-	_tag: Schema.Literal("Io"),
-	kind: Schema.String,
-	osCode: Schema.optional(Schema.Number)
+const InvalidValue = Schema.Struct({ _tag: Schema.Literal("InvalidValue"), message: Schema.String })
+const Io = Schema.Struct({ _tag: Schema.Literal("Io"), kind: Schema.String, osCode: Schema.optional(Schema.Number) })
+const ResourceLimit = Schema.Struct({
+	_tag: Schema.Literal("ResourceLimit"),
+	dimension: Schema.String,
+	used: Schema.BigInt,
+	requested: Schema.BigInt,
+	limit: Schema.BigInt
 })
-const StatementDiagnostic = Schema.Struct({ id: Schema.Number, descriptor: Schema.String })
-const SchemaDiagnostic = Schema.Struct({
-	statement: StatementDiagnostic,
-	conflict: Schema.optional(StatementDiagnostic)
-})
+/** An engine refusal: the engine error's kind and message. */
+const Engine = Schema.Struct({ _tag: Schema.Literal("Engine"), kind: Schema.String, message: Schema.String })
+const Malformed = Schema.Struct({ _tag: Schema.Literal("Malformed"), path: Schema.String, message: Schema.String })
 
-/** An engine refusal, with the cited statement coordinates when the engine gives them. */
-const Engine = Schema.Struct({
-	_tag: Schema.Literal("Engine"),
-	kind: Schema.String,
-	message: Schema.String,
-	diagnostic: Schema.optional(SchemaDiagnostic)
-})
-export const DbReason = Schema.Union([ResourceLimit, Io, Engine, InvalidArgument, PlainReason])
+/** Why an operation failed: the addon's `RuntimeError`, plus authoring detail on `InvalidArgument`. */
+export const DbReason = Schema.Union([PlainReason, InvalidArgument, InvalidValue, Io, ResourceLimit, Engine, Malformed])
+export type DbReason = typeof DbReason.Type
 
 /** The one runtime error: which operation failed, and why. */
 export class DbError extends Schema.TaggedError<DbError>()("DbError", {
@@ -99,24 +95,7 @@ export function dbError(operation: string, cause: unknown): DbError {
 	if (cause instanceof DbError) return cause
 	if (cause instanceof AuthoringError) return argumentError(operation, cause)
 	const decoded = decodeReason(cause)
-	if (decoded._tag === "Some") return new DbError({ operation, reason: decoded.value })
-	if (
-		typeof cause === "object" &&
-		cause !== null &&
-		"kind" in cause &&
-		typeof cause.kind === "string" &&
-		"message" in cause &&
-		typeof cause.message === "string"
-	) {
-		const reason = decodeReason({
-			_tag: "Engine",
-			kind: cause.kind,
-			message: cause.message,
-			diagnostic: "diagnostic" in cause ? cause.diagnostic : undefined
-		})
-		if (reason._tag === "Some") return new DbError({ operation, reason: reason.value })
-	}
-	return new DbError({ operation, reason: { _tag: "Internal" } })
+	return new DbError({ operation, reason: decoded._tag === "Some" ? decoded.value : { _tag: "Internal" } })
 }
 
 /** An input refusal, keeping an authoring error's message and diagnostic. */
@@ -138,7 +117,7 @@ export function internalError(operation: string): DbError {
 }
 
 const Outstanding = Schema.Struct({
-	phase: Schema.Literals(["open", "closing", "closed"]),
+	phase: Schema.Literals(["Open", "Closing", "Closed"]),
 	queued: Schema.BigInt,
 	active: Schema.BigInt,
 	retained: Schema.BigInt,
@@ -148,9 +127,9 @@ const Outstanding = Schema.Struct({
 })
 export type OutstandingWork = typeof Outstanding.Type
 const Close = Schema.Union([
-	Schema.Struct({ kind: Schema.Literal("closed") }),
-	Schema.Struct({ kind: Schema.Literal("incomplete"), outstanding: Outstanding }),
-	Schema.Struct({ kind: Schema.Literal("failed"), error: DbError })
+	Schema.Struct({ _tag: Schema.Literal("Closed") }),
+	Schema.Struct({ _tag: Schema.Literal("Incomplete"), outstanding: Outstanding }),
+	Schema.Struct({ _tag: Schema.Literal("Failed") })
 ])
 export type CloseReport = typeof Close.Type
 

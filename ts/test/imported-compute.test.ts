@@ -71,7 +71,7 @@ test("imported computed/aggregate columns retain numeric kinds through native co
 						{ id: 3n, group: 2n, units: 1n, signed: -1n, rate: 3n },
 						{ id: 4n, group: 2n, units: 1n, signed: -1n, rate: 3n }
 					])
-					assert.equal((yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })).kind, "accepted")
+					assert.equal((yield* db.apply(yield* draft.finish()))._tag, "Committed")
 					const snapshot = yield* db.snapshot()
 					assert.deepEqual(yield* (yield* snapshot.execute(rounded, {})).collect(), expected)
 					assert.deepEqual(yield* (yield* snapshot.execute(totals, {})).collect(), [
@@ -121,11 +121,11 @@ test("imported projections preserve signedness, interval descriptors and closed 
 	assert.equal(Compute.add(totalsRow.mean, Compute.f64(1)).result, "f64")
 	assert.throws(
 		() => query(Theory).rule((r) => r.match(labels, row).find({ span: r.pack(row.span), count: r.count() })),
-		/separate query stages/
+		/Pack and fold aggregates may not mix/
 	)
 	assert.throws(
 		() => query(Theory).rule((r) => r.match(labels, row).find({ first: r.pack(row.span), second: r.pack(row.span) })),
-		/one interval column/
+		/duplicate/
 	)
 	assert.throws(() => {
 		// @ts-expect-error Imported text remains nonnumeric.

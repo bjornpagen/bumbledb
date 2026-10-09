@@ -6,36 +6,33 @@
  */
 import type { Scope } from "effect"
 import { Effect } from "effect"
-import type { CloseReport, DbError } from "../errors.ts"
+import type { DbError } from "../errors.ts"
 import { CloseFailure, dbError } from "../errors.ts"
-import type { CloseWire, OperationHandle } from "../runtime-native.ts"
-import { runtimeNative } from "../runtime-native.ts"
+import type { OperationRef } from "./addon.ts"
+import { addon } from "./addon.ts"
+import type { CloseOut } from "./binding.d.ts"
 
 /** Registers one native operation; the addon calls `done` once its result can be taken. */
-type Start = (done: () => void) => OperationHandle
+type Start = (done: () => void) => OperationRef
 
 /** Starts one native close or cancel transition; the addon reports how it drained. */
-type Drain = (done: (report: CloseWire) => void) => void
-
-function reportOf(operation: string, wire: CloseWire): CloseReport {
-	return wire.kind === "failed" ? { kind: "failed", error: dbError(operation, { _tag: "Internal" }) } : wire
-}
+type Drain = (done: (report: CloseOut) => void) => void
 
 /** Runs a native close or cancel transition to completion. It cannot be interrupted and never fails. */
-function drain(operation: string, start: Drain): Effect.Effect<CloseReport> {
-	return Effect.callback<CloseReport>((resume) => {
+function drain(start: Drain): Effect.Effect<CloseOut> {
+	return Effect.callback<CloseOut>((resume) => {
 		try {
-			start((wire) => resume(Effect.succeed(reportOf(operation, wire))))
-		} catch (cause) {
-			resume(Effect.succeed({ kind: "failed", error: dbError(operation, cause) }))
+			start((report) => resume(Effect.succeed(report)))
+		} catch {
+			resume(Effect.succeed({ _tag: "Failed" }))
 		}
 	}).pipe(Effect.uninterruptible)
 }
 
 /** Drains, then dies with `CloseFailure` unless the transition closed cleanly. */
 function release(operation: string, start: Drain): Effect.Effect<void> {
-	return Effect.flatMap(drain(operation, start), (report) =>
-		report.kind === "closed" ? Effect.void : Effect.die(new CloseFailure({ operation, report }))
+	return Effect.flatMap(drain(start), (report) =>
+		report._tag === "Closed" ? Effect.void : Effect.die(new CloseFailure({ operation, report }))
 	)
 }
 
@@ -43,9 +40,9 @@ function release(operation: string, start: Drain): Effect.Effect<void> {
  * One native operation. A completion that arrives after interruption is left to the cancel drain
  * the interruption already started.
  */
-function call<A>(operation: string, start: Start, take: (lease: OperationHandle) => A): Effect.Effect<A, DbError> {
+function call<A>(operation: string, start: Start, take: (lease: OperationRef) => A): Effect.Effect<A, DbError> {
 	return Effect.callback<A, DbError>((resume, signal) => {
-		let lease: OperationHandle
+		let lease: OperationRef
 		try {
 			lease = start(() => {
 				if (signal.aborted) return
@@ -59,7 +56,7 @@ function call<A>(operation: string, start: Start, take: (lease: OperationHandle)
 			resume(Effect.fail(dbError(operation, cause)))
 			return
 		}
-		return release(`${operation}.cancel`, (done) => runtimeNative.runtimeCancel(lease, done))
+		return release(`${operation}.cancel`, (done) => addon.runtimeCancel(lease, done))
 	})
 }
 

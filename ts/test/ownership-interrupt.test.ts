@@ -9,7 +9,7 @@ import { test } from "node:test"
 import { Effect, Exit, Fiber, ManagedRuntime } from "effect"
 import { ChangeSet } from "../src/changes.ts"
 import { Db } from "../src/db.ts"
-import { dbNative } from "../src/db-native.ts"
+import { addon } from "../src/native/addon.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { Bumble } from "../src/runtime.ts"
@@ -27,7 +27,7 @@ function runtime() {
 test("interrupt after directory acquire and before db output adoption drains both owners (D18)", async function directoryThenDb() {
 	const rt = runtime()
 	try {
-		const original = (await import("../src/runtime-native.ts")).runtimeNative
+		const original = (await import("../src/native/addon.ts")).addon
 		const open = original.runtimeDirectoryDbOpen
 		const completed = Promise.withResolvers<() => void>()
 		original.runtimeDirectoryDbOpen = ((directory, child, spec, create, callback) =>
@@ -54,10 +54,10 @@ test("interrupt after directory acquire and before db output adoption drains bot
 test("abort after publication drains without take; retained wrappers cannot pin output (D18)", async function abortAfterPublication() {
 	const rt = runtime()
 	const kept: object[] = []
-	const collect = dbNative.runtimeResultCollect
+	const collect = addon.runtimeResultCollect
 	const published = Promise.withResolvers<() => void>()
-	dbNative.runtimeResultCollect = ((handle, callback) =>
-		collect.call(dbNative, handle, () => {
+	addon.runtimeResultCollect = ((handle, callback) =>
+		collect.call(addon, handle, () => {
 			published.resolve(callback)
 		})) as typeof collect
 	try {
@@ -80,7 +80,7 @@ test("abort after publication drains without take; retained wrappers cannot pin 
 						}
 					])
 					const changes = yield* draft.finish()
-					yield* db.apply(changes, { expected: { kind: "any" } })
+					yield* db.apply(changes)
 					const snapshot = yield* db.snapshot()
 					kept.push(snapshot)
 					const result = yield* snapshot.execute(allAttempts, {})
@@ -99,17 +99,17 @@ test("abort after publication drains without take; retained wrappers cannot pin 
 		)
 		assert.equal(kept.length, 3, "db, snapshot, and result wrappers stayed reachable")
 	} finally {
-		dbNative.runtimeResultCollect = collect
+		addon.runtimeResultCollect = collect
 		await Effect.runPromise(rt.disposeEffect)
 	}
 })
 
 test("draft interruption spends the draft and joins drain", async function interruptSpendsDraft() {
 	const rt = runtime()
-	const insert = dbNative.runtimeDraftInsert
+	const insert = addon.runtimeDraftInsert
 	const completed = Promise.withResolvers<() => void>()
-	dbNative.runtimeDraftInsert = ((handle, relation, rows, cells, callback) =>
-		insert.call(dbNative, handle, relation, rows, cells, () => completed.resolve(callback))) as typeof insert
+	addon.runtimeDraftInsert = ((handle, relation, rows, cells, callback) =>
+		insert.call(addon, handle, relation, rows, cells, () => completed.resolve(callback))) as typeof insert
 	try {
 		await rt.runPromise(
 			Effect.scoped(
@@ -143,7 +143,7 @@ test("draft interruption spends the draft and joins drain", async function inter
 			)
 		)
 	} finally {
-		dbNative.runtimeDraftInsert = insert
+		addon.runtimeDraftInsert = insert
 		await Effect.runPromise(rt.disposeEffect)
 	}
 })

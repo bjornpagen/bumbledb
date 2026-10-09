@@ -6,8 +6,7 @@ import { Db } from "../src/db.ts"
 import { f64, i64, interval, u64 } from "../src/fields.ts"
 import { ALLEN } from "../src/index.ts"
 import { Compute } from "../src/query/compute.ts"
-import { describeQuery, queryFromDescription } from "../src/query/description.ts"
-import { query } from "../src/query/lower.ts"
+import { lowerQuery, query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
 import { Bumble } from "../src/runtime.ts"
@@ -58,14 +57,7 @@ const rounded = query(Theory).rule((r) => {
 	})
 })
 
-test("segment kinds survive description imports and fixed-width refinement is dropped", () => {
-	const imported = queryFromDescription(Theory, describeQuery(overlaps), {
-		earning: u64,
-		band: u64,
-		numerator: u64,
-		span: interval(u64)
-	})
-	assert.deepEqual(describeQuery(imported), describeQuery(overlaps))
+test("segment outputs drop fixed-width refinement", () => {
 	const built = query(Theory).rule((r) => {
 		const row = v(Pair)
 		return r.match(Pair, row).find({ span: r.intersection(row.fixed, row.a) })
@@ -80,7 +72,7 @@ test("segment kinds survive description imports and fixed-width refinement is dr
 		})
 	)
 	const constructed = query(Theory).rule((r) => r.match(Pair, row).find({ span: r.difference(row.a, row.b) }))
-	assert.deepEqual(describeQuery(plain), describeQuery(constructed), "plain interval descriptors use the same algebra")
+	assert.deepEqual(lowerQuery(plain), lowerQuery(constructed), "plain interval descriptors use the same algebra")
 	assert.throws(() =>
 		query(Theory).rule((r) => r.match(Pair, row).find({ bad: r.intersection(row.a, row.dense as never) }))
 	)
@@ -120,12 +112,11 @@ test("pack widens fixed intervals before imported difference and measurement sta
 	})
 	const width: undefined = v(packed).span.field.width
 	assert.equal(width, undefined)
-	const imported = queryFromDescription(theory, describeQuery(packed), { span: interval(i64) })
 	const pieces = query(theory).rule((r) => {
-		const row = v(imported)
+		const row = v(packed)
 		const window = v(Window)
 		return r
-			.match(imported, row)
+			.match(packed, row)
 			.match(Window, window)
 			.find({ span: r.difference(row.span, window.span) })
 	})
@@ -146,10 +137,10 @@ test("pack widens fixed intervals before imported difference and measurement sta
 						{ span: { start: 8n, end: 11n } }
 					])
 					yield* draft.insert(Window, [{ span: { start: -1n, end: 1n } }])
-					assert.equal((yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })).kind, "accepted")
+					assert.equal((yield* db.apply(yield* draft.finish()))._tag, "Committed")
 					const snapshot = yield* db.snapshot()
 					assert.deepEqual(
-						new Set(yield* (yield* snapshot.execute(imported, {})).collect()),
+						new Set(yield* (yield* snapshot.execute(packed, {})).collect()),
 						new Set([{ span: { start: -3n, end: 3n } }, { span: { start: 8n, end: 11n } }])
 					)
 					assert.deepEqual(
@@ -187,7 +178,7 @@ test("native marginal bands derive slices, preserve equal contributions, and rou
 						{ id: 3n, schedule: 2n, span: { start: 0n, end: 10n }, numerator: 1n },
 						{ id: 4n, schedule: 2n, span: { start: 10n, end: 20n }, numerator: 1n }
 					])
-					assert.equal((yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })).kind, "accepted")
+					assert.equal((yield* db.apply(yield* draft.finish()))._tag, "Committed")
 					const snap = yield* db.snapshot()
 					const answer = yield* (yield* snap.execute(rounded, {})).collect()
 					assert.deepEqual(
@@ -198,8 +189,7 @@ test("native marginal bands derive slices, preserve equal contributions, and rou
 							{ earning: 3n, amount: 21n }
 						]
 					)
-					const imported = queryFromDescription(Theory, describeQuery(rounded), { earning: u64, amount: u64 })
-					assert.deepEqual(new Set(yield* (yield* snap.execute(imported, {})).collect()), new Set(answer))
+
 					const unbounded = query(Theory).rule((r) => {
 						const row = v(Earning)
 						return r.match(Earning, row).find({ width: Compute.measure(row.span) })
@@ -254,7 +244,7 @@ test("difference emits products, dense measures and fixed intervals use native m
 							fixed: { start: -1n, end: 2n }
 						}
 					])
-					yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })
+					yield* db.apply(yield* draft.finish())
 					const snap = yield* db.snapshot()
 					const pieces = query(Theory).rule((r) => {
 						const row = v(Pair)

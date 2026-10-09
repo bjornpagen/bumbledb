@@ -22,7 +22,6 @@ import {
 	Compute,
 	contained,
 	decodeBoundaryField,
-	describeQuery,
 	duration,
 	encodeBoundaryField,
 	f64,
@@ -36,7 +35,6 @@ import {
 	Bumble,
 	on,
 	query,
-	queryFromDescription,
 	ref,
 	relation,
 	schema,
@@ -101,10 +99,8 @@ reporting. Defaults are up to four workers, 128 queued jobs, 128 cleanup reports
 Operations use ordinary allocation without byte/row/work quotas or execution
 deadlines. Effect interruption requests cooperative cancellation. Runtime
 inspection reports outstanding work, not memory usage.
-Database `inspect().storage` reports virtual map extent, populated file length,
-non-free LMDB pages, and allocated disk blocks (null when unavailable).
-None of these measures process heap usage or resident RAM. Log history
-inspection uses the same `StorageInspection` fields.
+Database `inspect()` reports the generation, the database's bytes on disk and
+the native operations it retains; none of these measures heap or resident RAM.
 `Db.open` never creates a missing database; `Db.create` refuses existing
 authority. Both are scoped acquisitions.
 
@@ -151,15 +147,15 @@ const applyOnce = Effect.scoped(
 		const draft = yield* ChangeSet.builder(Tasks)
 		yield* draft.insert(Task, [{ id: taskId, title: "write the cookbook", done: 0n }])
 		const changes = yield* draft.finish()
-		const outcome: ApplyOutcome = yield* db.apply(changes, { expected: { kind: "any" } })
-		switch (outcome.kind) {
-			case "accepted":
-			case "no-change":
+		const outcome: ApplyOutcome = yield* db.apply(changes)
+		switch (outcome._tag) {
+			case "Committed":
+			case "NoChange":
 				return outcome.witness
-			case "invariant-rejected":
+			case "Rejected":
 				// Complete statement diagnostics, typed data — never a throw.
 				return yield* Effect.fail(outcome.violations)
-			case "moved":
+			case "Moved":
 				return outcome.current
 		}
 	})
@@ -180,14 +176,14 @@ const judgeOnce = Effect.scoped(
 		const draft = yield* ChangeSet.builder(Tasks)
 		const id = yield* Effect.sync(() => crypto.randomUUID())
 		yield* draft.insert(Task, [{ id, title: "inspect a candidate", done: 0n }])
-		return yield* db.judge(yield* draft.finish(), { expected: { kind: "any" } })
+		return yield* db.judge(yield* draft.finish())
 	})
 )
 void judgeOnce
 ```
 
 Judgment is optional: `apply` always judges for itself. To act on a judgment,
-use its base as an exact expected witness and handle `moved`; do not assume
+pass its base as the expected witness and handle `Moved`; do not assume
 another writer could not change the database between these operations.
 
 Change sets also work as inspectable values without a database. Their
@@ -314,39 +310,6 @@ const readTwoAuthors = (reader: QueryReader<typeof Library>) =>
 void readTwoAuthors
 ```
 
-Generated queries use the same checked rule, scalar, and execution machinery.
-`describeQuery` exposes the logical IR and its names as owned data. Its relation
-ordinals refer to the supplied schema's declaration order; variables are local
-to each rule. Intermediate names are local labels. The result-field record
-passed to `queryFromDescription` must match the actual derived head, including
-closed vocabularies, and determines the returned row type. Parameters supplied
-to a generated query are checked against their uses during execution.
-
-```ts
-const Event = relation("Event", { id: uuid, amount: u64 })
-const Events = schema("Events", { Event }, [key(Event, ["id"])])
-const countEvents = query(Events).rule((r) =>
-	r.match(Event, {}).find({ count: r.count() })
-)
-const description = describeQuery(countEvents)
-const totalEvents = queryFromDescription(
-	Events,
-	{ ...description, columns: ["total"] },
-	{ total: u64 }
-)
-const readTotal = (reader: QueryReader<typeof Events>) =>
-	Effect.scoped(Effect.gen(function* () {
-		const result = yield* reader.execute(totalEvents, {})
-		const rows: readonly { readonly total: bigint }[] = yield* result.collect()
-		return rows
-	}))
-void readTotal
-```
-
-Descriptions contain bigint and byte values, so they are not a JSON wire format.
-An accepted description is an authored query; native preparation still checks
-engine semantics. It carries no snapshot, prepared handle, or result rows.
-
 ## 6. Grouped exact aggregates
 
 Aggregates fold the group's distinct full bindings: keep the identity-bearing
@@ -454,9 +417,9 @@ void [okOrRefused, mintOnce]
 
 ## 10. Witnessed correction: exact expected state
 
-Read under a short scope, keep the copied witness, and apply with
-`expected: { kind: "exact", at: witness }`. An intervening net change moves
-the apply instead of silently overwriting.
+Read under a short scope, keep the copied witness, and pass it to `apply` as
+the expected state. An intervening net change moves the apply instead of
+silently overwriting.
 
 ```ts
 const Account = relation("Account", { id: uuid, balance: i64 })
@@ -481,7 +444,7 @@ const correct = (accountId: Uuid) =>
 			yield* draft.delete(Account, [observed.previous])
 			yield* draft.insert(Account, [{ ...observed.previous, balance: observed.previous.balance + 1n }])
 			const changes = yield* draft.finish()
-			return yield* db.apply(changes, { expected: { kind: "exact", at: observed.at } })
+			return yield* db.apply(changes, observed.at)
 		})
 	)
 void correct
@@ -566,7 +529,7 @@ const calculate = Effect.scoped(Effect.gen(function* () {
 		{ id: 1n, schedule: 1n, span: { start: 0n, end: 100n }, numerator: 1n },
 		{ id: 2n, schedule: 1n, span: { start: 100n, end: 200n }, numerator: 2n }
 	])
-	yield* db.apply(yield* change.finish(), { expected: { kind: "any" } })
+	yield* db.apply(yield* change.finish())
 	const snapshot = yield* db.snapshot()
 	return yield* (yield* snapshot.execute(amounts, {})).collect()
 }))

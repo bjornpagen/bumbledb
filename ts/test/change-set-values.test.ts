@@ -4,9 +4,9 @@ import { Effect, Exit, Fiber, ManagedRuntime, Option, Scope, Stream } from "effe
 import { type ChangeRecord, ChangeSet } from "../src/changes.ts"
 import { closed, closedId } from "../src/closed.ts"
 import { Db } from "../src/db.ts"
-import { dbNative } from "../src/db-native.ts"
 import { on } from "../src/face.ts"
 import { bool, bytes, f64, i64, interval, str, u64, uuid } from "../src/fields.ts"
+import { addon } from "../src/native/addon.ts"
 import { type Fact, relation } from "../src/relation.ts"
 import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
@@ -52,10 +52,10 @@ test("typed records, canonical byte ownership and counts round trip without a da
 			assert.deepEqual(changes.counts, { added: 3n, removed: 1n })
 			const records = yield* Stream.runCollect(changes.records())
 			assert.deepEqual(records, [
-				{ relation: "Item", kind: "add", fact: { id: 1n, label: "one" } },
-				{ relation: "Item", kind: "add", fact: { id: 2n, label: "two" } },
-				{ relation: "Item", kind: "remove", fact: { id: 3n, label: "three" } },
-				{ relation: "Other", kind: "add", fact: { active: true } }
+				{ relation: "Item", kind: "Add", fact: { id: 1n, label: "one" } },
+				{ relation: "Item", kind: "Add", fact: { id: 2n, label: "two" } },
+				{ relation: "Item", kind: "Remove", fact: { id: 3n, label: "three" } },
+				{ relation: "Other", kind: "Add", fact: { active: true } }
 			])
 			for (const record of records) {
 				// The relation name narrows the fact without a cast.
@@ -77,17 +77,17 @@ test("typed records, canonical byte ownership and counts round trip without a da
 			assert.deepEqual(yield* Stream.runCollect(decoded.records()), records)
 			assert.deepEqual(yield* Stream.runCollect(changes.records()), records)
 			assert.notEqual((yield* changes.toBytes())[0], 0)
-			const duringCompile = yield* changes.toBytes()
-			const compile = dbNative.runtimeSchemaCompile
-			dbNative.runtimeSchemaCompile = (runtime, spec, callback) => {
-				duringCompile.fill(0)
-				return compile(runtime, spec, callback)
+			const duringParse = yield* changes.toBytes()
+			const parse = addon.runtimeChangesParse
+			addon.runtimeChangesParse = (runtime, schema, bytes, callback) => {
+				duringParse.fill(0)
+				return parse(runtime, schema, bytes, callback)
 			}
 			try {
-				const owned = yield* ChangeSet.fromBytes(Theory, duringCompile)
+				const owned = yield* ChangeSet.fromBytes(Theory, duringParse)
 				assert.deepEqual(yield* Stream.runCollect(owned.records()), records)
 			} finally {
-				dbNative.runtimeSchemaCompile = compile
+				addon.runtimeChangesParse = parse
 			}
 		})
 	))
@@ -115,14 +115,14 @@ test("composition is add-wins, commutative and idempotent; admission still judge
 			const conflicting = yield* left.compose(conflict)
 			assert.deepEqual(conflicting.counts, { added: 2n, removed: 1n })
 			const db = yield* Db.create(storeDir("change-composition"), Theory)
-			assert.equal((yield* db.judge(conflicting, { expected: { kind: "any" } })).kind, "invariant-rejected")
-			assert.equal((yield* db.apply(lr, { expected: { kind: "any" } })).kind, "accepted")
-			const noChange = yield* db.judge(lr, { expected: { kind: "any" } })
-			assert.equal(noChange.kind, "admitted")
-			if (noChange.kind === "admitted") assert.deepEqual(noChange.changes, { added: 0n, removed: 0n })
+			assert.equal((yield* db.judge(conflicting))._tag, "Rejected")
+			assert.equal((yield* db.apply(lr))._tag, "Committed")
+			const noChange = yield* db.judge(lr)
+			assert.equal(noChange._tag, "Admitted")
+			if (noChange._tag === "Admitted") assert.deepEqual(noChange.changes, { added: 0n, removed: 0n })
 			assert.deepEqual(lr.counts, { added: 2n, removed: 0n }, "requested counts are independent of current state")
 			// Sequential commands are different: a later removal really does remove.
-			yield* db.apply(third, { expected: { kind: "any" } })
+			yield* db.apply(third)
 			const snapshot = yield* db.snapshot()
 			assert.ok(Option.isNone(yield* snapshot.get(ItemById, { id: b.id })))
 		})
@@ -183,8 +183,8 @@ test("inspection is bounded, repeatable and releases early-terminated cursors", 
 			const before = yield* service.inspect()
 			let copied = 0
 			let pulls = 0
-			const take = dbNative.runtimeChangePageTake
-			dbNative.runtimeChangePageTake = (operation) => {
+			const take = addon.runtimeChangePageTake
+			addon.runtimeChangePageTake = (operation) => {
 				const page = take(operation)
 				copied += page?.length ?? 0
 				pulls++
@@ -192,7 +192,7 @@ test("inspection is bounded, repeatable and releases early-terminated cursors", 
 			}
 			try {
 				assert.deepEqual(yield* Stream.runCollect(changes.records().pipe(Stream.take(1))), [
-					{ relation: "Item", kind: "add", fact: rows[0] }
+					{ relation: "Item", kind: "Add", fact: rows[0] }
 				])
 				assert.equal(pulls, 1)
 				assert.ok(copied > 0 && copied <= 256)
@@ -206,7 +206,7 @@ test("inspection is bounded, repeatable and releases early-terminated cursors", 
 					rows
 				)
 			} finally {
-				dbNative.runtimeChangePageTake = take
+				addon.runtimeChangePageTake = take
 			}
 		})
 	))
@@ -246,7 +246,7 @@ test("inspection uses the shared field codec for all scalars, intervals and clos
 			yield* draft.insert(Values, [fact])
 			const changes = yield* draft.finish()
 			const decoded = yield* ChangeSet.fromBytes(theory, yield* changes.toBytes())
-			const expected: ChangeRecord<typeof theory>[] = [{ relation: "Values", kind: "add", fact }]
+			const expected: ChangeRecord<typeof theory>[] = [{ relation: "Values", kind: "Add", fact }]
 			assert.deepEqual(yield* Stream.runCollect(decoded.records()), expected)
 		})
 	))
@@ -277,10 +277,9 @@ test("cancelled composition delivery cannot leak a native handle or consume its 
 	run(
 		Effect.gen(function* () {
 			const changes = yield* build([{ id: 1n, label: "a" }])
-			const original = dbNative.runtimeChangesCompose
+			const original = addon.runtimeChangesCompose
 			const completed = Promise.withResolvers<() => void>()
-			dbNative.runtimeChangesCompose = (left, right, callback) =>
-				original(left, right, () => completed.resolve(callback))
+			addon.runtimeChangesCompose = (left, right, callback) => original(left, right, () => completed.resolve(callback))
 			try {
 				const service = yield* Bumble
 				const before = yield* service.inspect()
@@ -294,7 +293,7 @@ test("cancelled composition delivery cannot leak a native handle or consume its 
 				assert.equal(after.retained, before.retained)
 				assert.equal((yield* changes.toBytes()).byteLength, Number(changes.byteLength))
 			} finally {
-				dbNative.runtimeChangesCompose = original
+				addon.runtimeChangesCompose = original
 			}
 		})
 	))

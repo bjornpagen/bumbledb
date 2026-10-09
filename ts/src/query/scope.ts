@@ -5,9 +5,9 @@ import type { AnyField, Infer, SignatureOf } from "../fields.ts"
 import { rosterOf, signaturesAgree } from "../fields.ts"
 import type { Same, SameLen } from "../judgment.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "../law.ts"
-import type { QueryParam } from "../native.ts"
 import type { AnyRelation } from "../relation.ts"
 import type { FieldsOf } from "../selection.ts"
+import type { QueryParam } from "../spec.ts"
 import type { FindColumn } from "./atom.ts"
 
 const term: unique symbol = Symbol("bumbledb.query.term")

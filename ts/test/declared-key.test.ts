@@ -88,7 +88,7 @@ test("every declared key reads the same snapshot with its own projection and nat
 					yield* draft.insert(Detail, [{ item: item.id }])
 					yield* draft.insert(Booking, [booking])
 					const changes = yield* draft.finish()
-					assert.equal((yield* db.apply(changes, { expected: { kind: "any" } })).kind, "accepted")
+					assert.equal((yield* db.apply(changes))._tag, "Committed")
 					const snapshot = yield* db.snapshot()
 					for (const read of [
 						snapshot.get(ItemById, { id: item.id }),

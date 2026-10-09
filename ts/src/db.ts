@@ -6,29 +6,25 @@
  */
 import type { Scope } from "effect"
 import { Effect, Option } from "effect"
-import type { ChangeCounts, ChangeSet } from "./changes.ts"
+import type { ChangeSet } from "./changes.ts"
 import { ChangeSetLive } from "./changes.ts"
 import { membersAgree } from "./closed.ts"
 import type { SchemaId } from "./compile.ts"
-import { Schema as CoreSchema, declaredKey, schemaTables } from "./compile.ts"
-import type {
-	ApplyOutcomeWire,
-	DbInspectionWire,
-	ExpectedWire,
-	JudgeOutcomeWire,
-	PreparedHandle,
-	SnapshotHandle,
-	SnapshotWire,
-	WitnessWire
-} from "./db-native.ts"
-import { dbNative } from "./db-native.ts"
+import { compiledOf, declaredKey, schemaTables } from "./compile.ts"
 import { argumentError, DbError } from "./errors.ts"
-import { lower } from "./lower.ts"
+import type { DbRef, DirectoryRef, PreparedRef, SnapshotRef } from "./native/addon.ts"
+import { addon } from "./native/addon.ts"
+import type {
+	ApplyOutcome,
+	DbInspection as DbInspectionOut,
+	DbOpened,
+	JudgeOutcome,
+	WitnessOut
+} from "./native/binding.d.ts"
 import type { Start } from "./native/op.ts"
 import { call, drain, scoped } from "./native/op.ts"
-import type { DbHandle, Violation } from "./native.ts"
 import type { AnyQuery } from "./query/lower.ts"
-import { lowerQuery } from "./query/lower.ts"
+import { queryHandleOf } from "./query/lower.ts"
 import { wireParams } from "./query/run.ts"
 import type { ParamsRecord } from "./query/scope.ts"
 import type { Fact } from "./relation.ts"
@@ -38,60 +34,17 @@ import type { CellValue } from "./rows.ts"
 import { factOfCells, keyCellsOf } from "./rows.ts"
 import type { Bumble } from "./runtime.ts"
 import { runtimeHandle } from "./runtime.ts"
-import type { DirectoryHandle } from "./runtime-native.ts"
-import { runtimeNative } from "./runtime-native.ts"
 import type { AnySchema } from "./schema.ts"
-import { schemasAgree } from "./schema.ts"
+import { schemaDescriptor, schemasAgree } from "./schema.ts"
 import type { Key, QueryTemplate, Rel } from "./shape.ts"
 import type { KeyStatement } from "./statements.ts"
-import { integerValue, recordValue } from "./values.ts"
 
-/** The store's identity plus its generation: the point a write can be conditioned on. */
-interface CoreWitness {
-	readonly store: string
-	readonly generation: bigint
-}
-
-type WriteExpected = { readonly kind: "any" } | { readonly kind: "exact"; readonly at: CoreWitness }
-
-/** Expected-state intent shared by judgment and application. */
-type WriteOptions = { readonly expected: WriteExpected }
-
-type ApplyOutcome =
-	| { readonly kind: "accepted"; readonly witness: CoreWitness }
-	| { readonly kind: "no-change"; readonly witness: CoreWitness }
-	| { readonly kind: "invariant-rejected"; readonly violations: readonly Violation[] }
-	| { readonly kind: "moved"; readonly witnessed: CoreWitness; readonly current: CoreWitness }
-
-/** A judgment against the current base; nothing is stored. A moved witness is not judged. */
-type JudgeOutcome =
-	| { readonly kind: "admitted"; readonly base: CoreWitness; readonly changes: ChangeCounts }
-	| {
-			readonly kind: "invariant-rejected"
-			readonly base: CoreWitness
-			readonly changes: ChangeCounts
-			readonly violations: readonly Violation[]
-	  }
-	| { readonly kind: "moved"; readonly witnessed: CoreWitness; readonly current: CoreWitness }
-
-/** Storage measurements, not heap usage or mapped-page residency. */
-interface StorageInspection {
-	/** Reserved virtual address range for the LMDB mapping. */
-	readonly virtualMapBytes: bigint
-	/** File length; may include sparse regions and free pages. */
-	readonly populatedFileBytes: bigint
-	/** LMDB's non-free branch, leaf and overflow pages. Not resident RAM. */
-	readonly nonFreePageBytes: bigint
-	/** Allocated filesystem blocks, or null when the OS cannot report them. */
-	readonly allocatedDiskBytes: bigint | null
-}
+/** The store's identity plus its generation: the state a write can be conditioned on. */
+type Witness = WitnessOut
 
 /** Database diagnostics: measurements, never retained rows. */
-interface DbInspection {
+interface DbInspection extends DbInspectionOut {
 	readonly schemaId: SchemaId
-	readonly generation: bigint
-	readonly storage: StorageInspection
-	readonly retainedOperations: bigint
 }
 
 /**
@@ -113,7 +66,7 @@ interface QueryReader<S extends AnySchema> {
 }
 
 interface Snapshot<S extends AnySchema> extends QueryReader<S> {
-	readonly witness: CoreWitness
+	readonly witness: Witness
 }
 
 /** One compiled plan and its reusable buffers, pinned to the snapshot that prepared it. */
@@ -126,9 +79,10 @@ interface PreparedQuery<P extends ParamsRecord, A> {
 interface Db<S extends AnySchema> {
 	readonly schemaId: SchemaId
 	snapshot(): Effect.Effect<Snapshot<S>, DbError, Scope.Scope>
-	apply(changes: ChangeSet<S>, options: WriteOptions): Effect.Effect<ApplyOutcome, DbError>
-	/** Judges `changes` against the current base and aborts; stores nothing. */
-	judge(changes: ChangeSet<S>, options: WriteOptions): Effect.Effect<JudgeOutcome, DbError>
+	/** Applies `changes` atomically; with `expected`, only if the database is still at that state. */
+	apply(changes: ChangeSet<S>, expected?: Witness): Effect.Effect<ApplyOutcome, DbError>
+	/** Judges `changes` against the current state (or `expected`) and stores nothing. */
+	judge(changes: ChangeSet<S>, expected?: Witness): Effect.Effect<JudgeOutcome, DbError>
 	inspect(): Effect.Effect<DbInspection, DbError>
 	/** Clears shared query caches without invalidating live snapshots or results. */
 	clearCache(): Effect.Effect<void, DbError>
@@ -138,61 +92,17 @@ function invalid(operation: string): DbError {
 	return new DbError({ operation, reason: { _tag: "InvalidArgument" } })
 }
 
-function witnessOf(wire: WitnessWire): CoreWitness {
-	return Object.freeze({ store: wire.store, generation: wire.generation })
+/** A database the engine would not open: its refusal, as an engine error. */
+function refused(operation: string, opened: Exclude<DbOpened, { _tag: "Opened" }>): DbError {
+	const message =
+		opened._tag === "Rejected" ? opened.violations.map((violation) => violation.spelling).join("; ") : opened.message
+	return new DbError({ operation, reason: { _tag: "Engine", kind: opened._tag, message } })
 }
 
-function outcomeOf(wire: ApplyOutcomeWire): ApplyOutcome {
-	switch (wire.tag) {
-		case "accepted":
-			return Object.freeze({ kind: "accepted", witness: witnessOf(wire.witness) })
-		case "no-change":
-			return Object.freeze({ kind: "no-change", witness: witnessOf(wire.witness) })
-		case "invariant-rejected":
-			return Object.freeze({ kind: "invariant-rejected", violations: wire.violations })
-		case "moved":
-			return Object.freeze({ kind: "moved", witnessed: witnessOf(wire.witnessed), current: witnessOf(wire.current) })
-	}
-}
-
-function judgmentOf(wire: JudgeOutcomeWire): JudgeOutcome {
-	switch (wire.tag) {
-		case "admitted":
-			return Object.freeze({ kind: "admitted", base: witnessOf(wire.base), changes: Object.freeze(wire.changes) })
-		case "invariant-rejected":
-			return Object.freeze({
-				kind: "invariant-rejected",
-				base: witnessOf(wire.base),
-				changes: Object.freeze(wire.changes),
-				violations: wire.violations
-			})
-		case "moved":
-			return Object.freeze({ kind: "moved", witnessed: witnessOf(wire.witnessed), current: witnessOf(wire.current) })
-	}
-}
-
-function expectedOf(options: WriteOptions): ExpectedWire {
-	const record = recordValue("write options", options, ["expected"])
-	const intent = recordValue(
-		"expected state",
-		record.expected,
-		options.expected.kind === "any" ? ["kind"] : ["kind", "at"]
-	)
-	if (intent.kind === "any") return { kind: "any" }
-	if (intent.kind !== "exact") throw invalid("write options")
-	const at = recordValue("expected witness", intent.at, ["store", "generation"])
-	if (typeof at.store !== "string" || !/^[0-9a-f]{32}$/.test(at.store)) throw invalid("write options")
-	return { kind: "exact", store: at.store, generation: integerValue("expected generation", "u64", at.generation) }
-}
-
-function writeInputs(schemaId: SchemaId, changes: object, options: WriteOptions, operation: string) {
-	return Effect.try({
-		try: () => {
-			const handle = ChangeSetLive.handle(changes, schemaId)
-			if (handle === undefined) throw invalid(operation)
-			return { handle, expected: expectedOf(options) }
-		},
-		catch: (cause) => argumentError(operation, cause)
+function changesOf(schemaId: SchemaId, changes: object, operation: string) {
+	return Effect.suspend(() => {
+		const handle = ChangeSetLive.handle(changes, schemaId)
+		return handle === undefined ? Effect.fail(invalid(operation)) : Effect.succeed(handle)
 	})
 }
 
@@ -205,8 +115,8 @@ function scopedResult<A>(
 	return Effect.map(
 		scoped(
 			"CompleteResult.release",
-			call(operation, start, dbNative.runtimeResultTake),
-			(handle) => (done) => dbNative.runtimeResultClose(handle, done)
+			call(operation, start, addon.runtimeResultTake),
+			(handle) => (done) => addon.runtimeResultClose(handle, done)
 		),
 		(handle) => new CompleteResultLive<A>(handle, finds)
 	)
@@ -215,7 +125,7 @@ function scopedResult<A>(
 const getOn = Effect.fn("QueryReader.get")(function* <
 	S extends AnySchema,
 	K extends KeyStatement<Rel<S>, readonly string[]>
->(theory: S, handle: SnapshotHandle, key: K, value: Key<K>) {
+>(theory: S, handle: SnapshotRef, key: K, value: Key<K>) {
 	const resolved = yield* Effect.try({
 		try: () => declaredKey(theory, key),
 		catch: (cause) => argumentError("QueryReader.get", cause)
@@ -232,8 +142,8 @@ const getOn = Effect.fn("QueryReader.get")(function* <
 	})
 	const row = yield* call(
 		"QueryReader.get",
-		(done) => dbNative.runtimeSnapshotGet(handle, relationId, resolved.statementId, cells, done),
-		dbNative.runtimeRowTake
+		(done) => addon.runtimeSnapshotGet(handle, relationId, resolved.statementId, cells, done),
+		addon.runtimeRowTake
 	)
 	return row === null
 		? Option.none<Fact<K["owner"]>>()
@@ -242,7 +152,7 @@ const getOn = Effect.fn("QueryReader.get")(function* <
 
 function executeOn<S extends AnySchema, A>(
 	theory: S,
-	handle: SnapshotHandle,
+	handle: SnapshotRef,
 	query: AnyQuery,
 	params: Readonly<Record<string, unknown>>
 ): Effect.Effect<CompleteResult<A>, DbError, Scope.Scope> {
@@ -250,23 +160,23 @@ function executeOn<S extends AnySchema, A>(
 		const prepared = yield* Effect.try({
 			try: () => {
 				if (!schemasAgree(query.schema, theory)) throw invalid("QueryReader.execute")
-				return { ir: lowerQuery(query), wire: wireParams(query.data.params, params) }
+				return { query: queryHandleOf(query), wire: wireParams(query.data.params, params) }
 			},
 			catch: (cause) => argumentError("QueryReader.execute", cause)
 		})
 		return yield* scopedResult<A>(
 			"QueryReader.execute",
-			(done) => dbNative.runtimeSnapshotExecute(handle, prepared.ir, prepared.wire, done),
+			(done) => addon.runtimeSnapshotExecute(handle, prepared.query, prepared.wire, done),
 			query.data.finds
 		)
 	}).pipe(Effect.withSpan("QueryReader.execute"))
 }
 
 class PreparedQueryLive<P extends ParamsRecord, A> implements PreparedQuery<P, A> {
-	readonly #handle: PreparedHandle
+	readonly #handle: PreparedRef
 	readonly #query: AnyQuery
 
-	constructor(handle: PreparedHandle, query: AnyQuery) {
+	constructor(handle: PreparedRef, query: AnyQuery) {
 		this.#handle = handle
 		this.#query = query
 	}
@@ -281,7 +191,7 @@ class PreparedQueryLive<P extends ParamsRecord, A> implements PreparedQuery<P, A
 			})
 			return yield* scopedResult<A>(
 				"PreparedQuery.execute",
-				(done) => dbNative.runtimePreparedExecute(handle, args, done),
+				(done) => addon.runtimePreparedExecute(handle, args, done),
 				query.data.finds
 			)
 		}).pipe(Effect.withSpan("PreparedQuery.execute"))
@@ -291,33 +201,29 @@ class PreparedQueryLive<P extends ParamsRecord, A> implements PreparedQuery<P, A
 		const handle = this.#handle
 		return call(
 			"PreparedQuery.releaseMemory",
-			(done) => dbNative.runtimePreparedReleaseMemory(handle, done),
-			runtimeNative.runtimeTake
+			(done) => addon.runtimePreparedReleaseMemory(handle, done),
+			addon.runtimeTake
 		).pipe(Effect.withSpan("PreparedQuery.releaseMemory"))
 	}
 }
 
 function prepareOn<S extends AnySchema, P extends ParamsRecord, A>(
 	theory: S,
-	handle: SnapshotHandle,
+	handle: SnapshotRef,
 	query: QueryTemplate<S, P, A>
 ): Effect.Effect<PreparedQuery<P, A>, DbError, Scope.Scope> {
 	return Effect.gen(function* () {
 		const ir = yield* Effect.try({
 			try: () => {
 				if (!schemasAgree(query.schema, theory)) throw invalid("QueryReader.prepare")
-				return lowerQuery(query)
+				return queryHandleOf(query as AnyQuery)
 			},
 			catch: (cause) => argumentError("QueryReader.prepare", cause)
 		})
 		const prepared = yield* scoped(
 			"PreparedQuery.release",
-			call(
-				"QueryReader.prepare",
-				(done) => dbNative.runtimeSnapshotPrepare(handle, ir, done),
-				dbNative.runtimePreparedTake
-			),
-			(owned) => (done) => dbNative.runtimePreparedClose(owned, done)
+			call("QueryReader.prepare", (done) => addon.runtimeSnapshotPrepare(handle, ir, done), addon.runtimePreparedTake),
+			(owned) => (done) => addon.runtimePreparedClose(owned, done)
 		)
 		return new PreparedQueryLive<P, A>(prepared, query)
 	}).pipe(Effect.withSpan("QueryReader.prepare"))
@@ -325,10 +231,10 @@ function prepareOn<S extends AnySchema, P extends ParamsRecord, A>(
 
 class SnapshotLive<S extends AnySchema> implements Snapshot<S> {
 	readonly #theory: S
-	readonly #handle: SnapshotHandle
-	readonly witness: CoreWitness
+	readonly #handle: SnapshotRef
+	readonly witness: Witness
 
-	constructor(theory: S, handle: SnapshotHandle, witness: CoreWitness) {
+	constructor(theory: S, handle: SnapshotRef, witness: Witness) {
 		this.#theory = theory
 		this.#handle = handle
 		this.witness = witness
@@ -357,10 +263,10 @@ class SnapshotLive<S extends AnySchema> implements Snapshot<S> {
 
 class DbLive<S extends AnySchema> implements Db<S> {
 	readonly #theory: S
-	readonly #handle: DbHandle
+	readonly #handle: DbRef
 	readonly schemaId: SchemaId
 
-	constructor(theory: S, handle: DbHandle, schemaId: SchemaId) {
+	constructor(theory: S, handle: DbRef, schemaId: SchemaId) {
 		this.#theory = theory
 		this.#handle = handle
 		this.schemaId = schemaId
@@ -372,37 +278,31 @@ class DbLive<S extends AnySchema> implements Db<S> {
 		return Effect.map(
 			scoped(
 				"Snapshot.release",
-				call("Db.snapshot", (done) => dbNative.runtimeDbSnapshot(handle, done), dbNative.runtimeSnapshotTake),
-				(wire: SnapshotWire) => (done) => dbNative.runtimeSnapshotClose(wire.snapshot, done)
+				call("Db.snapshot", (done) => addon.runtimeDbSnapshot(handle, done), addon.runtimeSnapshotTake),
+				(opened) => (done) => addon.runtimeSnapshotClose(opened.snapshot, done)
 			),
-			(wire): Snapshot<S> => new SnapshotLive(theory, wire.snapshot, witnessOf(wire.witness))
+			(opened): Snapshot<S> => new SnapshotLive(theory, opened.snapshot, Object.freeze(opened.witness))
 		).pipe(Effect.withSpan("Db.snapshot"))
 	}
 
-	apply(changes: ChangeSet<S>, options: WriteOptions): Effect.Effect<ApplyOutcome, DbError> {
+	apply(changes: ChangeSet<S>, expected?: Witness): Effect.Effect<ApplyOutcome, DbError> {
 		const handle = this.#handle
-		const schemaId = this.schemaId
-		return Effect.gen(function* () {
-			const input = yield* writeInputs(schemaId, changes, options, "Db.apply")
-			return yield* call(
-				"Db.apply",
-				(done) => dbNative.runtimeDbApply(handle, input.handle, input.expected, done),
-				(lease) => outcomeOf(dbNative.runtimeApplyTake(lease))
-			)
-		}).pipe(Effect.withSpan("Db.apply"))
+		return changesOf(this.schemaId, changes, "Db.apply").pipe(
+			Effect.flatMap((owned) =>
+				call("Db.apply", (done) => addon.runtimeDbApply(handle, owned, expected ?? null, done), addon.runtimeApplyTake)
+			),
+			Effect.withSpan("Db.apply")
+		)
 	}
 
-	judge(changes: ChangeSet<S>, options: WriteOptions): Effect.Effect<JudgeOutcome, DbError> {
+	judge(changes: ChangeSet<S>, expected?: Witness): Effect.Effect<JudgeOutcome, DbError> {
 		const handle = this.#handle
-		const schemaId = this.schemaId
-		return Effect.gen(function* () {
-			const input = yield* writeInputs(schemaId, changes, options, "Db.judge")
-			return yield* call(
-				"Db.judge",
-				(done) => dbNative.runtimeDbJudge(handle, input.handle, input.expected, done),
-				(lease) => judgmentOf(dbNative.runtimeJudgeTake(lease))
-			)
-		}).pipe(Effect.withSpan("Db.judge"))
+		return changesOf(this.schemaId, changes, "Db.judge").pipe(
+			Effect.flatMap((owned) =>
+				call("Db.judge", (done) => addon.runtimeDbJudge(handle, owned, expected ?? null, done), addon.runtimeJudgeTake)
+			),
+			Effect.withSpan("Db.judge")
+		)
 	}
 
 	inspect(): Effect.Effect<DbInspection, DbError> {
@@ -410,22 +310,14 @@ class DbLive<S extends AnySchema> implements Db<S> {
 		const schemaId = this.schemaId
 		return call(
 			"Db.inspect",
-			(done) => dbNative.runtimeDbInspect(handle, done),
-			(lease): DbInspection => {
-				const wire: DbInspectionWire = dbNative.runtimeDbInspectTake(lease)
-				return Object.freeze({
-					schemaId,
-					generation: wire.generation,
-					storage: Object.freeze(wire.storage),
-					retainedOperations: wire.retainedOperations
-				})
-			}
+			(done) => addon.runtimeDbInspect(handle, done),
+			(lease): DbInspection => Object.freeze({ ...addon.runtimeDbInspectTake(lease), schemaId })
 		).pipe(Effect.withSpan("Db.inspect"))
 	}
 
 	clearCache(): Effect.Effect<void, DbError> {
 		const handle = this.#handle
-		return call("Db.clearCache", (done) => dbNative.runtimeDbClearCache(handle, done), runtimeNative.runtimeTake).pipe(
+		return call("Db.clearCache", (done) => addon.runtimeDbClearCache(handle, done), addon.runtimeTake).pipe(
 			Effect.withSpan("Db.clearCache")
 		)
 	}
@@ -434,9 +326,8 @@ class DbLive<S extends AnySchema> implements Db<S> {
 /** The database's child directory inside the owned directory. */
 const CHILD = "store"
 
-const closeDirectory =
-	(directory: DirectoryHandle) => (done: Parameters<typeof runtimeNative.runtimeDirectoryClose>[2]) =>
-		runtimeNative.runtimeDirectoryClose(directory, false, done)
+const closeDirectory = (directory: DirectoryRef) => (done: Parameters<typeof addon.runtimeDirectoryClose>[2]) =>
+	addon.runtimeDirectoryClose(directory, false, done)
 
 /**
  * Takes the directory lock, then opens the database inside it. Both are owned by the current
@@ -451,29 +342,28 @@ const openDatabase = <S extends AnySchema>(
 ): Effect.Effect<Db<S>, DbError, Bumble | Scope.Scope> =>
 	Effect.gen(function* () {
 		const runtime = yield* runtimeHandle
-		const compiled = yield* CoreSchema.compile(schema)
-		const spec = lower(compiled.schema)
+		const theory = yield* Effect.try({
+			try: () => schemaDescriptor(schema),
+			catch: (cause) => argumentError(operation, cause)
+		})
+		const compiled = compiledOf(theory)
 		const directory = yield* scoped(
 			"Db.directoryRelease",
-			call(
-				operation,
-				(done) => runtimeNative.runtimeDirectoryAcquire(runtime, path, done),
-				runtimeNative.runtimeDirectoryTake
-			),
+			call(operation, (done) => addon.runtimeDirectoryAcquire(runtime, path, done), addon.runtimeDirectoryTake),
 			closeDirectory
 		)
 		const opened = call(
 			operation,
-			(done) => runtimeNative.runtimeDirectoryDbOpen(directory, CHILD, spec, create, done),
-			runtimeNative.runtimeDbTake
+			(done) => addon.runtimeDirectoryDbOpen(directory, CHILD, compiled.handle, create, done),
+			addon.runtimeDbTake
 		).pipe(
-			Effect.flatMap((outcome) =>
-				outcome.tag === "accepted" ? Effect.succeed(outcome.db) : Effect.fail(invalid(operation))
+			Effect.flatMap((opened) =>
+				opened._tag === "Opened" ? Effect.succeed(opened.db) : Effect.fail(refused(operation, opened))
 			),
-			Effect.tapError(() => drain(`${operation}.directoryRelease`, closeDirectory(directory)))
+			Effect.tapError(() => drain(closeDirectory(directory)))
 		)
-		const handle = yield* scoped("Db.release", opened, (db) => (done) => runtimeNative.runtimeManagedDbClose(db, done))
-		return new DbLive(compiled.schema, handle, compiled.schemaId) as Db<S>
+		const handle = yield* scoped("Db.release", opened, (db) => (done) => addon.runtimeManagedDbClose(db, done))
+		return new DbLive(theory as S, handle, compiled.schemaId) as Db<S>
 	}).pipe(Effect.withSpan(operation))
 
 /**
@@ -489,16 +379,6 @@ const Db = Object.freeze({
 	}
 })
 
-export type {
-	ApplyOutcome,
-	CoreWitness,
-	DbInspection,
-	JudgeOutcome,
-	PreparedQuery,
-	QueryReader,
-	Snapshot,
-	StorageInspection,
-	WriteExpected,
-	WriteOptions
-}
+export type { ApplyOutcome, JudgeOutcome } from "./native/binding.d.ts"
+export type { DbInspection, PreparedQuery, QueryReader, Snapshot, Witness }
 export { Db }

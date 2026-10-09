@@ -11,6 +11,7 @@
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
+import { AuthoringError } from "../src/errors.ts"
 import type { AnyComputeExpr, ComputeExpr } from "../src/query/compute.ts"
 import { Compute } from "../src/query/compute.ts"
 import type { QueryRow } from "../src/query/lower.ts"
@@ -19,15 +20,6 @@ import { v } from "../src/query/scope.ts"
 import { Attempt, Learning, Student } from "./fixtures/learning.ts"
 
 /** Reads one lowered find term structurally (the wire arm is P06R2's). */
-function findTermAt(parsed: unknown, position: number): Record<string, unknown> {
-	const rules = (parsed as { readonly rules: ReadonlyArray<{ readonly finds: readonly unknown[] }> }).rules
-	const rule = rules[0]
-	assert.notEqual(rule, undefined)
-	const term = rule?.finds[position]
-	assert.notEqual(term, undefined)
-	return term as Record<string, unknown>
-}
-
 describe("Compute construction walls (engine result_type parity)", function walls() {
 	test("mixed numeric kinds refuse — no implicit promotion", function mixed() {
 		const { score, units } = v(Attempt)
@@ -116,8 +108,8 @@ describe("Compute construction walls (engine result_type parity)", function wall
 	})
 })
 
-describe("computed find lowering (the recorded C05 wire)", function lowering() {
-	test("a compute column lowers to { kind: compute, expr } under a compute head", function wire() {
+describe("computed find lowering", function lowering() {
+	test("a compute column lowers to a Compute find under a Compute head", function wire() {
 		const scaled = query(Learning).rule(function scaledRule(r) {
 			const { id, score, units } = v(Attempt)
 			return r.match(Attempt, { id, score, units }).find({
@@ -126,46 +118,32 @@ describe("computed find lowering (the recorded C05 wire)", function lowering() {
 				exact: Compute.toF64Exact(units)
 			})
 		})
-		const parsed = lowerQuery(scaled) as unknown as {
-			readonly head: ReadonlyArray<{ readonly kind: string }>
-			readonly rules: ReadonlyArray<{
-				readonly finds: readonly unknown[]
-				readonly atoms: ReadonlyArray<{
-					readonly bindings: ReadonlyArray<readonly [number, { readonly kind: string; readonly var?: number }]>
-				}>
-			}>
-		}
+		const lowered = lowerQuery(scaled)
 		assert.deepEqual(
-			parsed.head.map(function kindOf(term) {
-				return term.kind
-			}),
-			["var", "compute", "compute"]
+			lowered.head.map((term) => term.kind),
+			["Var", "Compute", "Compute"]
 		)
-		const rule = parsed.rules[0]
-		assert.notEqual(rule, undefined)
-		const bindings = rule?.atoms[0]?.bindings ?? []
+		const rule = lowered.rules[0]
+		assert.ok(rule !== undefined)
 		// Attempt's sealed field order: id(0) student(1) score(2) units(3) active(4).
 		const varAt = new Map<number, number>()
-		for (const [field, term] of bindings) {
-			if (term.kind === "var" && term.var !== undefined) {
-				varAt.set(field, term.var)
-			}
+		for (const binding of rule.atoms[0]?.bindings ?? []) {
+			if (binding.term.kind === "Var") varAt.set(binding.field, binding.term.var)
 		}
 		const scoreVar = varAt.get(2)
 		const unitsVar = varAt.get(3)
-		assert.notEqual(scoreVar, undefined)
-		assert.notEqual(unitsVar, undefined)
-		assert.deepEqual(findTermAt(parsed, 1), {
-			kind: "compute",
+		assert.ok(scoreVar !== undefined && unitsVar !== undefined)
+		assert.deepEqual(rule.finds[1], {
+			kind: "Compute",
 			expr: {
-				kind: "multiply",
-				left: { kind: "var", var: scoreVar },
-				right: { kind: "literal", value: { kind: "f64", value: 2 } }
+				kind: "Multiply",
+				left: { kind: "Var", var: scoreVar },
+				right: { kind: "Literal", value: { kind: "F64", value: "4000000000000000" } }
 			}
 		})
-		assert.deepEqual(findTermAt(parsed, 2), {
-			kind: "compute",
-			expr: { kind: "cast", cast: "toF64Exact", expr: { kind: "var", var: unitsVar } }
+		assert.deepEqual(rule.finds[2], {
+			kind: "Compute",
+			expr: { kind: "Cast", cast: "ToF64Exact", expr: { kind: "Var", var: unitsVar } }
 		})
 	})
 
@@ -176,7 +154,7 @@ describe("computed find lowering (the recorded C05 wire)", function lowering() {
 				const { budget } = v(Student)
 				return r.match(Attempt, { id, score }).find({ id, over: Compute.toF64(budget) })
 			})
-		}, /not bound by a relation atom/)
+		}, AuthoringError)
 	})
 
 	test("the recursive head refuses computed columns", function recWall() {
@@ -220,14 +198,10 @@ describe("computed find lowering (the recorded C05 wire)", function lowering() {
 				const { id } = v(Attempt)
 				return r.match(Attempt, { id }).find({ id })
 			})
-		const parsed = lowerQuery(staged) as unknown as {
-			readonly interiors: ReadonlyArray<{ readonly head: ReadonlyArray<{ readonly kind: string }> }>
-		}
+		const lowered = lowerQuery(staged)
 		assert.deepEqual(
-			parsed.interiors[0]?.head.map(function kindOf(term) {
-				return term.kind
-			}),
-			["var", "compute"]
+			lowered.interiors[0]?.rules[0]?.finds.map((term) => term.kind),
+			["Var", "Compute"]
 		)
 	})
 })

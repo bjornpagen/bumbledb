@@ -1,17 +1,19 @@
-import { Effect, Schema as EffectSchema } from "effect"
+/**
+ * A schema is compiled by the engine when it is defined. The compiled handle, descriptor and
+ * fingerprint ride with the schema value; the engine's diagnostics come back as authoring errors
+ * that name the schema's own relations and statements.
+ */
+import { Schema as EffectSchema } from "effect"
 import { isClosedMember, membersAgree } from "./closed.ts"
-import { dbNative } from "./db-native.ts"
-import { argumentError, internalError } from "./errors.ts"
-import { isImmutable, snapshotData } from "./immutable.ts"
-import type { SchemaClasses } from "./law.ts"
+import { AuthoringError, internalError } from "./errors.ts"
+import { isImmutable } from "./immutable.ts"
 import { lower } from "./lower.ts"
-import { call } from "./native/op.ts"
-import type { SealedDescriptor } from "./native.ts"
+import type { SchemaRef } from "./native/addon.ts"
+import { addon } from "./native/addon.ts"
+import type { SchemaDescriptorOut, SchemaDiagnostic } from "./native/binding.d.ts"
 import type { AnyRelation } from "./relation.ts"
-import { runtimeHandle } from "./runtime.ts"
-import type { AnySchema, Schema as SchemaDeclaration, SchemaRelations } from "./schema.ts"
-import { schemaDescriptor } from "./schema.ts"
-import { type KeyStatement, type Statement, statementDescriptor } from "./statements.ts"
+import type { AnySchema } from "./schema.ts"
+import { type KeyStatement, renderStatement, type Statement, statementDescriptor } from "./statements.ts"
 
 /** The engine's schema fingerprint: 64 lowercase hex digits, independent of any database. */
 const SchemaId = EffectSchema.String.check(EffectSchema.isPattern(/^[0-9a-f]{64}$/)).pipe(
@@ -19,69 +21,47 @@ const SchemaId = EffectSchema.String.check(EffectSchema.isPattern(/^[0-9a-f]{64}
 )
 type SchemaId = typeof SchemaId.Type
 
-/**
- * `CompiledSchema<S>` — bounded detached immutable descriptor data plus the
- * canonical `schemaId`. NOT a tenant handle or a second
- * user-authored schema: it needs no native finalizer, holds no native
- * resource, and open/create/build compile through the same implementation —
- * prior compilation is optional, never a mandatory prepare ceremony.
- */
-interface CompiledSchema<S extends AnySchema> {
-	readonly schema: S
+interface Compiled {
+	readonly handle: SchemaRef
+	readonly descriptor: SchemaDescriptorOut
 	readonly schemaId: SchemaId
-	readonly descriptor: SealedDescriptor
 }
 
 /**
- * Pure declaration-order tables shared by the whole core surface: relation
- * ids (declaration order = ids), materialized statement ids (closed
- * relations' auto-handle keys FIRST in relation-declaration order, then
- * declared statements in declaration order with `mirrors` occupying two
- * consecutive slots, source-first — the theory's `StatementId` law).
- * Every declared statement retains its own native identity; no key is
- * privileged by its position in the declaration.
+ * Declaration-order tables: relation ids, and each declared statement's first materialized
+ * statement id (closed relations' id keys come first; `mirrors` takes two consecutive ids).
  */
 interface SchemaTables {
 	readonly relationIds: ReadonlyMap<string, number>
 	readonly statementIds: ReadonlyMap<Statement, number>
 }
 
-function declaredWidth(statement: Statement): number {
-	return statement.kind === "mirrors" ? 2 : 1
-}
-
 function tablesOf(theory: AnySchema): SchemaTables {
 	const relationIds = new Map<string, number>()
 	const statementIds = new Map<Statement, number>()
-	let autoKeys = 0
-	Object.entries(theory.relations).forEach(function assignRelation([name, member], ordinal) {
+	let offset = 0
+	Object.entries(theory.relations).forEach(([name, member], ordinal) => {
 		relationIds.set(name, ordinal)
-		if (isClosedMember(member)) {
-			autoKeys += 1
-		}
+		if (isClosedMember(member)) offset += 1
 	})
-	let offset = autoKeys
 	for (const statement of theory.statements) {
 		statementIds.set(statement, offset)
-		offset += declaredWidth(statement)
+		offset += statement.kind === "mirrors" ? 2 : 1
 	}
 	return Object.freeze({ relationIds, statementIds })
 }
 
-const compiledCache = new WeakMap<AnySchema, SchemaTables>()
+const tablesCache = new WeakMap<AnySchema, SchemaTables>()
 
-/** Memoized pure tables (per schema value identity; no native work). */
 function schemaTables(theory: AnySchema): SchemaTables {
-	const cached = compiledCache.get(theory)
-	if (cached !== undefined) {
-		return cached
-	}
+	const cached = tablesCache.get(theory)
+	if (cached !== undefined) return cached
 	const built = tablesOf(theory)
-	if (isImmutable(theory)) compiledCache.set(theory, built)
+	if (isImmutable(theory)) tablesCache.set(theory, built)
 	return built
 }
 
-/** Resolve a logical key declaration, never an opaque constructor token. */
+/** Resolves a key declaration to the schema's own statement and its statement id. */
 function declaredKey<R extends AnyRelation>(
 	theory: AnySchema,
 	input: KeyStatement<R>
@@ -103,68 +83,67 @@ function declaredKey(
 	return undefined
 }
 
-const decodeSchemaId = EffectSchema.decodeUnknownOption(SchemaId)
-
-function admitSchemaId(fingerprint: string): SchemaId {
-	const id = decodeSchemaId(fingerprint)
-	if (id._tag === "None") throw internalError("Schema.compile: the engine returned no canonical fingerprint")
-	return id.value
+function explain(theory: AnySchema, diagnostic: SchemaDiagnostic): string {
+	if (diagnostic._tag === "Schema") {
+		const cited = [diagnostic.statement, diagnostic.conflict].flatMap((cite) =>
+			cite === undefined ? [] : [cite.spelling]
+		)
+		return cited.length === 0 ? diagnostic.message : `${diagnostic.message} — ${cited.join("; ")}`
+	}
+	const relations = Object.keys(theory.relations)
+	return diagnostic.issues
+		.map((issue) => {
+			const at = [
+				issue.relation === undefined ? undefined : `relation ${relations[issue.relation] ?? issue.relation}`,
+				issue.row === undefined ? undefined : `row ${issue.row}`,
+				issue.statement === undefined
+					? undefined
+					: (() => {
+							const statement = theory.statements[issue.statement]
+							return statement === undefined ? `statement ${issue.statement}` : renderStatement(statement)
+						})()
+			].filter((part) => part !== undefined)
+			return at.length === 0 ? issue.message : `${issue.message} — ${at.join(", ")}`
+		})
+		.join("; ")
 }
 
-/**
- * Effectful native schema admission/compilation: a
- * schema declaration is pure metadata and never a claim its theory has been
- * admitted. Runs on the shared executor, requires the
- * acquired {@link Bumble}, and yields detached immutable descriptor
- * data plus the canonical schema identity. No database is opened and no
- * native finalizer is created.
- */
-const compile = Effect.fn("Schema.compile")(function* <S extends AnySchema>(schema: S) {
-	const owned = yield* Effect.try({
-		try: () => schemaDescriptor(schema),
-		catch: (cause) => argumentError("Schema.compile", cause)
-	})
-	const spec = yield* Effect.try({ try: () => lower(owned), catch: (cause) => argumentError("Schema.compile", cause) })
-	const handle = yield* runtimeHandle
-	const descriptor = yield* call(
-		"Schema.compile",
-		(callback) => dbNative.runtimeSchemaCompile(handle, spec, callback),
-		dbNative.runtimeSchemaTake
-	)
-	const ownedDescriptor = snapshotData(descriptor)
-	const compiled: CompiledSchema<S> = Object.freeze({
-		get schema() {
-			return snapshotData(owned)
-		},
-		schemaId: admitSchemaId(descriptor.fingerprint),
-		get descriptor() {
-			return snapshotData(ownedDescriptor)
+const decodeSchemaId = EffectSchema.decodeUnknownOption(SchemaId)
+
+/** Compiles `theory` with the engine; an engine refusal throws `AuthoringError`. */
+function compileSchema(theory: AnySchema): Compiled {
+	const compiled = addon.compileSchema(JSON.stringify(lower(theory)))
+	switch (compiled._tag) {
+		case "Compiled": {
+			const schemaId = decodeSchemaId(compiled.descriptor.fingerprint)
+			if (schemaId._tag === "None") throw internalError("compileSchema: the engine returned no fingerprint")
+			return Object.freeze({ handle: compiled.schema, descriptor: compiled.descriptor, schemaId: schemaId.value })
 		}
-	})
+		case "Invalid":
+			throw new AuthoringError({ message: `schema ${theory.name}: ${explain(theory, compiled.diagnostic)}` })
+		case "Malformed":
+			throw internalError(`compileSchema: ${compiled.path}: ${compiled.message}`)
+	}
+}
+
+const compiledSchemas = new WeakMap<AnySchema, Compiled>()
+
+/** Records the compiled form of a schema value `schema()` produced. */
+function registerCompiled(theory: AnySchema): void {
+	compiledSchemas.set(theory, compileSchema(theory))
+}
+
+/** Whether `value` is a schema value `schema()` produced (and so has a compiled form). */
+function isCompiledSchema(value: unknown): value is AnySchema {
+	return typeof value === "object" && value !== null && compiledSchemas.has(value as AnySchema)
+}
+
+/** The engine's compiled form of `theory`; every schema value `schema()` produced has one. */
+function compiledOf(theory: AnySchema): Compiled {
+	const compiled = compiledSchemas.get(theory)
+	if (compiled === undefined) throw internalError("compiledOf: the schema was not produced by schema()")
 	return compiled
-})
+}
 
-/**
- * The declaration-tier `Schema<Rels, Classes>` TYPE (from `#schema.ts`),
- * re-aliased LOCALLY so the one name carries both meanings through a
- * SINGLE export specifier below — a local `type` + `const` merge is the
- * plain TypeScript type/value merge, with no same-name pair of export
- * declarations for any checker to refuse (the earlier
- * `export type { Schema } from "./schema.ts"` beside `export { Schema }`
- * spelled the type meaning twice at the barrel; this spelling cannot).
- */
-type Schema<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> = SchemaDeclaration<
-	Rels,
-	Classes
->
-
-/**
- * The core `Schema` namespace (import as `BumbleSchema` when Effect Schema
- * is also in scope). The `Schema<Rels>` type remains the pure
- * declaration from `#schema.ts` (the local alias above); this value owns
- * the effectful half. One exported name, two meanings.
- */
-const Schema = Object.freeze({ compile })
-
-export type { CompiledSchema, SchemaId, SchemaTables }
-export { declaredKey, Schema, schemaTables }
+export type { Compiled, SchemaTables }
+export { compiledOf, declaredKey, isCompiledSchema, registerCompiled, SchemaId, schemaTables }

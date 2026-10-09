@@ -2,17 +2,18 @@ import type { Scope } from "effect"
 import { Effect, Exit, Option, Stream } from "effect"
 import { isClosedMember, membersAgree } from "./closed.ts"
 import type { SchemaId } from "./compile.ts"
-import { Schema as CoreSchema, schemaTables } from "./compile.ts"
-import type { ChangeRecordWire, ChangesHandle, ChangesWire, DraftHandle } from "./db-native.ts"
-import { dbNative } from "./db-native.ts"
-import { argumentError, DbError, internalError } from "./errors.ts"
-import { lower } from "./lower.ts"
+import { compiledOf, schemaTables } from "./compile.ts"
+import { argumentError, DbError, dbError, internalError } from "./errors.ts"
+import type { ChangesRef, DraftRef } from "./native/addon.ts"
+import { addon } from "./native/addon.ts"
+import type { ChangeCounts, ChangeKindOut, ChangeRecordOut, ChangesOut } from "./native/binding.d.ts"
 import { call, drain, release, scoped } from "./native/op.ts"
 import { type AnyRelation, type Fact, relationFields } from "./relation.ts"
 import type { CellValue } from "./rows.ts"
 import { factCellsOf, factOfCells, hostCellCharge } from "./rows.ts"
 import { runtimeHandle } from "./runtime.ts"
 import type { AnySchema, SchemaRelation } from "./schema.ts"
+import { schemaDescriptor } from "./schema.ts"
 import type { Rel } from "./shape.ts"
 import { bytesValue, recordValue } from "./values.ts"
 
@@ -24,15 +25,11 @@ import { bytesValue, recordValue } from "./values.ts"
  * retains the SAME native value — no second JS row walk ever happens.
  */
 /** Counts of distinct fact additions and removals, never input events. */
-interface ChangeCounts {
-	readonly added: bigint
-	readonly removed: bigint
-}
 
 /** A relation-name-discriminated union of plain, fully typed facts. */
 type ChangeRecord<S extends AnySchema> = {
 	[N in keyof S["relations"]]: S["relations"][N] extends AnyRelation
-		? { readonly relation: N; readonly kind: "add" | "remove"; readonly fact: Fact<S["relations"][N]> }
+		? { readonly relation: N; readonly kind: ChangeKindOut; readonly fact: Fact<S["relations"][N]> }
 		: never
 }[keyof S["relations"]]
 
@@ -80,7 +77,7 @@ const CHUNK_BYTES = 65536n
 const CHUNK_ROWS = 4096
 
 interface DraftState {
-	readonly handle: DraftHandle
+	readonly handle: DraftRef
 	readonly theory: AnySchema
 	spent: boolean
 	inFlight: boolean
@@ -92,7 +89,7 @@ function refusal(operation: string, reason: "SpentHandle" | "ClosedHandle" | "In
 
 interface Chunk {
 	readonly rows: bigint
-	readonly cells: readonly CellValue[]
+	readonly cells: CellValue[]
 	readonly done: boolean
 	readonly leftover: object | undefined
 }
@@ -151,16 +148,13 @@ function pullChunk(relation: AnyRelation, iterator: Iterator<object>, pending: o
 	return { rows, cells, done: false, leftover }
 }
 
-function spendAndDrain(state: DraftState, operation: string): Effect.Effect<void> {
+function spendAndDrain(state: DraftState): Effect.Effect<void> {
 	return Effect.suspend(() => {
 		if (state.spent) {
 			return Effect.void
 		}
 		state.spent = true
-		// Tracked drain: join the native close transition; the report is
-		// diagnostic here (the ingestion failure itself is the caller's
-		// error), but native Closing accounting is never dropped.
-		return drain(operation, (callback) => dbNative.runtimeDraftClose(state.handle, callback)).pipe(Effect.asVoid)
+		return drain((done) => addon.runtimeDraftClose(state.handle, done)).pipe(Effect.asVoid)
 	})
 }
 
@@ -170,7 +164,7 @@ function ingest(
 	relation: AnyRelation,
 	rows: Iterable<object>
 ): Effect.Effect<void, DbError> {
-	const verb = operation === "ChangeDraft.insert" ? dbNative.runtimeDraftInsert : dbNative.runtimeDraftDelete
+	const verb = operation === "ChangeDraft.insert" ? addon.runtimeDraftInsert : addon.runtimeDraftDelete
 	return Effect.gen(function* () {
 		if (state.spent) {
 			return yield* Effect.fail(refusal(operation, "SpentHandle"))
@@ -178,7 +172,7 @@ function ingest(
 		if (state.inFlight) {
 			// Reentrant construction refuses AND spends/drains — there is
 			// no implicit queue.
-			yield* spendAndDrain(state, operation)
+			yield* spendAndDrain(state)
 			return yield* Effect.fail(refusal(operation, "SpentHandle"))
 		}
 		if (!membersAgree(state.theory.relations[relation.name], relation)) {
@@ -202,7 +196,7 @@ function ingest(
 					const chunk = yield* Effect.try({
 						try: () => pullChunk(relation, iterator, leftover),
 						catch: (cause) => argumentError(operation, cause)
-					}).pipe(Effect.catch((error) => spendAndDrain(state, operation).pipe(Effect.andThen(Effect.fail(error)))))
+					}).pipe(Effect.catch((error) => spendAndDrain(state).pipe(Effect.andThen(Effect.fail(error)))))
 					leftover = chunk.leftover
 					done = chunk.done && leftover === undefined
 					if (chunk.rows === 0n) {
@@ -213,7 +207,7 @@ function ingest(
 						operation,
 						(callback) => verb(state.handle, relationId, chunk.rows, chunk.cells, callback),
 						(lease) => {
-							dbNative.runtimeReportTake(lease)
+							addon.runtimeStagedTake(lease)
 						}
 					).pipe(
 						Effect.catch((error) =>
@@ -236,17 +230,17 @@ function ingest(
 			if (state.spent || Exit.isSuccess(exit)) {
 				return Effect.void
 			}
-			return spendAndDrain(state, operation)
+			return spendAndDrain(state)
 		})
 	})
 }
 
 function decodeChangeRecord<S extends AnySchema>(
 	relations: readonly SchemaRelation[],
-	record: ChangeRecordWire
+	record: ChangeRecordOut
 ): ChangeRecord<S> {
 	const relation = relations[record.relation]
-	if (relation === undefined || isClosedMember(relation) || (record.kind !== "add" && record.kind !== "remove")) {
+	if (relation === undefined || isClosedMember(relation)) {
 		throw internalError("ChangeSet.records: invalid native record descriptor")
 	}
 	// Relation id resolves through this schema's own ordered roster. The
@@ -259,7 +253,7 @@ function decodeChangeRecord<S extends AnySchema>(
 }
 
 function changeRecords<S extends AnySchema>(
-	handle: ChangesHandle,
+	handle: ChangesRef,
 	relations: readonly SchemaRelation[]
 ): Stream.Stream<ChangeRecord<S>, DbError> {
 	return Stream.unwrap(
@@ -267,17 +261,17 @@ function changeRecords<S extends AnySchema>(
 			const cursor = yield* Effect.acquireRelease(
 				call(
 					"ChangeSet.records",
-					(callback) => dbNative.runtimeChangesCursor(handle, callback),
-					dbNative.runtimeChangesCursorTake
+					(callback) => addon.runtimeChangesCursor(handle, callback),
+					addon.runtimeChangesCursorTake
 				),
-				(value) => release("ChangeCursor.close", (callback) => dbNative.runtimeChangesCursorClose(value, callback)),
+				(value) => release("ChangeCursor.close", (callback) => addon.runtimeChangesCursorClose(value, callback)),
 				{ interruptible: true }
 			)
 			return Stream.paginate(undefined, () =>
 				call(
 					"ChangeSet.records",
-					(callback) => dbNative.runtimeChangesCursorNext(cursor, callback),
-					dbNative.runtimeChangePageTake
+					(callback) => addon.runtimeChangesCursorNext(cursor, callback),
+					addon.runtimeChangePageTake
 				).pipe(
 					Effect.map((page) =>
 						page === null
@@ -293,22 +287,22 @@ function changeRecords<S extends AnySchema>(
 function acquireChanges<S extends AnySchema>(
 	theory: S,
 	schemaId: SchemaId,
-	acquire: Effect.Effect<ChangesWire, DbError>
+	acquire: Effect.Effect<ChangesOut, DbError>
 ): Effect.Effect<ChangeSet<S>, DbError, Scope.Scope> {
 	return Effect.map(
-		scoped("ChangeSet.release", acquire, (wire) => (done) => dbNative.runtimeChangesClose(wire.changes, done)),
+		scoped("ChangeSet.release", acquire, (wire) => (done) => addon.runtimeChangesClose(wire.changes, done)),
 		(wire): ChangeSet<S> => new ChangeSetLive(theory, wire, schemaId)
 	)
 }
 
 class ChangeSetLive<S extends AnySchema> implements ChangeSet<S> {
 	readonly #theory: S
-	readonly #handle: ChangesHandle
+	readonly #handle: ChangesRef
 	readonly schemaId: SchemaId
 	readonly counts: ChangeCounts
 	readonly byteLength: bigint
 
-	constructor(theory: S, wire: ChangesWire, schemaId: SchemaId) {
+	constructor(theory: S, wire: ChangesOut, schemaId: SchemaId) {
 		this.#theory = theory
 		this.#handle = wire.changes
 		this.schemaId = schemaId
@@ -324,11 +318,9 @@ class ChangeSetLive<S extends AnySchema> implements ChangeSet<S> {
 
 	toBytes(): Effect.Effect<Uint8Array, DbError> {
 		const handle = this.#handle
-		return call(
-			"ChangeSet.toBytes",
-			(done) => dbNative.runtimeChangesBytes(handle, done),
-			dbNative.runtimeBytesTake
-		).pipe(Effect.withSpan("ChangeSet.toBytes"))
+		return call("ChangeSet.toBytes", (done) => addon.runtimeChangesBytes(handle, done), addon.runtimeBytesTake).pipe(
+			Effect.withSpan("ChangeSet.toBytes")
+		)
 	}
 
 	compose(other: ChangeSet<S>): Effect.Effect<ChangeSet<S>, DbError, Scope.Scope> {
@@ -338,16 +330,12 @@ class ChangeSetLive<S extends AnySchema> implements ChangeSet<S> {
 		return acquireChanges(
 			this.#theory,
 			this.schemaId,
-			call(
-				"ChangeSet.compose",
-				(done) => dbNative.runtimeChangesCompose(left, right, done),
-				dbNative.runtimeChangesTake
-			)
+			call("ChangeSet.compose", (done) => addon.runtimeChangesCompose(left, right, done), addon.runtimeChangesTake)
 		).pipe(Effect.withSpan("ChangeSet.compose"))
 	}
 
 	/** The native change set behind `value`, when `value` is one this SDK made for `schemaId`. */
-	static handle(value: object, schemaId: SchemaId): ChangesHandle | undefined {
+	static handle(value: object, schemaId: SchemaId): ChangesRef | undefined {
 		if (!(#handle in value)) return undefined
 		const changes = value as unknown as ChangeSetLive<AnySchema>
 		return changes.schemaId === schemaId ? changes.#handle : undefined
@@ -371,15 +359,15 @@ function makeDraft<S extends AnySchema>(theory: S, state: DraftState, schemaId: 
 						return yield* Effect.fail(refusal("ChangeDraft.finish", "SpentHandle"))
 					}
 					if (state.inFlight) {
-						yield* spendAndDrain(state, "ChangeDraft.finish")
+						yield* spendAndDrain(state)
 						return yield* Effect.fail(refusal("ChangeDraft.finish", "SpentHandle"))
 					}
 					// Finish CONSUMES the draft, success or failure.
 					state.spent = true
 					return yield* call(
 						"ChangeDraft.finish",
-						(callback) => dbNative.runtimeDraftFinish(state.handle, callback),
-						dbNative.runtimeChangesTake
+						(callback) => addon.runtimeDraftFinish(state.handle, callback),
+						addon.runtimeChangesTake
 					)
 				})
 			)
@@ -397,19 +385,28 @@ function makeDraft<S extends AnySchema>(theory: S, state: DraftState, schemaId: 
  */
 const builder = Effect.fn("ChangeSet.builder")(function* <S extends AnySchema>(schema: S) {
 	const handle = yield* runtimeHandle
-	const compiled = yield* CoreSchema.compile(schema)
-	const spec = lower(compiled.schema)
+	const theory = yield* Effect.try({
+		try: () => schemaDescriptor(schema),
+		catch: (cause) => argumentError("ChangeSet.builder", cause)
+	})
+	const compiled = compiledOf(theory)
 	const state = yield* scoped(
 		"ChangeDraft.release",
-		call("ChangeSet.builder", (done) => dbNative.runtimeDraftOpen(handle, spec, done), dbNative.runtimeDraftTake).pipe(
-			Effect.map((draft): DraftState => ({ handle: draft, theory: compiled.schema, spent: false, inFlight: false }))
-		),
+		Effect.try({
+			try: (): DraftState => ({
+				handle: addon.runtimeDraftOpen(handle, compiled.handle),
+				theory,
+				spent: false,
+				inFlight: false
+			}),
+			catch: (cause) => dbError("ChangeSet.builder", cause)
+		}),
 		(owned) => (done) => {
 			owned.spent = true
-			dbNative.runtimeDraftClose(owned.handle, done)
+			addon.runtimeDraftClose(owned.handle, done)
 		}
 	)
-	return makeDraft(compiled.schema, state, compiled.schemaId)
+	return makeDraft(theory as S, state, compiled.schemaId)
 })
 
 /** Parse canonical native bytes, owning the input when the Effect starts. */
@@ -419,19 +416,24 @@ const fromBytes = Effect.fn("ChangeSet.fromBytes")(function* <S extends AnySchem
 		catch: (cause) => argumentError("ChangeSet.fromBytes", cause)
 	})
 	const handle = yield* runtimeHandle
-	const compiled = yield* CoreSchema.compile(schema)
+	const theory = yield* Effect.try({
+		try: () => schemaDescriptor(schema),
+		catch: (cause) => argumentError("ChangeSet.fromBytes", cause)
+	})
+	const compiled = compiledOf(theory)
 	return yield* acquireChanges(
-		compiled.schema,
+		theory as S,
 		compiled.schemaId,
 		call(
 			"ChangeSet.fromBytes",
-			(callback) => dbNative.runtimeChangesParse(handle, lower(compiled.schema), ownedBytes, callback),
-			dbNative.runtimeChangesTake
+			(done) => addon.runtimeChangesParse(handle, compiled.handle, ownedBytes, done),
+			addon.runtimeChangesTake
 		)
 	)
 })
 
 const ChangeSet = Object.freeze({ builder, fromBytes })
 
-export type { ChangeCounts, ChangeDraft, ChangeRecord }
+export type { ChangeCounts } from "./native/binding.d.ts"
+export type { ChangeDraft, ChangeRecord }
 export { ChangeSet, ChangeSetLive }

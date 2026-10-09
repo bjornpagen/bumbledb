@@ -39,7 +39,7 @@ test("UUID native persistence and ordered predicates preserve both halves", asyn
 						ids.map((id) => ({ id, name: "UUID", budget: 10n }))
 					)
 					const changes = yield* draft.finish()
-					assert.equal((yield* db.apply(changes, { expected: { kind: "any" } })).kind, "accepted")
+					assert.equal((yield* db.apply(changes))._tag, "Committed")
 				})
 			)
 		)

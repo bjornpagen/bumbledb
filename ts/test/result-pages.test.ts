@@ -19,16 +19,15 @@ import { test } from "node:test"
 import { Cause, Deferred, Effect, Exit, Fiber, ManagedRuntime, Scope, Stream } from "effect"
 import { ChangeSet } from "../src/changes.ts"
 import { Db } from "../src/db.ts"
-import { dbNative } from "../src/db-native.ts"
 import { DbError } from "../src/errors.ts"
 import { bytes, f64, i64, interval, str, u64, uuid } from "../src/fields.ts"
+import { addon } from "../src/native/addon.ts"
 import { call, drain } from "../src/native/op.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
 import { type CompleteResult, CompleteResultLive } from "../src/result.ts"
 import { Bumble, runtimeHandle } from "../src/runtime.ts"
-import { runtimeNative } from "../src/runtime-native.ts"
 import { schema } from "../src/schema.ts"
 import type { Uuid } from "../src/uuid.ts"
 import { Attempt, Learning, runtimeOptions, Student, storeDir } from "./fixtures/learning.ts"
@@ -64,7 +63,7 @@ function seededResult(tag: string, count: number) {
 		}
 		yield* draft.insert(Attempt, rows)
 		const changes = yield* draft.finish()
-		yield* db.apply(changes, { expected: { kind: "any" } })
+		yield* db.apply(changes)
 		const snapshot = yield* db.snapshot()
 		const result: CompleteResult<Row> = yield* snapshot.execute(allAttempts, {})
 		return { result, count }
@@ -85,7 +84,7 @@ test("collect leaves the result available; cancellation leaves the sealed backin
 					assert.equal(again.length, count)
 
 					// A publication cancellation leaves the backing sealed.
-					runtimeNative.runtimeArmPublicationCancel(yield* runtimeHandle)
+					addon.runtimeArmPublicationCancel(yield* runtimeHandle)
 					const capped = yield* Effect.exit(result.collect())
 					assert.equal(capped._tag, "Failure")
 					if (capped._tag === "Failure") {
@@ -261,7 +260,7 @@ test("borrowed native delivery preserves exact values and independent byte owner
 					const draft = yield* ChangeSet.builder(Data)
 					yield* draft.insert(Record, expected)
 					const changes = yield* draft.finish()
-					yield* db.apply(changes, { expected: { kind: "any" } })
+					yield* db.apply(changes)
 					const snapshotScope = yield* Scope.make()
 					const snapshot = yield* db.snapshot().pipe(Scope.provide(snapshotScope))
 					const result = yield* snapshot.execute(all, {})
@@ -350,7 +349,7 @@ test("publication-boundary cancel delivers nothing; retry starts at row1 (D12/D2
 					const { result } = yield* seededResult("publication-cancel", 3)
 					const handle = yield* runtimeHandle
 					// L12 probe: cancel after work returns, before operation.output.
-					runtimeNative.runtimeArmPublicationCancel(handle)
+					addon.runtimeArmPublicationCancel(handle)
 					const refused = yield* Effect.exit(result.collect())
 					assert.equal(refused._tag, "Failure", "predelivery cancel returns no page")
 					const retry = yield* result.collect()
@@ -374,10 +373,10 @@ test("publication-boundary cancel delivers nothing; retry starts at row1 (D12/D2
 
 test("non-terminal cursor refusal does not take Page/Rows; same cursor retries at row1 (D25)", async function sameCursorAfterRefusal() {
 	const rt = runtime()
-	const pageTake = dbNative.runtimePageTake
+	const pageTake = addon.runtimePageTake
 	let takes = 0
-	dbNative.runtimePageTake = ((operation) => {
-		const page = pageTake.call(dbNative, operation)
+	addon.runtimePageTake = ((operation) => {
+		const page = pageTake.call(addon, operation)
 		takes += 1
 		return page
 	}) as typeof pageTake
@@ -392,29 +391,28 @@ test("non-terminal cursor refusal does not take Page/Rows; same cursor retries a
 					const cursor = yield* Effect.acquireRelease(
 						call(
 							"cursor.open",
-							(callback) => dbNative.runtimeResultCursor(resultHandle, callback),
-							dbNative.runtimeCursorTake
+							(callback) => addon.runtimeResultCursor(resultHandle, callback),
+							addon.runtimeCursorTake
 						),
-						(taken) =>
-							drain("cursor.close", (callback) => dbNative.runtimeCursorClose(taken, callback)).pipe(Effect.asVoid)
+						(taken) => drain((callback) => addon.runtimeCursorClose(taken, callback)).pipe(Effect.asVoid)
 					)
-					runtimeNative.runtimeArmPublicationCancel(runtime)
+					addon.runtimeArmPublicationCancel(runtime)
 					const refused = yield* Effect.exit(
-						call("cursor.refused", (callback) => dbNative.runtimeCursorNext(cursor, callback), dbNative.runtimePageTake)
+						call("cursor.refused", (callback) => addon.runtimeCursorNext(cursor, callback), addon.runtimePageTake)
 					)
 					assert.equal(refused._tag, "Failure", "predelivery cancel returns no page")
 					assert.equal(takes, 0, "the completion probe throws its refusal; no Page/Rows payload is adopted")
 					const retry = yield* call(
 						"cursor.retry",
-						(callback) => dbNative.runtimeCursorNext(cursor, callback),
-						dbNative.runtimePageTake
+						(callback) => addon.runtimeCursorNext(cursor, callback),
+						addon.runtimePageTake
 					)
 					assert.equal(retry?.length, 3, "same cursor retries all three rows without skipping")
 				})
 			)
 		)
 	} finally {
-		dbNative.runtimePageTake = pageTake
+		addon.runtimePageTake = pageTake
 		await Effect.runPromise(rt.disposeEffect)
 	}
 })

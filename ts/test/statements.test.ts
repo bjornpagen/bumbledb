@@ -90,7 +90,7 @@ function buildSeverity() {
 }
 
 describe("the Ledger example", function describeLedger() {
-	test("lowers to the SchemaSpec shape, declaration order throughout, newtype slots carrying the law-computed class names", function probeLedgerLowering() {
+	test("lowers to the SchemaSpecIn shape, declaration order throughout, newtype slots carrying the law-computed class names", function probeLedgerLowering() {
 		const { Ledger } = buildLedger()
 		assert.deepStrictEqual(lower(Ledger), {
 			relations: [
@@ -108,66 +108,55 @@ describe("the Ledger example", function describeLedger() {
 				{
 					name: "Holder",
 					fields: [
-						{ name: "id", valueType: { kind: "u64" }, newtype: "Holder.id" },
-						{ name: "name", valueType: { kind: "string" }, newtype: undefined }
-					],
-					closed: undefined
+						{ name: "id", valueType: { kind: "U64" }, newtype: "Holder.id" },
+						{ name: "name", valueType: { kind: "String" } }
+					]
 				},
 				{
 					name: "Account",
 					fields: [
-						{ name: "id", valueType: { kind: "u64" }, newtype: "Account.id" },
-						{ name: "holder", valueType: { kind: "u64" }, newtype: "Holder.id" },
-						{ name: "kind", valueType: { kind: "u64" }, newtype: "Kind.id" },
-						{
-							name: "active",
-							valueType: { kind: "interval", element: "i64", width: undefined },
-							newtype: undefined
-						}
-					],
-					closed: undefined
+						{ name: "id", valueType: { kind: "U64" }, newtype: "Account.id" },
+						{ name: "holder", valueType: { kind: "U64" }, newtype: "Holder.id" },
+						{ name: "kind", valueType: { kind: "U64" }, newtype: "Kind.id" },
+						{ name: "active", valueType: { kind: "Interval", element: "I64" } }
+					]
 				},
 				{
 					name: "SavingsTerms",
-					fields: [{ name: "account", valueType: { kind: "u64" }, newtype: "Account.id" }],
-					closed: undefined
+					fields: [{ name: "account", valueType: { kind: "U64" }, newtype: "Account.id" }]
 				}
 			],
 			statements: [
-				{ kind: "fd", relation: "Holder", projection: ["id"] },
-				{ kind: "fd", relation: "Account", projection: ["id"] },
-				{ kind: "fd", relation: "SavingsTerms", projection: ["account"] },
+				{ kind: "Fd", relation: "Holder", projection: ["id"] },
+				{ kind: "Fd", relation: "Account", projection: ["id"] },
+				{ kind: "Fd", relation: "SavingsTerms", projection: ["account"] },
 				{
-					kind: "containment",
+					kind: "Containment",
 					source: { relation: "Account", projection: ["holder"], selection: [] },
 					target: { relation: "Holder", projection: ["id"], selection: [] },
 					bidirectional: false
 				},
 				{
-					kind: "containment",
+					kind: "Containment",
 					source: { relation: "Account", projection: ["kind"], selection: [] },
 					target: { relation: "Kind", projection: ["id"], selection: [] },
 					bidirectional: false
 				},
 				{
-					kind: "containment",
+					kind: "Containment",
 					source: {
 						relation: "Account",
 						projection: ["id"],
-						selection: [["kind", { kind: "one", literal: { kind: "handle", handle: "Savings" } }]]
+						selection: [{ field: "kind", set: { kind: "One", literal: { kind: "Handle", handle: "Savings" } } }]
 					},
 					target: { relation: "SavingsTerms", projection: ["account"], selection: [] },
 					bidirectional: true
 				},
 				{
-					kind: "capacity",
+					kind: "Capacity",
 					target: { relation: "Holder", projection: ["id"], selection: [] },
-					weight: { kind: "unit" },
-					window: {
-						kind: "range",
-						lo: { kind: "lit", value: 0n },
-						hi: { kind: "lit", value: 3n }
-					},
+					weight: { kind: "Unit" },
+					window: { kind: "Range", lo: { kind: "Lit", value: "0" }, hi: { kind: "Lit", value: "3" } },
 					source: { relation: "Account", projection: ["holder"], selection: [] }
 				}
 			]
@@ -177,9 +166,9 @@ describe("the Ledger example", function describeLedger() {
 	test("the composite key and pointwise containment lower positionally", function probeCalendarLowering() {
 		const { Calendar } = buildCalendar()
 		assert.deepStrictEqual(lower(Calendar).statements, [
-			{ kind: "fd", relation: "Booking", projection: ["room", "during"] },
+			{ kind: "Fd", relation: "Booking", projection: ["room", "during"] },
 			{
-				kind: "containment",
+				kind: "Containment",
 				source: { relation: "Slot", projection: ["room", "during"], selection: [] },
 				target: { relation: "Booking", projection: ["room", "during"], selection: [] },
 				bidirectional: false
@@ -193,28 +182,27 @@ describe("the Ledger example", function describeLedger() {
 			relations: [
 				{
 					name: "Sev",
-					fields: [{ name: "level", valueType: { kind: "u64" }, newtype: "Sev.level" }],
+					fields: [{ name: "level", valueType: { kind: "U64" }, newtype: "Sev.level" }],
 					closed: {
 						newtype: "Sev.id",
 						rows: [
-							{ handle: "Info", values: [{ kind: "value", value: { kind: "u64", value: 1n } }] },
-							{ handle: "Critical", values: [{ kind: "value", value: { kind: "u64", value: 5n } }] }
+							{ handle: "Info", values: [{ kind: "Value", value: { kind: "U64", value: "1" } }] },
+							{ handle: "Critical", values: [{ kind: "Value", value: { kind: "U64", value: "5" } }] }
 						]
 					}
 				},
 				{
 					name: "Limit",
 					fields: [
-						{ name: "level", valueType: { kind: "u64" }, newtype: "Sev.level" },
-						{ name: "cap", valueType: { kind: "u64" }, newtype: undefined }
-					],
-					closed: undefined
+						{ name: "level", valueType: { kind: "U64" }, newtype: "Sev.level" },
+						{ name: "cap", valueType: { kind: "U64" } }
+					]
 				}
 			],
 			statements: [
-				{ kind: "fd", relation: "Limit", projection: ["level"] },
+				{ kind: "Fd", relation: "Limit", projection: ["level"] },
 				{
-					kind: "containment",
+					kind: "Containment",
 					source: { relation: "Sev", projection: ["level"], selection: [] },
 					target: { relation: "Limit", projection: ["level"], selection: [] },
 					bidirectional: false
@@ -684,7 +672,7 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 		// With no fresh mint there is no implied key to duplicate: an
 		// explicit `Account(id) -> Account` is the ONE way to key an id.
 		const keyed = schema("Keyed", { Kind, Holder, Account, SavingsTerms }, [key(Account, ["id"])])
-		assert.deepStrictEqual(lower(keyed).statements, [{ kind: "fd", relation: "Account", projection: ["id"] }])
+		assert.deepStrictEqual(lower(keyed).statements, [{ kind: "Fd", relation: "Account", projection: ["id"] }])
 		// A closed relation's key stays engine-materialized; an explicit one
 		// is still the duplicate it always was.
 		assert.throws(function duplicateClosed() {
@@ -701,7 +689,7 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 				contained(on(Account, "holder"), on(Holder, "id")),
 				contained(on(Account, "holder"), on(Holder, "id"))
 			])
-		}, /duplicate statement — Account\(holder\) <= Holder\(id\)/)
+		}, /duplicates statement .*Account\(holder\) <= Holder\(id\)/)
 	})
 
 	test("a record key must equal its relation's declared name", function probeRecordKey() {
@@ -718,7 +706,7 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 				key(SavingsTerms, ["account"]),
 				mirrors(on(select(Account, { kind: "Savings" }), "id"), on(SavingsTerms, "account"))
 			])
-		}, /no declared containment resolves the closed reference/)
+		}, /is not a closed-relation reference/)
 	})
 
 	test("generated statements are checked semantically without an admission token", () => {
@@ -760,24 +748,22 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 		const psiTarget = {
 			relation: "Grade",
 			projection: ["id"],
-			selection: [["mastered", { kind: "one", literal: { kind: "value", value: { kind: "bool", value: true } } }]]
+			selection: [
+				{ field: "mastered", set: { kind: "One", literal: { kind: "Value", value: { kind: "Bool", value: true } } } }
+			]
 		}
 		assert.deepStrictEqual(lower(Mastery).statements, [
 			{
-				kind: "containment",
+				kind: "Containment",
 				source: { relation: "Certificate", projection: ["grade"], selection: [] },
 				target: psiTarget,
 				bidirectional: false
 			},
 			{
-				kind: "capacity",
+				kind: "Capacity",
 				target: psiTarget,
-				weight: { kind: "unit" },
-				window: {
-					kind: "range",
-					lo: { kind: "lit", value: 0n },
-					hi: { kind: "lit", value: 1n }
-				},
+				weight: { kind: "Unit" },
+				window: { kind: "Range", lo: { kind: "Lit", value: "0" }, hi: { kind: "Lit", value: "1" } },
 				source: { relation: "Certificate", projection: ["grade"], selection: [] }
 			}
 		])

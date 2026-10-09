@@ -1,7 +1,8 @@
 /** Query scalar nodes, with cached kind and depth. Construction is constant
  * work; native preparation binds variables and evaluates the expressions. */
 import { AuthoringError } from "./errors.ts"
-import type { ScalarExprIr } from "./native.ts"
+import type { ScalarExprIn } from "./native/binding.d.ts"
+import { valueIn } from "./native/json.ts"
 import type { ValueSpec } from "./spec.ts"
 
 /** The engine's scalar result vocabulary — distinct at the type level. */
@@ -346,27 +347,46 @@ function queryVarsOf(node: ScalarNode): readonly ScalarQueryVar[] {
 }
 
 /** Lower each query variable through its existing binding. */
-function scalarWire(node: ScalarNode, leaf: (node: QueryVarLeaf) => number): ScalarExprIr {
-	const walk = (expr: ScalarNode): ScalarExprIr => scalarWire(expr, leaf)
+const ROUNDING = {
+	towardZero: "TowardZero",
+	nearestTiesAwayFromZero: "NearestTiesAwayFromZero",
+	nearestTiesToEven: "NearestTiesToEven"
+} as const
+
+const CAST = { toF64: "ToF64", toF64Exact: "ToF64Exact", toI64Exact: "ToI64Exact", toU64Exact: "ToU64Exact" } as const
+
+const UNARY = { measure: "Measure", negate: "Negate", isNaN: "IsNaN", isFinite: "IsFinite" } as const
+
+const BINARY = { add: "Add", subtract: "Subtract", multiply: "Multiply", divide: "Divide" } as const
+
+/** Lowers a scalar expression to the addon's `ScalarExprIn`; `leaf` numbers the rule variables. */
+function scalarWire(node: ScalarNode, leaf: (node: QueryVarLeaf) => number): ScalarExprIn {
+	const walk = (expr: ScalarNode): ScalarExprIn => scalarWire(expr, leaf)
 	switch (node.kind) {
 		case "var":
-			return { kind: "var", var: leaf(node) }
+			return { kind: "Var", var: leaf(node) }
 		case "literal":
-			return { kind: "literal", value: literalWireOf(node.value) }
+			return { kind: "Literal", value: valueIn(literalWireOf(node.value)) }
 		case "measure":
 		case "negate":
 		case "isNaN":
 		case "isFinite":
-			return { kind: node.kind, expr: walk(node.expr) }
+			return { kind: UNARY[node.kind], expr: walk(node.expr) }
 		case "cast":
-			return { kind: node.kind, cast: node.cast, expr: walk(node.expr) }
+			return { kind: "Cast", cast: CAST[node.cast], expr: walk(node.expr) }
 		case "mulDiv":
-			return { kind: node.kind, a: walk(node.a), b: walk(node.b), divisor: walk(node.divisor), rounding: node.rounding }
+			return {
+				kind: "MulDiv",
+				a: walk(node.a),
+				b: walk(node.b),
+				divisor: walk(node.divisor),
+				rounding: ROUNDING[node.rounding]
+			}
 		case "add":
 		case "subtract":
 		case "multiply":
 		case "divide":
-			return { kind: node.kind, left: walk(node.left), right: walk(node.right) }
+			return { kind: BINARY[node.kind], left: walk(node.left), right: walk(node.right) }
 	}
 }
 

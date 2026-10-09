@@ -39,8 +39,7 @@ export {
 	rowSchema,
 	rowShape
 } from "./codec.ts"
-export type { CompiledSchema, SchemaId } from "./compile.ts"
-export { Schema } from "./compile.ts"
+export type { SchemaId } from "./compile.ts"
 export { FsStore } from "./database/fs.ts"
 export type {
 	Body,
@@ -65,8 +64,7 @@ export {
 	CloseFailure,
 	DbError,
 	dbError,
-	NativeLoadError,
-	runtimeErrorCodes
+	NativeLoadError
 } from "./errors.ts"
 export type {
 	AnyFace,
@@ -108,35 +106,11 @@ export type {
 export { bool, bytes, f64, i64, interval, str, u64, uuid } from "./fields.ts"
 export type { Same, SameLen } from "./judgment.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "./law.ts"
-export type {
-	AtomIr,
-	AtomSourceIr,
-	CmpOpIr,
-	ComparisonIr,
-	ConditionTreeIr,
-	FindTermIr,
-	HeadTermIr,
-	InteriorIr,
-	QueryIr,
-	RecIr,
-	RuleIr,
-	ScalarExprIr,
-	TermIr,
-	Violation,
-	ViolationFact
-} from "./native.ts"
+export type { FactOut, ViolationOut as Violation } from "./native/binding.d.ts"
 export type { FindColumn } from "./query/atom.ts"
 export { ALLEN } from "./query/atom.ts"
 export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode } from "./query/compute.ts"
 export { Compute } from "./query/compute.ts"
-export type {
-	DescriptionHead,
-	DescriptionParameter,
-	DescriptionRow,
-	DescriptionTable,
-	QueryDescription
-} from "./query/description.ts"
-export { describeQuery, queryFromDescription } from "./query/description.ts"
 export type { Agg, HeadRecordOf, RowOfFind } from "./query/find.ts"
 export type {
 	AnyQuery,
@@ -196,25 +170,12 @@ export type {
 	ScalarResultKind,
 	ScalarValue
 } from "./scalar.ts"
-export type { AnySchema, Schema as SchemaDeclaration, SchemaRelation, SchemaRelations } from "./schema.ts"
+export type { AnySchema, Schema, SchemaRelation, SchemaRelations } from "./schema.ts"
 export { schema } from "./schema.ts"
 export type { AnySelected, FieldsOf, Selected, SelectionBinding, SelectionInput } from "./selection.ts"
 export { select } from "./selection.ts"
 export type { Key, QueryTemplate, Rel } from "./shape.ts"
-export type {
-	CapacityBoundSpec,
-	CapacityWindowSpec,
-	FieldSpec,
-	LiteralSetSpec,
-	LiteralSpec,
-	RelationSpec,
-	RowSpec,
-	SchemaSpec,
-	SideSpec,
-	StatementSpec,
-	ValueSpec,
-	ValueTypeSpec
-} from "./spec.ts"
+export type { CapacityBoundSpec, CapacityWindowSpec, LiteralSetSpec, LiteralSpec, ValueSpec } from "./spec.ts"
 export type {
 	CapacityStatement,
 	ContainmentStatement,

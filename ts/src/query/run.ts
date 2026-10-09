@@ -1,11 +1,34 @@
 import { AuthoringError, internalError } from "../errors.ts"
-import type { QueryParam, TaggedValue } from "../native.ts"
+import type { CellIn, ParamIn } from "../native/binding.d.ts"
 import type { CellValue } from "../rows.ts"
 import { decodeCell, handleOf, setOwnField } from "../rows.ts"
+import type { QueryParam, TaggedValue } from "../spec.ts"
 import { arrayValue, recordValue } from "../values.ts"
 import type { FindColumn } from "./atom.ts"
 import { taggedCmpLiteral } from "./lower.ts"
 import type { ParamEntry } from "./scope.ts"
+
+const CELL = {
+	bool: "Bool",
+	u64: "U64",
+	i64: "I64",
+	f64: "F64",
+	string: "String",
+	uuid: "Uuid",
+	fixedBytes: "FixedBytes",
+	intervalU64: "IntervalU64",
+	intervalI64: "IntervalI64",
+	intervalF64: "IntervalF64"
+} as const
+
+/** One tagged value as the addon's data-plane `CellIn`. */
+function cellIn(value: TaggedValue): CellIn {
+	return { ...value, kind: CELL[value.kind] } as CellIn
+}
+
+function paramIn(param: QueryParam): ParamIn {
+	return param.kind === "set" ? { kind: "Set", values: param.values.map(cellIn) } : cellIn(param)
+}
 
 function wireValue(entry: ParamEntry, context: string, value: unknown): TaggedValue {
 	if (entry.anchor === undefined) {
@@ -16,15 +39,15 @@ function wireValue(entry: ParamEntry, context: string, value: unknown): TaggedVa
 	return taggedCmpLiteral(context, entry.anchor, value, entry.op)
 }
 
-function wireParams(entries: readonly ParamEntry[], supplied: Readonly<Record<string, unknown>>): QueryParam[] {
+function wireParams(entries: readonly ParamEntry[], supplied: Readonly<Record<string, unknown>>): ParamIn[] {
 	const input = recordValue(
 		"query parameters",
 		supplied,
 		entries.filter((entry) => entry.membership === undefined).map((entry) => entry.name)
 	)
-	return entries.map(function wireOne(entry): QueryParam {
+	return entries.map(function wireOne(entry): ParamIn {
 		if (entry.membership !== undefined) {
-			return entry.membership
+			return paramIn(entry.membership)
 		}
 		const value = input[entry.name]
 		if (value === undefined) {
@@ -32,13 +55,13 @@ function wireParams(entries: readonly ParamEntry[], supplied: Readonly<Record<st
 		}
 		if (entry.shape === "set") {
 			return {
-				kind: "set",
-				values: arrayValue(`param ${entry.name}`, value, function wireElement(context, element) {
-					return wireValue(entry, context, element)
-				})
+				kind: "Set",
+				values: [
+					...arrayValue(`param ${entry.name}`, value, (context, element) => cellIn(wireValue(entry, context, element)))
+				]
 			}
 		}
-		return wireValue(entry, `param ${entry.name}`, value)
+		return cellIn(wireValue(entry, `param ${entry.name}`, value))
 	})
 }
 

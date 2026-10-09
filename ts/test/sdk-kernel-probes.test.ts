@@ -77,12 +77,9 @@ test("pointIn() with a literal interval operand lowers to PointIn (interval-left
 	const conditions = ir.rules[0]?.conditions
 	assert.ok(conditions !== undefined && conditions.length === 1)
 	const leaf = conditions[0]
-	assert.ok(leaf !== undefined && leaf.kind === "leaf")
-	assert.deepEqual(leaf.cmp.op, { kind: "pointIn" })
-	assert.deepEqual(leaf.cmp.lhs, {
-		kind: "literal",
-		value: { kind: "intervalU64", start: 0n, end: 10n }
-	})
+	assert.ok(leaf !== undefined && leaf.kind === "Leaf")
+	assert.deepEqual(leaf.op, { kind: "PointIn" })
+	assert.deepEqual(leaf.lhs, { kind: "Literal", value: { kind: "IntervalU64", start: "0", end: "10" } })
 })
 
 test("a param value no rule places never registers — the query lowers under its inferred Params", function unusedParam() {
@@ -113,7 +110,6 @@ test("a param value no rule places never registers — the query lowers under it
 	assert.deepEqual(inferrred, {})
 	const ir = lowerQuery(q)
 	assert.equal(ir.interiors.length, 0, "the ghost never reaches the IR")
-	assert.equal(ir.kind, "cq", "the ghost never reaches the IR")
 })
 
 test("closed() admits every legal handle name as pure roster data", function protoHandle() {

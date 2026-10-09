@@ -3,9 +3,10 @@ import { test } from "node:test"
 import { Effect, ManagedRuntime, Result } from "effect"
 import { ChangeSet } from "../src/changes.ts"
 import { closed } from "../src/closed.ts"
-import { decodeBoundaryRows, decodeRows, encodeBoundaryRows, encodeRows, rowShape } from "../src/codec.ts"
+import { decodeBoundaryRows, decodeRows, encodeBoundaryRows, encodeRows } from "../src/codec.ts"
 import { Db } from "../src/db.ts"
 import type { DbError } from "../src/errors.ts"
+import { AuthoringError } from "../src/errors.ts"
 import { str, u64 } from "../src/fields.ts"
 import { query } from "../src/query/lower.ts"
 import { relation } from "../src/relation.ts"
@@ -102,21 +103,15 @@ test("typed writes, keys and both query execution forms retain authoring detail"
 	}
 })
 
-test("native schema refusal retains its engine family and detail instead of Internal", async () => {
-	// The native theory disallows str payload columns on a closed relation.
+test("an engine schema refusal is an authoring error carrying the engine's message", () => {
 	const Invalid = closed("Invalid", ["Only"], { label: str }, { Only: { label: "sensitive content" } })
-	const invalidTheory = schema("InvalidTheory", { Invalid, Row }, [ById])
-	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
-	try {
-		const result = await runtime.runPromise(Effect.result(encodeRows(rowShape(invalidTheory, Row), [])))
-		assert.ok(Result.isFailure(result))
-		assert.equal(result.failure.reason._tag, "Engine")
-		if (result.failure.reason._tag === "Engine") {
-			assert.equal(result.failure.reason.kind, "schema")
-			assert.match(result.failure.reason.message, /str on a closed relation/)
+	assert.throws(
+		() => schema("InvalidTheory", { Invalid, Row }, [ById]),
+		(error: unknown) => {
+			assert.ok(error instanceof AuthoringError)
+			assert.match(error.message, /^schema InvalidTheory: /)
+			assert.match(error.message, /str on a closed relation/)
+			return true
 		}
-		assert.equal(result.failure.message, "encodeRows: Engine")
-	} finally {
-		await Effect.runPromise(runtime.disposeEffect)
-	}
+	)
 })

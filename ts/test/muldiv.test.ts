@@ -5,7 +5,6 @@ import { ChangeSet } from "../src/changes.ts"
 import { Db } from "../src/db.ts"
 import { i64, u64 } from "../src/fields.ts"
 import { Compute } from "../src/query/compute.ts"
-import { describeQuery, queryFromDescription } from "../src/query/description.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
@@ -24,7 +23,7 @@ test("native mulDiv keeps exact wide products and explicit signed rounding acros
 					const db = yield* Db.create(storeDir("muldiv"), Theory)
 					const draft = yield* ChangeSet.builder(Theory)
 					yield* draft.insert(Input, [{ signed: -(1n << 63n), unsigned: (1n << 64n) - 1n }])
-					yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })
+					yield* db.apply(yield* draft.finish())
 					const snap = yield* db.snapshot()
 					const result = query(Theory).rule((r) => {
 						const row = v(Input)
@@ -41,15 +40,6 @@ test("native mulDiv keeps exact wide products and explicit signed rounding acros
 						{ unsigned: (1n << 64n) - 1n, signed: 1n << 62n, toward: -2n, away: -3n, even: -2n, odd: -4n }
 					]
 					assert.deepEqual(yield* (yield* snap.execute(result, {})).collect(), expected)
-					const imported = queryFromDescription(Theory, describeQuery(result), {
-						unsigned: u64,
-						signed: i64,
-						toward: i64,
-						away: i64,
-						even: i64,
-						odd: i64
-					})
-					assert.deepEqual(yield* (yield* snap.execute(imported, {})).collect(), expected)
 					for (const divisor of [0n, -1n, 1n]) {
 						const bad = query(Theory).rule((r) => {
 							const row = v(Input)
@@ -76,10 +66,9 @@ test("native mulDiv keeps exact wide products and explicit signed rounding acros
 								assert.equal(failed.failure.reason.message, `find 0: scalar computation: ${reason}`)
 							}
 						}
-						const importedBad = queryFromDescription(Theory, describeQuery(bad), { value: i64 })
 						const filtered = query(Theory).rule((r) => {
-							const row = v(importedBad)
-							return r.match(importedBad, row).where(r.eq(row.value, 0n)).find(row)
+							const row = v(bad)
+							return r.match(bad, row).where(r.eq(row.value, 0n)).find(row)
 						})
 						const downstream = yield* Effect.result(
 							Effect.scoped(

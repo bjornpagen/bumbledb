@@ -56,7 +56,7 @@ test("native ChangeSet ownership rejects all reads and both composition position
 						Stream.runCollect(left.records()).pipe(Effect.asVoid),
 						left.compose(right).pipe(Effect.asVoid),
 						right.compose(left).pipe(Effect.asVoid),
-						db.apply(left, { expected: { kind: "any" } }).pipe(Effect.asVoid)
+						db.apply(left).pipe(Effect.asVoid)
 					]) {
 						const outcome = yield* Effect.result(effect)
 						assert.ok(Result.isFailure(outcome))
@@ -96,8 +96,8 @@ test("insert effects are lazy and rerunnable: each run reads the THEN-CURRENT ar
 					const changes = yield* draft.finish()
 
 					const db = yield* Db.create(storeDir("lazy-rerun"), Learning)
-					const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
-					assert.equal(outcome.kind, "accepted")
+					const outcome = yield* db.apply(changes)
+					assert.equal(outcome._tag, "Committed")
 					const snapshot = yield* db.snapshot()
 					const ada = yield* snapshot.get(StudentById, { id: first })
 					const bo = yield* snapshot.get(StudentById, { id: second })
@@ -130,8 +130,8 @@ test("a one-shot iterator is consumed, never replayed: the second run ingests no
 					yield* insert
 					const changes = yield* draft.finish()
 					const db = yield* Db.create(storeDir("exhausted-iterator"), Learning)
-					const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
-					assert.equal(outcome.kind, "accepted")
+					const outcome = yield* db.apply(changes)
+					assert.equal(outcome._tag, "Committed")
 				})
 			)
 		)
@@ -158,7 +158,7 @@ test("mutation AFTER successful ingestion cannot change the accepted native fact
 					;(row as { name: string }).name = "Mutated"
 					const changes = yield* draft.finish()
 					const db = yield* Db.create(storeDir("accepted-independent"), Learning)
-					yield* db.apply(changes, { expected: { kind: "any" } })
+					yield* db.apply(changes)
 					const snapshot = yield* db.snapshot()
 					const stored = yield* snapshot.get(StudentById, { id: kept })
 					assert.ok(Option.isSome(stored))
@@ -227,7 +227,7 @@ test("draft ingestion has no cumulative quota and accepts larger single rows", a
 					for (let index = 0; index < 4; index++) yield* draft.insert(Student, [row])
 					const changes = yield* draft.finish()
 					const db = yield* Db.create(storeDir("large-draft"), Learning)
-					assert.equal((yield* db.apply(changes, { expected: { kind: "any" } })).kind, "accepted")
+					assert.equal((yield* db.apply(changes))._tag, "Committed")
 					const snapshot = yield* db.snapshot()
 					const stored = yield* snapshot.get(StudentById, { id: row.id })
 					assert.ok(Option.isSome(stored))
@@ -284,7 +284,7 @@ test("same-command normalization: exact same-fact add wins over remove, independ
 					const seed = yield* ChangeSet.builder(Learning)
 					yield* seed.insert(Student, [studentRow(studentId, "Ada")])
 					const seeded = yield* seed.finish()
-					yield* db.apply(seeded, { expected: { kind: "any" } })
+					yield* db.apply(seeded)
 
 					// One command that both deletes and inserts the identical
 					// attempt fact: add wins WITHIN the command.
@@ -299,8 +299,8 @@ test("same-command normalization: exact same-fact add wins over remove, independ
 					yield* draft.delete(Attempt, [fact])
 					yield* draft.insert(Attempt, [fact])
 					const changes = yield* draft.finish()
-					const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
-					assert.equal(outcome.kind, "accepted")
+					const outcome = yield* db.apply(changes)
+					assert.equal(outcome._tag, "Committed")
 					const snapshot = yield* db.snapshot()
 					const stored = yield* snapshot.get(AttemptById, { id: attemptId })
 					assert.ok(Option.isSome(stored), "the identical fact's add won the one-command normalization")

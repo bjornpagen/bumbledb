@@ -4,7 +4,7 @@ import { Effect, ManagedRuntime, Option, Result } from "effect"
 import { ChangeSet } from "../src/changes.ts"
 import { closed, closedId, memberDescriptor, membersAgree } from "../src/closed.ts"
 import { decodeRows, encodeRows, rowShape } from "../src/codec.ts"
-import { Schema, schemaTables } from "../src/compile.ts"
+import { schemaTables } from "../src/compile.ts"
 import { Db } from "../src/db.ts"
 import { on } from "../src/face.ts"
 import { bytes, str, u64 } from "../src/fields.ts"
@@ -175,7 +175,7 @@ test("checked schema reuse requires an immutable graph and validates classes and
 	assert.equal(schemasAgree(before, binarySchema), false)
 })
 
-test("compilation and live resources own schema metadata; malformed schemas fail in the Effect channel", async () => {
+test("live resources own their schema; malformed schemas fail in the Effect channel", async () => {
 	const { Theory, Item, ById } = declarations()
 	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
@@ -183,33 +183,16 @@ test("compilation and live resources own schema metadata; malformed schemas fail
 			Effect.scoped(
 				Effect.gen(function* () {
 					const mutable = structuredClone(Theory)
-					const compiled = yield* Schema.compile(mutable)
-					const Binary = closed("Binary", ["Only"], { value: bytes(2) }, { Only: { value: new Uint8Array([1, 2]) } })
-					const binaryTheory = schema("CompiledBytes", { Binary }, [])
-					const binaryCompiled = yield* Schema.compile(binaryTheory)
-					binaryCompiled.schema.relations.Binary.axioms.Only.value[0] = 99
-					const descriptorValue = binaryCompiled.descriptor.relations[0]?.extension?.[0]?.values.find(
-						(field) => field.name === "value"
-					)?.value
-					assert.ok(descriptorValue instanceof Uint8Array)
-					descriptorValue[0] = 99
-					assert.equal(binaryCompiled.schema.relations.Binary.axioms.Only.value[0], 1)
-					assert.deepEqual(
-						binaryCompiled.descriptor.relations[0]?.extension?.[0]?.values.find((field) => field.name === "value")
-							?.value,
-						new Uint8Array([1, 2])
-					)
 					const db = yield* Db.create(storeDir("owned-schema"), mutable)
 					const draft = yield* ChangeSet.builder(mutable)
 					Reflect.set(mutable.relations.Item.fields, "id", str)
 					Reflect.set(mutable, "statements", [])
-					assert.equal(compiled.schema.relations.Item.fields.id.kind, "u64")
 					const row = { id: 4n, sequence: 8n, kind: "Active" as const }
 					yield* draft.insert(Item, [row])
-					assert.equal((yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })).kind, "accepted")
+					assert.equal((yield* db.apply(yield* draft.finish()))._tag, "Committed")
 					assert.deepEqual(yield* (yield* db.snapshot()).get(ById, { id: 4n }), Option.some(row))
 					for (const bad of [undefined, { ...Theory, classes: {} }, { ...Theory, statements: [undefined] }]) {
-						const result = yield* Effect.result(Schema.compile(bad as never))
+						const result = yield* Effect.result(Effect.scoped(Db.create(storeDir("malformed-schema"), bad as never)))
 						assert.ok(Result.isFailure(result))
 						assert.equal(result.failure.code, "InvalidArgument")
 					}
@@ -255,7 +238,7 @@ test("equivalent declarations work across codecs, writes, keys, query unions, im
 					const db = yield* Db.create(storeDir("structural-declarations"), original.Theory)
 					const draft = yield* ChangeSet.builder(original.Theory)
 					yield* draft.insert(equivalent.Item, [row])
-					assert.equal((yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })).kind, "accepted")
+					assert.equal((yield* db.apply(yield* draft.finish()))._tag, "Committed")
 					const snapshot = yield* db.snapshot()
 					assert.deepEqual(yield* snapshot.get(equivalent.ById, { id: 3n }), Option.some(row))
 					assert.deepEqual(yield* (yield* snapshot.execute(direct, {})).collect(), [row])

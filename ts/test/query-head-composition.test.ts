@@ -108,15 +108,15 @@ const intervals = query(Theory)
 
 test("projection roles align while each arm retains its real expression", () => {
 	const ir = lowerQuery(direct)
-	assert.deepEqual(ir.head, [{ kind: "var" }, { kind: "var" }])
-	assert.equal(ir.rules[0]?.finds[1]?.kind, "var")
-	assert.equal(ir.rules[1]?.finds[1]?.kind, "compute")
+	assert.deepEqual(ir.head, [{ kind: "Var" }, { kind: "Var" }])
+	assert.equal(ir.rules[0]?.finds[1]?.kind, "Var")
+	assert.equal(ir.rules[1]?.finds[1]?.kind, "Compute")
 	assert.equal(lowerQuery(imported).interiors.length, 1)
 	const reverse = corrections.rule((r) => {
 		const { id, amount } = v(Entry)
 		return r.match(Entry, { id, amount, original: true }).find({ id, amount })
 	})
-	assert.deepEqual(lowerQuery(reverse).head, [{ kind: "var" }, { kind: "compute" }])
+	assert.deepEqual(lowerQuery(reverse).head, [{ kind: "Var" }, { kind: "Compute" }])
 	const row = v(direct)
 	const signed: "i64" = row.amount.field.kind
 	assert.equal(signed, "i64")
@@ -136,7 +136,10 @@ test("projection roles align while each arm retains its real expression", () => 
 		})
 	const width: 10n = v(fixed).span.field.width
 	assert.equal(width, 10n, "equal refinements survive every arm")
-	assert.throws(() => query(Theory).rule((r) => r.match(Window, v(Window)).find({ span: v(Window).span })), /not bound/)
+	assert.throws(
+		() => query(Theory).rule((r) => r.match(Window, v(Window)).find({ span: v(Window).span })),
+		/bound by no positive atom/
+	)
 })
 
 test("incompatible folds, scalar types, rosters, and output names still refuse", () => {
@@ -242,7 +245,7 @@ test("mixed heads execute through imports and preserve sets, zero groups, interv
 						{ id: 3n, amount: 5n, previous: 5n, original: false }
 					])
 					yield* draft.insert(Window, [{ span: { start: 0n, end: 10n }, excluded: { start: 4n, end: 6n } }])
-					yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })
+					yield* db.apply(yield* draft.finish())
 					const snapshot = yield* db.snapshot()
 					const rows = ordered(yield* (yield* snapshot.execute(direct, {})).collect())
 					assert.deepEqual(rows, [
@@ -271,7 +274,7 @@ test("mixed heads execute through imports and preserve sets, zero groups, interv
 					assert.deepEqual(widths.toSorted(compare), [4n, 10n])
 					const bad = yield* ChangeSet.builder(Theory)
 					yield* bad.insert(Entry, [{ id: 4n, amount: -(1n << 63n), previous: 1n, original: false }])
-					yield* db.apply(yield* bad.finish(), { expected: { kind: "any" } })
+					yield* db.apply(yield* bad.finish())
 					const next = yield* db.snapshot()
 					const directFailure = yield* Effect.result(next.execute(direct, {}))
 					const importedFailure = yield* Effect.result(next.execute(imported, {}))
@@ -331,7 +334,7 @@ test("mixed projection adapters survive empty and pruned arms in either order", 
 					const changes = yield* ChangeSet.builder(Theory)
 					yield* changes.insert(Entry, [{ id: 1n, amount: 7n, previous: 1n, original: true }])
 					yield* changes.insert(Window, [{ span: { start: 0n, end: 10n }, excluded: { start: 0n, end: 10n } }])
-					yield* db.apply(yield* changes.finish(), { expected: { kind: "any" } })
+					yield* db.apply(yield* changes.finish())
 					const source = yield* db.snapshot()
 					const pruned = query(Theory)
 						.rule((r) => {

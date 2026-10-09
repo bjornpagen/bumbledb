@@ -3,10 +3,10 @@ import { test } from "node:test"
 import { Effect, Schema as EffectSchema, ManagedRuntime, Option, Result } from "effect"
 import { ChangeSet } from "../src/changes.ts"
 import { decodeBoundaryRows, decodeRows, encodeBoundaryRows, encodeRows, rowSchema, rowShape } from "../src/codec.ts"
+import { compiledOf } from "../src/compile.ts"
 import { Db } from "../src/db.ts"
-import { dbNative } from "../src/db-native.ts"
 import { bool, bytes, f64, i64, interval, literalOf, str, u64, uuid } from "../src/fields.ts"
-import { lower } from "../src/lower.ts"
+import { addon } from "../src/native/addon.ts"
 import { call } from "../src/native/op.ts"
 import { lowerQuery, query } from "../src/query/lower.ts"
 import { wireParams } from "../src/query/run.ts"
@@ -123,7 +123,7 @@ test("unknown, inherited, absent, symbolic, and nested fields are never silently
 
 test("query parameters use the same interpreter and exact supplied parameter fields", () => {
 	const q = query(Theory).rule((r) => r.match(Row, { n: r.param("n") }).find({ count: r.count() }))
-	assert.deepEqual(wireParams(q.data.params, { n: 1n }), [{ kind: "u64", value: 1n }])
+	assert.deepEqual(wireParams(q.data.params, { n: 1n }), [{ kind: "U64", value: 1n }])
 	for (const params of [{}, { n: -1n }, { n: U64_MAX + 1n }, { n: 1n, extra: undefined }, Object.create({ n: 1n })]) {
 		assert.throws(() => wireParams(q.data.params, params))
 	}
@@ -148,7 +148,7 @@ test("query parameters use the same interpreter and exact supplied parameter fie
 			.where(r.pointIn(r.param("point"), span))
 			.find({ span })
 	})
-	assert.deepEqual(wireParams(points.data.params, { point: 0n }), [{ kind: "i64", value: 0n }])
+	assert.deepEqual(wireParams(points.data.params, { point: 0n }), [{ kind: "I64", value: 0n }])
 	assert.throws(() => wireParams(points.data.params, { point: I64_MAX + 1n }))
 })
 
@@ -247,8 +247,8 @@ function nativeEncode(row: Readonly<Record<string, unknown>>) {
 		const cells = Object.keys(Row.fields).map((name) => row[name])
 		return yield* call(
 			"native value conformance",
-			(callback) => dbNative.runtimeEncodeRows(runtime, lower(Theory), 0, 1n, cells as never, callback),
-			dbNative.runtimeBytesTake
+			(callback) => addon.runtimeEncodeRows(runtime, compiledOf(Theory).handle, 0, 1n, cells as never, callback),
+			addon.runtimeBytesTake
 		)
 	})
 }
@@ -283,7 +283,7 @@ test("host admission matches the real native codec; rejected facts do not enter 
 
 test("native names and query parameters reject lossy Unicode conversion", async () => {
 	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
-	const original = dbNative.runtimeSnapshotExecute
+	const original = addon.runtimeSnapshotExecute
 	try {
 		await runtime.runPromise(
 			Effect.scoped(
@@ -293,36 +293,21 @@ test("native names and query parameters reject lossy Unicode conversion", async 
 					const q = query(Theory).rule((r) => r.match(Row, { text: r.param("text") }).find({ count: r.count() }))
 					for (const text of ["bee 🐝", "\ud800", "\udc00"]) {
 						// Replace only the already-validated host parameter to exercise native ingress independently.
-						dbNative.runtimeSnapshotExecute = (snapshot, query, _params, callback) =>
-							original(snapshot, query, [{ kind: "string", value: text }], callback)
+						addon.runtimeSnapshotExecute = (snapshot, query, _params, callback) =>
+							original(snapshot, query, [{ kind: "String", value: text }], callback)
 						const result = yield* Effect.result(Effect.scoped(snapshot.execute(q, { text: "valid" })))
 						assert.equal(Result.isSuccess(result), text.isWellFormed())
 					}
-					dbNative.runtimeSnapshotExecute = original
-					const handle = yield* runtimeHandle
+					addon.runtimeSnapshotExecute = original
 					for (const name of ["well-formed 🐝", "bad\ud800"]) {
-						const result = yield* Effect.result(
-							call(
-								"native name text",
-								(callback) =>
-									dbNative.runtimeSchemaCompile(
-										handle,
-										{
-											relations: [{ name, fields: [], closed: undefined }],
-											statements: []
-										},
-										callback
-									),
-								dbNative.runtimeSchemaTake
-							)
-						)
-						assert.equal(Result.isSuccess(result), name.isWellFormed())
+						const compiled = addon.compileSchema(JSON.stringify({ relations: [{ name, fields: [] }], statements: [] }))
+						assert.equal(compiled._tag === "Compiled", name.isWellFormed())
 					}
 				})
 			)
 		)
 	} finally {
-		dbNative.runtimeSnapshotExecute = original
+		addon.runtimeSnapshotExecute = original
 		await Effect.runPromise(runtime.disposeEffect)
 	}
 })
@@ -346,7 +331,7 @@ test("prototype-sensitive field and result names are ordinary owned data", async
 					const db = yield* Db.create(storeDir("special-fields"), SpecialTheory)
 					const draft = yield* ChangeSet.builder(SpecialTheory)
 					yield* draft.insert(Special, [row])
-					assert.equal((yield* db.apply(yield* draft.finish(), { expected: { kind: "any" } })).kind, "accepted")
+					assert.equal((yield* db.apply(yield* draft.finish()))._tag, "Committed")
 					const snapshot = yield* db.snapshot()
 					const decoded = Option.getOrThrow(yield* snapshot.get(ById, { id: 1n }))
 					assert.deepEqual(decoded, row)

@@ -18,29 +18,14 @@ import { AuthoringError, internalError } from "./errors.ts"
  */
 import type { AnyClosedRoster, AnyField } from "./fields.ts"
 import { literalShapeError, rosterOf } from "./fields.ts"
+import type { CellValue } from "./native/binding.d.ts"
 import { type AnyRelation, type Fact, relationFields } from "./relation.ts"
 import { fieldValue, recordValue } from "./values.ts"
 
-/**
- * One owned cell at the private bridge boundary. The declared sealed field
- * type disambiguates the union: `string` is text, an `uuid` in its
- * canonical hyphenated UUID spelling, or a closed handle
- * before lowering (closed handles cross as `bigint` row ids),
- * `Uint8Array` is `bytes<N>`, `{ start, end }` bigints are a discrete
- * interval and numbers a dense float interval.
- */
-type CellValue =
-	| boolean
-	| bigint
-	| number
-	| string
-	| Uint8Array
-	| { readonly start: bigint; readonly end: bigint }
-	| { readonly start: number; readonly end: number }
-
+/** Row-major cells for `rows` rows, in sealed field order. */
 interface FlatRows {
 	readonly rows: bigint
-	readonly cells: readonly CellValue[]
+	readonly cells: CellValue[]
 }
 
 function recordOf(fact: object): Readonly<Record<string, unknown>> {

@@ -9,11 +9,9 @@ import {
 	Compute,
 	closed,
 	closedId,
-	describeQuery,
 	interval,
 	key,
 	query,
-	queryFromDescription,
 	relation,
 	schema,
 	u64,
@@ -41,24 +39,17 @@ const pieces = query(Theory).rule((r) => {
 		.where(r.not(Quoted, { parent: row.parent }))
 		.find({ id: row.parent, span: r.difference(row.span, row.excluded) })
 })
-const importedPieces = queryFromDescription(Theory, describeQuery(pieces), { id: u64, span: interval(u64) })
 const packed = query(Theory).rule((r) => {
-	const row = v(importedPieces)
-	return r.match(importedPieces, row).find({ id: row.id, span: r.pack(row.span) })
+	const row = v(pieces)
+	return r.match(pieces, row).find({ id: row.id, span: r.pack(row.span) })
 })
-const importedPack = queryFromDescription(Theory, describeQuery(packed), { id: u64, span: interval(u64) })
 const measured = query(Theory).rule((r) => {
-	const row = v(importedPack)
-	return r.match(importedPack, row).find({ id: row.id, span: row.span, width: Compute.measure(row.span) })
-})
-const importedMeasure = queryFromDescription(Theory, describeQuery(measured), {
-	id: u64,
-	span: interval(u64),
-	width: u64
+	const row = v(packed)
+	return r.match(packed, row).find({ id: row.id, span: row.span, width: Compute.measure(row.span) })
 })
 const totals = query(Theory).rule((r) => {
-	const row = v(importedMeasure)
-	return r.match(importedMeasure, row).find({ id: row.id, total: r.sum(row.width) })
+	const row = v(measured)
+	return r.match(measured, row).find({ id: row.id, total: r.sum(row.width) })
 })
 const amounts = query(Theory).rule((r) => {
 	const row = v(totals)
@@ -66,10 +57,9 @@ const amounts = query(Theory).rule((r) => {
 		.match(totals, row)
 		.find({ id: row.id, amount: Compute.mulDiv(row.total, Compute.u64(3n), Compute.u64(2n), "nearestTiesToEven") })
 })
-const imported = queryFromDescription(Theory, describeQuery(amounts), { id: u64, amount: u64 })
 
 function importedTypeChecks() {
-	const row = v(importedPieces)
+	const row = v(pieces)
 	// @ts-expect-error Importing a description does not turn scalar ids into intervals.
 	Compute.measure(row.id)
 	// @ts-expect-error Integer measurement keeps its unsigned result kind after import.
@@ -84,7 +74,6 @@ test("alternatives and imported interval stages compose through atomic arm switc
 			Effect.scoped(
 				Effect.gen(function* () {
 					const db = yield* Db.create(storeDir("structural-composition"), Theory)
-					const options = { expected: { kind: "any" } } as const
 					const measuredRow = {
 						parent: 1n,
 						span: { start: 0n, end: 10n },
@@ -97,8 +86,6 @@ test("alternatives and imported interval stages compose through atomic arm switc
 							Effect.gen(function* () {
 								const snapshot = yield* db.snapshot()
 								const direct = yield* (yield* snapshot.execute(amounts, {})).collect()
-								const roundtrip = yield* (yield* snapshot.execute(imported, {})).collect()
-								assert.deepEqual(roundtrip, direct)
 								return direct
 							})
 						)
@@ -129,16 +116,16 @@ test("alternatives and imported interval stages compose through atomic arm switc
 										})
 									const forward = yield* build(false)
 									const backward = yield* build(true)
-									const judged = yield* db.judge(forward, options)
-									assert.deepEqual(yield* db.judge(backward, options), judged)
-									const result = yield* db.apply(forward, options)
-									assert.equal(result.kind, invalid ? "invariant-rejected" : "accepted")
+									const judged = yield* db.judge(forward)
+									assert.deepEqual(yield* db.judge(backward), judged)
+									const result = yield* db.apply(forward)
+									assert.equal(result._tag, invalid ? "Rejected" : "Committed")
 									if (invalid) {
-										assert.equal(judged.kind, "invariant-rejected")
-										if (result.kind === "invariant-rejected" && judged.kind === "invariant-rejected") {
+										assert.equal(judged._tag, "Rejected")
+										if (result._tag === "Rejected" && judged._tag === "Rejected") {
 											assert.deepEqual(result.violations, judged.violations)
 											assert.equal(result.violations.length, 1)
-											assert.equal(result.violations[0]?.kind, "containment")
+											assert.equal(result.violations[0]?._tag, "Containment")
 										}
 										assert.deepEqual(yield* read(), before)
 									}

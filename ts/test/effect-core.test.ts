@@ -1,24 +1,13 @@
-/**
- * The chapter 35 core surface, end to end against the real native runtime
- * (API-01/02/03/07/12; SDK-003): explicit `Db.create`/`Db.open`, coherent
- * scoped snapshots, the shared `QueryReader` capability, one immutable
- * final-state `apply` with the three-way expected-state intent, `Option`
- * lookups, honest close reports, scoped misuse refusals and foreign
- * capability refusals. Effect-only: everything below is a LAZY effect and
- * nothing runs at construction.
- */
 import assert from "node:assert/strict"
-import { statSync } from "node:fs"
-import { join } from "node:path"
 import { test } from "node:test"
 import { Cause, Effect, Exit, Fiber, ManagedRuntime, Option, Scope } from "effect"
 import { ChangeSet } from "../src/changes.ts"
 import { decodeRows, encodeRows, rowShape } from "../src/codec.ts"
-import type { ApplyOutcome, CoreWitness, Db as DbValue, Snapshot } from "../src/db.ts"
+import type { Db as DbValue, Snapshot, Witness } from "../src/db.ts"
 import { Db } from "../src/db.ts"
-import { dbNative } from "../src/db-native.ts"
 import { DbError } from "../src/errors.ts"
 import { str, uuid } from "../src/fields.ts"
+import { addon } from "../src/native/addon.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
@@ -42,32 +31,16 @@ function runtime() {
 
 const newId = () => Effect.runPromise(Effect.sync(() => crypto.randomUUID()))
 
-test("inspection separates virtual mapping, file pages and disk blocks", async function inspectStorage() {
+test("inspection reports measurements of a fresh database", async function inspectStorage() {
 	const rt = runtime()
 	try {
 		await rt.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const directory = storeDir("storage-inspection")
-					const db = yield* Db.create(directory, Learning)
+					const db = yield* Db.create(storeDir("storage-inspection"), Learning)
 					const report = yield* db.inspect()
-					const file = statSync(join(directory, "store", "data.mdb"), { bigint: true })
-					assert.deepEqual(Object.keys(report.storage).sort(), [
-						"allocatedDiskBytes",
-						"nonFreePageBytes",
-						"populatedFileBytes",
-						"virtualMapBytes"
-					])
-					assert.equal(report.storage.populatedFileBytes, file.size)
-					assert.ok(report.storage.virtualMapBytes >= file.size)
-					assert.ok(report.storage.nonFreePageBytes > 0n)
-					assert.ok(report.storage.nonFreePageBytes <= file.size)
-					if (process.platform === "win32") {
-						assert.equal(report.storage.allocatedDiskBytes, null)
-					} else {
-						assert.equal(report.storage.allocatedDiskBytes, file.blocks * 512n)
-					}
-					assert.equal("residentEstimateBytes" in report, false, "live disk pages do not measure resident RAM")
+					assert.equal(report.schemaId, db.schemaId)
+					assert.ok(report.diskBytes > 0n)
 				})
 			)
 		)
@@ -95,11 +68,11 @@ test("native row codecs own their values and remain reusable after cancelled del
 		const fresh = await rt.runPromise(encodeRows(shape, [first]))
 		for (const kind of ["encode", "decode"] as const) {
 			const completed = Promise.withResolvers<() => void>()
-			const encode = dbNative.runtimeEncodeRows
-			const decode = dbNative.runtimeDecodeRows
-			dbNative.runtimeEncodeRows = (runtime, spec, relation, count, cells, callback) =>
+			const encode = addon.runtimeEncodeRows
+			const decode = addon.runtimeDecodeRows
+			addon.runtimeEncodeRows = (runtime, spec, relation, count, cells, callback) =>
 				encode(runtime, spec, relation, count, cells, () => completed.resolve(callback))
-			dbNative.runtimeDecodeRows = (runtime, spec, relation, bytes, callback) =>
+			addon.runtimeDecodeRows = (runtime, spec, relation, bytes, callback) =>
 				decode(runtime, spec, relation, bytes, () => completed.resolve(callback))
 			try {
 				const operation =
@@ -112,8 +85,8 @@ test("native row codecs own their values and remain reusable after cancelled del
 				assert.ok(Exit.hasInterrupts(await Effect.runPromise(Fiber.await(fiber))))
 				lateCallback()
 			} finally {
-				dbNative.runtimeEncodeRows = encode
-				dbNative.runtimeDecodeRows = decode
+				addon.runtimeEncodeRows = encode
+				addon.runtimeDecodeRows = decode
 			}
 			assert.deepEqual(await rt.runPromise(decodeRows(shape, fresh)), [first])
 		}
@@ -149,8 +122,8 @@ test("create/apply/snapshot/get/execute — the whole chapter 34 core flow, one 
 			Effect.gen(function* () {
 				const db = yield* Db.create(storeDir("core-flow"), Learning)
 				const changes = yield* seeded(studentId, attemptId)
-				const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
-				assert.equal(outcome.kind, "accepted")
+				const outcome = yield* db.apply(changes)
+				assert.equal(outcome._tag, "Committed")
 				const snapshot = yield* db.snapshot()
 				// Missing key is Option.none, never a fake I/O error.
 				const absent = yield* snapshot.get(StudentById, { id: attemptId })
@@ -209,7 +182,7 @@ test("scoped preparation reuses parameters and closes independently of snapshots
 				Effect.gen(function* () {
 					const db = yield* Db.create(storeDir("prepared-ownership"), Learning)
 					const changes = yield* seeded(studentId, attemptId)
-					yield* db.apply(changes, { expected: { kind: "any" } })
+					yield* db.apply(changes)
 					const snapshotScope = yield* Scope.make()
 					const firstScope = yield* Scope.make()
 					const secondScope = yield* Scope.make()
@@ -228,7 +201,7 @@ test("scoped preparation reuses parameters and closes independently of snapshots
 					assert.ok(Exit.isFailure(yield* Effect.exit(first.releaseMemory())))
 					assert.ok(Option.isSome(yield* snapshot.get(StudentById, { id: studentId })))
 					const late = yield* seeded(absentId, lateAttemptId)
-					assert.equal((yield* db.apply(late, { expected: { kind: "any" } })).kind, "accepted")
+					assert.equal((yield* db.apply(late))._tag, "Committed")
 					// A preparation pins the snapshot's version on its own; closing the snapshot leaves it usable.
 					yield* Scope.close(snapshotScope, Exit.void)
 					for (let i = 0; i < 16; i += 1) {
@@ -269,10 +242,10 @@ test("apply is the three-coordinate judgment: accepted, no-change, invariant-rej
 				Effect.gen(function* () {
 					const db = yield* Db.create(storeDir("apply-outcomes"), Learning)
 					const changes = yield* seeded(studentId, attemptId)
-					const first = yield* db.apply(changes, { expected: { kind: "any" } })
+					const first = yield* db.apply(changes)
 					// The identical sealed change is reusable while open: a
 					// second application of the same final set is no-change.
-					const second = yield* db.apply(changes, { expected: { kind: "any" } })
+					const second = yield* db.apply(changes)
 
 					// A violating candidate: an attempt referencing an
 					// undeclared student breaks the containment law.
@@ -281,30 +254,30 @@ test("apply is the three-coordinate judgment: accepted, no-change, invariant-rej
 						{ id: outsider, student: outsider, score: 0.1, units: 1n, active: { start: 0n, end: 1n } }
 					])
 					const violating = yield* bad.finish()
-					const rejected = yield* db.apply(violating, { expected: { kind: "any" } })
+					const rejected = yield* db.apply(violating)
 
 					// A stale exact-state witness moves, never silently applies.
 					const snapshot = yield* db.snapshot()
-					const witness: CoreWitness = snapshot.witness
+					const witness: Witness = snapshot.witness
 					const third = yield* ChangeSet.builder(Learning)
 					yield* third.insert(Student, [{ id: outsider, name: "Bo", budget: 1n }])
 					const advance = yield* third.finish()
-					yield* db.apply(advance, { expected: { kind: "any" } })
+					yield* db.apply(advance)
 					const fourth = yield* ChangeSet.builder(Learning)
 					yield* fourth.insert(Student, [{ id: attemptId, name: "Cy", budget: 1n }])
 					const staleChange = yield* fourth.finish()
-					const moved = yield* db.apply(staleChange, { expected: { kind: "exact", at: witness } })
+					const moved = yield* db.apply(staleChange, witness)
 					return { first, second, rejected, moved }
 				})
 			)
 		)
-		assert.equal(outcomes.first.kind, "accepted")
-		assert.equal(outcomes.second.kind, "no-change")
-		assert.equal(outcomes.rejected.kind, "invariant-rejected")
-		if (outcomes.rejected.kind === "invariant-rejected") {
+		assert.equal(outcomes.first._tag, "Committed")
+		assert.equal(outcomes.second._tag, "NoChange")
+		assert.equal(outcomes.rejected._tag, "Rejected")
+		if (outcomes.rejected._tag === "Rejected") {
 			assert.ok(outcomes.rejected.violations.length > 0, "complete statement diagnostics, never a bare boolean")
 		}
-		assert.equal(outcomes.moved.kind, "moved")
+		assert.equal(outcomes.moved._tag, "Moved")
 	} finally {
 		await Effect.runPromise(rt.disposeEffect)
 	}
@@ -321,13 +294,13 @@ test("a snapshot is coherent: a later apply cannot move an open snapshot's facts
 				Effect.gen(function* () {
 					const db = yield* Db.create(storeDir("snapshot-coherence"), Learning)
 					const changes = yield* seeded(studentId, attemptId)
-					yield* db.apply(changes, { expected: { kind: "any" } })
+					yield* db.apply(changes)
 					const snapshot = yield* db.snapshot()
 					const late = yield* ChangeSet.builder(Learning)
 					yield* late.insert(Student, [{ id: lateId, name: "Late", budget: 1n }])
 					const lateChanges = yield* late.finish()
-					const outcome = yield* db.apply(lateChanges, { expected: { kind: "any" } })
-					assert.equal(outcome.kind, "accepted")
+					const outcome = yield* db.apply(lateChanges)
+					assert.equal(outcome._tag, "Committed")
 					// The pinned snapshot still answers the OLD state.
 					const observed = yield* snapshot.get(StudentById, { id: lateId })
 					assert.ok(Option.isNone(observed), "the open snapshot never observes the later apply")
@@ -354,7 +327,7 @@ test("methods are lazy: construction dispatches nothing, and a scope-escaped han
 				Effect.gen(function* () {
 					const db = yield* Db.create(storeDir("scoped-misuse"), Learning)
 					const changes = yield* seeded(studentId, attemptId)
-					yield* db.apply(changes, { expected: { kind: "any" } })
+					yield* db.apply(changes)
 					escapedDb = db
 					escapedSnapshot = yield* db.snapshot()
 					// Constructing an effect on a live handle runs NOTHING:
@@ -388,7 +361,7 @@ test("a foreign object where a ChangeSet is expected refuses BEFORE any native d
 				Effect.gen(function* () {
 					const db = yield* Db.create(storeDir("foreign-changes"), Learning)
 					const forged = { schemaId: db.schemaId, close: () => Effect.void }
-					return yield* db.apply(forged as never, { expected: { kind: "any" } })
+					return yield* db.apply(forged as never)
 				})
 			)
 		)
@@ -458,9 +431,3 @@ test("interruption surfaces in Cause, never as a manufactured outcome arm", asyn
 		await Effect.runPromise(rt.disposeEffect)
 	}
 })
-
-/** The chapter 35 ApplyOutcome vocabulary is the pinned public type. */
-function applyOutcomeShape(outcome: ApplyOutcome): string {
-	return outcome.kind
-}
-void applyOutcomeShape

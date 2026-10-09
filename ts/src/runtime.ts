@@ -1,9 +1,10 @@
 import { Context, Duration, Effect, Layer } from "effect"
 import type { OutstandingWork } from "./errors.ts"
 import { DbError, dbError } from "./errors.ts"
+import type { RuntimeRef } from "./native/addon.ts"
+import { addon } from "./native/addon.ts"
+import type { RuntimeOptionsIn } from "./native/binding.d.ts"
 import { call, scoped } from "./native/op.ts"
-import type { OptionsWire, RuntimeHandle } from "./runtime-native.ts"
-import { runtimeNative } from "./runtime-native.ts"
 
 /** Sizing for the native runtime. The addon validates every count and picks the defaults. */
 export interface BumbleOptions {
@@ -15,36 +16,37 @@ export interface BumbleOptions {
 	readonly cleanupTimeout?: Duration.Input
 }
 
-function wire(options: BumbleOptions): OptionsWire {
+function wire(options: BumbleOptions): string {
 	const timeout = options.cleanupTimeout === undefined ? undefined : Duration.toMillis(options.cleanupTimeout)
 	if (timeout !== undefined && !Number.isFinite(timeout)) {
 		throw new DbError({ operation: "Bumble.layer", reason: { _tag: "InvalidArgument" } })
 	}
-	return {
-		workers: options.workers,
-		queueCapacity: options.queueCapacity,
-		cleanupCapacity: options.cleanupCapacity,
-		ownerCapacity: options.ownerCapacity,
-		nativeHandleCapacity: options.nativeHandleCapacity,
-		cleanupTimeoutMs: timeout === undefined ? undefined : Math.ceil(timeout)
+	const input: RuntimeOptionsIn = {
+		...(options.workers === undefined ? {} : { workers: options.workers }),
+		...(options.queueCapacity === undefined ? {} : { queueCapacity: options.queueCapacity }),
+		...(options.cleanupCapacity === undefined ? {} : { cleanupCapacity: options.cleanupCapacity }),
+		...(options.ownerCapacity === undefined ? {} : { ownerCapacity: options.ownerCapacity }),
+		...(options.nativeHandleCapacity === undefined ? {} : { nativeHandleCapacity: options.nativeHandleCapacity }),
+		...(timeout === undefined ? {} : { cleanupTimeoutMs: Math.ceil(timeout) })
 	}
+	return JSON.stringify(input)
 }
 
 /** The live native runtime: one worker pool and handle registry per process. */
 export class Runtime {
-	readonly #handle: RuntimeHandle
+	readonly #handle: RuntimeRef
 	/** The runtime's outstanding native work, after every operation queued before it settles. */
 	readonly inspect: () => Effect.Effect<OutstandingWork, DbError>
 
-	constructor(handle: RuntimeHandle) {
+	constructor(handle: RuntimeRef) {
 		this.#handle = handle
 		this.inspect = Effect.fn("Bumble.inspect")(function* () {
-			yield* call("Bumble.inspect", (done) => runtimeNative.runtimeReady(handle, done), runtimeNative.runtimeTake)
-			return runtimeNative.runtimeInspect(handle)
+			yield* call("Bumble.inspect", (done) => addon.runtimeReady(handle, done), addon.runtimeTake)
+			return addon.runtimeInspect(handle) as OutstandingWork
 		})
 	}
 
-	static handle(runtime: Runtime): RuntimeHandle {
+	static handle(runtime: Runtime): RuntimeRef {
 		return runtime.#handle
 	}
 }
@@ -53,10 +55,10 @@ const acquire = Effect.fn("Bumble.layer")(function* (options: BumbleOptions) {
 	const input = yield* Effect.try({ try: () => wire(options), catch: (cause) => dbError("Bumble.layer", cause) })
 	const handle = yield* scoped(
 		"Bumble.release",
-		Effect.try({ try: () => runtimeNative.runtimeOpen(input), catch: (cause) => dbError("Bumble.layer", cause) }),
-		(owner) => (done) => runtimeNative.runtimeClose(owner, done)
+		Effect.try({ try: () => addon.runtimeOpen(input), catch: (cause) => dbError("Bumble.layer", cause) }),
+		(owner) => (done) => addon.runtimeClose(owner, done)
 	)
-	yield* call("Bumble.layer", (done) => runtimeNative.runtimeReady(handle, done), runtimeNative.runtimeTake)
+	yield* call("Bumble.layer", (done) => addon.runtimeReady(handle, done), addon.runtimeTake)
 	return new Runtime(handle)
 })
 
@@ -68,6 +70,6 @@ export class Bumble extends Context.Service<Bumble, Runtime>()("@bjornpagen/bumb
 }
 
 /** The provided runtime's native handle. */
-export const runtimeHandle: Effect.Effect<RuntimeHandle, never, Bumble> = Effect.gen(function* () {
+export const runtimeHandle: Effect.Effect<RuntimeRef, never, Bumble> = Effect.gen(function* () {
 	return Runtime.handle(yield* Bumble)
 })

@@ -11,8 +11,8 @@ Owns: `ts/**` (except `ts/src/native/binding.d.ts`), `ts-log/**`, `examples/**`.
 | F4 ts-log deleted; exports `"."` and `"./engine"` | landed |
 | F5 `native/op.ts` | landed |
 | F6 scope-only resources, `#private`, one `DbError`, `Bumble` layer, branded `SchemaId` | landed |
-| D17 TS side | waits on bridge `compileSchema`/`validateQuery` |
-| F7/F8 consumption | waits on bridge `binding.d.ts` |
+| D17 TS side (sync compile/validate at definition, mirrored checks deleted, diagnostics named) | landed |
+| F7/F8 consumption (generated `binding.d.ts`, JSON inputs, `_tag` outputs) | landed |
 | D6 stores (MemStore with faults, FsStore, S3Store), I/O executor, machine driver | landed |
 | D6/F9 `Database.layer`, `Database.pool`, submit/consistency | waits on bridge hosted verbs over log-core `Machine` |
 | D7 migrations + CLI | after D6 |
@@ -94,6 +94,19 @@ TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `impo
   `AuthoringError`, `NativeLoadError`, `DbError { operation, reason }`, `CloseFailure` (all
   `Schema.TaggedError`); `SdkInvariantError`, `NativeOperationError` and `NativeReportedError` are
   gone (contradictions are `DbError` with reason `Internal`). `SchemaId` is a branded string.
+
+- D17/F7/F8: `schema()` compiles with `compileSchema` when it is defined and `query(...).rule(...)`
+  validates with `validateQuery` when it is built; engine refusals throw `AuthoringError` naming the
+  schema's statements/relations and the query's tables, finds, params and variables. TS keeps only
+  checks the engine cannot see (relation identity, record keys, class joins, lowering shape).
+  `Schema.compile`/`CompiledSchema`, `describeQuery`/`queryFromDescription` and the TS IR parser are
+  deleted. All native types come from `ts/src/native/binding.d.ts` through `ts/src/native/addon.ts`.
+- Public outcome unions are the generated wire types: `Db.apply(changes, expected?)` and
+  `Db.judge(changes, expected?)` (`expected` is a `Witness`, omitted means current) return
+  `ApplyOutcome` (`Committed | NoChange | Rejected | Moved`) and `JudgeOutcome`
+  (`Admitted | Rejected | Moved`); violations are `ViolationOut`; `ChangeRecord.kind` is
+  `"Add" | "Remove"`; `DbInspection` is `{ schemaId, generation, diskBytes, retainedOperations }`.
+  `DbError.reason` mirrors the addon's `RuntimeError` union; `CloseFailure.report` is `CloseOut`.
 
 ### For ci
 - `examples/consumers/{log-ts,native-ledger}` are deleted (they used bumbledb-log).

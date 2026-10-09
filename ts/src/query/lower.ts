@@ -1,4 +1,5 @@
 import { membersAgree, sealedFieldsOf } from "../closed.ts"
+import { compiledOf } from "../compile.ts"
 import { AuthoringError, internalError } from "../errors.ts"
 import type { AnyClosedRoster, AnyField, IntervalField } from "../fields.ts"
 import {
@@ -15,23 +16,25 @@ import {
 import { snapshotData } from "../immutable.ts"
 import type { Same } from "../judgment.ts"
 import type { ClassRecordOf, SchemaClasses } from "../law.ts"
+import type { QueryRef } from "../native/addon.ts"
+import { addon } from "../native/addon.ts"
 import type {
-	AtomIr,
-	ComparisonIr,
-	ConditionTreeIr,
-	FindTermIr,
-	HeadOpIr,
-	HeadTermIr,
-	ParsedQuery,
-	QueryParam,
-	RuleIr,
-	ScalarExprIr,
-	TaggedValue,
-	TermIr
-} from "../native.ts"
+	AtomIn,
+	BindingIn,
+	ConditionIn,
+	FindTermIn,
+	HeadTermIn,
+	QueryDiagnostic,
+	QueryIn,
+	RecStepIn,
+	RuleIn,
+	TermIn
+} from "../native/binding.d.ts"
+import { valueIn } from "../native/json.ts"
 import { scalarWire } from "../scalar.ts"
 import type { AnySchema, Schema, SchemaRelations } from "../schema.ts"
 import { schemaDescriptor, schemasAgree } from "../schema.ts"
+import type { QueryParam, TaggedValue } from "../spec.ts"
 import { arrayValue, recordValue, taggedValueOf } from "../values.ts"
 import type {
 	AggData,
@@ -41,7 +44,6 @@ import type {
 	BindParamsShape,
 	CheckBindings,
 	CheckCond,
-	CmpData,
 	CmpKind,
 	CmpTermData,
 	CondData,
@@ -61,11 +63,9 @@ import type {
 	RuleItem
 } from "./atom.ts"
 import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "./atom.ts"
-import type { QueryNode } from "./compute.ts"
-import { computeFieldOf, computeVarsOf, isComputeExpr, MAX_COMPUTE_DEPTH } from "./compute.ts"
+import { computeFieldOf, isComputeExpr, MAX_COMPUTE_DEPTH } from "./compute.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "./find.ts"
 import { count, max, mean, min, pack, sum } from "./find.ts"
-import { parseQueryIr } from "./parse-ir.ts"
 import type {
 	AnyVar,
 	ClassedField,
@@ -914,51 +914,6 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 }
 
 /**
- * The orderable ban's pointed refusal
- * § orderability): a closed reference is equality-and-membership only.
- */
-function closedOrderError(context: string, position: string, vocabulary: string): Error {
-	return new AuthoringError({
-		message: `${context}: ${position} is a ${vocabulary} reference — declaration order is an accident, not semantics: vocabularies do not order (equality, membership, and counting remain)`
-	})
-}
-
-function isOrderOp(op: CmpKind | "binding"): op is "lt" | "le" | "gt" | "ge" | "pointIn" {
-	return op === "lt" || op === "le" || op === "gt" || op === "ge" || op === "pointIn"
-}
-
-function assertBound(where: string, bound: ReadonlySet<AnyVar>, ref: AnyVar): void {
-	if (!bound.has(ref)) {
-		throw new AuthoringError({
-			message: `${where}: the variable ${ref.label} is not bound by a relation atom of the rule`
-		})
-	}
-}
-
-function assertInterval(where: string, ref: AnyVar): void {
-	if (ref.field.kind !== "interval") {
-		throw new AuthoringError({
-			message: `${where}: ${ref.label} is not interval-typed — the measure is defined over interval-typed variables only`
-		})
-	}
-}
-
-function assertNotClosed(where: string, position: string, ref: AnyVar): void {
-	const roster = rosterOf(ref.field)
-	if (roster !== undefined) {
-		throw closedOrderError(where, `${position} ${ref.label}`, roster.name)
-	}
-}
-
-function assertNumeric(where: string, position: string, ref: AnyVar): void {
-	if (ref.field.kind !== "u64" && ref.field.kind !== "i64" && ref.field.kind !== "f64") {
-		throw new AuthoringError({
-			message: `${where}: ${position} ${ref.label} is ${ref.field.kind}, not numeric — a fold reads u64/i64/f64 only`
-		})
-	}
-}
-
-/**
  * The head column's slot: a projected variable keeps its mint slot; an
  * aggregate output is a NEW derived scalar — its descriptor follows the
  * aggregate's typing (count is u64, mean is f64, sum/min/max keep the
@@ -992,80 +947,24 @@ function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedFie
 	}
 }
 
-function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, column: FindColumn): void {
-	const where = `${contextLabel(context)} find ${column.name}`
-	const entry = column.entry
-	if (entry.kind === "segments") {
-		assertBound(where, bound, entry.left)
-		assertBound(where, bound, entry.right)
+/** An equality between two variables joins them, so their slots must join under the class law. */
+function validateCond(context: ChainContext, cond: CondData): void {
+	if (cond.kind !== "cmp") {
+		for (const child of cond.children) validateCond(context, child)
 		return
 	}
-	if (entry.kind === "var") {
-		assertBound(where, bound, entry.over)
-		return
-	}
-	if (entry.kind === "compute") {
-		// Kind agreement, closed-reference and depth walls hold at
-		// construction (#query/compute.ts); boundness is a RULE property,
-		// judged here like every other term position.
-		for (const ref of computeVarsOf(entry.expr)) {
-			assertBound(where, bound, ref)
-		}
-		return
-	}
-	const agg = entry.agg
-	switch (agg.op) {
-		case "count":
-			return
-		case "fold": {
-			assertBound(where, bound, agg.over)
-			assertNotClosed(where, `the ${agg.fold} input`, agg.over)
-			assertNumeric(where, `the ${agg.fold} input`, agg.over)
-			if (agg.fold === "mean" && agg.over.field.kind !== "f64") {
-				throw new AuthoringError({ message: `${where}: mean requires an f64 input; cast integers explicitly` })
-			}
-			return
-		}
-		case "pack":
-			assertBound(where, bound, agg.over)
-			assertInterval(where, agg.over)
-			return
-	}
-}
-
-function validateCond(context: ChainContext, bound: ReadonlySet<AnyVar>, cond: CondData): void {
-	const label = contextLabel(context)
-	if (cond.kind === "cmp") {
-		for (const side of [cond.lhs, cond.rhs]) {
-			if (side.kind === "var") {
-				assertBound(label, bound, side.ref)
-				const roster = rosterOf(side.ref.field)
-				if (isOrderOp(cond.op.kind) && roster !== undefined) {
-					throw closedOrderError(label, `the ${cond.op.kind} side ${side.ref.label}`, roster.name)
-				}
-			}
-		}
-		if ((cond.op.kind === "eq" || cond.op.kind === "ne") && cond.lhs.kind === "var" && cond.rhs.kind === "var") {
-			assertBound(label, bound, cond.lhs.ref)
-			assertBound(label, bound, cond.rhs.ref)
-			const lhs = mintSlotOf(context, cond.lhs.ref)
-			const rhs = mintSlotOf(context, cond.rhs.ref)
-			if (!fieldJoins(lhs, rhs)) {
-				throw new AuthoringError({
-					message: `${label}: ${cond.op.kind}(${cond.lhs.ref.label}, ${cond.rhs.ref.label}) unifies domain-unequal fields — ${cond.lhs.ref.label} bound at ${renderFieldKind(lhs)}, ${cond.rhs.ref.label} at ${renderFieldKind(rhs)} (a var joins only class-equal slots; bare pairs only with bare)`
-				})
-			}
-		}
-		return
-	}
-	for (const child of cond.children) {
-		validateCond(context, bound, child)
+	if ((cond.op.kind !== "eq" && cond.op.kind !== "ne") || cond.lhs.kind !== "var" || cond.rhs.kind !== "var") return
+	const lhs = mintSlotOf(context, cond.lhs.ref)
+	const rhs = mintSlotOf(context, cond.rhs.ref)
+	if (!fieldJoins(lhs, rhs)) {
+		throw new AuthoringError({
+			message: `${contextLabel(context)}: ${cond.op.kind}(${cond.lhs.ref.label}, ${cond.rhs.ref.label}) unifies domain-unequal fields — ${cond.lhs.ref.label} bound at ${renderFieldKind(lhs)}, ${cond.rhs.ref.label} at ${renderFieldKind(rhs)} (a var joins only class-equal slots; bare pairs only with bare)`
+		})
 	}
 }
 
 function validateInterior(
 	context: ChainContext,
-	bound: ReadonlySet<AnyVar>,
 	item: {
 		readonly kind: "interior" | "negatedInterior"
 		readonly target: DerivedTable
@@ -1096,11 +995,6 @@ function validateInterior(
 		}
 	}
 	for (const binding of item.bindings) {
-		if (item.kind === "negatedInterior" && !bound.has(binding.ref)) {
-			throw new AuthoringError({
-				message: `${label}: negated interior ${item.target.name} names the variable ${binding.ref.label}, but no positive atom of the rule binds it — a negated atom binds nothing, only rejects (the safety rule)`
-			})
-		}
 		const headColumn = headColumns.find(function byName(column) {
 			return column.name === binding.key
 		})
@@ -1118,38 +1012,14 @@ function validateInterior(
 
 function completeRule(context: ChainContext, state: RuleBuildState, rawColumns: readonly FindColumn[]): RuleData {
 	const label = contextLabel(context)
-	if (rawColumns.length === 0) {
-		throw new AuthoringError({ message: `${label}: a find needs at least one entry` })
-	}
-	const aggregates = rawColumns.flatMap((column) => (column.entry.kind === "aggregate" ? [column.entry.agg] : []))
-	const packs = aggregates.filter((agg) => agg.op === "pack").length
-	if (packs > 1) throw new AuthoringError({ message: "a query stage can pack one interval column" })
-	if (packs !== 0 && aggregates.length !== packs)
-		throw new AuthoringError({ message: "pack intervals and compute numeric aggregates in separate query stages" })
-	if (rawColumns.some((c) => c.entry.kind === "segments") && aggregates.length !== 0)
-		throw new AuthoringError({ message: "aggregate generated segments in a following query stage" })
 	const columns = rawColumns.map(function enrichColumn(column): FindColumn {
 		assertDeclarationOrderKey(`${label} find column`, column.name)
-		validateColumn(context, state.bound, column)
 		const slot = findColumnSlotOf(context, column)
 		return Object.freeze({ name: column.name, entry: column.entry, slot, closed: rosterOf(slot?.field) })
 	})
 	for (const item of state.items) {
-		if (item.kind === "negated") {
-			for (const binding of item.atom.bindings) {
-				if (binding.term.kind === "var" && !state.bound.has(binding.term.ref)) {
-					throw new AuthoringError({
-						message: `${label}: negated ${item.atom.relation.name} atom binds the variable ${binding.term.ref.label} at position ${binding.field}, but no positive atom of the rule binds it — a negated atom binds nothing, only rejects (the safety rule)`
-					})
-				}
-			}
-		}
-		if (item.kind === "interior" || item.kind === "negatedInterior") {
-			validateInterior(context, state.bound, item, columns)
-		}
-		if (item.kind === "cond") {
-			validateCond(context, state.bound, item.cond)
-		}
+		if (item.kind === "interior" || item.kind === "negatedInterior") validateInterior(context, item, columns)
+		if (item.kind === "cond") validateCond(context, item.cond)
 	}
 	return Object.freeze({ items: state.items, finds: Object.freeze(columns), paramUses: state.paramUses })
 }
@@ -1562,8 +1432,10 @@ function renderClosedSlice(closed: AnyClosedRoster | undefined): string {
 	return closed === undefined ? "a bare value" : `a ${closed.name} reference`
 }
 
-function headOperation(column: FindColumn): HeadOpIr | undefined {
-	return column.entry.kind === "aggregate" ? headOpOf(column.entry.agg) : undefined
+function headOperation(column: FindColumn): string | undefined {
+	if (column.entry.kind !== "aggregate") return undefined
+	const agg = column.entry.agg
+	return agg.op === "fold" ? agg.fold : agg.op
 }
 
 function renderParamAnchor(roster: AnyClosedRoster | undefined): string {
@@ -1777,6 +1649,53 @@ function afterMainError(what: string): Error {
 	})
 }
 
+/** Names the parts of `data` an engine query diagnostic cites. */
+function explainQuery(data: QueryData, labels: RuleLabels, diagnostic: QueryDiagnostic): string {
+	const tables = [...data.interiors, ...(data.kind === "reach" ? [data.rec] : [])]
+	const table = diagnostic.interior === undefined ? undefined : tables[diagnostic.interior]
+	const ruleLabels =
+		diagnostic.rule === undefined
+			? undefined
+			: (diagnostic.interior === undefined ? labels.main : labels.interiors[diagnostic.interior])?.[diagnostic.rule]
+	const finds = table?.finds ?? data.finds
+	const cited = [
+		table === undefined ? undefined : `in ${table.name}`,
+		diagnostic.rule === undefined ? undefined : `rule ${diagnostic.rule}`,
+		diagnostic.find === undefined ? undefined : `find ${finds[diagnostic.find]?.name ?? diagnostic.find}`,
+		diagnostic.atom === undefined ? undefined : `atom ${diagnostic.atom}`,
+		diagnostic.var === undefined ? undefined : `variable ${ruleLabels?.[diagnostic.var] ?? diagnostic.var}`,
+		diagnostic.param === undefined ? undefined : `param ${data.params[diagnostic.param]?.name ?? diagnostic.param}`,
+		diagnostic.comparison === undefined ? undefined : `comparison ${diagnostic.comparison}`
+	].filter((part) => part !== undefined)
+	return cited.length === 0 ? diagnostic.message : `${diagnostic.message} (${cited.join(", ")})`
+}
+
+/** Validates a complete query with the engine and returns its compiled handle. */
+function validateQueryData(theory: AnySchema, data: QueryData): QueryRef {
+	const lowered = lowerQueryLabelled({ schema: theory, data })
+	const validated = addon.validateQuery(compiledOf(schemaDescriptor(theory)).handle, JSON.stringify(lowered.query))
+	switch (validated._tag) {
+		case "Valid":
+			return validated.query
+		case "Invalid":
+			throw new AuthoringError({
+				message: `query: ${explainQuery(data, lowered.labels, validated.diagnostic)}`,
+				diagnostic: { code: "InvalidQuery", context: validated.diagnostic.code, expected: validated.diagnostic.message }
+			})
+		case "Malformed":
+			throw internalError(`validateQuery: ${validated.path}: ${validated.message}`)
+	}
+}
+
+const validatedQueries = new WeakMap<object, QueryRef>()
+
+/** The engine's validated form of a query value `query()` built. */
+function queryHandleOf(query: AnyQuery): QueryRef {
+	const handle = validatedQueries.get(query)
+	if (handle === undefined) throw internalError("queryHandleOf: the query was not built by query()")
+	return handle
+}
+
 function makeRawQuery(
 	inputTheory: AnySchema,
 	inputInteriors: readonly InteriorData[],
@@ -1816,6 +1735,7 @@ function makeRawQuery(
 					finds: mergedFinds,
 					params
 				})
+	const handle = validateQueryData(theory, data)
 	const value: RawQuery = {
 		get schema() {
 			return snapshotData(theory)
@@ -1841,6 +1761,7 @@ function makeRawQuery(
 		}
 	}
 	Object.freeze(value)
+	validatedQueries.set(value, handle)
 	return value
 }
 
@@ -2071,6 +1992,8 @@ interface LowerContext {
 
 interface VarIds {
 	of(ref: AnyVar): number
+	/** Each variable's label, by variable id. */
+	labels(): readonly string[]
 }
 
 function freshVarIds(): VarIds {
@@ -2084,6 +2007,9 @@ function freshVarIds(): VarIds {
 			const id = assigned.size
 			assigned.set(ref, id)
 			return id
+		},
+		labels() {
+			return [...assigned.keys()].map((ref) => ref.label)
 		}
 	}
 }
@@ -2096,256 +2022,221 @@ function paramIdOf(ctx: LowerContext, name: string): number {
 	return id
 }
 
-function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIr {
-	const member = ctx.theory.relations[atom.relation.name]
-	if (!membersAgree(member, atom.relation)) {
-		throw new AuthoringError({
-			message: `query lowering: relation ${atom.relation.name} is not the relation value schema ${ctx.theory.name} declares`
-		})
-	}
+function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIn {
 	const relationId = ctx.relationIds.get(atom.relation.name)
-	if (relationId === undefined) {
-		throw new AuthoringError({ message: `query lowering: relation ${atom.relation.name} has no ordinal` })
+	if (!membersAgree(ctx.theory.relations[atom.relation.name], atom.relation) || relationId === undefined) {
+		throw new AuthoringError({
+			message: `query: relation ${atom.relation.name} is not the relation value schema ${ctx.theory.name} declares`
+		})
 	}
 	const ordered = sealedFieldsOf(atom.relation)
-	const bindings: Array<readonly [number, TermIr]> = atom.bindings.map(function lowerBinding(binding) {
-		const ordinal = ordered.findIndex(function byName(candidate) {
-			return candidate.name === binding.field
-		})
-		if (ordinal < 0) {
-			throw new AuthoringError({
-				message: `query lowering: relation ${atom.relation.name} has no field ${binding.field}`
-			})
-		}
-		return [ordinal, lowerBindingTerm(ctx, `${atom.relation.name}.${binding.field}`, binding, ids)] as const
+	const bindings = atom.bindings.map((binding): BindingIn => {
+		const field = ordered.findIndex((candidate) => candidate.name === binding.field)
+		if (field < 0)
+			throw new AuthoringError({ message: `query: relation ${atom.relation.name} has no field ${binding.field}` })
+		return { field, term: lowerBindingTerm(ctx, `${atom.relation.name}.${binding.field}`, binding, ids) }
 	})
-	return { source: { kind: "edb", relation: relationId }, bindings }
+	return { source: { kind: "Edb", relation: relationId }, bindings }
 }
 
-function lowerBindingTerm(ctx: LowerContext, context: string, binding: BindingEntry, ids: VarIds): TermIr {
+function lowerBindingTerm(ctx: LowerContext, context: string, binding: BindingEntry, ids: VarIds): TermIn {
 	const bound = binding.term
 	switch (bound.kind) {
 		case "var":
-			return { kind: "var", var: ids.of(bound.ref) }
+			return { kind: "Var", var: ids.of(bound.ref) }
 		case "param":
-			return { kind: "param", param: paramIdOf(ctx, bound.name) }
+			return { kind: "Param", param: paramIdOf(ctx, bound.name) }
 		case "setParam":
-			return { kind: "paramSet", param: paramIdOf(ctx, bound.name) }
 		case "literalSet":
-			return { kind: "paramSet", param: paramIdOf(ctx, bound.name) }
+			return { kind: "ParamSet", param: paramIdOf(ctx, bound.name) }
 		case "literal":
-			return { kind: "literal", value: taggedLiteral(context, binding.data, bound.value) }
+			return { kind: "Literal", value: valueIn(taggedLiteral(context, binding.data, bound.value)) }
 	}
 }
 
-/**
- * Lowers one interior atom: named bindings placed by HEAD order, `FieldId(i)` =
- * head position i. Every head column of the table must be bound (a missing key
- * is refused pointed); the var-id assignment order is head order, so the
- * first-use numbering matches the name-keyed edition exactly.
- */
+/** An interior atom binds every head column of the table, by head position. */
 function lowerInteriorAtom(
 	ctx: LowerContext,
 	target: DerivedTable,
 	bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }>,
 	ids: VarIds
-): AtomIr {
+): AtomIn {
 	const interior = ctx.interiorIds.get(target.name)
 	if (interior === undefined) {
-		throw new AuthoringError({ message: `query lowering: derived table ${target.name} was not declared on this query` })
+		throw new AuthoringError({ message: `query: derived table ${target.name} was not declared on this query` })
 	}
-	if (target.finds.length === 0) {
-		throw new AuthoringError({ message: `query lowering: derived table ${target.name} has no head` })
-	}
-	const irBindings: Array<readonly [number, TermIr]> = target.finds.map(function lowerPosition(column, position) {
-		const binding = bindings.find(function byKey(candidate) {
-			return candidate.key === column.name
+	return {
+		source: { kind: "Interior", interior },
+		bindings: target.finds.map((column, field): BindingIn => {
+			const binding = bindings.find((candidate) => candidate.key === column.name)
+			if (binding === undefined) {
+				throw new AuthoringError({ message: `query: interior ${target.name} omits head column ${column.name}` })
+			}
+			return { field, term: { kind: "Var", var: ids.of(binding.ref) } }
 		})
-		if (binding === undefined) {
-			throw new AuthoringError({ message: `query lowering: interior ${target.name} omits head column ${column.name}` })
-		}
-		return [position, { kind: "var", var: ids.of(binding.ref) } as const] as const
-	})
-	return { source: { kind: "interior", interior }, bindings: irBindings }
+	}
 }
 
-function lowerCmpTerm(ctx: LowerContext, side: CmpTermData, sibling: CmpTermData, ids: VarIds, op: CmpKind): TermIr {
+function lowerCmpTerm(ctx: LowerContext, side: CmpTermData, sibling: CmpTermData, ids: VarIds, op: CmpKind): TermIn {
 	switch (side.kind) {
 		case "var":
-			return { kind: "var", var: ids.of(side.ref) }
+			return { kind: "Var", var: ids.of(side.ref) }
 		case "param":
-			return { kind: "param", param: paramIdOf(ctx, side.name) }
+			return { kind: "Param", param: paramIdOf(ctx, side.name) }
 		case "setParam":
-			return { kind: "paramSet", param: paramIdOf(ctx, side.name) }
+			return { kind: "ParamSet", param: paramIdOf(ctx, side.name) }
 		case "literal": {
 			const anchor = cmpAnchorOf(ctx, sibling)
 			if (anchor === undefined) {
 				throw new AuthoringError({
-					message: "query lowering: a comparison literal needs a bound-variable or anchored-param sibling to type it"
+					message: "query: a comparison literal needs a bound-variable or anchored-param sibling to type it"
 				})
 			}
-			return { kind: "literal", value: taggedCmpLiteral("comparison literal", anchor, side.value, op) }
+			return { kind: "Literal", value: valueIn(taggedCmpLiteral("comparison literal", anchor, side.value, op)) }
 		}
 	}
 }
 
 function cmpAnchorOf(ctx: LowerContext, sibling: CmpTermData): AnyField | undefined {
-	if (sibling.kind === "var") {
-		return sibling.ref.field
-	}
-	if (sibling.kind === "param" || sibling.kind === "setParam") {
-		return ctx.params.get(sibling.name)?.anchor
-	}
+	if (sibling.kind === "var") return sibling.ref.field
+	if (sibling.kind === "param" || sibling.kind === "setParam") return ctx.params.get(sibling.name)?.anchor
 	return undefined
 }
 
-function lowerComparison(ctx: LowerContext, cmp: CmpData, ids: VarIds): ComparisonIr {
-	if (cmp.op.kind === "allen") {
+const CMP = { eq: "Eq", ne: "Ne", lt: "Lt", le: "Le", gt: "Gt", ge: "Ge", pointIn: "PointIn" } as const
+
+function lowerCondition(ctx: LowerContext, cond: CondData, ids: VarIds): ConditionIn {
+	if (cond.kind !== "cmp") {
 		return {
-			op: { kind: "allen", mask: cmp.op.mask },
-			lhs: lowerCmpTerm(ctx, cmp.lhs, cmp.rhs, ids, "allen"),
-			rhs: lowerCmpTerm(ctx, cmp.rhs, cmp.lhs, ids, "allen")
+			kind: cond.op === "and" ? "And" : "Or",
+			children: cond.children.map((child) => lowerCondition(ctx, child, ids))
 		}
 	}
+	const kind = cond.op.kind
 	return {
-		op: { kind: cmp.op.kind },
-		lhs: lowerCmpTerm(ctx, cmp.lhs, cmp.rhs, ids, cmp.op.kind),
-		rhs: lowerCmpTerm(ctx, cmp.rhs, cmp.lhs, ids, cmp.op.kind)
+		kind: "Leaf",
+		op: cond.op.kind === "allen" ? { kind: "Allen", mask: cond.op.mask } : { kind: CMP[cond.op.kind] },
+		lhs: lowerCmpTerm(ctx, cond.lhs, cond.rhs, ids, kind),
+		rhs: lowerCmpTerm(ctx, cond.rhs, cond.lhs, ids, kind)
 	}
 }
 
-function lowerCondition(ctx: LowerContext, cond: CondData, ids: VarIds): ConditionTreeIr {
-	if (cond.kind === "cmp") {
-		return { kind: "leaf", cmp: lowerComparison(ctx, cond, ids) }
-	}
-	return {
-		kind: cond.op,
-		children: cond.children.map(function lowerChild(child) {
-			return lowerCondition(ctx, child, ids)
-		})
-	}
-}
+const FOLD = { sum: "Sum", mean: "Mean", min: "Min", max: "Max" } as const
 
-/**
- * Lowers one computed scalar node to the C05 wire (`#native.ts`'s
- * `ScalarExprIr`): the shared grammar arms pass through 1:1. Cached
- * construction depth is the bound; this walk emits wire only and does
- * not re-judge kinds (L14/native compile owns binding).
- */
-function lowerComputeNode(node: QueryNode, ids: VarIds): ScalarExprIr {
-	if (node.depth > MAX_COMPUTE_DEPTH) {
-		throw new AuthoringError({
-			message: `query lowering: a compute expression is deeper than ${MAX_COMPUTE_DEPTH} nodes (the engine's scalar depth bound)`
-		})
-	}
-	return lowerComputeGrammar(node, ids)
-}
-
-function lowerComputeGrammar(node: QueryNode, ids: VarIds): ScalarExprIr {
-	return scalarWire(node, (leaf) => {
-		return ids.of(leaf.ref as AnyVar)
-	})
-}
-
-function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
-	if (entry.kind === "segments")
-		return { kind: entry.kind, op: entry.op, left: ids.of(entry.left), right: ids.of(entry.right) }
-	if (entry.kind === "var") {
-		return { kind: "var", var: ids.of(entry.over) }
-	}
-	if (entry.kind === "compute") {
-		return { kind: "compute", expr: lowerComputeNode(entry.expr, ids) }
+function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIn {
+	switch (entry.kind) {
+		case "segments":
+			return {
+				kind: "Segments",
+				op: entry.op === "intersection" ? "Intersection" : "Difference",
+				left: ids.of(entry.left),
+				right: ids.of(entry.right)
+			}
+		case "var":
+			return { kind: "Var", var: ids.of(entry.over) }
+		case "compute":
+			if (entry.expr.depth > MAX_COMPUTE_DEPTH) {
+				throw new AuthoringError({
+					message: `query: a compute expression is deeper than ${MAX_COMPUTE_DEPTH} nodes`
+				})
+			}
+			return { kind: "Compute", expr: scalarWire(entry.expr, (leaf) => ids.of(leaf.ref as AnyVar)) }
 	}
 	const agg = entry.agg
 	switch (agg.op) {
 		case "count":
-			return { kind: "count" }
+			return { kind: "Count" }
 		case "fold":
-			return { kind: "aggregate", op: { kind: agg.fold }, over: ids.of(agg.over) }
+			return { kind: "Aggregate", op: FOLD[agg.fold], over: ids.of(agg.over) }
 		case "pack":
-			return { kind: "pack", over: ids.of(agg.over) }
+			return { kind: "Pack", over: ids.of(agg.over) }
 	}
 }
 
-function headOpOf(agg: AggData): HeadOpIr {
-	switch (agg.op) {
-		case "count":
-			return "count"
-		case "fold":
-			return agg.fold
-		case "pack":
-			return "pack"
-	}
-}
-
-function headTermOf(column: FindColumn): HeadTermIr {
+function headTermOf(column: FindColumn): HeadTermIn {
 	const entry = column.entry
-	if (entry.kind === "segments") return { kind: "compute" }
-	if (entry.kind === "var") {
-		return { kind: "var" }
-	}
-	if (entry.kind === "compute") {
-		return { kind: "compute" }
-	}
-	return { kind: "aggregate", op: headOpOf(entry.agg) }
+	if (entry.kind === "segments" || entry.kind === "compute") return { kind: "Compute" }
+	if (entry.kind === "var") return { kind: "Var" }
+	const agg = entry.agg
+	if (agg.op === "count") return { kind: "Aggregate", op: "Count" }
+	if (agg.op === "pack") return { kind: "Aggregate", op: "Pack" }
+	return { kind: "Aggregate", op: FOLD[agg.fold] }
 }
 
-function lowerRule(ctx: LowerContext, rule: RuleData): RuleIr {
+function lowerRule(ctx: LowerContext, rule: RuleData, labels?: (readonly string[])[]): RuleIn {
 	const ids = freshVarIds()
-	const atoms: AtomIr[] = []
-	const negated: AtomIr[] = []
-	const conditions: ConditionTreeIr[] = []
+	const atoms: AtomIn[] = []
+	const negated: AtomIn[] = []
+	const conditions: ConditionIn[] = []
 	for (const item of rule.items) {
 		switch (item.kind) {
-			case "atom": {
+			case "atom":
 				atoms.push(lowerAtom(ctx, item.atom, ids))
 				break
-			}
-			case "negated": {
+			case "negated":
 				negated.push(lowerAtom(ctx, item.atom, ids))
 				break
-			}
-			case "interior": {
+			case "interior":
 				atoms.push(lowerInteriorAtom(ctx, item.target, item.bindings, ids))
 				break
-			}
-			case "negatedInterior": {
+			case "negatedInterior":
 				negated.push(lowerInteriorAtom(ctx, item.target, item.bindings, ids))
 				break
-			}
-			case "cond": {
+			case "cond":
 				conditions.push(lowerCondition(ctx, item.cond, ids))
 				break
-			}
 		}
 	}
+	const finds = rule.finds.map((column) => lowerFind(column.entry, ids))
+	labels?.push(ids.labels())
+	return { finds, atoms, negated, conditions }
+}
+
+/** A recursive rule projects variables only and negates nothing. */
+function recFinds(label: string, rule: RuleIn): number[] {
+	if (rule.negated.length > 0) throw new AuthoringError({ message: `query ${label}: a recursive rule cannot negate` })
+	return rule.finds.map((find) => {
+		if (find.kind !== "Var")
+			throw new AuthoringError({ message: `query ${label}: a recursive rule finds variables only` })
+		return find.var
+	})
+}
+
+/** A recursive step reads its own previous output through exactly one self-atom. */
+function recStep(label: string, rule: RuleIn, self: number): RecStepIn {
+	const selfAtoms = rule.atoms.filter((atom) => atom.source.kind === "Interior" && atom.source.interior === self)
+	const [selfAtom] = selfAtoms
+	if (selfAtom === undefined || selfAtoms.length > 1) {
+		throw new AuthoringError({ message: `query ${label}: a recursive step reads the recursion exactly once` })
+	}
 	return {
-		finds: rule.finds.map(function findOf(column) {
-			return lowerFind(column.entry, ids)
-		}),
-		atoms,
-		negated,
-		conditions
+		finds: recFinds(label, rule),
+		selfBindings: selfAtom.bindings,
+		atoms: rule.atoms.filter((atom) => atom !== selfAtom),
+		conditions: rule.conditions
 	}
 }
 
-function lowerQuery(q: AnyQuery): ParsedQuery {
+/** Variable labels by rule: main rules, then each interior's rules. */
+interface RuleLabels {
+	readonly main: (readonly string[])[]
+	readonly interiors: (readonly string[])[][]
+}
+
+/** Lowers a query to the addon's `QueryIn`. The engine validates it; lowering judges nothing. */
+function lowerQuery(q: AnyQuery): QueryIn {
+	return lowerQueryLabelled(q).query
+}
+
+function lowerQueryLabelled(q: AnyQuery): { readonly query: QueryIn; readonly labels: RuleLabels } {
 	const theory = q.schema
 	const data = q.data
-	const relationIds = new Map<string, number>()
-	Object.keys(theory.relations).forEach(function assignOrdinal(name, index) {
-		relationIds.set(name, index)
-	})
-	const interiorIds = new Map<string, number>()
-	data.interiors.forEach(function assignInteriorId(interior, index) {
-		interiorIds.set(interior.name, index)
-	})
-	if (data.kind === "reach") {
-		interiorIds.set(data.rec.name, data.interiors.length)
-	}
+	const relationIds = new Map(Object.keys(theory.relations).map((name, index) => [name, index] as const))
+	const interiorIds = new Map(data.interiors.map((interior, index) => [interior.name, index] as const))
+	if (data.kind === "reach") interiorIds.set(data.rec.name, data.interiors.length)
 	const paramIds = new Map<string, number>()
 	const params = new Map<string, ParamEntry>()
-	data.params.forEach(function assignParamId(entry, index) {
+	data.params.forEach((entry, index) => {
 		if (entry.anchor === undefined) {
 			throw new AuthoringError({
 				message: `query param ${entry.name} has no field-anchored use — bind it in an atom or compare it against a bound variable`
@@ -2355,36 +2246,30 @@ function lowerQuery(q: AnyQuery): ParsedQuery {
 		params.set(entry.name, entry)
 	})
 	const ctx: LowerContext = { theory, relationIds, interiorIds, paramIds, params }
-	const interiors = data.interiors.map(function lowerInterior(interior) {
-		return {
-			head: interior.finds.map(headTermOf),
-			rules: interior.rules.map(function lowerInteriorRule(rule) {
-				return lowerRule(ctx, rule)
-			})
-		}
-	})
-	const head = data.finds.map(headTermOf)
-	const rules = data.rules.map(function lowerMainRule(rule) {
-		return lowerRule(ctx, rule)
-	})
-	if (data.kind === "cq") {
-		return parseQueryIr({ kind: "cq", interiors, head, rules })
+	const labels: RuleLabels = { main: [], interiors: data.interiors.map(() => []) }
+	const query: QueryIn = {
+		interiors: data.interiors.map((interior, index) => ({
+			rules: interior.rules.map((rule) => lowerRule(ctx, rule, labels.interiors[index]))
+		})),
+		head: data.finds.map(headTermOf),
+		rules: data.rules.map((rule) => lowerRule(ctx, rule, labels.main))
 	}
-	return parseQueryIr({
-		kind: "reach",
-		interiors,
-		rec: {
-			head: data.rec.finds.map(headTermOf),
-			base: data.rec.base.map(function lowerBase(rule) {
-				return lowerRule(ctx, rule)
-			}),
-			rec: data.rec.rec.map(function lowerRecArm(rule) {
-				return lowerRule(ctx, rule)
-			})
+	if (data.kind === "cq") return { query, labels }
+	const label = `recursion ${data.rec.name}`
+	const self = data.interiors.length
+	return {
+		query: {
+			...query,
+			rec: {
+				base: data.rec.base.map((rule) => {
+					const lowered = lowerRule(ctx, rule)
+					return { finds: recFinds(label, lowered), atoms: lowered.atoms, conditions: lowered.conditions }
+				}),
+				rec: data.rec.rec.map((rule) => recStep(label, lowerRule(ctx, rule), self))
+			}
 		},
-		head,
-		rules
-	})
+		labels
+	}
 }
 
 export type {
@@ -2405,4 +2290,4 @@ export type {
 	RuleValue,
 	TermOps
 }
-export { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, query, taggedCmpLiteral }
+export { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, query, queryHandleOf, taggedCmpLiteral }

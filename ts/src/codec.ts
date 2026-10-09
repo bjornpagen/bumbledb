@@ -1,10 +1,9 @@
 import { Effect, Schema as EffectSchema, Result } from "effect"
 import { membersAgree } from "./closed.ts"
-import { schemaTables } from "./compile.ts"
-import { dbNative } from "./db-native.ts"
+import { compiledOf, schemaTables } from "./compile.ts"
 import { AuthoringError, argumentError, DbError } from "./errors.ts"
 import { type AnyField, fieldDescriptor, type Infer } from "./fields.ts"
-import { lower } from "./lower.ts"
+import { addon } from "./native/addon.ts"
 import { call } from "./native/op.ts"
 import { type AnyRelation, type Fact, relationDescriptor, relationFields } from "./relation.ts"
 import type { CellValue } from "./rows.ts"
@@ -58,7 +57,7 @@ function checkedRowShape<R extends AnyRelation>(operation: string, input: RowSha
 	if (relationId === undefined || !membersAgree(schema.relations[relation.name], relation)) {
 		throw new AuthoringError({ message: `${operation}: relation is not declared in the schema` })
 	}
-	return { relation, relationId, spec: lower(schema) }
+	return { relation, relationId, schema: compiledOf(schema).handle }
 }
 
 function invalid(operation: string): DbError {
@@ -282,7 +281,7 @@ const encodeRows = Effect.fn("encodeRows")(function* <R extends AnyRelation>(
 	rows: Iterable<Fact<R>>
 ) {
 	const runtime = yield* runtimeHandle
-	const { relation, relationId, spec } = yield* Effect.try({
+	const { relation, relationId, schema } = yield* Effect.try({
 		try: () => checkedRowShape("encodeRows", shape),
 		catch: (cause) => argumentError("encodeRows", cause)
 	})
@@ -292,14 +291,14 @@ const encodeRows = Effect.fn("encodeRows")(function* <R extends AnyRelation>(
 	})
 	return yield* call(
 		"encodeRows",
-		(callback) => dbNative.runtimeEncodeRows(runtime, spec, relationId, flat.rows, flat.cells, callback),
-		dbNative.runtimeBytesTake
+		(callback) => addon.runtimeEncodeRows(runtime, schema, relationId, flat.rows, flat.cells, callback),
+		addon.runtimeBytesTake
 	)
 })
 
 const decodeRows = Effect.fn("decodeRows")(function* <R extends AnyRelation>(shape: RowShape<R>, input: Uint8Array) {
 	const runtime = yield* runtimeHandle
-	const { relation, relationId, spec } = yield* Effect.try({
+	const { relation, relationId, schema } = yield* Effect.try({
 		try: () => checkedRowShape("decodeRows", shape),
 		catch: (cause) => argumentError("decodeRows", cause)
 	})
@@ -308,10 +307,10 @@ const decodeRows = Effect.fn("decodeRows")(function* <R extends AnyRelation>(sha
 	}
 	return yield* call(
 		"decodeRows",
-		(callback) => dbNative.runtimeDecodeRows(runtime, spec, relationId, input, callback),
+		(callback) => addon.runtimeDecodeRows(runtime, schema, relationId, input, callback),
 		(lease) =>
 			((rows) => Object.freeze(rows.map((row) => factOfCells(relation, row as readonly CellValue[]))))(
-				dbNative.runtimeRowsTake(lease)
+				addon.runtimeRowsTake(lease)
 			)
 	)
 })

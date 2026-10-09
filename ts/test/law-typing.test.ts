@@ -3,7 +3,7 @@ import { describe, test } from "node:test"
 import { within } from "../src/capacity.ts"
 import { closed, closedId } from "../src/closed.ts"
 import { on } from "../src/face.ts"
-import { str, u64 } from "../src/fields.ts"
+import { bool, str, u64 } from "../src/fields.ts"
 import type { ClassWall, LawfulStatements } from "../src/law.ts"
 import { lower } from "../src/lower.ts"
 import { relation } from "../src/relation.ts"
@@ -64,15 +64,14 @@ describe("the three class laws", function laws() {
 		const Grade = closed(
 			"Grade",
 			["Failed", "DirectPass"],
-			{ mastered: str },
-			{ Failed: { mastered: "no" }, DirectPass: { mastered: "yes" } }
+			{ mastered: bool },
+			{ Failed: { mastered: false }, DirectPass: { mastered: true } }
 		)
 		const Certificate = relation("Certificate", { id: u64, grade: closedId(Grade) })
 		const Mastery = schema("Mastery", { Grade, Certificate }, [
-			contained(on(Certificate, "grade"), on(select(Grade, { mastered: "yes" }), "id"))
+			contained(on(Certificate, "grade"), on(select(Grade, { mastered: true }), "id"))
 		])
 		const probeGrade: Equal<(typeof Mastery)["classes"]["Certificate"]["grade"], "Grade.id"> = true
-		// An id in no law is BARE now — the fresh generator authority is deleted.
 		const probeId: Equal<(typeof Mastery)["classes"]["Certificate"]["id"], undefined> = true
 		const probeColumn: Equal<(typeof Mastery)["classes"]["Grade"]["mastered"], undefined> = true
 		assert.ok(probeGrade && probeId && probeColumn)

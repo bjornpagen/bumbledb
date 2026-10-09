@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { Effect, ManagedRuntime, Result } from "effect"
+import { Effect, ManagedRuntime } from "effect"
 import { alternatives } from "../src/alternatives.ts"
 import { ChangeSet } from "../src/changes.ts"
 import { closed, closedId } from "../src/closed.ts"
-import { Schema } from "../src/compile.ts"
+import { compiledOf } from "../src/compile.ts"
 import { Db } from "../src/db.ts"
+import { AuthoringError } from "../src/errors.ts"
 import { on } from "../src/face.ts"
 import { i64, interval, str, u64 } from "../src/fields.ts"
 import { lower } from "../src/lower.ts"
@@ -108,40 +109,25 @@ function typePins() {
 }
 void typePins
 
-test("native expansion refusals cite both actual directions at their current statement positions", async () => {
+test("the engine refuses expanded duplicates at definition, citing the duplicated statement", () => {
 	const { Parent, Imported, members, keys, expansion } = declarations()
 	const selected = on(select(Parent, { kind: "Imported" }), "id")
 	const inward = contained(on(Imported, "parent"), selected)
 	const outward = contained(selected, on(Imported, "parent"))
-	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
-	try {
-		for (const [laws, rejected, earlier] of [
-			[[...keys, ...expansion, inward], 12, 7],
-			[[...keys, inward, ...expansion], 8, 5],
-			[[...keys, ...expansion, outward], 12, 6]
-		] as const) {
-			const invalid = schema("ExpandedDuplicate", members, laws)
-			const outcome = await runtime.runPromise(Effect.result(Schema.compile(invalid)))
-			assert.ok(Result.isFailure(outcome))
-			assert.equal(outcome.failure.reason._tag, "Engine")
-			if (outcome.failure.reason._tag !== "Engine") assert.fail("expected native engine refusal")
-			const diagnostic = outcome.failure.reason.diagnostic
-			assert.ok(diagnostic)
-			assert.equal(diagnostic.statement.id, rejected)
-			assert.equal(diagnostic.conflict?.id, earlier)
-			assert.equal(diagnostic.statement.descriptor, diagnostic.conflict?.descriptor)
-			assert.match(diagnostic.statement.descriptor, /Imported\(parent\)/)
-			assert.match(diagnostic.statement.descriptor, /Parent\(id \| kind == /)
-			assert.match(diagnostic.statement.descriptor, / <= /)
-			assert.doesNotMatch(diagnostic.statement.descriptor, /statement#|relation#|field#/)
-		}
+	for (const laws of [
+		[...keys, ...expansion, inward],
+		[...keys, inward, ...expansion],
+		[...keys, ...expansion, outward]
+	]) {
 		assert.throws(
-			() => schema("HandwrittenDuplicate", members, [...keys, ...expansion, inward, inward]),
-			/duplicate statement/
+			() => schema("ExpandedDuplicate", members, laws),
+			(error: unknown) =>
+				error instanceof AuthoringError &&
+				/Imported\(parent\)/.test(error.message) &&
+				/Parent\(id \| kind == /.test(error.message)
 		)
-	} finally {
-		await runtime.dispose()
 	}
+	assert.throws(() => schema("HandwrittenDuplicate", members, [...keys, ...expansion, inward, inward]), AuthoringError)
 })
 
 test("ordinary native admission enforces payloads and accepts an atomic arm switch", async () => {
@@ -151,15 +137,14 @@ test("ordinary native admission enforces payloads and accepts an atomic arm swit
 		await runtime.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const compiled = yield* Schema.compile(Theory)
-					const equivalent = yield* Schema.compile(schema("Alternatives", members, [...keys, ...manual]))
+					const compiled = compiledOf(Theory)
+					const equivalent = compiledOf(schema("Alternatives", members, [...keys, ...manual]))
 					assert.deepEqual(compiled.descriptor, equivalent.descriptor)
 					assert.equal(compiled.schemaId, equivalent.schemaId)
 					for (const missing of keys) {
 						assert.throws(() => schema("Alternatives", members, [...keys.filter((k) => k !== missing), ...expansion]))
 					}
 					const db = yield* Db.create(storeDir("alternatives"), Theory)
-					const options = { expected: { kind: "any" } } as const
 					for (const invalid of ["missing", "wrong", "orphan", "conflict", "mismatched"] as const) {
 						const draft = yield* ChangeSet.builder(Theory)
 						if (invalid !== "orphan") yield* draft.insert(Parent, [{ id: 1n, kind: "Imported" }])
@@ -168,8 +153,8 @@ test("ordinary native admission enforces payloads and accepts an atomic arm swit
 						if (invalid === "wrong") yield* draft.insert(Electronic, [{ parent: 1n, reference: "wrong arm" }])
 						if (invalid === "conflict") yield* draft.insert(Imported, [{ parent: 1n, evidence: "conflicting payload" }])
 						const changes = yield* draft.finish()
-						assert.equal((yield* db.judge(changes, options)).kind, "invariant-rejected", invalid)
-						assert.equal((yield* db.apply(changes, options)).kind, "invariant-rejected", invalid)
+						assert.equal((yield* db.judge(changes))._tag, "Rejected", invalid)
+						assert.equal((yield* db.apply(changes))._tag, "Rejected", invalid)
 					}
 					const draft = yield* ChangeSet.builder(Theory)
 					yield* draft.insert(Parent, [
@@ -180,7 +165,7 @@ test("ordinary native admission enforces payloads and accepts an atomic arm swit
 					yield* draft.insert(Imported, [{ parent: 1n, evidence: "one" }])
 					yield* draft.insert(Electronic, [{ parent: 2n, reference: "two" }])
 					yield* draft.insert(Postal, [{ parent: 3n, window: { start: -1n, end: 1n } }])
-					assert.equal((yield* db.apply(yield* draft.finish(), options)).kind, "accepted")
+					assert.equal((yield* db.apply(yield* draft.finish()))._tag, "Committed")
 					for (const reverse of [false, true]) {
 						const change = yield* ChangeSet.builder(Theory)
 						const remove = Effect.gen(function* () {
@@ -194,8 +179,8 @@ test("ordinary native admission enforces payloads and accepts an atomic arm swit
 						yield* reverse ? add : remove
 						yield* reverse ? remove : add
 						const changes = yield* change.finish()
-						assert.equal((yield* db.judge(changes, options)).kind, "admitted")
-						if (reverse) assert.equal((yield* db.apply(changes, options)).kind, "accepted")
+						assert.equal((yield* db.judge(changes))._tag, "Admitted")
+						if (reverse) assert.equal((yield* db.apply(changes))._tag, "Committed")
 					}
 				})
 			)

@@ -23,6 +23,7 @@
 
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
+import { AuthoringError } from "../src/errors.ts"
 import type { TermOps } from "../src/index.ts"
 import { ALLEN, bool, i64, interval, query, relation, schema, u64, v } from "../src/index.ts"
 import { allen, lt, pointIn } from "../src/query/atom.ts"
@@ -70,29 +71,35 @@ describe("the comparison pairing walls", function suite() {
 		}, CONSTANT)
 	})
 
-	test("the order pair: cross-domain variable pairs are compile-refused (each side alone is orderable)", function orderPairs() {
-		const boolAgainstNumeric = query(World).rule((r) => {
-			const { id, flag, count } = v(Reading)
-			return (
-				r
-					.match(Reading, { id, flag, count })
-					// @ts-expect-error — bool meets only bool: a bool var against a u64 var is the engine's same-type conviction
-					.where(r.lt(flag, count))
-					.find({ n: id })
-			)
-		})
-		assert.equal(boolAgainstNumeric.data.rules.length, 1)
-		const acrossSignedness = query(World).rule((r) => {
-			const { id, count, delta } = v(Reading)
-			return (
-				r
-					.match(Reading, { id, count, delta })
-					// @ts-expect-error — u64 and i64 never meet under an order operator
-					.where(r.lt(count, delta))
-					.find({ n: id })
-			)
-		})
-		assert.equal(acrossSignedness.data.rules.length, 1)
+	test("the order pair: cross-domain variable pairs are refused at compile time and by the engine", function orderPairs() {
+		assert.throws(
+			() =>
+				query(World).rule((r) => {
+					const { id, flag, count } = v(Reading)
+					return (
+						r
+							.match(Reading, { id, flag, count })
+							// @ts-expect-error — bool meets only bool: a bool var against a u64 var is the engine's same-type conviction
+							.where(r.lt(flag, count))
+							.find({ n: id })
+					)
+				}),
+			AuthoringError
+		)
+		assert.throws(
+			() =>
+				query(World).rule((r) => {
+					const { id, count, delta } = v(Reading)
+					return (
+						r
+							.match(Reading, { id, count, delta })
+							// @ts-expect-error — u64 and i64 never meet under an order operator
+							.where(r.lt(count, delta))
+							.find({ n: id })
+					)
+				}),
+			AuthoringError
+		)
 	})
 
 	test("the order pair: literals type against their sibling — bool-vs-bigint and u64-vs-boolean are compile-refused", function literalPairs() {
@@ -137,7 +144,7 @@ describe("the comparison pairing walls", function suite() {
 						.find({ n: id, f: r.min(flag) })
 				)
 			})
-		}, /the min input Reading\.flag is bool, not numeric/)
+		}, AuthoringError)
 		assert.throws(function maxBool() {
 			query(World).rule((r) => {
 				const { id, flag } = v(Reading)
@@ -148,35 +155,41 @@ describe("the comparison pairing walls", function suite() {
 						.find({ n: id, f: r.max(flag) })
 				)
 			})
-		}, /the max input Reading\.flag is bool, not numeric/)
+		}, AuthoringError)
 	})
 
 	test("the pointIn pair: the point lives in the interval's element domain", function pointInPair() {
-		const signedPointInUnsigned = query(World).rule((r) => {
-			const { id, delta, window } = v(Reading)
-			return (
-				r
-					.match(Reading, { id, delta, window })
-					// @ts-expect-error — an i64-typed point against interval(u64) is IllegalComparison; the element domain is the point's domain
-					.where(r.pointIn(delta, window))
-					.find({ n: id })
-			)
-		})
-		assert.equal(signedPointInUnsigned.data.rules.length, 1)
+		assert.throws(
+			() =>
+				query(World).rule((r) => {
+					const { id, delta, window } = v(Reading)
+					return (
+						r
+							.match(Reading, { id, delta, window })
+							// @ts-expect-error — an i64-typed point against interval(u64) is IllegalComparison; the element domain is the point's domain
+							.where(r.pointIn(delta, window))
+							.find({ n: id })
+					)
+				}),
+			AuthoringError
+		)
 	})
 
 	test("the allen pair: two intervals of one element domain (Q1 — widths meet freely, u64-vs-i64 stays illegal)", function allenPair() {
-		const crossElement = query(World).rule((r) => {
-			const { id, window, phase } = v(Reading)
-			return (
-				r
-					.match(Reading, { id, window, phase })
-					// @ts-expect-error — interval(u64) never classifies against interval(i64)
-					.where(r.allen(window, ALLEN.before, phase))
-					.find({ n: id })
-			)
-		})
-		assert.equal(crossElement.data.rules.length, 1)
+		assert.throws(
+			() =>
+				query(World).rule((r) => {
+					const { id, window, phase } = v(Reading)
+					return (
+						r
+							.match(Reading, { id, window, phase })
+							// @ts-expect-error — interval(u64) never classifies against interval(i64)
+							.where(r.allen(window, ALLEN.before, phase))
+							.find({ n: id })
+					)
+				}),
+			AuthoringError
+		)
 	})
 
 	test("the legal pairs stay legal: same-domain vars, sibling-typed opens, one-element allen", function legalPairs() {

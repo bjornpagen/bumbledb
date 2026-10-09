@@ -79,21 +79,15 @@ describe("the generic full-binding law", function suite() {
 		)
 
 		assert.deepStrictEqual(lowerQuery(counted), {
-			kind: "cq",
 			interiors: [],
-			head: [{ kind: "aggregate", op: "count" }],
+			head: [{ kind: "Aggregate", op: "Count" }],
 			rules: [
 				{
-					finds: [{ kind: "count" }],
+					finds: [{ kind: "Count" }],
 					atoms: [
 						{
-							source: { kind: "edb", relation: ACCOUNT_ID },
-							bindings: [
-								[0, { kind: "var", var: 0 }],
-								[1, { kind: "var", var: 1 }],
-								[2, { kind: "var", var: 2 }],
-								[3, { kind: "var", var: 3 }]
-							]
+							source: { kind: "Edb", relation: ACCOUNT_ID },
+							bindings: [0, 1, 2, 3].map((field) => ({ field, term: { kind: "Var", var: field } }))
 						}
 					],
 					negated: [],
@@ -110,13 +104,14 @@ describe("the generic full-binding law", function suite() {
 		type RowPin = Expect<Equal<QueryRow<typeof kinds>, { readonly n: bigint }>>
 
 		assert.deepStrictEqual(lowerQuery(kinds), {
-			kind: "cq",
 			interiors: [],
-			head: [{ kind: "aggregate", op: "count" }],
+			head: [{ kind: "Aggregate", op: "Count" }],
 			rules: [
 				{
-					finds: [{ kind: "count" }],
-					atoms: [{ source: { kind: "edb", relation: KIND_ID }, bindings: [[0, { kind: "var", var: 0 }]] }],
+					finds: [{ kind: "Count" }],
+					atoms: [
+						{ source: { kind: "Edb", relation: KIND_ID }, bindings: [{ field: 0, term: { kind: "Var", var: 0 } }] }
+					],
 					negated: [],
 					conditions: []
 				}
@@ -140,7 +135,7 @@ describe("the generic full-binding law", function suite() {
 		type RowPin = Expect<Equal<QueryRow<typeof full>, { readonly holder: bigint; readonly n: bigint }>>
 		type ParamsPin = Expect<Equal<keyof QueryParams<typeof full>, never>>
 		const lowered = lowerQuery(full)
-		assert.equal(lowered.kind, "cq")
+		assert.equal(lowered.rec, undefined)
 		const rule = lowered.rules[0]
 		assert.ok(rule !== undefined, "the one rule lowered")
 		assert.equal(rule.atoms.length, 2, "the full binding and the second full binding are two positive atoms")

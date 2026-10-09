@@ -2,15 +2,8 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Effect, type Stream } from "effect"
 import { ChangeSet } from "../src/changes.ts"
-import { Schema as BumbleSchema } from "../src/compile.ts"
 import { Db } from "../src/db.ts"
-import { f64, str, u64, uuid } from "../src/fields.ts"
-import { query } from "../src/query/lower.ts"
-import { v } from "../src/query/scope.ts"
-import { relation } from "../src/relation.ts"
 import { Bumble } from "../src/runtime.ts"
-import { schema } from "../src/schema.ts"
-import { key } from "../src/statements.ts"
 import { type Attempt, Learning, type Student } from "./fixtures/learning.ts"
 
 function assertNoTwin(name: string, value: object): void {
@@ -24,12 +17,10 @@ function assertNoTwin(name: string, value: object): void {
 test("every core entry point constructs a lazy Effect (or Stream) — nothing runs at construction", function lazyConstruction() {
 	const create = Db.create("/tmp/never-used", Learning)
 	const open = Db.open("/tmp/never-used", Learning)
-	const compile = BumbleSchema.compile(Learning)
 	const builder = ChangeSet.builder(Learning)
 	for (const [name, value] of [
 		["Db.create", create],
 		["Db.open", open],
-		["Schema.compile", compile],
 		["ChangeSet.builder", builder]
 	] as const) {
 		assert.ok(Effect.isEffect(value), `${name} constructs an Effect`)
@@ -50,23 +41,6 @@ test("the layer value is inert data until provided into a running scope", functi
 		cleanupTimeout: "1 second"
 	})
 	assertNoTwin("Bumble.layer", layer)
-})
-
-test("pure schema/query metadata construction touches no native work and no I/O", function pureMetadata() {
-	// These constructions run against ORDINARY data only. A native
-	// dispatch here would be an import-time/authoring-time side effect —
-	// the exact thing chapter 35's pure-descriptions table forbids.
-	const Widget = relation("Widget", { id: uuid, name: str, score: f64, count: u64 })
-	const Gadgets = schema("Gadgets", { Widget }, [key(Widget, ["id"])])
-	const template = query(Gadgets).rule((r) => {
-		const { id, name, score } = v(Widget)
-		return r
-			.match(Widget, { id, name, score })
-			.where(r.eq(name, r.param("name")))
-			.find({ id, total: r.sum(score) })
-	})
-	assert.ok(Object.isFrozen(Gadgets))
-	assert.equal(typeof template.data, "object", "the template is inert owned AST")
 })
 
 test("a CompleteResult's pages is a Stream value, and no cursor/AsyncIterable twin exists on the type", function pagesIsStream() {
