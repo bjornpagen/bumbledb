@@ -88,7 +88,7 @@ fn u64_key_uses_exact_bounded_routing_bytes() {
     let store = Store::create(
         &TempDir::new("exact-u64").path().join("store"),
         &schema,
-        MapPolicy::default(),
+        DEFAULT_MAP_CEILING,
     )
     .expect("create")
     .0;
@@ -136,7 +136,7 @@ fn text_key_uses_fingerprint_routing() {
     let store = Store::create(
         &TempDir::new("fp-text").path().join("store"),
         &schema,
-        MapPolicy::default(),
+        DEFAULT_MAP_CEILING,
     )
     .expect("create")
     .0;
@@ -223,7 +223,7 @@ fn store_shares_schema_compiled_theory() {
     let store = Store::create(
         &TempDir::new("shared-theory").path().join("store"),
         &schema,
-        MapPolicy::default(),
+        DEFAULT_MAP_CEILING,
     )
     .expect("create")
     .0;

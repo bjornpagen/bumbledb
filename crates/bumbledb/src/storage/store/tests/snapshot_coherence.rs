@@ -269,7 +269,7 @@ fn export_uses_the_selected_nonleading_scalar_key_not_canonical_row_order() {
     }
     .validate()
     .unwrap();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .unwrap()
         .0;
     let values = [
@@ -306,30 +306,6 @@ fn export_uses_the_selected_nonleading_scalar_key_not_canonical_row_order() {
         })
         .unwrap();
     assert_eq!(actual, [values[1].clone(), values[0].clone()]);
-}
-
-#[test]
-fn snapshot_age_is_exposed_for_growth_diagnostics() {
-    let (_dir, path) = store_dir("snap-age");
-    let store = create_default(&path);
-    let (pass, cached) = store.inner.gate.enter_read(&work()).expect("admission");
-    assert!(cached.is_none());
-    let txn = store.inner.env.clone().static_read_txn().expect("reader");
-    let reader = super::super::gate::CachedRead::new(txn, GenerationId::initial());
-    // Admission already blocks growth, even while the native snapshot is
-    // being initialized. Its age must not restart at the later capture.
-    let setup = std::time::Instant::now();
-    std::thread::sleep(std::time::Duration::from_millis(5));
-    let elapsed = setup.elapsed();
-    let snapshot = super::super::snapshot::OwnedSnapshot::capture(
-        std::sync::Arc::clone(&store.inner),
-        pass,
-        reader,
-    );
-    assert!(
-        snapshot.age() >= elapsed,
-        "age includes growth-blocking setup"
-    );
 }
 
 #[test]
@@ -468,16 +444,14 @@ fn census_and_page_stats_read_one_coherent_snapshot() {
     // Distinct quantities stay distinct and self-consistent: the two meta
     // pages, every live tree page and the derived freelist together are the
     // populated page span, which the file length covers.
-    let report = store.map_report(&context).expect("map report");
+    let file_bytes = store.file_bytes().expect("file bytes");
     let populated_pages =
         2 + stats.branch_pages + stats.leaf_pages + stats.overflow_pages + stats.free_pages;
     assert!(
-        populated_pages * stats.page_size <= report.populated_file_bytes,
-        "{populated_pages} pages of {} bytes exceed the {}-byte file",
+        populated_pages * stats.page_size <= file_bytes,
+        "{populated_pages} pages of {} bytes exceed the {file_bytes}-byte file",
         stats.page_size,
-        report.populated_file_bytes
     );
-    assert_eq!(u64::from(report.page_size), stats.page_size);
 }
 
 pub(super) fn row_bytes(values: &[Value]) -> &'static [u8] {

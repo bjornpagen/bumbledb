@@ -12,13 +12,10 @@
 //! - `collision`      → HASH-02 / Q-COLLISION substrate: forced constant
 //!   fingerprints through insert/contains/delete/judgment/export, long
 //!   values above the LMDB key bound.
-//! - `resize`         → G06 elastic map: growth under load, pinned-reader
-//!   blocked resize, growth ceiling refusal, map-full before/after seal.
+//! - `ceiling`        → the fixed virtual map: `Full` before and at seal.
 //! - `crash`          → G06/E-DURABILITY process-death schedules: kill
 //!   before/after durable commit, lock release on death. (True power-loss
 //!   qualification is a separate authorized hardware gate.)
-
-use std::time::Duration;
 
 use bumbledb_theory::schema::{RelationId, StatementId};
 
@@ -37,20 +34,19 @@ use super::candidate::{
 };
 use super::error::{StoreError, StoreResult};
 use super::host::{AttachmentChange, HostChanges, HostRecordChange};
-use super::map::MapPolicy;
+use super::store_env::DEFAULT_MAP_CEILING;
 use super::store_env::Store;
 
 mod admission;
 mod candidate_visibility;
+mod ceiling;
 mod collision;
 mod compiled_projection;
 mod crash;
 mod fresh_adoption;
 mod incremental;
 mod judged;
-mod large;
 mod lifecycle;
-mod resize;
 mod schema_indexed;
 mod snapshot_coherence;
 
@@ -115,28 +111,8 @@ pub(super) fn work() -> WorkContext {
     WorkContext::new()
 }
 
-/// A test host explicitly requests cancellation after the chosen wait.
-pub(super) fn cancel_after(delay: Duration) -> WorkContext {
-    let work = WorkContext::new();
-    if delay.is_zero() {
-        work.cancel();
-    } else {
-        let cancel = work.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(delay);
-            cancel.cancel();
-        });
-    }
-    work
-}
-
-/// Tiny-map policy for forced growth schedules.
-pub(super) fn tiny_map() -> MapPolicy {
-    MapPolicy {
-        initial_map_bytes: 1 << 20,
-        max_map_bytes: None,
-    }
-}
+/// A ceiling small enough for deterministic `Full` schedules.
+pub(super) const SMALL_CEILING: u64 = 1 << 20;
 
 /// Indexes nothing: relations with no declared key statements.
 pub(super) struct NoIndex;
@@ -300,11 +276,11 @@ pub(super) fn store_dir(tag: &str) -> (TempDir, std::path::PathBuf) {
 }
 
 pub(super) fn open_default(path: &std::path::Path) -> Store {
-    Store::open(path, &schema(), MapPolicy::default()).expect("open store")
+    Store::open(path, &schema(), DEFAULT_MAP_CEILING).expect("open store")
 }
 
 pub(super) fn create_default(path: &std::path::Path) -> Store {
-    Store::create(path, &schema(), MapPolicy::default())
+    Store::create(path, &schema(), DEFAULT_MAP_CEILING)
         .expect("create store")
         .0
 }

@@ -23,6 +23,7 @@ impl Error {
             crate::storage::store::StoreError::UndefinedDuration { statement } => {
                 Self::CapacityRayMeasure { statement }
             }
+            crate::storage::store::StoreError::Full { ceiling } => Self::Full { ceiling },
             other => Self::Store(Box::new(other)),
         }
     }

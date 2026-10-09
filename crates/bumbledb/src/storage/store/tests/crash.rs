@@ -166,7 +166,7 @@ fn a_paused_owner_keeps_the_lock_and_death_releases_it() {
     let mut child = spawn_child("hold-lock", &path);
     wait_for_marker(&mut child, "CRASH_CHILD_HOLDING");
     // While the child lives, ownership refuses — time never mints an owner.
-    match Store::open(&path, &schema(), MapPolicy::default()) {
+    match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
         Err(StoreError::StoreLocked { .. }) => {}
         other => panic!("expected StoreLocked under a live child, got {other:?}"),
     }

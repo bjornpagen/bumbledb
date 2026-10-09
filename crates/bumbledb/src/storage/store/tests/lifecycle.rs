@@ -107,7 +107,7 @@ fn environment_identity_differs_per_open() {
 fn create_refuses_an_existing_destination() {
     let (_dir, path) = store_dir("store-create-exists");
     drop(create_default(&path));
-    match Store::create(&path, &schema(), MapPolicy::default()) {
+    match Store::create(&path, &schema(), DEFAULT_MAP_CEILING) {
         Err(StoreError::DestinationExists { path: reported }) => assert_eq!(reported, path),
         other => panic!("expected DestinationExists, got {other:?}"),
     }
@@ -117,7 +117,7 @@ fn create_refuses_an_existing_destination() {
 fn a_second_open_refuses_while_the_owner_lives_and_succeeds_after_drop() {
     let (_dir, path) = store_dir("store-lock");
     let owner = create_default(&path);
-    match Store::open(&path, &schema(), MapPolicy::default()) {
+    match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
         Err(StoreError::StoreLocked { .. }) => {}
         other => panic!("expected StoreLocked, got {other:?}"),
     }
@@ -137,18 +137,18 @@ fn duplicated_lock_description_does_not_outlive_the_final_environment_owner() {
         drop(owner.snapshot(&work()).unwrap());
         let held = retain_snapshot.then(|| owner.snapshot(&work()).unwrap());
         assert!(matches!(
-            Store::open(&path, &schema(), MapPolicy::default()),
+            Store::open(&path, &schema(), DEFAULT_MAP_CEILING),
             Err(StoreError::StoreLocked { .. })
         ));
         drop(owner);
         if held.is_some() {
             assert!(matches!(
-                Store::open(&path, &schema(), MapPolicy::default()),
+                Store::open(&path, &schema(), DEFAULT_MAP_CEILING),
                 Err(StoreError::StoreLocked { .. })
             ));
         }
         drop(held);
-        let reopened = Store::open(&path, &schema(), MapPolicy::default())
+        let reopened = Store::open(&path, &schema(), DEFAULT_MAP_CEILING)
             .expect("native close must release the lock even before an inherited fd closes");
         assert_eq!(
             reopened.snapshot(&work()).unwrap().row_count(NOTE).unwrap(),
@@ -157,7 +157,7 @@ fn duplicated_lock_description_does_not_outlive_the_final_environment_owner() {
         drop(inherited);
         // Closing the old description must not release the new owner's lock.
         assert!(matches!(
-            Store::open(&path, &schema(), MapPolicy::default()),
+            Store::open(&path, &schema(), DEFAULT_MAP_CEILING),
             Err(StoreError::StoreLocked { .. })
         ));
         drop(reopened);
@@ -211,7 +211,7 @@ fn an_old_family_transitional_store_refuses_before_any_cleanup() {
     let data_len = std::fs::metadata(path.join("data.mdb"))
         .expect("fixture data")
         .len();
-    match Store::open(&path, &schema(), MapPolicy::default()) {
+    match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
         Err(StoreError::UnrecognizedStore { path: reported }) => assert_eq!(reported, path),
         other => panic!("expected UnrecognizedStore, got {other:?}"),
     }
@@ -251,7 +251,7 @@ fn a_layout_bump_refuses_with_both_counters() {
             let store = create_default(&path);
             store.force_layout_for_tests(incompatible);
         }
-        match Store::open(&path, &schema(), MapPolicy::default()) {
+        match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
             Err(StoreError::LayoutMismatch { found, expected }) => {
                 assert_eq!(found, incompatible);
                 assert_eq!(expected, super::super::format::LAYOUT);
@@ -270,7 +270,7 @@ fn recognizing_the_layout_integer_alone_is_forbidden() {
         let store = create_default(&path);
         store.corrupt_family_for_tests();
     }
-    match Store::open(&path, &schema(), MapPolicy::default()) {
+    match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
         Err(StoreError::UnrecognizedStore { .. }) => {}
         other => panic!("expected UnrecognizedStore, got {other:?}"),
     }
@@ -280,7 +280,7 @@ fn recognizing_the_layout_integer_alone_is_forbidden() {
 fn a_foreign_schema_refuses_to_open() {
     let (_dir, path) = store_dir("store-schema-mismatch");
     drop(create_default(&path));
-    match Store::open(&path, &other_schema(), MapPolicy::default()) {
+    match Store::open(&path, &other_schema(), DEFAULT_MAP_CEILING) {
         Err(StoreError::SchemaMismatch) => {}
         other => panic!("expected SchemaMismatch, got {other:?}"),
     }
@@ -305,7 +305,9 @@ fn close_reports_live_snapshots_and_refuses_new_admission() {
     let (_dir, path) = store_dir("store-close");
     let store = create_default(&path);
     let pinned = store.snapshot(&work()).expect("pinned snapshot");
-    match store.close(&cancel_after(std::time::Duration::from_millis(50))) {
+    let stopped = work();
+    stopped.cancel();
+    match store.close(&stopped) {
         CloseReport::Incomplete {
             live_transactions, ..
         } => assert_eq!(live_transactions, 1),
@@ -328,7 +330,7 @@ fn the_lock_releases_after_the_owner_and_all_snapshots_drop() {
     let store = open_snapshot_then_drop_store(&path);
     // The snapshot transitively holds the inner store (and lock): a new
     // owner must refuse while it lives.
-    match Store::open(&path, &schema(), MapPolicy::default()) {
+    match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
         Err(StoreError::StoreLocked { .. }) => {}
         other => panic!("expected StoreLocked under a live snapshot, got {other:?}"),
     }
@@ -403,7 +405,7 @@ fn install_populated_leaves_no_destination_on_population_failure() {
     let (_dir, path) = store_dir("store-install-populated");
     let schema = schema();
     let work = work();
-    let err = Store::install_populated(&path, &schema, MapPolicy::default(), &work, |_stage, _| {
+    let err = Store::install_populated(&path, &schema, DEFAULT_MAP_CEILING, &work, |_stage, _| {
         Err(StoreError::Allocation)
     })
     .expect_err("population failure");
@@ -420,17 +422,12 @@ fn install_populated_publishes_complete_store() {
     let schema = schema();
     let work = work();
     let changes = change_set(&schema, &[(NOTE, note(1, "published"))], &[]);
-    let store = Store::install_populated(
-        &path,
-        &schema,
-        MapPolicy::default(),
-        &work,
-        |stage, work| {
+    let store =
+        Store::install_populated(&path, &schema, DEFAULT_MAP_CEILING, &work, |stage, work| {
             stage.apply(&changes, work)?;
             Ok(())
-        },
-    )
-    .expect("installed");
+        })
+        .expect("installed");
     assert!(path.exists());
     assert_eq!(
         store
@@ -450,7 +447,7 @@ fn unready_admit_install_publishes_without_query_surface() {
     let schema = schema();
     let work = work();
     let changes = change_set(&schema, &[(NOTE, note(1, "staged"))], &[]);
-    let unready = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("begin");
+    let unready = UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &work).expect("begin");
     unready
         .populate(&work, |stage, work| {
             stage.apply(&changes, work)?;
@@ -458,7 +455,7 @@ fn unready_admit_install_publishes_without_query_surface() {
         })
         .expect("populate");
     let admitted = unready.admit(&schema, &work).expect("admitted");
-    match admitted.install(&schema, MapPolicy::default(), &work) {
+    match admitted.install(&schema, DEFAULT_MAP_CEILING, &work) {
         InstallOutcome::Installed(store) => {
             assert!(path.exists());
             assert_eq!(

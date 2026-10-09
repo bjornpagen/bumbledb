@@ -1,7 +1,7 @@
 //! D06/D26 public-path discriminators: complete admit, no-clobber install.
 
 use bumbledb::schema::ValidateDescriptor as _;
-use bumbledb::store::{InstallOutcome, MapPolicy, StoreError, UnreadyStore};
+use bumbledb::store::{InstallOutcome, StoreError, UnreadyStore};
 use bumbledb::{ApplyExpected, ApplyOutcome, ChangeSet, Db, Theory, Value, WorkContext};
 
 mod common;
@@ -27,7 +27,8 @@ fn d26_two_key_conflicting_tuples_then_admit_with_no_delta_rejects() {
     let dest = dir.path().join("store");
     let schema = GateAdmit.descriptor().validate().expect("schema");
     let ctx = work();
-    let unready = UnreadyStore::begin(&dest, &schema, MapPolicy::default(), &ctx).expect("begin");
+    let unready = UnreadyStore::begin(&dest, &schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx)
+        .expect("begin");
     let first = {
         let mut builder = ChangeSet::builder(&schema, ctx.clone());
         builder
@@ -68,8 +69,10 @@ fn d06_two_installers_never_overwrite() {
     let dest = dir.path().join("store");
     let schema = GateAdmit.descriptor().validate().expect("schema");
     let ctx = work();
-    let first = UnreadyStore::begin(&dest, &schema, MapPolicy::default(), &ctx).expect("first");
-    let second = UnreadyStore::begin(&dest, &schema, MapPolicy::default(), &ctx).expect("second");
+    let first = UnreadyStore::begin(&dest, &schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx)
+        .expect("first");
+    let second = UnreadyStore::begin(&dest, &schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx)
+        .expect("second");
     let row = {
         let mut builder = ChangeSet::builder(&schema, ctx.clone());
         builder
@@ -84,14 +87,14 @@ fn d06_two_installers_never_overwrite() {
         .populate(&ctx, |stage, work| stage.apply(&row, work).map(|_| ()))
         .expect("populate");
     let admitted = first.admit(&schema, &ctx).expect("admit");
-    match admitted.install(&schema, MapPolicy::default(), &ctx) {
+    match admitted.install(&schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx) {
         InstallOutcome::Installed(store) => drop(store),
         other => panic!("first installer publishes, got {other:?}"),
     }
     match second
         .admit(&schema, &ctx)
         .expect("second admit of empty sibling")
-        .install(&schema, MapPolicy::default(), &ctx)
+        .install(&schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx)
     {
         InstallOutcome::NotInstalled { cleanup, detail } => {
             assert!(matches!(detail, StoreError::DestinationExists { .. }));
@@ -112,7 +115,8 @@ fn apply_after_admit_install_rejects_conflict_and_pins() {
     let dest = dir.path().join("store");
     let schema = GateAdmit.descriptor().validate().expect("schema");
     let ctx = work();
-    let unready = UnreadyStore::begin(&dest, &schema, MapPolicy::default(), &ctx).expect("begin");
+    let unready = UnreadyStore::begin(&dest, &schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx)
+        .expect("begin");
     let first = {
         let mut builder = ChangeSet::builder(&schema, ctx.clone());
         builder
@@ -127,7 +131,7 @@ fn apply_after_admit_install_rejects_conflict_and_pins() {
         .populate(&ctx, |stage, work| stage.apply(&first, work).map(|_| ()))
         .expect("populate");
     let admitted = unready.admit(&schema, &ctx).expect("complete admit");
-    match admitted.install(&schema, MapPolicy::default(), &ctx) {
+    match admitted.install(&schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx) {
         InstallOutcome::Installed(_) => {}
         other => panic!("install must publish, got {other:?}"),
     }

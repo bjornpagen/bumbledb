@@ -1041,6 +1041,10 @@ impl fmt::Display for Error {
                 )
             }
             Self::Capacity(capacity) => write!(f, "capacity reached: {capacity}"),
+            Self::Full { ceiling } => write!(
+                f,
+                "the store is full at its {ceiling}-byte map ceiling; reopen with a larger ceiling"
+            ),
             Self::Corruption(err) => write!(f, "corruption: {err}"),
             Self::Store(err) => err.fmt(f),
         }

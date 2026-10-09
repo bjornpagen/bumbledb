@@ -40,7 +40,6 @@ use super::candidate::{Judgment, StoreCommit};
 use super::error::{StoreError, StoreResult};
 use super::host::{AttachmentChange, HostChanges, HostRecordChange, HostWindow};
 use super::judge_bridge::UnindexedRows;
-use super::map::MapPolicy;
 use super::snapshot::OwnedSnapshot;
 use super::store_env::{
     PublishOutcome, Store, init_staging_directory, publish_staging, staging_path,
@@ -152,7 +151,7 @@ impl UnreadyStore {
     pub fn begin(
         dest: &Path,
         schema: &Schema,
-        policy: MapPolicy,
+        ceiling: u64,
         work: &WorkContext,
     ) -> StoreResult<Self> {
         if dest.exists() {
@@ -170,12 +169,12 @@ impl UnreadyStore {
         let mut staging = StagingIdentity {
             path: staging_path.clone(),
         };
-        if let Err(error) = init_staging_directory(&staging.path, dest, schema, policy) {
+        if let Err(error) = init_staging_directory(&staging.path, dest, schema, ceiling) {
             staging.remove();
             staging.disarm();
             return Err(error);
         }
-        let store = match Store::open(&staging.path, schema, policy) {
+        let store = match Store::open(&staging.path, schema, ceiling) {
             Ok(store) => store,
             Err(error) => {
                 staging.remove();
@@ -243,7 +242,7 @@ impl UnreadyStore {
     /// receipt delete there.
     ///
     /// # Errors
-    /// Host-key grammar, growth refusals, storage failure, or stopped work.
+    /// Host-key grammar, `Full`, storage failure, or stopped work.
     pub fn delete_host_batch(
         &self,
         prefix: &[u8],
@@ -304,7 +303,7 @@ impl StageWriter<'_> {
     /// Ingest a sealed delta without judgment.
     ///
     /// # Errors
-    /// Foreign schema, growth refusals, storage failure, or stopped work.
+    /// Foreign schema, `Full`, storage failure, or stopped work.
     pub fn apply(&self, changes: &ChangeSet, work: &WorkContext) -> StoreResult<StoreCommit> {
         let _ = work;
         let mut owner = self.store.writer(work)?;
@@ -317,7 +316,7 @@ impl StageWriter<'_> {
     /// here; use [`Self::delete_host_batch`]. Not a ready [`crate::Db`].
     ///
     /// # Errors
-    /// Host-key grammar, growth refusals, storage failure, or stopped work.
+    /// Host-key grammar, `Full`, storage failure, or stopped work.
     pub fn put_host(&self, host: HostChanges<'_>, work: &WorkContext) -> StoreResult<StoreCommit> {
         let mut owner = self.store.writer(work)?;
         owner.prepare_unchanged()?.seal(host)?.commit()
@@ -329,7 +328,7 @@ impl StageWriter<'_> {
     /// full prefix. Keys must remain owned after releasing the read snapshot.
     ///
     /// # Errors
-    /// Host-key grammar, growth refusals, storage failure, or stopped work.
+    /// Host-key grammar, `Full`, storage failure, or stopped work.
     pub fn delete_host_batch(
         &self,
         prefix: &[u8],
@@ -442,7 +441,7 @@ impl AdmittedStore {
     /// Rename success — not `dest.exists()` — decides whether this attempt
     /// installed the destination.
     #[must_use]
-    pub fn install(self, schema: &Schema, policy: MapPolicy, work: &WorkContext) -> InstallOutcome {
+    pub fn install(self, schema: &Schema, ceiling: u64, work: &WorkContext) -> InstallOutcome {
         let AdmittedStore {
             store,
             mut staging,
@@ -450,7 +449,7 @@ impl AdmittedStore {
         } = self;
         let staging_path = staging.path.clone();
         drop(store);
-        match publish_staging(&staging_path, &dest, schema, policy, work) {
+        match publish_staging(&staging_path, &dest, schema, ceiling, work) {
             PublishOutcome::Installed(opened) => {
                 staging.disarm();
                 InstallOutcome::Installed(opened)
@@ -484,14 +483,14 @@ impl AdmittedStore {
 pub fn install_populated(
     dest: &Path,
     schema: &Schema,
-    policy: MapPolicy,
+    ceiling: u64,
     work: &WorkContext,
     populate: impl FnOnce(&StageWriter<'_>, &WorkContext) -> StoreResult<()>,
 ) -> StoreResult<Store> {
-    let unready = UnreadyStore::begin(dest, schema, policy, work)?;
+    let unready = UnreadyStore::begin(dest, schema, ceiling, work)?;
     unready.populate(work, populate)?;
     let admitted = unready.admit(schema, work)?;
-    match admitted.install(schema, policy, work) {
+    match admitted.install(schema, ceiling, work) {
         InstallOutcome::Installed(store) => Ok(store),
         InstallOutcome::SettlementFailed { dest, detail } => {
             Err(StoreError::InstallSettlementFailed {

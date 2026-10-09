@@ -9,7 +9,7 @@ use crate::storage::store::format::RowId;
 const FORCED: [u8; 16] = [0xCC; 16];
 
 fn forced_store(path: &std::path::Path) -> Store {
-    Store::create_forced_fingerprint(path, &schema(), MapPolicy::default(), FORCED)
+    Store::create_forced_fingerprint(path, &schema(), DEFAULT_MAP_CEILING, FORCED)
         .expect("forced-fingerprint store")
 }
 

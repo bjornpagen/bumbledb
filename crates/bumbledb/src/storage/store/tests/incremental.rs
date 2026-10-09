@@ -304,7 +304,7 @@ fn interval_prefix_order_coverage_collisions_and_cleanup() {
         let (schema, span) = interval_coverage_fixture(target_type);
         let (_dir, path) = store_dir("interval-prefix-differential");
         let store =
-            Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0xA5; FP_LEN])
+            Store::create_forced_fingerprint(&path, &schema, DEFAULT_MAP_CEILING, [0xA5; FP_LEN])
                 .expect("colliding scalar groups");
         let target_row = |group: &str, start, end, id| {
             (
@@ -554,7 +554,7 @@ fn run_differential(store: &Store, schema: &Schema, seed: u64, iterations: u32) 
 fn incremental_judge_matches_the_complete_judge_on_randomized_mutations() {
     let (_dir, path) = store_dir("incremental-differential");
     let schema = delta_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
     run_differential(&store, &schema, 0x00C0_FFEE_D00D_F00D, 90);
@@ -568,7 +568,7 @@ fn incremental_judge_matches_the_complete_judge_under_forced_collisions() {
     // exact decoded confirmation alone separates groups. Verdicts must
     // still be byte-equal with the complete judge.
     let store =
-        Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0x5A; FP_LEN])
+        Store::create_forced_fingerprint(&path, &schema, DEFAULT_MAP_CEILING, [0x5A; FP_LEN])
             .expect("forced-collision store");
     run_differential(&store, &schema, 0x1BAD_B002_CAFE_BABE, 40);
 }
@@ -579,10 +579,10 @@ fn capacity_measure_follows_target_row_order_not_delta_group_order() {
         let (_dir, path) = store_dir("capacity-measure-order");
         let schema = delta_schema();
         let store = if forced_collision {
-            Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0x5A; FP_LEN])
+            Store::create_forced_fingerprint(&path, &schema, DEFAULT_MAP_CEILING, [0x5A; FP_LEN])
                 .expect("forced-collision store")
         } else {
-            Store::create(&path, &schema, MapPolicy::default())
+            Store::create(&path, &schema, DEFAULT_MAP_CEILING)
                 .expect("create")
                 .0
         };
@@ -635,7 +635,7 @@ fn capacity_measure_follows_target_row_order_not_delta_group_order() {
 fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
     let (_dir, path) = store_dir("incremental-multi");
     let schema = delta_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
     assert!(compare_and_commit(
@@ -751,7 +751,7 @@ impl CandidateJudge for PremiseWitness<'_> {
 fn an_unlawful_parent_hides_from_the_incremental_judge_and_the_sweeper_convicts() {
     let (_dir, path) = store_dir("incremental-unlawful");
     let schema = delta_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
 
@@ -906,7 +906,7 @@ fn measured_one_row_judgment(store: &Store, schema: &Schema, id: u64) -> u64 {
 fn incremental_judgment_allocations_are_delta_shaped_not_relation_shaped() {
     let (_dir, path) = store_dir("incremental-workcount");
     let schema = delta_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
 
@@ -948,8 +948,8 @@ fn incremental_judgment_allocations_are_delta_shaped_not_relation_shaped() {
 fn selected_home_preservation_does_not_hide_alternate_or_interval_keys() {
     let schema = delta_schema();
     let (_dir, path) = store_dir("home-preservation-other-laws");
-    let store = Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0; FP_LEN])
-        .unwrap();
+    let store =
+        Store::create_forced_fingerprint(&path, &schema, DEFAULT_MAP_CEILING, [0; FP_LEN]).unwrap();
     assert!(compare_and_commit(
         &store,
         &schema,

@@ -50,6 +50,7 @@ mod write;
 pub use builder::InstanceBuilder;
 pub use collection::{AcceptedCollection, CollectionBuilder};
 pub use mutation::MutationReport;
+pub use open::Options;
 pub use owned::OwnedInstance;
 pub use read_instance::{OwnedRead, ReadFrame, ReadInstance};
 pub use row_reader::RowReader;

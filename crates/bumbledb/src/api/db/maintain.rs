@@ -5,7 +5,7 @@ use std::path::Path;
 use super::Db;
 use crate::error::{Error, Result};
 use crate::storage::GenerationId;
-use crate::storage::store::{CloseReport, MapPolicy, Store};
+use crate::storage::store::{CloseReport, Store};
 use crate::work::WorkContext;
 
 impl<S> Db<S> {
@@ -19,9 +19,8 @@ impl<S> Db<S> {
     /// `DestinationExists`, storage failure, or stopped work.
     pub fn compact(&self, dest: &Path, work: WorkContext) -> Result<()> {
         let snapshot = self.store.snapshot(&work).map_err(Error::from_store)?;
-        let policy = MapPolicy::default();
-        let (target, fresh) =
-            Store::create(dest, self.schema.as_ref(), policy).map_err(Error::from_store)?;
+        let (target, fresh) = Store::create(dest, self.schema.as_ref(), self.store.ceiling())
+            .map_err(Error::from_store)?;
         target
             .compact_snapshot(&snapshot, fresh, &work)
             .map_err(Error::from_store)?;
@@ -29,13 +28,12 @@ impl<S> Db<S> {
         Ok(())
     }
 
-    /// Populated file bytes of the store (not the virtual map, not resident
-    /// memory — see the C04 map report for the distinct quantities).
+    /// Populated file bytes of the store: not the virtual map, not resident
+    /// memory.
     /// # Errors
-    /// Storage failure or stopped work.
-    pub fn disk_size(&self, work: WorkContext) -> Result<u64> {
-        let report = self.store.map_report(&work).map_err(Error::from_store)?;
-        Ok(report.populated_file_bytes)
+    /// I/O failure reading the file metadata.
+    pub fn disk_size(&self) -> Result<u64> {
+        self.store.file_bytes().map_err(Error::from_store)
     }
 
     /// The committed generation.

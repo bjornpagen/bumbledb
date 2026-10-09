@@ -1,17 +1,13 @@
-//! The one store owner: environment lifecycle, elastic map growth, the
-//! transaction gate, directory ownership and close.
+//! The one store owner: environment lifecycle, the fixed virtual map, the
+//! close gate, directory ownership and close.
 //!
-//! Create and open are distinct. Create publishes through a staged
-//! sibling directory: lock staging, write meta, durable commit, fsync files
-//! and dirent chain, rename into place, fsync the parent — a crash leaves
-//! either no destination or a complete one. Open acquires the kernel lock
-//! *first*, then verifies family/layout/schema against one read view before
-//! adopting anything; refusal performs zero cleanup or mutation.
-//!
-//! Durability is LMDB defaults — fsync per commit. There is deliberately no
-//! `NO_SYNC` lane, flag parameter, or hidden constructor in this module
-//! (ENG-008); scratch durability weakening belongs to the query scratch
-//! facility, which never reaches this persistent store.
+//! Create publishes through a staged sibling directory (lock, write meta,
+//! commit, fsync files and dirent chain, rename, fsync the parent), so a
+//! crash leaves no destination or a complete one. Open takes the kernel lock
+//! first, then verifies family, layout and schema before touching anything.
+//! The map is one virtual reservation fixed at open: it costs address space,
+//! not RAM or disk, because without `WRITEMAP` the file grows only as pages
+//! are written.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,9 +26,8 @@ use super::format::{
     self, CoreStoreId, DATA_DB, EnvironmentId, FAMILY, K_FAMILY, K_GENERATION, K_LAYOUT,
     K_NEXT_ROW_ID, K_SCHEMA, K_STORE_ID, LAYOUT, META_DB, StoreIdentity,
 };
-use super::gate::{CachedRead, GatePass, TransactionGate};
+use super::gate::{GatePass, TransactionGate};
 use super::judge_bridge::SchemaJudge;
-use super::map::{MapPolicy, MapReport};
 use super::snapshot::OwnedSnapshot;
 use crate::schema::Schema;
 use crate::schema::fingerprint::{SchemaFingerprint, fingerprint};
@@ -41,6 +36,9 @@ use crate::work::WorkContext;
 
 const LOCK_FILE: &str = "bumbledb.lock";
 const MAX_READERS: u32 = 1024;
+
+/// The default virtual map ceiling: 1 TiB of address space.
+pub const DEFAULT_MAP_CEILING: u64 = 1 << 40;
 
 pub(crate) struct StoreInner {
     // Field order is drop order: transactions are gone (gate drained or the
@@ -53,7 +51,7 @@ pub(crate) struct StoreInner {
     pub(crate) gate: TransactionGate,
     writer: Mutex<()>,
     writer_thread: AtomicU64,
-    map: Mutex<MapState>,
+    ceiling: u64,
     pub(crate) identity: StoreIdentity,
     pub(crate) schema_fp: SchemaFingerprint,
     pub(crate) fingerprinter: Fingerprinter,
@@ -69,14 +67,8 @@ pub(crate) struct StoreInner {
     _lock: DirectoryLock,
 }
 
-#[derive(Debug)]
-struct MapState {
-    policy: MapPolicy,
-    current_map_bytes: u64,
-}
-
 /// The store owner. `Send + Sync`; clones share one environment and its
-/// transaction gate, map policy, and admitted readers.
+/// close gate and admitted readers.
 pub struct Store {
     pub(crate) inner: Arc<StoreInner>,
 }
@@ -103,32 +95,38 @@ pub enum CloseReport {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GrowReport {
-    pub old_map_bytes: u64,
-    pub new_map_bytes: u64,
-}
-
 /// A write transaction admitted through the gate. Declared txn-before-pass:
 /// the transaction aborts/commits before its gate slot releases.
 pub(crate) struct GatedRwTxn<'env> {
     pub(crate) txn: RwTxn<'env>,
+    ceiling: u64,
     _pass: GatePass,
 }
 
 impl GatedRwTxn<'_> {
     pub(crate) fn commit(self) -> StoreResult<()> {
-        self.txn.commit().map_err(map_txn_error)
+        let ceiling = self.ceiling;
+        self.txn.commit().map_err(|error| {
+            if matches!(error, heed::Error::Mdb(heed::MdbError::MapFull)) {
+                StoreError::Full { ceiling }
+            } else {
+                StoreError::from_heed(error)
+            }
+        })
     }
 }
 
-pub(crate) fn map_txn_error(error: heed::Error) -> StoreError {
-    if StoreError::is_map_full(&error) {
-        // The caller resolves the current extent for its diagnostics; zero
-        // here means "unresolved", filled in by the candidate path.
-        StoreError::MapFull { map_bytes: 0 }
-    } else {
-        StoreError::from_heed(error)
+impl StoreInner {
+    /// A write-path LMDB failure: map exhaustion is the typed fixed-ceiling
+    /// refusal, everything else keeps its LMDB identity.
+    pub(crate) fn txn_error(&self, error: heed::Error) -> StoreError {
+        if matches!(error, heed::Error::Mdb(heed::MdbError::MapFull)) {
+            StoreError::Full {
+                ceiling: self.ceiling,
+            }
+        } else {
+            StoreError::from_heed(error)
+        }
     }
 }
 
@@ -138,16 +136,10 @@ pub(crate) fn map_txn_error(error: heed::Error) -> StoreError {
               in a process is LMDB UB. The kernel directory lock is acquired \
               before every open, so each directory has one live environment."
 )]
-fn open_env(path: &Path, map_bytes: u64) -> StoreResult<heed::Env<WithoutTls>> {
+fn open_env(path: &Path, ceiling: u64) -> StoreResult<heed::Env<WithoutTls>> {
     let mut options = EnvOpenOptions::new().read_txn_without_tls();
     options
-        .map_size(
-            usize::try_from(map_bytes).map_err(|_| StoreError::MapGrowthExhausted {
-                map_bytes: 0,
-                requested_bytes: map_bytes,
-                detail: None,
-            })?,
-        )
+        .map_size(usize::try_from(ceiling).map_err(|_| StoreError::Full { ceiling })?)
         .max_dbs(2)
         .max_readers(MAX_READERS);
     // SAFETY: single open per directory, enforced by the held kernel lock;
@@ -187,10 +179,6 @@ fn acquire_lock(path: &Path) -> StoreResult<DirectoryLock> {
     }
 }
 
-fn populated_file_bytes(path: &Path) -> u64 {
-    std::fs::metadata(path.join("data.mdb")).map_or(0, |meta| meta.len())
-}
-
 pub(crate) fn sync_dirent_chain(dir: &Path) -> std::io::Result<()> {
     let parent = match dir.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
@@ -211,7 +199,7 @@ impl Store {
     pub fn create(
         path: &Path,
         schema: &Schema,
-        policy: MapPolicy,
+        ceiling: u64,
     ) -> StoreResult<(Self, FreshDestination)> {
         if path.exists() {
             return Err(StoreError::DestinationExists {
@@ -226,7 +214,7 @@ impl Store {
         }
         let staging = staging_path(path)?;
         let created: StoreResult<()> = (|| {
-            init_staging_directory(&staging, path, schema, policy)?;
+            init_staging_directory(&staging, path, schema, ceiling)?;
             for entry in std::fs::read_dir(&staging)? {
                 let entry = entry?;
                 if entry.file_type()?.is_file() {
@@ -248,7 +236,7 @@ impl Store {
             }
             return Err(error);
         }
-        Self::open(path, schema, policy).map(|store| (store, FreshDestination::mint()))
+        Self::open(path, schema, ceiling).map(|store| (store, FreshDestination::mint()))
     }
 
     /// Populate a new store in a private staging directory, then publish it
@@ -259,11 +247,11 @@ impl Store {
     pub fn install_populated(
         dest: &Path,
         schema: &Schema,
-        policy: MapPolicy,
+        ceiling: u64,
         work: &WorkContext,
         populate: impl FnOnce(&super::staging::StageWriter<'_>, &WorkContext) -> StoreResult<()>,
     ) -> StoreResult<Self> {
-        super::staging::install_populated(dest, schema, policy, work, populate)
+        super::staging::install_populated(dest, schema, ceiling, work, populate)
     }
 
     /// Open an existing store. Acquires the kernel lock first; verifies the
@@ -272,8 +260,8 @@ impl Store {
     /// # Errors
     /// `StoreLocked`, `UnrecognizedStore`, `LayoutMismatch`,
     /// `SchemaMismatch`, `Compile`, corruption, lock/I/O/LMDB failures.
-    pub fn open(path: &Path, schema: &Schema, policy: MapPolicy) -> StoreResult<Self> {
-        Self::open_with(path, schema, policy, Fingerprinter::Blake3)
+    pub fn open(path: &Path, schema: &Schema, ceiling: u64) -> StoreResult<Self> {
+        Self::open_with(path, schema, ceiling, Fingerprinter::Blake3)
     }
 
     /// HASH-02 probe constructor: open with a caller-supplied
@@ -286,10 +274,10 @@ impl Store {
     pub fn open_with_fingerprinter(
         path: &Path,
         schema: &Schema,
-        policy: MapPolicy,
+        ceiling: u64,
         fingerprinter: Fingerprinter,
     ) -> StoreResult<Self> {
-        Self::open_with(path, schema, policy, fingerprinter)
+        Self::open_with(path, schema, ceiling, fingerprinter)
     }
 
     /// HASH-02 probe constructor: create with the production protocol,
@@ -305,13 +293,13 @@ impl Store {
     pub fn create_forced_fingerprint(
         path: &Path,
         schema: &Schema,
-        policy: MapPolicy,
+        ceiling: u64,
         fp: [u8; super::fingerprint::FP_LEN],
     ) -> StoreResult<Self> {
         // The production constructor returns an empty store with one owner.
         // Select the test fingerprinter before publishing it; no row/index
         // was written, so there is no reason to close and reopen the store.
-        let (mut store, _) = Self::create(path, schema, policy)?;
+        let (mut store, _) = Self::create(path, schema, ceiling)?;
         Arc::get_mut(&mut store.inner)
             .expect("freshly created store has one owner")
             .fingerprinter = Fingerprinter::Constant(fp);
@@ -321,14 +309,13 @@ impl Store {
     fn open_with(
         path: &Path,
         schema: &Schema,
-        policy: MapPolicy,
+        ceiling: u64,
         fingerprinter: Fingerprinter,
     ) -> StoreResult<Self> {
         let det = DeterminantTable::compile(schema)?;
         let keys = super::keys::KeyLayout::for_schema(schema)?;
         let lock = acquire_lock(path)?;
-        let map_bytes = policy.open_map_bytes(populated_file_bytes(path))?;
-        let env = open_env(path, map_bytes)?;
+        let env = open_env(path, ceiling)?;
         let schema_fp = fingerprint(schema);
         let (meta, data, store_id) = {
             let rtxn = env.read_txn().map_err(StoreError::from_heed)?;
@@ -366,10 +353,7 @@ impl Store {
                 gate: TransactionGate::default(),
                 writer: Mutex::new(()),
                 writer_thread: AtomicU64::new(0),
-                map: Mutex::new(MapState {
-                    policy,
-                    current_map_bytes: map_bytes,
-                }),
+                ceiling,
                 identity: StoreIdentity {
                     store: store_id,
                     environment: EnvironmentId::mint(),
@@ -415,23 +399,19 @@ impl Store {
     /// # Errors
     /// Refuses a closing store, exhausted reader slots, or stopped work.
     pub fn snapshot(&self, work: &WorkContext) -> StoreResult<OwnedSnapshot> {
-        let (pass, cached) = self.inner.gate.enter_read(work)?;
-        let reader = if let Some(reader) = cached {
-            reader
-        } else {
-            let txn = self
-                .inner
-                .env
-                .clone()
-                .static_read_txn()
-                .map_err(StoreError::from_heed)?;
-            let generation = read_generation(&self.inner, &txn)?;
-            CachedRead::new(txn, generation)
-        };
+        let pass = self.inner.gate.enter(work)?;
+        let txn = self
+            .inner
+            .env
+            .clone()
+            .static_read_txn()
+            .map_err(StoreError::from_heed)?;
+        let generation = read_generation(&self.inner, &txn)?;
         Ok(OwnedSnapshot::capture(
             Arc::clone(&self.inner),
             pass,
-            reader,
+            txn,
+            generation,
         ))
     }
 
@@ -465,114 +445,30 @@ impl Store {
     /// Begin one gated write transaction (writer mutex already held by the
     /// calling owner).
     pub(crate) fn gated_write_txn(&self, work: &WorkContext) -> StoreResult<GatedRwTxn<'_>> {
-        let pass = self.inner.gate.enter_write(work)?;
-        let txn = self.inner.env.write_txn().map_err(map_txn_error)?;
-        Ok(GatedRwTxn { txn, _pass: pass })
-    }
-
-    /// Grow the map geometrically under exclusive gate access. Requires
-    /// zero live transactions; a long-held snapshot surfaces as the typed
-    /// `ResizeBlockedByReaders` with its age, never as an invalidated
-    /// borrow.
-    /// # Errors
-    /// `ResizeBlockedByReaders`, `MapGrowthExhausted`, LMDB failures.
-    #[expect(
-        unsafe_code,
-        reason = "heed::Env::resize requires no active transactions; the \
-                  exclusive gate guard proves that for this process, and the \
-                  kernel directory lock proves single-process ownership"
-    )]
-    pub fn grow(&self, work: &WorkContext, needed_hint: Option<u64>) -> StoreResult<GrowReport> {
-        let exclusive = self.inner.gate.exclusive(work)?;
-        let mut map = self
+        let pass = self.inner.gate.enter(work)?;
+        let txn = self
             .inner
-            .map
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let old = map.current_map_bytes;
-        let Some(new) = map.policy.grown_map_bytes(old, needed_hint) else {
-            return Err(StoreError::MapGrowthExhausted {
-                map_bytes: old,
-                requested_bytes: needed_hint.unwrap_or(0),
-                detail: None,
-            });
-        };
-        if new <= old {
-            return Err(StoreError::MapGrowthExhausted {
-                map_bytes: old,
-                requested_bytes: new,
-                detail: None,
-            });
-        }
-        let new_usize = usize::try_from(new).map_err(|_| StoreError::MapGrowthExhausted {
-            map_bytes: old,
-            requested_bytes: new,
-            detail: None,
-        })?;
-        // SAFETY: `exclusive` holds the gate — no live transaction exists in
-        // this process, and the kernel lock forbids any other process.
-        if let Err(error) = unsafe { self.inner.env.resize(new_usize) } {
-            return Err(StoreError::MapGrowthExhausted {
-                map_bytes: old,
-                requested_bytes: new,
-                detail: Some(crate::error::LmdbFailure::from(error)),
-            });
-        }
-        map.current_map_bytes = new;
-        drop(map);
-        drop(exclusive);
-        Ok(GrowReport {
-            old_map_bytes: old,
-            new_map_bytes: new,
+            .env
+            .write_txn()
+            .map_err(|error| self.inner.txn_error(error))?;
+        Ok(GatedRwTxn {
+            txn,
+            ceiling: self.inner.ceiling,
+            _pass: pass,
         })
     }
 
+    /// The map ceiling fixed at open.
     #[must_use]
-    pub fn current_map_bytes(&self) -> u64 {
-        self.inner
-            .map
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .current_map_bytes
+    pub fn ceiling(&self) -> u64 {
+        self.inner.ceiling
     }
 
-    /// Distinct physical quantities; none of them is a RAM admission test.
-    /// Holds a gate pass: the internal stat read transaction must not race
-    /// an exclusive resize.
+    /// Length of `data.mdb`: the populated file, not the virtual map.
     /// # Errors
-    /// I/O or LMDB stat failure, a closing store, or stopped work.
-    pub fn map_report(&self, work: &WorkContext) -> StoreResult<MapReport> {
-        let _pass = self.inner.gate.enter(work)?;
-        let info = self.inner.env.info();
-        let stat = self.inner.env.stat();
-        let populated = self
-            .inner
-            .env
-            .real_disk_size()
-            .map_err(StoreError::from_heed)?;
-        let non_free = self
-            .inner
-            .env
-            .non_free_pages_size()
-            .map_err(StoreError::from_heed)?;
-        #[cfg(unix)]
-        let allocated = {
-            use std::os::unix::fs::MetadataExt as _;
-            std::fs::metadata(self.inner.path.join("data.mdb"))
-                .ok()
-                .map(|meta| meta.blocks().saturating_mul(512))
-        };
-        #[cfg(not(unix))]
-        let allocated = None;
-        Ok(MapReport {
-            virtual_map_bytes: info.map_size as u64,
-            populated_file_bytes: populated,
-            non_free_page_bytes: non_free,
-            allocated_disk_bytes: allocated,
-            page_size: stat.page_size,
-            // Exclude this report's own gate pass.
-            live_transactions: self.inner.gate.live().live.saturating_sub(1),
-        })
+    /// I/O failure reading the file metadata.
+    pub fn file_bytes(&self) -> StoreResult<u64> {
+        Ok(std::fs::metadata(self.inner.path.join("data.mdb"))?.len())
     }
 
     /// Bounded close: stop admitting transactions, drain within the work
@@ -640,12 +536,12 @@ pub(crate) fn init_staging_directory(
     staging: &Path,
     dest: &Path,
     schema: &Schema,
-    policy: MapPolicy,
+    ceiling: u64,
 ) -> StoreResult<()> {
     let _lock = acquire_lock(staging)?;
     let store_id = CoreStoreId::mint(dest);
     let schema_fp = fingerprint(schema);
-    let env = open_env(staging, policy.open_map_bytes(0)?)?;
+    let env = open_env(staging, ceiling)?;
     let mut wtxn = env.write_txn().map_err(StoreError::from_heed)?;
     let meta: Database<Bytes, Bytes> = env
         .create_database(&mut wtxn, Some(META_DB))
@@ -690,7 +586,7 @@ pub(crate) fn publish_staging(
     staging: &Path,
     dest: &Path,
     schema: &Schema,
-    policy: MapPolicy,
+    ceiling: u64,
     work: &WorkContext,
 ) -> PublishOutcome {
     if dest.exists() {
@@ -728,7 +624,7 @@ pub(crate) fn publish_staging(
             detail: StoreError::from(detail),
         };
     }
-    match Store::open(dest, schema, policy) {
+    match Store::open(dest, schema, ceiling) {
         Ok(store) => PublishOutcome::Installed(store),
         Err(detail) => PublishOutcome::PublishedUnsettled {
             dest: dest.to_path_buf(),

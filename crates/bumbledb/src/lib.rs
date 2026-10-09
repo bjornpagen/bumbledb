@@ -78,8 +78,8 @@ pub use allen::{AllenMask, Basic, classify};
 #[doc(hidden)]
 pub use api::db::{AcceptedCollection, CollectionBuilder};
 pub use api::db::{
-    ApplyExpected, ApplyOutcome, Db, Fact, InstanceBuilder, Key, MutationReport, OwnedInstance,
-    OwnedRead, ReadFrame, ReadInstance, RowReader, Witness, WriteTx,
+    ApplyExpected, ApplyOutcome, Db, Fact, InstanceBuilder, Key, MutationReport, Options,
+    OwnedInstance, OwnedRead, ReadFrame, ReadInstance, RowReader, Witness, WriteTx,
 };
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindArgs, BindValue, CompleteResult, DeliveryTicket, ParamArg,

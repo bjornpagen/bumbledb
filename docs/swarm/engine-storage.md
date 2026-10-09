@@ -15,6 +15,7 @@ C17, G2 (engine), L (code).
 | `testing` feature (engine-query request 4) | landed (`ground-off`, `collision-probe` still declared) |
 | C4 judge side: grouped maps RAM-only, drop every `exec::scratch` use | landed |
 | G2: one allocation counter, `alloc_census.rs` deleted | landed (feature still declared, see below) |
+| C17: fixed virtual map | landed |
 | C7: `bumbledb::host`, visibility cutover | in progress |
 | C8, C9, C10, C1, C6, A, C5, C15, C16, C17, L | todo |
 
@@ -41,6 +42,15 @@ C17, G2 (engine), L (code).
   is deleted. Every `#[cfg(feature = "alloc-counter")]` in my files is gone. The `alloc-counter`
   feature stays declared in `Cargo.toml` only until no other file names it: engine-query (image/,
   exec/, plan/ tests) and numeric, please drop yours; bench drops `features = ["alloc-counter"]`.
+
+- **C17 fixed map.** `bumbledb::Options { map_ceiling: u64 }` (`Default`: 1 TiB) with
+  `Db::create_with(path, schema, Options, work)` and `Db::open_with(path, schema, Options, work)`;
+  `Db::create`/`Db::open` use the default. A write past the ceiling is
+  `Error::Full { ceiling: u64 }` (`ErrorFamily::Full` until C8's `kind()`), nothing committed.
+  Deleted: `store::map`, `MapPolicy`, `MapReport`, `GrowReport`, `Store::grow`,
+  `Store::current_map_bytes`, `Store::map_report`, `StoreError::{MapFull, MapGrowthExhausted,
+  ResizeBlockedByReaders}`, the gate's parked-reader cache. `Db::disk_size(&self) -> Result<u64>`
+  (no work argument). Verified on this Mac: a 1 TiB map leaves a 10k-row `data.mdb` at 1.26 MB.
 
 ### Planned (signatures may still move; final shapes are announced under "Landed")
 

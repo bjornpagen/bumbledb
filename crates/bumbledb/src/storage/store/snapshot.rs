@@ -14,9 +14,9 @@
 //! require_sync::<bumbledb::store::OwnedSnapshot>();
 //! ```
 //!
-//! A held snapshot blocks map growth by design; the gate reports its count
-//! and age instead of invalidating a live Rust borrow. Projection visits
-//! take [`crate::schema::ProjectionId`], never a statement id.
+//! A held snapshot delays close; the gate reports its count and age instead
+//! of invalidating a live Rust borrow. Projection visits take
+//! [`crate::schema::ProjectionId`], never a statement id.
 //!
 //! ```compile_fail
 //! fn require_statement_visit(snap: &bumbledb::store::OwnedSnapshot) {
@@ -36,7 +36,7 @@ use super::fingerprint::FP_LEN;
 use super::format::{
     CoreStoreId, EnvironmentId, K_ATTACHMENT, K_HOST_RECORD_TAG, RowId, RowLocator, StoreIdentity,
 };
-use super::gate::{CachedRead, GatePass, ReadLease};
+use super::gate::GatePass;
 use super::host::{HostResume, HostWindow};
 use super::keys::{self, HOST_KEY_MAX};
 use super::rows;
@@ -80,10 +80,10 @@ pub struct StorePageStats {
 }
 
 pub struct OwnedSnapshot {
-    // The complete lease, including its gate Arc, drops before inner. A
-    // parked txn then lives only in inner's gate, which drops before its
-    // directory lock; the environment can never outlive that lock.
-    txn: ReadLease,
+    // Field order is drop order: the transaction aborts before its gate
+    // pass releases, and both go before the environment owner.
+    txn: RoTxn<'static, WithoutTls>,
+    pass: GatePass,
     inner: Arc<StoreInner>,
     generation: GenerationId,
 }
@@ -169,10 +169,15 @@ impl std::fmt::Debug for OwnedSnapshot {
 }
 
 impl OwnedSnapshot {
-    pub(crate) fn capture(inner: Arc<StoreInner>, pass: GatePass, reader: CachedRead) -> Self {
-        let generation = reader.generation;
+    pub(crate) fn capture(
+        inner: Arc<StoreInner>,
+        pass: GatePass,
+        txn: RoTxn<'static, WithoutTls>,
+        generation: GenerationId,
+    ) -> Self {
         Self {
-            txn: ReadLease::new(reader, pass),
+            txn,
+            pass,
             inner,
             generation,
         }
@@ -207,12 +212,10 @@ impl OwnedSnapshot {
         self.inner.identity
     }
 
-    /// Time since this borrow was admitted to the transaction gate,
-    /// including native transaction setup. This is the same growth-blocking
-    /// admission tracked by gate diagnostics, not the age of a reused reader.
+    /// Time since this snapshot was admitted to the close gate.
     #[must_use]
     pub fn age(&self) -> Duration {
-        self.txn.age()
+        self.pass.age()
     }
 
     /// The exact pinned transaction used by store copy and verification.

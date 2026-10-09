@@ -299,9 +299,9 @@ fn a_failed_seal_drops_facts_and_host_prefix_and_dispatches_nothing() {
         records: &records,
         attachment: AttachmentChange::Keep,
     }) {
-        Err(StoreError::MapFull { .. }) => {}
-        Err(other) => panic!("expected the injected map-full seal failure, got {other:?}"),
-        Ok(_) => panic!("expected the injected map-full seal failure, got a sealed write"),
+        Err(StoreError::Full { .. }) => {}
+        Err(other) => panic!("expected the injected Full seal failure, got {other:?}"),
+        Ok(_) => panic!("expected the injected Full seal failure, got a sealed write"),
     }
     store.fail_host_seal_after(None);
     drop(owner);

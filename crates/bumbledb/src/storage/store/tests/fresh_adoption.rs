@@ -31,9 +31,9 @@ fn keyed_schema() -> Schema {
 fn metadata_only_destination_refuses_adoption() {
     let dir = TempDir::new("fresh-refuse-meta");
     let schema = keyed_schema();
-    let (dest, fresh) = Store::create(&dir.path().join("dest"), &schema, MapPolicy::default())
-        .expect("create dest");
-    let (source, _fresh) = Store::create(&dir.path().join("source"), &schema, MapPolicy::default())
+    let (dest, fresh) =
+        Store::create(&dir.path().join("dest"), &schema, DEFAULT_MAP_CEILING).expect("create dest");
+    let (source, _fresh) = Store::create(&dir.path().join("source"), &schema, DEFAULT_MAP_CEILING)
         .expect("create source");
     let work = work();
 
@@ -81,14 +81,14 @@ fn metadata_only_destination_refuses_adoption() {
 fn fresh_create_adopts_complete_snapshot() {
     let dir = TempDir::new("fresh-adopt-ok");
     let schema = keyed_schema();
-    let (source, _fresh) = Store::create(&dir.path().join("source"), &schema, MapPolicy::default())
+    let (source, _fresh) = Store::create(&dir.path().join("source"), &schema, DEFAULT_MAP_CEILING)
         .expect("create source");
     let work = work();
     commit_row(&source, &schema, &work, 7);
     let snapshot = source.snapshot(&work).expect("snapshot");
 
-    let (dest, fresh) = Store::create(&dir.path().join("dest"), &schema, MapPolicy::default())
-        .expect("create dest");
+    let (dest, fresh) =
+        Store::create(&dir.path().join("dest"), &schema, DEFAULT_MAP_CEILING).expect("create dest");
     dest.adopt_snapshot(&snapshot, fresh, &UnindexedRows, &work)
         .expect("fresh destination adopts");
     let snap = dest.snapshot(&work).expect("read dest");
@@ -213,7 +213,7 @@ fn physical_compaction_preserves_pinned_indexes_metadata_and_sparse_row_ids() {
     );
 
     let dest_path = dir.path().join("dest");
-    let (dest, fresh) = Store::create(&dest_path, &schema, MapPolicy::default()).expect("dest");
+    let (dest, fresh) = Store::create(&dest_path, &schema, DEFAULT_MAP_CEILING).expect("dest");
     let destination_identity = dest.snapshot(&context).expect("new dest").identity().store;
     dest.compact_snapshot(&pinned, fresh, &context)
         .expect("compact pinned view");
@@ -235,7 +235,7 @@ fn physical_compaction_preserves_pinned_indexes_metadata_and_sparse_row_ids() {
         assert_eq!(copied.generation(), pinned.generation());
     }
     drop(dest);
-    let dest = Store::open(&dest_path, &schema, MapPolicy::default()).expect("reopen compacted");
+    let dest = Store::open(&dest_path, &schema, DEFAULT_MAP_CEILING).expect("reopen compacted");
     commit_changes(
         &dest,
         &change_set(&schema, &[(NOTE, note(100, "new"))], &[]),
@@ -262,12 +262,12 @@ fn physical_compaction_preserves_pinned_indexes_metadata_and_sparse_row_ids() {
 }
 
 #[test]
-fn physical_compaction_grows_and_copies_overflow_values_without_reencoding() {
-    let dir = TempDir::new("physical-compact-growth");
+fn physical_compaction_copies_overflow_values_without_reencoding() {
+    let dir = TempDir::new("physical-compact-overflow");
     let schema = schema();
     let context = work();
     let (source, _) =
-        Store::create(&dir.path().join("source"), &schema, tiny_map()).expect("source");
+        Store::create(&dir.path().join("source"), &schema, DEFAULT_MAP_CEILING).expect("source");
     commit_changes(
         &source,
         &change_set(
@@ -277,11 +277,10 @@ fn physical_compaction_grows_and_copies_overflow_values_without_reencoding() {
         ),
     );
     let pinned = source.snapshot(&context).expect("snapshot");
-    let (dest, fresh) = Store::create(&dir.path().join("dest"), &schema, tiny_map()).expect("dest");
-    let initial = dest.current_map_bytes();
+    let (dest, fresh) =
+        Store::create(&dir.path().join("dest"), &schema, DEFAULT_MAP_CEILING).expect("dest");
     dest.compact_snapshot(&pinned, fresh, &context)
-        .expect("grow and compact");
-    assert!(dest.current_map_bytes() > initial);
+        .expect("compact");
     assert_eq!(
         entries(&dest.snapshot(&context).expect("dest snapshot"), false),
         entries(&pinned, false)
@@ -310,7 +309,7 @@ fn physical_compaction_cancellation_rolls_back_data_and_fresh_metadata() {
                 "mid-metadata"
             }),
             &schema,
-            MapPolicy::default(),
+            DEFAULT_MAP_CEILING,
         )
         .unwrap();
         let initial_metadata = entries(&dest.snapshot(&work()).unwrap(), true);
@@ -341,7 +340,7 @@ fn physical_compaction_reindexes_test_only_fingerprint_policy_changes() {
     let source = Store::create_forced_fingerprint(
         &dir.path().join("source"),
         &schema,
-        MapPolicy::default(),
+        DEFAULT_MAP_CEILING,
         [0xCC; 16],
     )
     .expect("forced source");
@@ -353,7 +352,7 @@ fn physical_compaction_reindexes_test_only_fingerprint_policy_changes() {
     let context = work();
     let pinned = source.snapshot(&context).expect("snapshot");
     let (dest, fresh) =
-        Store::create(&dir.path().join("dest"), &schema, MapPolicy::default()).expect("dest");
+        Store::create(&dir.path().join("dest"), &schema, DEFAULT_MAP_CEILING).expect("dest");
     dest.compact_snapshot(&pinned, fresh, &context)
         .expect("logical fallback");
     let row =

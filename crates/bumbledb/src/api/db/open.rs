@@ -1,9 +1,6 @@
-//! Create / open / publish over the successor store owner. Create and open
-//! are distinct native operations: create refuses an existing
-//! destination and publishes through the store's staged-directory protocol;
-//! open verifies family/layout/schema against one read view before adopting
-//! anything. Durability is LMDB defaults on every path — the `*_nosync`
-//! constructor family stays deleted.
+//! Create, open and publish. Create refuses an existing destination and
+//! publishes through the store's staged-directory protocol; open verifies
+//! family, layout and schema before touching anything.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -13,17 +10,52 @@ use crate::error::{Admission, Error, Result};
 use crate::image::cache::ImageCache;
 use crate::schema::judge::{JudgeBudget, Judgment, MapState, judge_final_state};
 use crate::schema::{Schema, Theory, ValidateDescriptor as _};
-use crate::storage::store::{MapPolicy, Store};
+use crate::storage::store::{DEFAULT_MAP_CEILING, Store};
 use crate::work::WorkContext;
 
+/// Environment options fixed at open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Options {
+    /// The virtual map reservation in bytes: address space, not RAM or disk.
+    /// A write that needs more pages fails with [`Error::Full`].
+    pub map_ceiling: u64,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            map_ceiling: DEFAULT_MAP_CEILING,
+        }
+    }
+}
+
 impl<S: Theory> Db<S> {
+    /// Create a new durable database with default [`Options`].
+    /// # Errors
+    /// As [`Db::create_with`].
+    pub fn create(path: &Path, schema: S, work: WorkContext) -> Result<Admission<Self>> {
+        Self::create_with(path, schema, Options::default(), work)
+    }
+
+    /// Open an existing database with default [`Options`].
+    /// # Errors
+    /// As [`Db::open_with`].
+    pub fn open(path: &Path, schema: S, work: WorkContext) -> Result<Self> {
+        Self::open_with(path, schema, Options::default(), work)
+    }
+
     /// Create a new durable database with cooperative cancellation.
     /// The declared theory is judged over the empty state (with its sealed
     /// closed extensions) before any directory is touched; an unsatisfiable
     /// declaration is a rejection, not a store.
     /// # Errors
     /// Schema validation, destination refusals, storage failure, stopped work.
-    pub fn create(path: &Path, schema: S, work: WorkContext) -> Result<Admission<Self>> {
+    pub fn create_with(
+        path: &Path,
+        schema: S,
+        options: Options,
+        work: WorkContext,
+    ) -> Result<Admission<Self>> {
         let schema = schema.descriptor().validate()?;
         match judge_final_state(&schema, &MapState::new(), &work, JudgeBudget::default())
             .map_err(super::violations::judge_refusal)?
@@ -36,7 +68,7 @@ impl<S: Theory> Db<S> {
             }
         }
         let (store, _fresh) =
-            Store::create(path, &schema, MapPolicy::default()).map_err(Error::from_store)?;
+            Store::create(path, &schema, options.map_ceiling).map_err(Error::from_store)?;
         Ok(Admission::Accepted(Self::assemble(store, schema, work)?))
     }
 
@@ -45,11 +77,11 @@ impl<S: Theory> Db<S> {
     /// view before adoption; refusal mutates nothing.
     /// # Errors
     /// Schema validation, recognition/lock refusals, storage failure, stopped work.
-    pub fn open(path: &Path, schema: S, work: WorkContext) -> Result<Self> {
+    pub fn open_with(path: &Path, schema: S, options: Options, work: WorkContext) -> Result<Self> {
         let schema = schema.descriptor().validate()?;
         work.checkpoint()
             .map_err(|error| Error::from_store(crate::storage::store::StoreError::Work(error)))?;
-        let store = Store::open(path, &schema, MapPolicy::default()).map_err(Error::from_store)?;
+        let store = Store::open(path, &schema, options.map_ceiling).map_err(Error::from_store)?;
         Self::assemble(store, schema, work)
     }
 
@@ -65,7 +97,7 @@ impl<S: Theory> Db<S> {
     ) -> Result<Self> {
         let schema = schema.descriptor().validate()?;
         let (store, _fresh) =
-            Store::create(path, &schema, MapPolicy::default()).map_err(Error::from_store)?;
+            Store::create(path, &schema, DEFAULT_MAP_CEILING).map_err(Error::from_store)?;
         Self::assemble(store, schema, work)
     }
 }
@@ -107,7 +139,7 @@ impl<S> Db<S> {
         let schema = instance.schema().clone();
         let changes = instance.change_set_of_rows(&work)?;
         let store =
-            Store::install_populated(path, &schema, MapPolicy::default(), &work, |stage, work| {
+            Store::install_populated(path, &schema, DEFAULT_MAP_CEILING, &work, |stage, work| {
                 stage.apply(&changes, work)?;
                 Ok(())
             })

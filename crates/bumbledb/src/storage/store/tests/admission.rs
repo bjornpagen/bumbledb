@@ -73,7 +73,7 @@ fn d26_conflicting_populated_stage_rejects_with_empty_delta() {
     let (_dir, path) = store_dir("d26-conflict-admit");
     let schema = keyed_users();
     let work = work();
-    let unready = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("begin");
+    let unready = UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &work).expect("begin");
     let first = change_set(&schema, &[(RelationId(0), user(1, "dup@ex"))], &[]);
     let second = change_set(&schema, &[(RelationId(0), user(2, "dup@ex"))], &[]);
     unready
@@ -100,14 +100,14 @@ fn d26_nonempty_required_survives_populate_admit_install_reopen() {
     let (_dir, path) = store_dir("d26-nonempty-required");
     let schema = nonempty_required();
     let work = work();
-    let unready = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("begin");
+    let unready = UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &work).expect("begin");
     unready
         .admit(&schema, &work)
         .err()
         .expect("empty nonempty-required staging rejects");
     assert!(!path.exists());
 
-    let unready = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("begin");
+    let unready = UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &work).expect("begin");
     let fill = change_set(&schema, &[(RelationId(1), vec![Value::U64(1)])], &[]);
     unready
         .populate(&work, |stage, work| {
@@ -116,7 +116,7 @@ fn d26_nonempty_required_survives_populate_admit_install_reopen() {
         })
         .expect("populate");
     let admitted = unready.admit(&schema, &work).expect("filled admits");
-    match admitted.install(&schema, MapPolicy::default(), &work) {
+    match admitted.install(&schema, DEFAULT_MAP_CEILING, &work) {
         InstallOutcome::Installed(store) => {
             assert_eq!(
                 store
@@ -130,7 +130,7 @@ fn d26_nonempty_required_survives_populate_admit_install_reopen() {
         }
         other => panic!("expected Installed, got {other:?}"),
     }
-    let reopened = Store::open(&path, &schema, MapPolicy::default()).expect("reopen");
+    let reopened = Store::open(&path, &schema, DEFAULT_MAP_CEILING).expect("reopen");
     assert_eq!(
         reopened
             .snapshot(&work)
@@ -147,21 +147,21 @@ fn d06_second_installer_cannot_clobber_and_cleanup_spares_winner() {
     let (_dir, path) = store_dir("d06-two-installers");
     let schema = schema();
     let work = work();
-    let first = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("first");
-    let second = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("second");
+    let first = UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &work).expect("first");
+    let second = UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &work).expect("second");
     let rows = change_set(&schema, &[(NOTE, note(1, "winner"))], &[]);
     first
         .populate(&work, |stage, work| stage.apply(&rows, work).map(|_| ()))
         .expect("populate first");
     let admitted = first.admit(&schema, &work).expect("admit first");
-    match admitted.install(&schema, MapPolicy::default(), &work) {
+    match admitted.install(&schema, DEFAULT_MAP_CEILING, &work) {
         InstallOutcome::Installed(_) => {}
         other => panic!("first installer publishes, got {other:?}"),
     }
     match second
         .admit(&schema, &work)
         .expect("second still unready")
-        .install(&schema, MapPolicy::default(), &work)
+        .install(&schema, DEFAULT_MAP_CEILING, &work)
     {
         InstallOutcome::NotInstalled { cleanup, detail } => {
             assert!(matches!(detail, StoreError::DestinationExists { .. }));
@@ -183,11 +183,11 @@ fn d06_ready_destination_population_is_refused() {
     let schema = schema();
     let work = work();
     drop(
-        Store::create(&path, &schema, MapPolicy::default())
+        Store::create(&path, &schema, DEFAULT_MAP_CEILING)
             .expect("create")
             .0,
     );
-    match UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work) {
+    match UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &work) {
         Err(StoreError::DestinationExists { .. }) => {}
         Err(error) => panic!("ready dest must refuse begin, got {error:?}"),
         Ok(_) => panic!("ready dest was accepted by begin"),
@@ -201,7 +201,7 @@ fn d06_zero_row_host_metadata_is_not_fresh() {
     let (_dir2, src_path) = store_dir("d06-meta-src");
     let schema = keyed_users();
     let work = work();
-    let (dest, _fresh) = Store::create(&dest_path, &schema, MapPolicy::default()).expect("dest");
+    let (dest, _fresh) = Store::create(&dest_path, &schema, DEFAULT_MAP_CEILING).expect("dest");
     {
         let mut owner = dest.writer(&work).expect("writer");
         let empty = ChangeSet::builder(&schema, work.clone())
@@ -228,7 +228,7 @@ fn d06_zero_row_host_metadata_is_not_fresh() {
             .commit()
             .expect("commit");
     }
-    let source = Store::create(&src_path, &schema, MapPolicy::default())
+    let source = Store::create(&src_path, &schema, DEFAULT_MAP_CEILING)
         .expect("source")
         .0;
     let snapshot = source.snapshot(&work).expect("snap");
@@ -247,7 +247,7 @@ fn ordinary_admitted_write_uses_prepare_incremental_under_lawful_parent() {
     let (_dir, path) = store_dir("ordinary-incremental-parent");
     let schema = keyed_users();
     let work = work();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
     let added = change_set(&schema, &[(RelationId(0), user(1, "a@ex"))], &[]);
@@ -334,7 +334,7 @@ fn unready_host_metadata_is_invisible_until_admit() {
     let (_dir, path) = store_dir("unready-host-invisible");
     let schema = keyed_users();
     let work = work();
-    let unready = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("begin");
+    let unready = UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &work).expect("begin");
     let first = change_set(&schema, &[(RelationId(0), user(1, "dup@ex"))], &[]);
     let second = change_set(&schema, &[(RelationId(0), user(2, "dup@ex"))], &[]);
     unready
@@ -390,7 +390,7 @@ fn unready_batched_host_deletes_stay_invisible_until_admit() {
     let (_dir, path) = store_dir("unready-host-batch-invisible");
     let schema = keyed_users();
     let work = work();
-    let unready = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("begin");
+    let unready = UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &work).expect("begin");
     let first = change_set(&schema, &[(RelationId(0), user(1, "dup@ex"))], &[]);
     let second = change_set(&schema, &[(RelationId(0), user(2, "dup@ex"))], &[]);
     let receipts = [
@@ -507,7 +507,7 @@ fn d04_closed_source_permuted_target_deletion_refuses_on_production_store() {
 
     let (_ok_dir, ok_path) = store_dir("d04-closed-permuted-lawful");
     let covered =
-        UnreadyStore::begin(&ok_path, &schema, MapPolicy::default(), &work).expect("begin");
+        UnreadyStore::begin(&ok_path, &schema, DEFAULT_MAP_CEILING, &work).expect("begin");
     let insert_lawful = change_set(&schema, &[(target, lawful.clone())], &[]);
     covered
         .populate(&work, |stage, work| {
@@ -520,7 +520,7 @@ fn d04_closed_source_permuted_target_deletion_refuses_on_production_store() {
     assert!(!ok_path.exists(), "control never installed dest");
 
     let (_dir, path) = store_dir("d04-closed-permuted-delete");
-    let unready = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("begin");
+    let unready = UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &work).expect("begin");
     let insert_both = change_set(
         &schema,
         &[(target, lawful.clone()), (target, decoy.clone())],

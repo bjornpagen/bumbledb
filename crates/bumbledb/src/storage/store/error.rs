@@ -5,7 +5,6 @@
 //! (see the P02 hub patch request) rather than flattening it into `Error`.
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use crate::error::{IoFailure, LmdbFailure};
 use crate::work::WorkError;
@@ -56,23 +55,8 @@ pub enum StoreError {
         path: PathBuf,
         detail: Box<StoreError>,
     },
-    /// Live read transactions blocked exclusive map access within the
-    /// caller's budget. The caller can release snapshots and retry.
-    ResizeBlockedByReaders {
-        live_transactions: u64,
-        oldest_age: Option<Duration>,
-    },
-    /// The map was full and no further growth is possible (address space,
-    /// configured ceiling, or the platform refused the larger mapping).
-    MapGrowthExhausted {
-        map_bytes: u64,
-        requested_bytes: u64,
-        detail: Option<LmdbFailure>,
-    },
-    /// The map filled up during a transaction and the caller asked for no
-    /// automatic growth, or growth succeeded but the same delta still did
-    /// not fit after the bounded number of growth attempts.
-    MapFull { map_bytes: u64 },
+    /// A write needed more pages than the fixed virtual map ceiling holds.
+    Full { ceiling: u64 },
     /// LMDB's reader table is full; a distinct condition from map exhaustion.
     ReaderSlotsExhausted,
     /// The store is closing or closed; no new transaction is admitted.
@@ -120,12 +104,6 @@ impl StoreError {
             heed::Error::Io(io) => Self::Io(IoFailure::from_io(&io)),
             other => Self::Lmdb(LmdbFailure::from(other)),
         }
-    }
-
-    /// True exactly for the LMDB map-full condition; the candidate path
-    /// converts this into abort → grow → reapply, never a partial commit.
-    pub(crate) fn is_map_full(error: &heed::Error) -> bool {
-        matches!(error, heed::Error::Mdb(heed::MdbError::MapFull))
     }
 }
 
@@ -184,22 +162,7 @@ impl std::fmt::Display for StoreError {
                     path.display()
                 )
             }
-            Self::ResizeBlockedByReaders {
-                live_transactions,
-                oldest_age,
-            } => write!(
-                f,
-                "resize blocked by {live_transactions} live transaction(s), oldest {oldest_age:?}"
-            ),
-            Self::MapGrowthExhausted {
-                map_bytes,
-                requested_bytes,
-                ..
-            } => write!(
-                f,
-                "map growth exhausted at {map_bytes} bytes ({requested_bytes} requested)"
-            ),
-            Self::MapFull { map_bytes } => write!(f, "map full at {map_bytes} bytes"),
+            Self::Full { ceiling } => write!(f, "store full at its {ceiling}-byte map ceiling"),
             Self::ReaderSlotsExhausted => f.write_str("LMDB reader slots exhausted"),
             Self::Closed => f.write_str("store is closing or closed"),
             Self::ReentrantWriter => f.write_str("writer session is already owned by this thread"),

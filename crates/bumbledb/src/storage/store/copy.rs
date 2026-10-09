@@ -51,18 +51,8 @@ impl Store {
         }
         let FreshDestination(FreshDestinationToken) = fresh;
         let owner = self.writer(work)?;
-        loop {
-            work.checkpoint()?;
-            match compact_attempt(self, source, work) {
-                Err(StoreError::MapFull { .. }) => {
-                    self.grow(work, None)?;
-                }
-                result => {
-                    result?;
-                    break;
-                }
-            }
-        }
+        work.checkpoint()?;
+        compact_attempt(self, source, work)?;
         drop(owner);
         Ok(())
     }
@@ -72,7 +62,7 @@ impl Store {
     /// or complete metadata emptiness — zero rows alone is insufficient
     /// (CORE-015).
     /// # Errors
-    /// `ForeignSchema`, `DestinationExists`, growth refusals, storage failure.
+    /// `ForeignSchema`, `DestinationExists`, `Full`, storage failure.
     pub fn adopt_snapshot(
         &self,
         source: &OwnedSnapshot,
@@ -85,18 +75,8 @@ impl Store {
             return Err(StoreError::ForeignSchema);
         }
         let owner = self.writer(work)?;
-        loop {
-            work.checkpoint()?;
-            match copy_attempt(self, source, indexer, work) {
-                Err(StoreError::MapFull { .. }) => {
-                    self.grow(work, None)?;
-                }
-                other => {
-                    let () = other?;
-                    break;
-                }
-            }
-        }
+        work.checkpoint()?;
+        copy_attempt(self, source, indexer, work)?;
         drop(owner);
         Ok(())
     }
@@ -116,18 +96,8 @@ impl Store {
             return Err(StoreError::ForeignSchema);
         }
         let owner = self.writer(work)?;
-        loop {
-            work.checkpoint()?;
-            match copy_attempt(self, source, indexer, work) {
-                Err(StoreError::MapFull { .. }) => {
-                    self.grow(work, None)?;
-                }
-                other => {
-                    let () = other?;
-                    break;
-                }
-            }
-        }
+        work.checkpoint()?;
+        copy_attempt(self, source, indexer, work)?;
         drop(owner);
         Ok(())
     }
@@ -170,7 +140,7 @@ fn compact_attempt(dest: &Store, source: &OwnedSnapshot, work: &WorkContext) -> 
         if key.first() == Some(&keys::TAG_ROW) {
             work.checkpoint()?;
         }
-        append_entry(*inner.data, &mut gated.txn, key, value, work)?;
+        append_entry(inner, *inner.data, &mut gated.txn, key, value, work)?;
     }
     // Repack metadata as well. Source and destination were opened/created with
     // the same format and schema. Copy all state, including future metadata
@@ -178,7 +148,7 @@ fn compact_attempt(dest: &Store, source: &OwnedSnapshot, work: &WorkContext) -> 
     inner
         .meta
         .clear(&mut gated.txn)
-        .map_err(super::store_env::map_txn_error)?;
+        .map_err(|error| dest.inner.txn_error(error))?;
     for entry in source_inner
         .meta
         .iter(source_txn)
@@ -190,7 +160,7 @@ fn compact_attempt(dest: &Store, source: &OwnedSnapshot, work: &WorkContext) -> 
         } else {
             value
         };
-        append_entry(inner.meta, &mut gated.txn, key, value, work)?;
+        append_entry(inner, inner.meta, &mut gated.txn, key, value, work)?;
     }
     work.checkpoint()?;
     gated.commit()
@@ -199,6 +169,7 @@ fn compact_attempt(dest: &Store, source: &OwnedSnapshot, work: &WorkContext) -> 
 /// No owned row buffers: small entries copy directly, overflow-sized values
 /// fill LMDB's reserved space in bounded chunks with typed cancellation.
 fn append_entry<C>(
+    inner: &super::store_env::StoreInner,
     db: Database<Bytes, Bytes, C>,
     txn: &mut RwTxn<'_>,
     key: &[u8],
@@ -207,13 +178,11 @@ fn append_entry<C>(
 ) -> StoreResult<()> {
     use std::io::Write as _;
     work.checkpoint()?;
-    work.checkpoint()?;
-    work.checkpoint()?;
     if value.len() <= rows::BYTE_QUANTUM {
         work.checkpoint()?;
         return db
             .put_with_flags(txn, PutFlags::APPEND, key, value)
-            .map_err(super::store_env::map_txn_error);
+            .map_err(|error| inner.txn_error(error));
     }
     let mut stopped = None;
     let result =
@@ -232,7 +201,7 @@ fn append_entry<C>(
     if let Some(error) = stopped {
         return Err(StoreError::Work(error));
     }
-    if result.map_err(super::store_env::map_txn_error)?.is_some() {
+    if result.map_err(|error| inner.txn_error(error))?.is_some() {
         return Err(StoreError::Corruption(StoreCorruption::MalformedKey(
             "compaction entries are not strictly ordered",
         )));
@@ -286,14 +255,14 @@ fn copy_attempt(
             inner
                 .meta
                 .put(&mut gated.txn, key, value)
-                .map_err(super::store_env::map_txn_error)?;
+                .map_err(|error| dest.inner.txn_error(error))?;
         }
         if let Some(attachment) = source.attachment()? {
             work.checkpoint()?;
             inner
                 .meta
                 .put(&mut gated.txn, K_ATTACHMENT, attachment)
-                .map_err(super::store_env::map_txn_error)?;
+                .map_err(|error| dest.inner.txn_error(error))?;
         }
     }
     {
@@ -310,7 +279,7 @@ fn copy_attempt(
             inner
                 .meta
                 .put(&mut gated.txn, key, value)
-                .map_err(super::store_env::map_txn_error)?;
+                .map_err(|error| dest.inner.txn_error(error))?;
         }
     }
     inner
@@ -320,7 +289,7 @@ fn copy_attempt(
             K_GENERATION,
             &source.generation().storage_word().to_be_bytes(),
         )
-        .map_err(super::store_env::map_txn_error)?;
+        .map_err(|error| dest.inner.txn_error(error))?;
     gated.commit()
 }
 

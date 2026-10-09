@@ -898,7 +898,7 @@ mod tests {
             let work = work();
             let (_dir, path) = store_dir("verify-secondary-home");
             let (store, _) =
-                super::super::Store::create(&path, &schema, super::super::MapPolicy::default())
+                super::super::Store::create(&path, &schema, super::super::DEFAULT_MAP_CEILING)
                     .unwrap();
             store
                 .writer(&work)

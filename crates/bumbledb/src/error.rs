@@ -1347,6 +1347,11 @@ pub enum Error {
     /// An in-memory representation reached its fixed capacity.
     Capacity(Capacity),
 
+    /// A write needed more pages than the store's fixed map ceiling.
+    Full {
+        ceiling: u64,
+    },
+
     Corruption(CorruptionError),
 
     /// A successor-store condition, surfaced with its full typed roster
@@ -1385,6 +1390,7 @@ pub enum ErrorFamily {
     Scalar,
     ResultBytesOverflow,
     Capacity,
+    Full,
     Corruption,
     Store,
 }
@@ -1460,6 +1466,7 @@ impl Error {
             Self::Scalar { .. } => family_only(ErrorFamily::Scalar),
             Self::ResultBytesOverflow => family_only(ErrorFamily::ResultBytesOverflow),
             Self::Capacity(_) => family_only(ErrorFamily::Capacity),
+            Self::Full { .. } => family_only(ErrorFamily::Full),
             Self::Corruption(_) => family_only(ErrorFamily::Corruption),
             Self::Store(err) => family_source(ErrorFamily::Store, err.as_ref()),
         }

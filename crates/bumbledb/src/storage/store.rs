@@ -1,5 +1,5 @@
 //! The physical store: one LMDB owner, owned coherent
-//! snapshots, an elastic map, and the private candidate
+//! snapshots, a fixed virtual map, and the private candidate
 //! prepare/admit/seal/commit capability.
 //!
 //! Judgment, snapshot access, log metadata and native ownership all use
@@ -37,10 +37,9 @@
 //! - Every physical key is fixed-width and far below LMDB's key bound; no
 //!   variable-width determinant or text ever enters a key (long-key safe by
 //!   construction).
-//! - The map is elastic: sized from the populated file plus headroom, grown
-//!   geometrically under an exclusive transaction gate ([`gate`]). There is
-//!   no 32 GiB policy constant and no `NO_SYNC` open lane anywhere in this
-//!   module: every commit is an ordinary durable LMDB commit.
+//! - The map is one fixed virtual reservation set at open; a write past it
+//!   is the typed `Full` refusal. Every commit is an ordinary durable LMDB
+//!   commit.
 //! - [`OwnedSnapshot`] owns one real LMDB read transaction; rows, generation
 //!   and opaque host attachment all derive from that one transaction
 //!   and export consumes only that view.
@@ -53,7 +52,7 @@
 //! | Capability | Send | Sync | Lifetime |
 //! | --- | --- | --- | --- |
 //! | [`Store`] | yes | yes | Owner; drop closes env then releases the lock |
-//! | [`OwnedSnapshot`] | yes | no | Owns env clone + read txn; blocks resize |
+//! | [`OwnedSnapshot`] | yes | no | Owns env clone + read txn; delays close |
 //! | [`WriteOwner`] | no | no | Holds the writer mutex; stays on its worker |
 //! | [`PreparedWrite`] | no | no | Owns the uncommitted `RwTxn` + evidence |
 //! | [`SealedWrite`] | no | no | Commit/abort only; facts frozen at seal |
@@ -75,7 +74,6 @@ pub mod gate;
 pub mod host;
 pub mod judge_bridge;
 pub mod keys;
-pub mod map;
 pub(crate) mod rows;
 pub mod snapshot;
 pub mod staging;
@@ -102,9 +100,8 @@ pub use host::{
 };
 pub use judge_bridge::{SchemaJudge, UnindexedRows};
 pub use keys::{PhysicalKeyKind, PhysicalKeyWidths};
-pub use map::{MapPolicy, MapReport};
 pub use snapshot::{ExportReport, OwnedSnapshot, StorePageStats};
-pub use store_env::{CloseReport, GrowReport, Store};
+pub use store_env::{CloseReport, DEFAULT_MAP_CEILING, Store};
 pub use verify::{VerifyCorruption, VerifyFinding};
 
 #[cfg(test)]

@@ -12,15 +12,8 @@
 //! never amend judged application facts, so sealing cannot invalidate the
 //! admission evidence. A failed seal drops the entire transaction —
 //! including any host-record prefix — and dispatches nothing. After seal,
-//! the only capabilities are commit and abort.
-//!
-//! `MDB_MAP_FULL` while preparing aborts the transaction, grows the map
-//! under the exclusive gate, and **reapplies the same owned canonical
-//! delta** — immutable native work, never an application callback. The loop
-//! is bounded by actual growth progress: `grow` either strictly grows or
-//! returns a typed refusal. Map-full during seal or commit surfaces as a
-//! typed error with nothing dispatched/committed; the caller (the log)
-//! owns replay of its immutable attempt after `Store::grow`.
+//! the only capabilities are commit and abort. A write past the map ceiling
+//! is the typed `Full` refusal with nothing committed.
 
 use std::sync::MutexGuard;
 
@@ -34,7 +27,7 @@ use super::format::{K_ATTACHMENT, K_GENERATION, K_HOST_RECORD_TAG, RowId, RowLoc
 use super::host::{AttachmentChange, HostChanges, HostRecordChange};
 use super::keys::HOST_KEY_MAX;
 use super::rows;
-use super::store_env::{GatedRwTxn, Store, map_txn_error, read_generation};
+use super::store_env::{GatedRwTxn, Store, read_generation};
 use crate::Value;
 use crate::changes::{ChangeKind, ChangeSet};
 use crate::storage::GenerationId;
@@ -249,43 +242,28 @@ impl<'store> WriteOwner<'store> {
         if changes.schema() != self.store.inner.schema_fp {
             return Err(StoreError::ForeignSchema);
         }
-        loop {
-            self.work.checkpoint()?;
-            match self.attempt(changes, indexer) {
-                Err(StoreError::MapFull { .. }) => {
-                    // The failed transaction is already dropped. Grow under
-                    // the exclusive gate and reapply the same owned delta;
-                    // `grow` strictly grows or returns the typed refusal
-                    // that bounds this loop.
-                    self.store.grow(&self.work, None)?;
-                }
-                Err(error) => return Err(error),
-                Ok((txn, report, application, home_keys_preserved)) => {
-                    let state = CandidateState {
-                        store: self.store,
-                        txn: &txn,
-                        changes: Some(changes),
-                        home_keys_preserved,
-                    };
-                    match decide(&state, &self.work)? {
-                        Judgment::Rejected(rejection) => {
-                            drop(txn); // the losing candidate is never readable
-                            return Ok(Prepared::Rejected {
-                                rejection,
-                                application,
-                            });
-                        }
-                        Judgment::Admitted => {
-                            return Ok(Prepared::Admitted(PreparedWrite {
-                                owner: self,
-                                txn,
-                                report,
-                                application,
-                            }));
-                        }
-                    }
-                }
+        self.work.checkpoint()?;
+        let (txn, report, application, home_keys_preserved) = self.attempt(changes, indexer)?;
+        let state = CandidateState {
+            store: self.store,
+            txn: &txn,
+            changes: Some(changes),
+            home_keys_preserved,
+        };
+        match decide(&state, &self.work)? {
+            Judgment::Rejected(rejection) => {
+                drop(txn);
+                Ok(Prepared::Rejected {
+                    rejection,
+                    application,
+                })
             }
+            Judgment::Admitted => Ok(Prepared::Admitted(PreparedWrite {
+                owner: self,
+                txn,
+                report,
+                application,
+            })),
         }
     }
 
@@ -299,28 +277,19 @@ impl<'store> WriteOwner<'store> {
         if changes.schema() != self.store.inner.schema_fp {
             return Err(StoreError::ForeignSchema);
         }
-        loop {
-            self.work.checkpoint()?;
-            match self.attempt(changes, indexer) {
-                Err(StoreError::MapFull { .. }) => {
-                    self.store.grow(&self.work, None)?;
-                }
-                Err(error) => return Err(error),
-                Ok((txn, report, application, _home_keys_preserved)) => {
-                    return PreparedWrite {
-                        owner: self,
-                        txn,
-                        report,
-                        application,
-                    }
-                    .seal(HostChanges {
-                        records: &[],
-                        attachment: AttachmentChange::Keep,
-                    })?
-                    .commit();
-                }
-            }
+        self.work.checkpoint()?;
+        let (txn, report, application, _home_keys_preserved) = self.attempt(changes, indexer)?;
+        PreparedWrite {
+            owner: self,
+            txn,
+            report,
+            application,
         }
+        .seal(HostChanges {
+            records: &[],
+            attachment: AttachmentChange::Keep,
+        })?
+        .commit()
     }
 
     /// A metadata-only transaction against the unchanged committed parent:
@@ -332,23 +301,14 @@ impl<'store> WriteOwner<'store> {
     pub fn prepare_unchanged<'owner>(
         &'owner mut self,
     ) -> StoreResult<PreparedWrite<'owner, 'store>> {
-        loop {
-            self.work.checkpoint()?;
-            let txn = match self.store.gated_write_txn(&self.work) {
-                Err(StoreError::MapFull { .. }) => {
-                    self.store.grow(&self.work, None)?;
-                    continue;
-                }
-                other => other?,
-            };
-            let generation = read_generation(&self.store.inner, &txn.txn)?;
-            return Ok(PreparedWrite {
-                owner: self,
-                txn,
-                report: CommitKind::Noop { generation },
-                application: AppliedChanges::default(),
-            });
-        }
+        let txn = self.store.gated_write_txn(&self.work)?;
+        let generation = read_generation(&self.store.inner, &txn.txn)?;
+        Ok(PreparedWrite {
+            owner: self,
+            txn,
+            report: CommitKind::Noop { generation },
+            application: AppliedChanges::default(),
+        })
     }
 
     fn attempt<I: RowIndexer + ?Sized>(
@@ -401,7 +361,7 @@ impl<'store> WriteOwner<'store> {
                     K_GENERATION,
                     &new_generation.storage_word().to_be_bytes(),
                 )
-                .map_err(map_txn_error)?;
+                .map_err(|error| inner.txn_error(error))?;
             // Advance exactly the touched relations' change versions, in the
             // same transaction as the rows they cover. Host-record-only
             // seals never reach this arm (they change no relation's rows).
@@ -417,7 +377,7 @@ impl<'store> WriteOwner<'store> {
                         super::format::relation_version_key(*relation).as_slice(),
                         &next.storage_word().to_be_bytes(),
                     )
-                    .map_err(map_txn_error)?;
+                    .map_err(|error| inner.txn_error(error))?;
             }
             CommitKind::Changed { new_generation }
         } else {
@@ -651,7 +611,7 @@ impl<'owner, 'store> PreparedWrite<'owner, 'store> {
                     K_GENERATION,
                     &new_generation.storage_word().to_be_bytes(),
                 )
-                .map_err(map_txn_error)?;
+                .map_err(|error| self.owner.store.inner.txn_error(error))?;
             self.report = CommitKind::Changed { new_generation };
         }
         Ok(SealedWrite {
@@ -771,7 +731,7 @@ fn put_chunked(
     if let Some(error) = stopped {
         return Err(StoreError::Work(error));
     }
-    result.map_err(map_txn_error)
+    result.map_err(|error| store.inner.txn_error(error))
 }
 
 fn apply_host_changes(
@@ -795,8 +755,8 @@ fn apply_host_changes(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             == Some(index)
         {
-            return Err(StoreError::MapFull {
-                map_bytes: store.current_map_bytes(),
+            return Err(StoreError::Full {
+                ceiling: store.ceiling(),
             });
         }
         match *record {
@@ -818,7 +778,7 @@ fn apply_host_changes(
                     .inner
                     .meta
                     .delete(&mut txn.txn, key)
-                    .map_err(map_txn_error)?;
+                    .map_err(|error| store.inner.txn_error(error))?;
             }
         }
     }
@@ -841,7 +801,7 @@ fn apply_host_changes(
                 .inner
                 .meta
                 .delete(&mut txn.txn, K_ATTACHMENT)
-                .map_err(map_txn_error)?;
+                .map_err(|error| store.inner.txn_error(error))?;
         }
     }
     work.checkpoint()?;

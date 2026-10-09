@@ -31,7 +31,7 @@ use bumbledb::schema::{
     SchemaDescriptor, Side, StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
 };
 use bumbledb::store::{
-    CandidateJudge, CandidateState, Judgment, MapPolicy, Prepared, SchemaJudge, Store, StoreResult,
+    CandidateJudge, CandidateState, Judgment, Prepared, SchemaJudge, Store, StoreResult,
     UnindexedRows,
 };
 use bumbledb::work::WorkContext;
@@ -406,9 +406,13 @@ fn complete_production_and_independent_reference_agree_on_randomized_mutations()
     let dir = common::TempDir::new("gate-inc-judge-differential");
     let schema = theory();
     std::fs::create_dir_all(dir.path()).expect("parent dir");
-    let store = Store::create(&dir.path().join("store"), &schema, MapPolicy::default())
-        .expect("create")
-        .0;
+    let store = Store::create(
+        &dir.path().join("store"),
+        &schema,
+        bumbledb::store::DEFAULT_MAP_CEILING,
+    )
+    .expect("create")
+    .0;
     run_differential(&store, &schema, 0xD1FF_E4E7_71A1_0001_u64, 70);
 }
 
@@ -427,7 +431,7 @@ fn complete_production_and_independent_reference_agree_under_forced_collisions()
     let store = Store::create_forced_fingerprint(
         &dir.path().join("store"),
         &schema,
-        MapPolicy::default(),
+        bumbledb::store::DEFAULT_MAP_CEILING,
         [0xEE; FP_LEN],
     )
     .expect("forced-collision store");

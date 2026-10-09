@@ -7,9 +7,6 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-mod clock;
-pub(crate) use clock::AdmissionStamp;
-
 /// An operation stopped by its caller, or a capacity that cannot be allocated.
 /// Fallible growth does not promise recovery from process-wide memory exhaustion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

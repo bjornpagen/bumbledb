@@ -12,7 +12,7 @@ use super::candidate::RowIndexer;
 use super::det_index;
 use super::error::{StoreCorruption, StoreError, StoreResult};
 use super::format::{self, K_NEXT_ROW_ID, RowId, RowLocator};
-use super::store_env::{GatedRwTxn, StoreInner, map_txn_error};
+use super::store_env::{GatedRwTxn, StoreInner};
 use crate::schema::ProjectionId;
 use crate::schema::compiled::KeyEncoding;
 use crate::work::WorkContext;
@@ -258,7 +258,7 @@ fn persist_insert<I: RowIndexer + ?Sized>(
     inner
         .data
         .put(txn, inner.keys.row_key(relation, locator)?.as_slice(), row)
-        .map_err(map_txn_error)?;
+        .map_err(|error| inner.txn_error(error))?;
     if let Some(fp) = fingerprint {
         inner
             .data
@@ -270,7 +270,7 @@ fn persist_insert<I: RowIndexer + ?Sized>(
                     .as_slice(),
                 &[],
             )
-            .map_err(map_txn_error)?;
+            .map_err(|error| inner.txn_error(error))?;
     }
     visit_determinants(
         inner,
@@ -297,7 +297,7 @@ fn persist_insert<I: RowIndexer + ?Sized>(
                         .as_slice(),
                     locator.home(),
                 )
-                .map_err(map_txn_error)
+                .map_err(|error| inner.txn_error(error))
         },
     )
 }
@@ -314,7 +314,7 @@ fn persist_remove<I: RowIndexer + ?Sized>(
     inner
         .data
         .delete(txn, inner.keys.row_key(relation, locator)?.as_slice())
-        .map_err(map_txn_error)?;
+        .map_err(|error| inner.txn_error(error))?;
     if let Some(fp) = fingerprint {
         inner
             .data
@@ -325,7 +325,7 @@ fn persist_remove<I: RowIndexer + ?Sized>(
                     .membership_key(relation, fp, locator.id)?
                     .as_slice(),
             )
-            .map_err(map_txn_error)?;
+            .map_err(|error| inner.txn_error(error))?;
     }
     visit_determinants(
         inner,
@@ -352,7 +352,7 @@ fn persist_remove<I: RowIndexer + ?Sized>(
                         .as_slice(),
                 )
                 .map(|_| ())
-                .map_err(map_txn_error)
+                .map_err(|error| inner.txn_error(error))
         },
     )
 }
@@ -653,7 +653,7 @@ impl<'inner, 'env, 'work> RowWriter<'inner, 'env, 'work> {
                     format::row_count_key(relation).as_slice(),
                     &count.to_be_bytes(),
                 )
-                .map_err(map_txn_error)?;
+                .map_err(|error| self.inner.txn_error(error))?;
             self.active_count = None;
         }
         Ok(())
@@ -685,7 +685,7 @@ impl<'inner, 'env, 'work> RowWriter<'inner, 'env, 'work> {
             self.inner
                 .meta
                 .put(&mut self.txn.txn, K_NEXT_ROW_ID, &next.to_be_bytes())
-                .map_err(map_txn_error)?;
+                .map_err(|error| self.inner.txn_error(error))?;
         }
         Ok(self.txn)
     }
@@ -998,11 +998,11 @@ mod tests {
     #[test]
     fn scalar_key_membership_keeps_competitors_and_keyless_collision_buckets() {
         use super::super::fingerprint::FP_LEN;
-        use crate::storage::store::{MapPolicy, Store};
+        use crate::storage::store::{DEFAULT_MAP_CEILING, Store};
         let (_dir, path) = store_dir("selected-membership");
         let schema = schema();
         let store =
-            Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0; FP_LEN])
+            Store::create_forced_fingerprint(&path, &schema, DEFAULT_MAP_CEILING, [0; FP_LEN])
                 .unwrap();
         let context = work();
         let notes = ["first", "second", "missing"].map(|body| {
@@ -1220,70 +1220,10 @@ mod tests {
                 crate::storage::store::tests::FirstFieldKey.index_row(relation, row, work, emit)?;
             }
             if self.fail_once.replace(false) {
-                Err(StoreError::MapFull { map_bytes: 0 })
+                Err(StoreError::Full { ceiling: 0 })
             } else {
                 Ok(())
             }
-        }
-    }
-
-    #[test]
-    fn retry_after_partial_streaming_preserves_set_indexes_and_single_counter_change() {
-        use crate::storage::store::tests::{NO_HOST, change_set, tiny_map};
-        use crate::storage::store::{Prepared, Store};
-        let (_dir, path) = store_dir("stream-retry");
-        let schema = schema();
-        let store = Store::create(&path, &schema, tiny_map()).unwrap().0;
-        let values = note(1, "body");
-        for inserting in [true, false] {
-            let context = work();
-            let map_before = store.current_map_bytes();
-            let indexer = RetryDuplicate {
-                fail_once: std::cell::Cell::new(true),
-                calls: std::cell::Cell::new(0),
-            };
-            let batch = [(NOTE, values.clone())];
-            let changes = if inserting {
-                change_set(&schema, &batch, &[])
-            } else {
-                change_set(&schema, &[], &batch)
-            };
-            let mut owner = store.writer(&context).unwrap();
-            let committed = match owner
-                .prepare(&changes, &indexer, &ExpectHomePreserved(&schema))
-                .unwrap()
-            {
-                Prepared::Admitted(prepared) => prepared.seal(NO_HOST).unwrap().commit().unwrap(),
-                Prepared::Rejected {
-                    rejection: never, ..
-                } => match never {},
-            };
-            drop(owner);
-            assert_eq!(indexer.calls.get(), 2, "one failed attempt and one replay");
-            assert!(store.current_map_bytes() > map_before);
-            assert_eq!(committed.application.added, u64::from(inserting));
-            assert_eq!(committed.application.removed, u64::from(!inserting));
-            let snapshot = store.snapshot(&context).unwrap();
-            assert_eq!(snapshot.row_count(NOTE).unwrap(), u64::from(inserting));
-            assert_eq!(
-                store.inner.data.len(snapshot.read_txn()).unwrap(),
-                u64::from(inserting)
-            );
-            assert_eq!(
-                format::read_u64(
-                    &store.inner.meta,
-                    snapshot.read_txn(),
-                    K_NEXT_ROW_ID,
-                    "next"
-                )
-                .unwrap(),
-                2
-            );
-            assert!(
-                super::super::verify::sweep(&snapshot, &schema, &context)
-                    .unwrap()
-                    .is_empty()
-            );
         }
     }
 
@@ -1526,7 +1466,7 @@ mod tests {
         };
         assert!(matches!(
             writer.insert(NOTE, &rows[2], &fail),
-            Err(StoreError::MapFull { .. })
+            Err(StoreError::Full { .. })
         ));
         drop(writer);
         assert_eq!(
@@ -1558,23 +1498,5 @@ mod tests {
             store.snapshot(&context).unwrap().row_count(NOTE).unwrap(),
             0
         );
-    }
-
-    struct ExpectHomePreserved<'s>(&'s crate::Schema);
-
-    impl crate::storage::store::CandidateJudge for ExpectHomePreserved<'_> {
-        type Rejection = std::convert::Infallible;
-        fn judge(
-            &self,
-            candidate: &crate::storage::store::CandidateState<'_, '_>,
-            work: &WorkContext,
-        ) -> StoreResult<crate::storage::store::Judgment<Self::Rejection>> {
-            assert!(candidate.preserves_home_key(self.0, bumbledb_theory::schema::StatementId(0)));
-            crate::storage::store::CandidateJudge::judge(
-                &crate::storage::store::tests::AdmitAll,
-                candidate,
-                work,
-            )
-        }
     }
 }

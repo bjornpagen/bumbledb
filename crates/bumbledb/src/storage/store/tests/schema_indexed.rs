@@ -263,7 +263,7 @@ fn assert_user_placement(
 fn scalar_home_and_secondary_locator_change_atomically_across_replacement_and_reinsertion() {
     let (_dir, path) = store_dir("scalar-home-move");
     let schema = keyed_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .unwrap()
         .0;
     judged_commit(
@@ -380,7 +380,7 @@ fn nonleading_uuid_fixed_bytes_and_reordered_composite_keys_are_primary_homes() 
         }
         .validate()
         .unwrap();
-        let store = Store::create(&path, &schema, MapPolicy::default())
+        let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
             .unwrap()
             .0;
         let mut values = vec![Value::String("payload".into())];
@@ -449,7 +449,7 @@ fn assert_single_primary_row(
 fn row_mutations_maintain_schema_determinant_entries_symmetrically() {
     let (_dir, path) = store_dir("schema-indexed-maintenance");
     let schema = keyed_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
 
@@ -563,7 +563,7 @@ impl CandidateJudge for CaptureCompetitors {
 fn judgment_enumeration_sees_all_competitors_without_scanning_the_relation() {
     let (_dir, path) = store_dir("schema-indexed-competitors");
     let schema = keyed_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
 
@@ -623,7 +623,7 @@ fn judgment_enumeration_sees_all_competitors_without_scanning_the_relation() {
 fn pointwise_keys_bucket_by_their_scalar_prefix() {
     let (_dir, path) = store_dir("schema-indexed-pointwise");
     let schema = keyed_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
     judged_commit(
@@ -730,7 +730,7 @@ fn assert_bucket_rejects_extra_route_byte(
 fn long_text_determinants_stay_out_of_lmdb_keys_and_still_resolve() {
     let (_dir, path) = store_dir("schema-indexed-long-text");
     let schema = keyed_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
     // Far past the 511-byte LMDB key bound.
@@ -772,7 +772,7 @@ fn forced_collisions_widen_buckets_but_never_answers() {
     let (_dir, path) = store_dir("schema-indexed-collision");
     let schema = keyed_schema();
     let store =
-        Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0xAB; FP_LEN])
+        Store::create_forced_fingerprint(&path, &schema, DEFAULT_MAP_CEILING, [0xAB; FP_LEN])
             .expect("forced-collision store");
     judged_commit(
         &store,
@@ -831,7 +831,7 @@ fn adopt_snapshot_rebuilds_the_determinant_index() {
     let (_dir, path) = store_dir("schema-indexed-adopt-src");
     let (_dir2, dest_path) = store_dir("schema-indexed-adopt-dest");
     let schema = keyed_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default())
+    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
     judged_commit(
@@ -849,7 +849,7 @@ fn adopt_snapshot_rebuilds_the_determinant_index() {
     );
     let context = work();
     let snapshot = store.snapshot(&context).expect("snapshot");
-    let (dest, fresh) = Store::create(&dest_path, &schema, MapPolicy::default()).expect("dest");
+    let (dest, fresh) = Store::create(&dest_path, &schema, DEFAULT_MAP_CEILING).expect("dest");
     dest.adopt_snapshot(&snapshot, fresh, &UnindexedRows, &context)
         .expect("adopt");
     assert_eq!(determinant_entry_count(&dest), 3);
@@ -873,7 +873,7 @@ fn visit_determinant_bucket_streams_candidates() {
     use crate::storage::store::rows;
     let dir = TempDir::new("bounded-visitor");
     let schema = keyed_schema();
-    let store = Store::create(&dir.path().join("store"), &schema, MapPolicy::default())
+    let store = Store::create(&dir.path().join("store"), &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
     let work = work();
@@ -914,7 +914,7 @@ fn visit_determinant_bucket_streams_candidates() {
 fn owned_snapshot_visit_projection_takes_projection_id() {
     let dir = TempDir::new("visit-projection");
     let schema = keyed_schema();
-    let store = Store::create(&dir.path().join("store"), &schema, MapPolicy::default())
+    let store = Store::create(&dir.path().join("store"), &schema, DEFAULT_MAP_CEILING)
         .expect("create")
         .0;
     let work = work();
@@ -994,7 +994,7 @@ fn primary_probe_continues_unready_conflicts_and_preserves_work() {
     let (_dir, path) = store_dir("primary-probe-conflicts");
     let schema = keyed_schema();
     let context = work();
-    let staged = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &context).unwrap();
+    let staged = UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &context).unwrap();
     let changes = keyed_changes(
         &schema,
         &[
@@ -1076,7 +1076,7 @@ fn primary_probe_validates_first_and_continuation_keys_without_eager_work() {
     for malformed_first in [true, false] {
         let (_dir, path) = store_dir("primary-probe-malformed");
         let schema = keyed_schema();
-        let store = Store::create(&path, &schema, MapPolicy::default())
+        let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
             .unwrap()
             .0;
         judged_commit(

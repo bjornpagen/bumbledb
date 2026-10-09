@@ -359,8 +359,8 @@ mod tests {
     };
     use crate::storage::store::candidate::{Judgment, Prepared};
     use crate::storage::store::error::StoreError;
-    use crate::storage::store::map::MapPolicy;
     use crate::storage::store::staging::UnreadyStore;
+    use crate::storage::store::store_env::DEFAULT_MAP_CEILING;
     use crate::storage::store::store_env::Store;
     use crate::work::WorkContext;
     use crate::{ChangeSet, Value};
@@ -425,7 +425,7 @@ mod tests {
         let store = Store::create_forced_fingerprint(
             &dest,
             &schema,
-            MapPolicy::default(),
+            DEFAULT_MAP_CEILING,
             [7; crate::storage::store::FP_LEN],
         )
         .unwrap();
@@ -715,7 +715,7 @@ mod tests {
         let old = user(0, "removed");
         let added = vec![user(1, &"long".repeat(2048)), user(2, "short")];
         let (_dir, path) = temp_dest("judge-stream-decode");
-        let (store, _) = Store::create(&path, &schema, MapPolicy::default()).unwrap();
+        let (store, _) = Store::create(&path, &schema, DEFAULT_MAP_CEILING).unwrap();
         store
             .writer(&work())
             .unwrap()
@@ -761,7 +761,7 @@ mod tests {
         let schema = keyed_email();
         let work = work();
         let (_dir, dest) = temp_dest("l02-d26-complete-vs-inc");
-        let (store, _) = Store::create(&dest, &schema, MapPolicy::default()).expect("create");
+        let (store, _) = Store::create(&dest, &schema, DEFAULT_MAP_CEILING).expect("create");
         let first = changes(&schema, &[user(1, "dup@ex")]);
         let second = changes(&schema, &[user(2, "dup@ex")]);
         {
@@ -807,7 +807,7 @@ mod tests {
         let work = work();
         let (_dir, dest) = temp_dest("l02-d26-unready-admit");
         let unready =
-            UnreadyStore::begin(&dest, &schema, MapPolicy::default(), &work).expect("begin");
+            UnreadyStore::begin(&dest, &schema, DEFAULT_MAP_CEILING, &work).expect("begin");
         let first = changes(&schema, &[user(1, "dup@ex")]);
         let second = changes(&schema, &[user(2, "dup@ex")]);
         unready
@@ -970,7 +970,7 @@ mod tests {
         let store = Store::create_forced_fingerprint(
             &dest,
             &schema,
-            MapPolicy::default(),
+            DEFAULT_MAP_CEILING,
             [0; crate::storage::store::FP_LEN],
         )
         .unwrap();
@@ -1021,7 +1021,7 @@ mod tests {
         let schema = schema();
         let work = work();
         let (_dir, dest) = temp_dest("home-preservation-unready");
-        let unready = UnreadyStore::begin(&dest, &schema, MapPolicy::default(), &work).unwrap();
+        let unready = UnreadyStore::begin(&dest, &schema, DEFAULT_MAP_CEILING, &work).unwrap();
         unready
             .populate(&work, |stage, work| {
                 for value in ["z", "a"] {
@@ -1058,7 +1058,7 @@ mod tests {
         let schema = schema();
         let work = work();
         let (_dir, dest) = temp_dest("home-preservation-error");
-        let store = Store::create(&dest, &schema, MapPolicy::default())
+        let store = Store::create(&dest, &schema, DEFAULT_MAP_CEILING)
             .unwrap()
             .0;
         let changes = change_set(&schema, &[(NOTE, note(1, "new"))], &[]);
@@ -1095,7 +1095,7 @@ mod tests {
         let schema = schema();
         let work = work();
         let (_dir, dest) = temp_dest("home-preservation-complete");
-        let store = Store::create(&dest, &schema, MapPolicy::default())
+        let store = Store::create(&dest, &schema, DEFAULT_MAP_CEILING)
             .unwrap()
             .0;
         let bad = change_set(&schema, &[(NOTE, note(1, "a")), (NOTE, note(1, "z"))], &[]);
@@ -1133,7 +1133,7 @@ mod tests {
         let schema = schema();
         let context = work();
         let (_dir, dest) = temp_dest("home-preservation-cancel");
-        let store = Store::create(&dest, &schema, MapPolicy::default())
+        let store = Store::create(&dest, &schema, DEFAULT_MAP_CEILING)
             .unwrap()
             .0;
         let changes = change_set(&schema, &[(NOTE, note(1, "new"))], &[]);

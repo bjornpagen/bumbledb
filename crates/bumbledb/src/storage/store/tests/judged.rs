@@ -48,7 +48,7 @@ fn user(id: u64, email: &str) -> Vec<Value> {
 }
 
 fn user_store(path: &std::path::Path) -> Store {
-    Store::create(path, &user_schema(), MapPolicy::default())
+    Store::create(path, &user_schema(), DEFAULT_MAP_CEILING)
         .expect("user store")
         .0
 }

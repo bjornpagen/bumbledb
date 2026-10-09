@@ -816,7 +816,7 @@ fn disk_size_and_generation_report_store_state() {
     let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    let empty = db.disk_size(common::work()).expect("size");
+    let empty = db.disk_size().expect("size");
     assert!(empty > 0, "a fresh environment still has pages");
     assert_eq!(db.generation(common::work()).expect("gen").value(), 0);
 
@@ -832,7 +832,7 @@ fn disk_size_and_generation_report_store_state() {
     })
     .expect("collection write")
     .unwrap();
-    let grown = db.disk_size(common::work()).expect("size");
+    let grown = db.disk_size().expect("size");
     assert!(grown > empty, "10k facts grow the file: {empty} -> {grown}");
     assert_eq!(db.generation(common::work()).expect("gen").value(), 1);
 }
@@ -956,7 +956,7 @@ fn compaction_drops_the_freelist_and_preserves_content() {
         .unwrap()
         .value;
     assert_eq!(removed.changed(), 9_000);
-    let source_size = db.disk_size(common::work()).expect("size");
+    let source_size = db.disk_size().expect("size");
     let generation = db.generation(common::work()).expect("generation");
     let source_rows = scan_digest(&db);
     assert_eq!(source_rows.len(), 1_000);
@@ -975,7 +975,7 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     drop(db);
 
     let compacted = Db::open(&compact_dir, Ledger, common::work()).expect("open compacted");
-    let compact_size = compacted.disk_size(common::work()).expect("size");
+    let compact_size = compacted.disk_size().expect("size");
     assert!(
         compact_size * 10 <= source_size * 8,
         "compaction reclaims the churn: {compact_size} vs {source_size}"
