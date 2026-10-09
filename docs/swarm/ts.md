@@ -23,8 +23,9 @@ Owns: `ts/**` (except `ts/src/native/binding.d.ts`), `ts-log/**`, `examples/**`.
 | G4 `test:s3`: ObjectStore conformance plus a hosted `Database` contract against real S3 | landed `3bf9357f7` |
 | L (TS): no ticket ids, chapter refs, rulings or history in `ts/` and `examples/` comments, messages and test names; removed-API absence probes deleted | landed `2a3b18723` |
 | D20 (TS tests): test database directories are `<name>.bdb` | landed `affa3f8ab` |
+| L (TS): module docs at most five lines; package and README docs match definition-time validation | landed `f2c8763dc`, `4a7b2326c` |
 
-Gate at the last commit (sandbox, HEAD addon): `biome check`, `tsc --noEmit`, `node --test` 283/283;
+Gate at `4a7b2326c` (sandbox, HEAD addon): `biome check`, `tsc --noEmit`, `node --test` 283/283;
 notes `typecheck`, `test` 8/8, `migrations:check`, `next build`; `scripts/family.mjs pack` + `smoke` with
 the host addon; the Rust consumer runs and is clippy-clean.
 
@@ -188,7 +189,6 @@ TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `impo
   accepts, while the package requires Node 26. Deploying needs a Node 26 runtime (container image or
   custom runtime) once Alchemy or Lambda offers one.
 - Notes is not in CI; the consolidator's gate runs it as listed above.
-- Comment purge: history and process references are gone from `ts/` and `examples/`; module essays
-  longer than five lines remain for the consolidator's strict pass (`ts/src/law.ts` header and
-  `TargetKeyWall` notes, `ts/src/codec.ts` header, `ts/src/rows.ts` header, and long item docs in
-  `query/scope.ts`, `query/lower.ts`, `query/atom.ts`, `changes.ts`).
+- Comment purge: history and process references are gone from `ts/` and `examples/`, and module
+  docs in `ts/src` are at most five lines (`f2c8763dc`). Long item docs that explain type-tier
+  invariants remain (`law.ts` `DecidableRoster`/`computeClasses`, `query/scope.ts` `ExactVars`).
