@@ -133,8 +133,6 @@ pub(in crate::exec::sink) struct SeenSet {
     pending_steps: u32,
 }
 
-pub(in crate::exec::sink) type SpillSet = SeenSet;
-
 /// The maximum unpolled work quantum of a sink: cancellation is checked at
 /// bounded intervals.
 pub(crate) const STEP_QUANTUM: u32 = 256;
@@ -449,6 +447,7 @@ impl SeenSet {
 /// immediate.
 pub(crate) type StageRowVisit<'v> = &'v mut dyn FnMut(&[u64]) -> crate::error::Result<bool>;
 
+#[allow(dead_code, reason = "deleted with the numeric lane's stream_finalize")]
 pub(in crate::exec::sink) fn encode_stage_row(row: &[u64], out: &mut Vec<u8>) {
     out.clear();
     for word in row {

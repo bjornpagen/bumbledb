@@ -103,11 +103,7 @@ fn small_aggregate_keeps_free_join_image_alive_after_producer_drop() {
             .unwrap(),
         2
     );
-    let image = Arc::clone(
-        derived.published[0]
-            .resident()
-            .expect("small aggregate uses Free Join"),
-    );
+    let image = Arc::clone(&derived.published[0]);
     let mut rows: Vec<_> = (0..image.row_count())
         .map(|row| (image.column_words(0)[row], image.column_words(1)[row]))
         .collect();
@@ -189,5 +185,5 @@ fn finished_projection_stage_seals_resident() {
         .stash_finished(0, &u64_types(1), &mut sink, &work(), &generation())
         .expect("seal");
     assert_eq!(count, 3);
-    assert!(derived.published[0].is_resident());
+    assert_eq!(derived.published[0].row_count(), 3);
 }

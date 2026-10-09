@@ -4,7 +4,6 @@
 //! Queries containing only interiors never enter this loop.
 use std::sync::Arc;
 
-use super::derived::SealedStage;
 use super::run_join::run_join;
 use super::{
     Bindings, EitherSink, FreeJoinRule, PreparedInterior, PreparedPipeline, PreparedQuery,
@@ -12,7 +11,6 @@ use super::{
 };
 use crate::error::Result;
 use crate::exec::run::Counters;
-use crate::exec::scratch::ScratchRelation;
 use crate::exec::sink::FindSpec;
 use crate::image::SourceImages;
 use crate::image::intern::InternerHandle;
@@ -79,7 +77,7 @@ impl OccImages {
 #[derive(Default)]
 pub(super) struct DerivedImages {
     working: Vec<TransientImage>,
-    pub(super) published: Vec<SealedStage>,
+    pub(super) published: Vec<Arc<RelationImage>>,
     pub(super) occ_images: OccImages,
     pub(super) retired: Vec<Vec<u32>>,
 }
@@ -114,12 +112,11 @@ impl DerivedImages {
             |_, write| write_projection_rows(sink, 0, write),
         )?;
         let count = image.row_count() as u64;
-        self.published.push(SealedStage::Resident(image));
+        self.published.push(image);
         Ok(count)
     }
 
-    /// Finalize an aggregate stage into a columnar image. A stage whose group
-    /// state left RAM seals as [`SealedStage::Scratch`], which no rule joins.
+    /// Finalize an aggregate stage into a columnar image.
     fn stash_aggregate(
         &mut self,
         id: usize,
@@ -134,28 +131,20 @@ impl DerivedImages {
             id,
             "derived tables seal in declaration order"
         );
-        if let Some(bound) = sink.resident_row_bound()
-            && u32::try_from(bound).is_ok()
-        {
-            let image = self.working[id].refill_bounded(
-                work,
-                field_types,
-                bound,
-                generation,
-                |_, write| {
-                    sink.finalize_into(answer_scratch, |row| {
-                        write(row);
-                        Ok(())
-                    })
-                },
-            )?;
-            let count = image.row_count() as u64;
-            self.published.push(SealedStage::Resident(image));
-            return Ok(count);
-        }
-        let mut dest = ScratchRelation::new(work);
-        let count = sink.stream_finalize(&mut dest, answer_scratch, |_| Ok(()))?;
-        self.published.push(SealedStage::Scratch);
+        let bound = sink
+            .resident_row_bound()
+            .ok_or(crate::error::Error::Capacity(
+                crate::error::Capacity::ResidentRows,
+            ))?;
+        let image =
+            self.working[id].refill_bounded(work, field_types, bound, generation, |_, write| {
+                sink.finalize_into(answer_scratch, |row| {
+                    write(row);
+                    Ok(())
+                })
+            })?;
+        let count = image.row_count() as u64;
+        self.published.push(image);
         Ok(count)
     }
 }
@@ -221,27 +210,6 @@ struct RunCtx<'a> {
     resolved_params: &'a [Const],
     missed_params: &'a [bool],
     fast_eligible: bool,
-    published: &'a [SealedStage],
-}
-
-/// A rule joins only resident stages.
-pub(super) fn check_resident_stages(
-    plan: &crate::plan::fj::ValidatedPlan,
-    published: &[SealedStage],
-) -> Result<()> {
-    let scratch = plan.occurrences().iter().any(|occurrence| {
-        occurrence
-            .bind
-            .interior()
-            .and_then(|id| published.get(id.index()))
-            .is_some_and(|stage| !stage.is_resident())
-    });
-    if scratch {
-        return Err(crate::error::Error::Capacity(
-            crate::error::Capacity::ResidentRows,
-        ));
-    }
-    Ok(())
 }
 
 impl<S> PreparedQuery<S> {
@@ -297,7 +265,6 @@ impl<S> PreparedQuery<S> {
                         resolved_params: &self.resolved_params,
                         missed_params: &self.missed_params,
                         fast_eligible,
-                        published: &self.derived.published,
                     };
                     let occ_images = std::mem::take(&mut self.derived.occ_images);
                     let mut retired = std::mem::take(&mut self.derived.retired);
@@ -411,7 +378,6 @@ fn run_reach<Cnt: Counters>(
             resolved_params,
             missed_params,
             fast_eligible,
-            published: &derived.published,
         };
         ran |= run_into_projection(
             &mut ctx,
@@ -449,14 +415,14 @@ fn run_reach<Cnt: Counters>(
         // slot holds this round's immutable frontier, not another copy
         // of the accumulated set.
         debug_assert_eq!(derived.published.len(), rec_id);
-        derived.published.push(SealedStage::Resident(next_frontier(
+        derived.published.push(next_frontier(
             driver,
             images.source().work(),
             images.generation(),
             watermark,
             len,
             retained_texts,
-        )?));
+        )?);
         watermark = len;
 
         for rule in &mut driver.rec {
@@ -468,7 +434,6 @@ fn run_reach<Cnt: Counters>(
                 resolved_params,
                 missed_params,
                 fast_eligible,
-                published: &derived.published,
             };
             let result = run_free_join_into_projection(
                 &mut ctx,
@@ -574,9 +539,9 @@ fn fill_plan_images(plan: &crate::plan::fj::ValidatedPlan, derived: &mut Derived
         let Some(id) = occurrence.bind.interior() else {
             continue;
         };
-        if let SealedStage::Resident(image) = &derived.published[id.index()] {
-            derived.occ_images.insert(occ_idx, image.clone());
-        }
+        derived
+            .occ_images
+            .insert(occ_idx, Arc::clone(&derived.published[id.index()]));
     }
 }
 
@@ -631,7 +596,6 @@ fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
 ) -> Result<bool> {
     let multi_unit = units > 1;
     bindings.resize(rule.plan.slot_count());
-    check_resident_stages(&rule.plan, ctx.published)?;
     let resolved = if ctx.fast_eligible && rule.resolution == super::ResolutionState::Complete {
         true
     } else {

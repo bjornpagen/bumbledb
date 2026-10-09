@@ -97,14 +97,6 @@ pub struct LeafScan<'a> {
 /// Consumes complete bindings (D3: the executor emits to a sink, never an
 /// `output`).
 pub trait Sink {
-    #[expect(
-        dead_code,
-        reason = "deleted once the numeric lane's sinks drop their overrides"
-    )]
-    fn retains_binding_slot(&self, _slot: usize) -> bool {
-        true
-    }
-
     /// Whether this sink can consume a witnessed physical set traversal.
     /// Static dispatch erases the extra traversal machinery for ordinary
     /// projection/computed sinks. The executor still requires the plan's

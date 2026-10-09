@@ -75,14 +75,6 @@ impl EitherSink {
 }
 
 impl Sink for EitherSink {
-    fn retains_binding_slot(&self, slot: usize) -> bool {
-        match self {
-            Self::Computed(sink) => sink.retains_binding_slot(slot),
-            Self::Projection(sink) => sink.retains_binding_slot(slot),
-            Self::Aggregate(sink) => sink.retains_binding_slot(slot),
-        }
-    }
-
     fn emit(&mut self, bindings: &Bindings) -> crate::exec::run::Flow {
         let flow = match self {
             Self::Computed(sink) => sink.emit(bindings),

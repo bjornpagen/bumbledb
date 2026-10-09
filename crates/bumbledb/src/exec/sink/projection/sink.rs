@@ -5,10 +5,6 @@ use crate::image::ColumnView;
 use std::mem::MaybeUninit;
 
 impl Sink for ProjectionSink {
-    fn retains_binding_slot(&self, slot: usize) -> bool {
-        self.sources.contains(&slot)
-    }
-
     fn emit(&mut self, bindings: &Bindings) -> Flow {
         for (i, source) in self.sources.iter().enumerate() {
             self.scratch[i] = bindings.get(*source);

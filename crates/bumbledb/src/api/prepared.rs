@@ -23,7 +23,6 @@ mod answers;
 mod bind;
 mod build;
 pub(crate) mod computed;
-pub(crate) mod derived;
 mod either_sink;
 mod execute;
 mod finalize;

@@ -206,9 +206,6 @@ impl<S> PreparedQuery<S> {
         let slot_count = self.pipeline.main_rules()[rule_idx].slot_count();
         self.bindings.resize(slot_count);
 
-        if let PreparedRule::FreeJoin(rule) = &self.pipeline.main_rules()[rule_idx] {
-            super::reach::check_resident_stages(&rule.plan, &self.derived.published)?;
-        }
         self.fill_main_images(rule_idx);
         let occ_images = std::mem::take(&mut self.derived.occ_images);
         let mut retired = std::mem::take(&mut self.derived.retired);

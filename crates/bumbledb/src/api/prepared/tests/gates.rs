@@ -243,13 +243,6 @@ fn derived_pipeline_joins_and_negates_resident_stages() {
         })
         .expect("resident");
     assert_eq!(pairs(&got_resident), expected);
-    assert!(
-        resident
-            .derived
-            .published
-            .iter()
-            .all(super::super::derived::SealedStage::is_resident)
-    );
 }
 
 /// Independently minted tokens compare by exact bytes across generations.
