@@ -74,6 +74,11 @@ Items: A (`query!` string literal), C14, C15 (macro side), G6, L (macros).
    `Theory`, `schema::*` descriptor types. If C8 moves any of them, say so here. A
    `RowReader::next_fixed_bytes::<N>() -> Result<[u8; N]>` would let me drop the error path.
 
+6. **`tests/common/mod.rs` `TempDir`** joins a fixed `bumbledb-it-{tag}` path, so two runs of
+   the suite at once (two lanes' sandboxes) share store directories. Suggest the process id plus
+   a per-process counter, as `crates/bumbledb/tests/query/common.rs` does. `schema_macro.rs` no
+   longer uses the shared module.
+
 ### consolidator
 
 - `docs/cookbook.md` and the README still point at `crates/bumbledb-query/tests/cookbook.rs` and

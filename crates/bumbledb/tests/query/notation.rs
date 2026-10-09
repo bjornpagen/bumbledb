@@ -339,8 +339,8 @@ fn negation_and_bare_handle_round_trip() {
     assert_eq!(pin("dormant-fixed-point", Ledger, &reparsed), normalized);
 }
 
-/// The bare and qualified handle spellings lower to the same IR, and the
-/// rendered bare handle is a fixed point.
+/// The bare and qualified handle spellings, and a theory named by path,
+/// lower to the same IR; the rendered bare handle is a fixed point.
 #[test]
 fn closed_reference_handles_are_a_fixed_point() {
     let normalized = "(v0) | Regime(id: v0, status == Active);";
@@ -359,6 +359,10 @@ fn closed_reference_handles_are_a_fixed_point() {
         (v0) | Regime(id: v0, status == Status::Active);
     });
     assert_eq!(*qualified, *reparsed);
+    let through_path = query!(tax::Tax {
+        (v0) | Regime(id: v0, status == Active);
+    });
+    assert_eq!(*through_path, *reparsed);
 }
 
 /// A string literal selection lowers to the `Value::String` it spells and
