@@ -26,7 +26,8 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 | E2 check at HEAD: `micro --levels all` (neon here), `micro --levels <name>` refusing an unavailable level by name, and `micro --compare a.json b.json` all run against `bumbledb::kernels` | verified |
 | C8 stage B (`Error::Store` deleted) | nothing to do: the bench names no `StoreError`/`Error::Store` |
 | Tests: the SQLite cap test is decided by operation counts (zero cap), not the clock; every scratch directory is one `fixture::TempDir` (removed on drop, panics included) | landed `623f37f07`, `4a8b2bc2d` |
-| Gate at `4a8b2bc2d`: `clippy -p bumbledb-bench --all-targets -- -D warnings` clean, `nextest -p bumbledb-bench` 375/375 | green |
+| Dead code: the fuzz-op scenario generator (`corpus_gen::opgen`, consumed by nothing), unread fields (`WriteFamily.kind`, `Scenario.about`, `ClosureFamily.param_policy`, `LoadStats.wall`), unused helpers, re-exports and parameters; `corpus_gen::{irgen, theorygen}` are `#[cfg(test)]` (they only feed the engine's validators in tests) | landed `2aabcffb6`, `11f5f032a`, `24b653966` |
+| Gate at `24b653966`: `clippy -p bumbledb-bench --all-targets -- -D warnings` clean, `nextest -p bumbledb-bench` 369/369 | green |
 
 ## Layout (crate `bumbledb_bench`)
 
