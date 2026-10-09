@@ -195,6 +195,10 @@ mod differential {
         fn below(&mut self, n: u64) -> u64 {
             self.next() % n
         }
+
+        fn index(&mut self, n: usize) -> usize {
+            usize::try_from(self.below(u64::try_from(n).expect("small"))).expect("small")
+        }
     }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -243,7 +247,7 @@ mod differential {
         if rng.below(4) == 0 {
             F64::from_bits(rng.next())
         } else {
-            F64::from(POOL[rng.below(14) as usize])
+            F64::from(POOL[rng.index(14)])
         }
     }
 
@@ -292,7 +296,7 @@ mod differential {
             Rounding::TowardZero,
             Rounding::NearestTiesAwayFromZero,
             Rounding::NearestTiesToEven,
-        ][rng.below(3) as usize]
+        ][rng.index(3)]
     }
 
     fn arithmetic(rng: &mut Rng, a: E, b: E) -> E {
@@ -306,7 +310,7 @@ mod differential {
     }
 
     fn any_numeric(rng: &mut Rng) -> T {
-        [T::U64, T::I64, T::F64][rng.below(3) as usize]
+        [T::U64, T::I64, T::F64][rng.index(3)]
     }
 
     fn generate(rng: &mut Rng, t: T, depth: u32) -> E {
@@ -380,10 +384,11 @@ mod differential {
             columns[6][lane] = end.cast_unsigned() ^ (1 << 63);
             let (start, end) = loop {
                 let (a, b) = (float_pool(rng), float_pool(rng));
-                if let Some(span) = Interval::new(a.min(b), a.max(b)) {
-                    if !a.is_nan() && !b.is_nan() {
-                        break (span.start(), span.end());
-                    }
+                if let Some(span) = Interval::new(a.min(b), a.max(b))
+                    && !a.is_nan()
+                    && !b.is_nan()
+                {
+                    break (span.start(), span.end());
                 }
             };
             columns[7][lane] = start.to_order_key();
