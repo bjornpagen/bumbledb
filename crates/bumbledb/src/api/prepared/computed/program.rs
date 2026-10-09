@@ -111,31 +111,37 @@ pub(super) struct Program {
     encode: Encode,
 }
 
-/// Per-lane first error, in program order.
+/// Per-lane first error, in program order. `failed` is the truth; `first`
+/// holds a meaningful error only for lanes whose bit is set, so clearing is
+/// one store.
 pub(super) struct Errors {
-    first: [Option<ScalarError>; LANES],
+    first: [ScalarError; LANES],
     failed: u64,
 }
 
 impl Errors {
     pub(super) fn new() -> Self {
         Self {
-            first: [None; LANES],
+            first: [ScalarError::Overflow; LANES],
             failed: 0,
         }
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.failed = 0;
     }
 
     fn fail(&mut self, lanes: u64, error: ScalarError) {
         let mut fresh = lanes & !self.failed;
         self.failed |= fresh;
         while fresh != 0 {
-            self.first[fresh.trailing_zeros() as usize] = Some(error);
+            self.first[fresh.trailing_zeros() as usize] = error;
             fresh &= fresh - 1;
         }
     }
 
     pub(super) fn of(&self, lane: usize) -> Option<ScalarError> {
-        self.first[lane]
+        ((self.failed >> lane) & 1 != 0).then(|| self.first[lane])
     }
 }
 

@@ -224,7 +224,7 @@ impl ComputedSink {
             for (((program, _), result), errors) in
                 compiled.zip(&mut chunk.results).zip(&mut chunk.errors)
             {
-                *errors = Errors::new();
+                errors.clear();
                 program.run(simd, lanes, &chunk.columns, float, &mut chunk.stack, result, errors);
             }
         });
