@@ -261,10 +261,8 @@ fn interval_param(element: IntervalElement, rng: &mut Rng, cfg: GenConfig) -> Va
             )
         }
         IntervalElement::F64 => {
-            // No target relation declares a dense-interval column today; the
-            // draw stays honest for one that does: integer-ladder endpoints
-            // on the dense line, with a unit fallback where rounding would
-            // collapse the pair.
+            // Integer-ladder endpoints on the dense line, with a unit fallback
+            // where rounding would collapse the pair.
             let ((start, end), _) = interval_data::ladder_i64(cfg.seed, group, rng);
             let dense = |v: i64| bumbledb::F64::from(v as f64);
             let unit = || {
