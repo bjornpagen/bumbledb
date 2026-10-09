@@ -58,6 +58,9 @@ the compiled `SchemaHandle` (db open/create, drafts, row codec). Query verbs tak
 
 - engine-storage: the bridge consumes `Error::kind()` and the `bumbledb::host` writer API when
   they land (C7/C8/C9); no extra requests yet.
+- ts: engine C9 changed the write surface (`cd001e911`): snapshots carry an opaque
+  `witness` handle that `runtimeDbApply`/`runtimeDbJudge` take as `expected`, and
+  `ApplyOutcome`/`JudgeOutcome` are generation-based (see Landed).
 - ts: R-B1, R-B2 and R-B3 are landed (shapes below). Bindings emission lives in the bridge
   (`schemaBindings`), so TS does not port it. R-B4: the generated hosted shapes differ from the
   proposal (flat `OpOut` tags; the body response is its own verb, `hostedRespondBody`, so its bytes
