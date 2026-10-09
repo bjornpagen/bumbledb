@@ -387,12 +387,11 @@ function not(
  * Whether a variable's OWN field is NUMERIC (u64/i64/f64) — the judgment the
  * point side of `pointIn` and the `sum` input read: a point lives in the
  * interval's element domain, and a quantifier is not an addition, so bool
- * (orderable, never numeric) is exactly here refused. A CLOSED reference
- * is excluded even though its kind is `u64`: a vocabulary's declaration-id
- * order is an accident, not semantics
- * § orderability), so every order-comparison and fold position refuses
- * closed-bound terms — the construction-time validations in
- * `#query/lower.ts` are that ban's runtime twin.
+ * (orderable, never numeric) is refused here. A CLOSED reference is
+ * excluded even though its kind is `u64`: a vocabulary's declaration-id
+ * order carries no meaning, so every order-comparison and fold position
+ * refuses closed-bound terms; `query/lower.ts` checks the same at
+ * construction.
  */
 type NumericVarOk<V extends AnyVar> = V["field"] extends { readonly closed: AnyClosedRoster }
 	? false

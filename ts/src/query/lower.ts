@@ -1442,16 +1442,10 @@ function renderParamAnchor(roster: AnyClosedRoster | undefined): string {
 }
 
 /**
- * Folds every rule's param uses (interiors in declaration order, then rec
- * base, then rec arms, then main — exactly the lowering walk) into the
- * query's registry: first use mints the dense `ParamId`, the first
- * FIELD-ANCHORED use types the wire, and one name keeps one shape AND one
- * closedness. The orderable ban needs no registry arm: an order use always
- * anchors its SIBLING's domain (the no-variable-side spelling is refused
- * at the comparison constructor), so a closed-anchored param under an
- * order op dies at the one-domain wall here — and an order use whose
- * sibling is itself closed-bound dies at the comparison's own var-side
- * wall first.
+ * Folds every rule's param uses, in lowering order, into the query's registry: the first use mints
+ * the dense `ParamId`, the first field-anchored use types it, and one name keeps one shape and one
+ * closedness. An order use always anchors its sibling's domain, so a closed-anchored param under an
+ * order op fails the one-domain check here.
  */
 function paramRegistryOf(
 	interiors: readonly InteriorData[],

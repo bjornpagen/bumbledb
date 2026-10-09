@@ -49,16 +49,10 @@ interface ChangeSet<S extends AnySchema> {
 }
 
 /**
- * `ChangeDraft` — the scoped, database-free construction capability.
- * Every method constructs a LAZY effect; execution reads the then-current
- * iterable again on every sequential rerun (no hidden
- * memoization, no automatic retry, no iterator replay). Input must stay
- * stable from an ingestion effect's execution start through its Exit;
- * after successful ingestion the accepted native bytes are independent.
- * Failure/interruption SPENDS the draft and initiates tracked drain.
- * Concurrent/reentrant construction refuses and spends/drains the draft.
- * `finish` consumes the draft; later ingestion or a second finish refuses
- * through the spent capability state.
+ * A scoped, database-free change draft. Each method returns a lazy effect that reads its iterable
+ * when it runs (every rerun reads it again); accepted rows are copied, so later mutation of the
+ * input changes nothing. A failure, an interruption or concurrent use spends the draft; `finish`
+ * consumes it.
  */
 interface ChangeDraft<S extends AnySchema> {
 	insert<R extends Rel<S>>(relation: R, rows: Iterable<Fact<R>>): Effect.Effect<void, DbError>

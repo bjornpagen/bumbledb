@@ -16,25 +16,11 @@ import { f64BitsHex } from "./spec.ts"
 import { fieldValue, recordValue } from "./values.ts"
 
 /**
- * Boundary row codecs, derived from the core relation descriptors — never a
- * second hand-maintained field roster.
- *
- * Two layers:
- *
- * 1. The CANONICAL native row codec: `encodeRows`/`decodeRows` run the
- *    same native implementation the engine, log and migrations
- *    share (owned bytes in, owned typed rows out; untrusted input cannot
- *    inject native capabilities). Effect-only, `Bumble` required.
- * 2. The schema-tagged JSON VALUE form for HTTP/export boundaries:
- *    every `f64` — finite included — is
- *    `{"$f64":"<16 lowercase hex digits>"}` of canonical binary64 bits;
- *    integers are canonical decimal strings; `Uuid` is canonical UUID;
- *    bytes use ONE strict lowercase-hex encoding; intervals are
- *    `{start,end}` in their element encoding; closed references are handle
- *    names. `JSON.stringify` of raw numbers is NOT the database value
- *    wire codec — it loses infinities/NaN and cannot encode BigInt.
- *    Decoders reject malformed widths, unknown tags and noncanonical
- *    representations. These are pure bounded per-row functions.
+ * Row codecs derived from the relation descriptors: the canonical native row codec
+ * (`encodeRows`/`decodeRows`, the engine's own bytes) and the schema-tagged JSON value form for
+ * HTTP/export boundaries, where an `f64` is `{"$f64":"<16 hex>"}` of its canonical bits (raw JSON
+ * numbers lose infinities and NaN), integers are decimal strings, bytes are lowercase hex and
+ * closed references are handle names. Decoders reject anything noncanonical.
  */
 
 /** The typed row shape: a schema plus one of its relations. */

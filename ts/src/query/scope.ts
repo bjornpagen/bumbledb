@@ -80,18 +80,6 @@ function varsMinted<R extends MatchOwner>(owner: R, record: Readonly<Record<stri
 }
 
 /**
- * Mints a FRESH batch of query variables over an atom owner's
- * statically-known columns — one variable per sealed column
- * (`sealedFieldsOf`: a closed owner mints `id` first, then payload columns),
- * each frozen and each defined by OWN-property definition (object-protocol
- * column names must work, the `closed` precedent). Every `v` call mints
- * new objects, so two batches are two variables; property access within one
- * batch is stable by construction (the record is an eager frozen record,
- * never a Proxy). Variable identity is the object reference: destructure
- * what you need (`const { id, holder } = v(Account)`) and reuse a value
- * across binding positions to join.
- */
-/**
  * A schema-bound query template used as a relation-expression source
  * (nonrecursive composition): structurally, the query value's
  * own frozen data. Detection is structural so `scope.ts` needs no runtime
@@ -193,6 +181,11 @@ function importFacadeOfOwner(owner: object): ImportFacade | undefined {
 	return facadeByOwner.get(owner)
 }
 
+/**
+ * Mints fresh query variables, one per column of a relation, closed roster or imported query
+ * (a closed owner's `id` first). Each call mints new variables; reusing one across binding
+ * positions joins, so destructure what you need: `const { id, holder } = v(Account)`.
+ */
 function v<R extends MatchOwner>(owner: R): VarsOf<R>
 function v<Q extends ImportedSource>(imported: Q): ImportVars<Q>
 function v(owner: MatchOwner | ImportedSource): Readonly<Record<string, AnyVar>> {

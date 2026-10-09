@@ -1,20 +1,9 @@
 import { AuthoringError, internalError } from "./errors.ts"
 /**
- * The row codec: fact object ⇄ positional cell array by field
- * ordinal, schema-directed, in ONE place. The write side lowers named host
- * objects to rows in the relation's field-declaration order (declaration
- * order = ordinal ids); the read side decodes owned rows back to named
- * objects of BARE structural values. This module is the one fact⇄row
- * projector. It covers all value types: bool, u64, i64,
- * f64, uuid, str, bytes<N>, discrete intervals and dense float intervals,
- * plus the closed-handle bijection (name ⇄ declaration-order row id).
- *
- * Cells here are OWNED plain host values; the native boundary re-judges
- * every crossing against its resident sealed roster. Shape misuse throws
- * the pure {@link AuthoringError}; the Effect ingestion boundary catches
- * and types it (never an untracked partial draft). SharedArrayBuffer-backed
- * views are refused before any copy. Host length is judged before string
- * scans and byte copies.
+ * The one fact ⇄ row projector: named host objects to positional cells in field-declaration order
+ * and back, for every value type plus the closed-handle bijection (name ⇄ declaration-order id).
+ * Cells are owned host values that the native boundary checks again; shape misuse throws
+ * `AuthoringError`. SharedArrayBuffer-backed views are refused before any copy.
  */
 import type { AnyClosedRoster, AnyField } from "./fields.ts"
 import { literalShapeError, rosterOf } from "./fields.ts"

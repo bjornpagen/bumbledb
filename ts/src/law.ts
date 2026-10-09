@@ -1,58 +1,10 @@
 import { AuthoringError } from "./errors.ts"
 /**
- * The law-typing engine: THE LAWS TYPE THE COLUMNS. Domains are declared nowhere — `schema`
- * computes every field's domain FROM the statement list, at BOTH the type
- * level (this module's type machinery, reading the statements tuple type)
- * and at runtime (a plain union-find over the same pairs), and the two
- * tiers are the same computation by construction.
- *
- * The three class laws:
- *
- * 1. GENERATORS — a closed relation's synthetic id is a generator named
- * `"Kind.id"` (the vocabulary mints its own row ids). Ordinary relations
- * have no generator: the database issues no identity, and identity fields
- * are ordinary application-owned values.
- * 2. GENERATOR-LESS classes are named by their least member coordinate
- * in relation-declaration × field-declaration order (readable off the
- * relation record and each member's frozen field list at the VALUE
- * tier — deterministic, pinned forever; the wire reads only this
- * tier). At the TYPE tier the same class is carried as its
- * member-coordinate SET (see {@link ClassOfCoord}): TypeScript's
- * union member order is not observably deterministic, so a type-level
- * least-member pick would drift between compilations — the set is the
- * canonical deterministic spelling, the runtime name is always a
- * member of it, and the join judgment is identical at both tiers.
- * 3. BARE — a field in no law has NO class and pairs only with bare in
- * queries (the deliberate sum-domain pointer stays legal).
- *
- * THE WALL: a class containing more than one generator is a contradiction
- * (two mints cannot share a carrier) — a schema-level COMPILE error (the
- * named, self-locating {@link ClassWall}: which generator coordinates
- * collided, through which paired slots) with a construction-time runtime
- * twin (`computeClasses` throws with the same content, naming the exact
- * statement). The TARGET-KEY WALL ({@link TargetKeyWall},
- * 60-containment-parity) rides the same constraint seam: a containment/
- * mirrors/capacity target projection that resolves no key of its relation
- * is the same kind of schema-level compile error, with `schema`'s
- * `verifyTargetKeys` as its authoritative runtime twin.
- *
- * Every paired face of the statement tuple unions its positionwise field
- * slots: containment (ψ-selected targets included — a selection changes
- * pairing not at all), the `==` bijection, and capacity source/target pairs.
- * `key` statements pair nothing (an FD constrains one relation's own
- * rows; it identifies no carriers).
- *
- * The type tier reads pairs off the statement types' exact face data, so
- * spell the statement list INLINE in `schema` (the `const` type
- * parameter keeps the tuple precise). A widened `Statement[]` list
- * degrades the TYPE tier to generators-only (no pair is readable off a
- * widened type) — the runtime map stays complete and authoritative, and
- * the wire lowering reads only the runtime map. Every loop below is
- * tail-recursive with an accumulator, so the machinery rides TypeScript's
- * tail-recursion elimination for large schemas (~40 relations, ~200 slots,
- * ~123 statements); should a schema ever exceed the compiler's limits, tsc
- * fails LOUDLY with its own instantiation-depth error — the map is never
- * silently widened.
+ * The laws type the columns: `schema` computes each field's class from its statements at the type
+ * level and at runtime (a union-find over the same pairs). A closed id is a generator naming its
+ * class, a generator-less class is named by its least member coordinate, and a field in no law is
+ * bare. Two generators in one class, or a target projection that resolves no key, is a compile
+ * error with a runtime twin. Spell statements inline: a widened list degrades the type tier.
  */
 
 import type { AnyClosed } from "./closed.ts"
