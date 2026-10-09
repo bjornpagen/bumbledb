@@ -133,10 +133,6 @@ pub fn allen_filter_columns_const(
 
 const SCAN_CHUNK: usize = 256;
 
-#[expect(
-    unsafe_code,
-    reason = "the localized unsafe operation has a documented safety invariant"
-)]
 fn filter_chunked(
     n: usize,
     out: &mut Vec<u32>,
@@ -144,22 +140,16 @@ fn filter_chunked(
 ) {
     let mut codes = [0u8; SCAN_CHUNK];
     let mut keep = [0u8; SCAN_CHUNK];
-    let start = out.len();
-    out.reserve(n);
-    let mut write = start;
-    let mut pos = super::filter::positions_fit_u32(n);
+    let mut cursor = super::filter::Cursor::open(out, n);
     let mut base = 0usize;
     while base < n {
         let len = SCAN_CHUNK.min(n - base);
         let mask = fill(base, len, &mut codes[..len]);
         keep_into(&codes[..len], mask, &mut keep[..len]);
-        (write, pos) = super::filter::write_survivor_keeps(out, write, pos, &keep[..len]);
+        cursor.push_keeps(&keep[..len]);
         base += len;
     }
-    // SAFETY: every slot in `[start, write)` was cursor-written by the
-
-    // capacity` (`u32` carries no drop obligation).
-    unsafe { out.set_len(write) };
+    cursor.close();
 }
 
 fn codes_into(

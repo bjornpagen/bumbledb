@@ -1,32 +1,31 @@
-/// Compacts `items` in place, keeping `items[i]` where `mask[i] == 1` —
-/// the survivor-compaction kernel (scalar cursor-write on every target;
-/// see the module docs).
-/// Mask bytes are **0/1 by contract**: every producer writes
-/// `u8::from(bool)` (the probe/residual/anti-probe masks) or an Allen
-/// keep bit — `(mask >> code) & 1` in the scalar and `std::simd`
-/// forms, a 0/1 table byte through the NEON `tbl` — and the debug
-/// build asserts it. The contract buys the triad diet: a nonzero `mask[read]`
-/// The cursor store is unchecked under the module's unsafe law (safe
-/// most 1 per iteration — but the invariant is invisible to LLVM, so
+//! Survivor compaction: keep `items[i]` where `mask[i]` is nonzero.
+
+/// Compacts `items` in place, keeping `items[i]` where `mask[i] == 1`.
+/// Producers write keep bytes as `u8::from(bool)` or an Allen keep bit, so
+/// every byte is 0 or 1.
+///
 /// # Panics
-/// Only on a programmer-invariant violation: `mask` shorter than `items`.
+/// If `mask` is shorter than `items`.
+pub fn compact_u32_by_mask(items: &mut Vec<u32>, mask: &[u8]) {
+    cursor_write(items, mask);
+}
+
+/// Writes every item at the cursor and advances it past kept items: no
+/// branch on the keep byte.
 #[expect(
     unsafe_code,
-    reason = "the localized unsafe operation has a documented safety invariant"
+    reason = "unchecked cursor stores proven in bounds by write <= read < n"
 )]
-pub fn compact_u32_by_mask(items: &mut Vec<u32>, mask: &[u8]) {
+fn cursor_write(items: &mut Vec<u32>, mask: &[u8]) {
     let n = items.len();
     assert!(mask.len() >= n);
     let mask = &mask[..n];
-    debug_assert!(
-        mask.iter().all(|&keep| keep <= 1),
-        "keep bytes are 0/1 by contract"
-    );
+    debug_assert!(mask.iter().all(|&keep| keep <= 1), "keep bytes are 0 or 1");
     let mut write = 0usize;
-    // SAFETY: `write <= read < n` at every store — both cursors start
-    // at 0 and `write` advances by at most 1 after each store — so
-
-    // carries no drop obligation).
+    // SAFETY: `write` starts at 0 and grows by at most 1 per iteration, so
+    // `write <= read < n` at every store and both pointers stay inside the
+    // initialized prefix; `set_len(write)` shrinks to a written prefix of a
+    // `u32` buffer, which has no drop obligation.
     unsafe {
         let ptr = items.as_mut_ptr();
         for (read, &keep) in mask.iter().enumerate() {

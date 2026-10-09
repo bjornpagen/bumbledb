@@ -16,173 +16,190 @@ const LENGTHS: &[usize] = &[
     0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 257, 1023, 4099,
 ];
 
+/// Runs `kernel` and `twin` into fresh outputs that both start with one
+/// sentinel position, so appending (never overwriting) is checked too.
+fn same_survivors(kernel: impl Fn(&mut Vec<u32>), twin: impl Fn(&mut Vec<u32>)) {
+    let (mut got, mut want) = (vec![u32::MAX], vec![u32::MAX]);
+    kernel(&mut got);
+    twin(&mut want);
+    assert_eq!(got, want);
+}
+
 #[test]
-fn u64_kernels_match_the_scalar_reference_bit_for_bit() {
+fn u64_filters_match_their_twins_at_every_level() {
     let mut rng = Lcg(42);
-    for &len in LENGTHS {
-        let col: Vec<u64> = (0..len)
-            .map(|_| match rng.next() % 8 {
-                0 => 0,
-                1 => u64::MAX,
-                n => n % 4,
-            })
-            .collect();
-        for needle in [0u64, 1, 2, 3, u64::MAX] {
-            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
-            filter_eq_u64(&col, needle, &mut kernel);
-            super::reference::filter_eq_u64(&col, needle, &mut reference);
-            assert_eq!(kernel, reference, "eq len {len} needle {needle}");
-        }
-        for (lo, hi) in [(0u64, 2u64), (1, 1), (3, u64::MAX), (u64::MAX, 0)] {
-            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
-            filter_range_u64(&col, lo, hi, &mut kernel);
-            super::reference::filter_range_u64(&col, lo, hi, &mut reference);
-            assert_eq!(kernel, reference, "range len {len} {lo}..={hi}");
+    for level in every_level() {
+        for &len in LENGTHS {
+            let col: Vec<u64> = (0..len)
+                .map(|_| match rng.next() % 8 {
+                    0 => 0,
+                    1 => u64::MAX,
+                    n => n % 4,
+                })
+                .collect();
+            for needle in [0u64, 1, 2, 3, u64::MAX] {
+                same_survivors(
+                    |out| filter::eq_u64(level, &col, needle, out),
+                    |out| reference::filter_eq_u64(&col, needle, out),
+                );
+            }
+            for (lo, hi) in [(0u64, 2u64), (1, 1), (3, u64::MAX), (u64::MAX, 0)] {
+                same_survivors(
+                    |out| filter::range_u64(level, &col, lo, hi, out),
+                    |out| reference::filter_range_u64(&col, lo, hi, out),
+                );
+            }
         }
     }
 }
 
 #[test]
-fn u8_kernel_matches_the_scalar_reference() {
+fn u8_filter_matches_its_twin_at_every_level() {
     let mut rng = Lcg(7);
-    for &len in LENGTHS {
-        let col: Vec<u8> = (0..len)
-            .map(|_| u8::try_from(rng.next() % 3).expect("small"))
-            .collect();
-        for needle in [0u8, 1, 2, 255] {
-            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
-            filter_eq_u8(&col, needle, &mut kernel);
-            super::reference::filter_eq_u8(&col, needle, &mut reference);
-            assert_eq!(kernel, reference, "u8 eq len {len} needle {needle}");
+    for level in every_level() {
+        for &len in LENGTHS {
+            let col: Vec<u8> = (0..len)
+                .map(|_| u8::try_from(rng.next() % 3).expect("small"))
+                .collect();
+            for needle in [0u8, 1, 2, 255] {
+                same_survivors(
+                    |out| filter::eq_u8(level, &col, needle, out),
+                    |out| reference::filter_eq_u8(&col, needle, out),
+                );
+            }
         }
     }
 }
 
-/// The membership filter compositions —
-/// `PointIn` and `AnyPointIn` — are bit-identical to the scalar reference
-/// across the boundary shapes: empty, single, odd lengths, lane ±1.
 #[test]
-fn interval_filter_compositions_match_the_scalar_reference_bit_for_bit() {
+fn interval_filters_match_their_twins_at_every_level() {
     let mut rng = Lcg(1717);
-    for &len in LENGTHS {
-        let starts: Vec<u64> = (0..len)
-            .map(|_| match rng.next() % 8 {
-                0 => 0,
-                1 => u64::MAX - 1,
-                n => n % 6,
-            })
-            .collect();
-        let ends: Vec<u64> = starts
-            .iter()
-            .map(|s| match rng.next() % 4 {
-                0 => s.saturating_add(1).max(1),
-                1 => u64::MAX,
-                n => s.saturating_add(n + 1).max(1),
-            })
-            .collect();
-        for point in [0u64, 1, 2, 5, u64::MAX - 1, u64::MAX] {
-            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
-            filter_point_in_u64(&starts, &ends, point, &mut kernel);
-            super::reference::filter_point_in_u64(&starts, &ends, point, &mut reference);
-            assert_eq!(kernel, reference, "point_in len {len} point {point}");
-        }
-        for points in [&[][..], &[3][..], &[0, 4][..], &[1, 2, 5, u64::MAX - 1][..]] {
-            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
-            filter_any_point_in_u64(&starts, &ends, points, &mut kernel);
-            super::reference::filter_any_point_in_u64(&starts, &ends, points, &mut reference);
-            assert_eq!(kernel, reference, "any_point_in len {len} {points:?}");
+    for level in every_level() {
+        for &len in LENGTHS {
+            let starts: Vec<u64> = (0..len)
+                .map(|_| match rng.next() % 8 {
+                    0 => 0,
+                    1 => u64::MAX - 1,
+                    n => n % 6,
+                })
+                .collect();
+            let ends: Vec<u64> = starts
+                .iter()
+                .map(|s| match rng.next() % 4 {
+                    0 => s.saturating_add(1).max(1),
+                    1 => u64::MAX,
+                    n => s.saturating_add(n + 1).max(1),
+                })
+                .collect();
+            for point in [0u64, 1, 2, 5, u64::MAX - 1, u64::MAX] {
+                same_survivors(
+                    |out| filter::point_in_u64(level, &starts, &ends, point, out),
+                    |out| reference::filter_point_in_u64(&starts, &ends, point, out),
+                );
+            }
+            for points in [&[][..], &[3][..], &[0, 4][..], &[1, 2, 5, u64::MAX - 1][..]] {
+                same_survivors(
+                    |out| filter::any_point_in_u64(level, &starts, &ends, points, out),
+                    |out| reference::filter_any_point_in_u64(&starts, &ends, points, out),
+                );
+            }
         }
     }
 }
 
 #[test]
 fn point_in_is_half_open_at_both_boundaries() {
-    let starts = [10u64, 10, 10];
-    let ends = [20u64, 20, 20];
+    let starts = [10u64; 9];
+    let ends = [20u64; 9];
     let mut out = Vec::new();
     filter_point_in_u64(&starts, &ends, 10, &mut out);
-    assert_eq!(out, vec![0, 1, 2], "p == start is in");
+    assert_eq!(out, (0..9).collect::<Vec<u32>>(), "p == start is in");
     out.clear();
     filter_point_in_u64(&starts, &ends, 20, &mut out);
     assert!(out.is_empty(), "p == end is out");
 }
 
 #[test]
-fn results_preserve_ascending_position_order() {
-    let col: Vec<u64> = (0..1000).map(|i| i % 5).collect();
+#[should_panic(expected = "an interval column pair")]
+fn interval_filters_refuse_unequal_columns() {
     let mut out = Vec::new();
-    filter_eq_u64(&col, 3, &mut out);
-    assert!(out.windows(2).all(|w| w[0] < w[1]));
-    assert_eq!(out.len(), 200);
+    filter_point_in_u64(&[1, 2, 3], &[4, 5], 2, &mut out);
+}
+
+fn fold_words(rng: &mut Lcg, len: usize) -> Vec<u64> {
+    (0..len)
+        .map(|_| match rng.next() % 6 {
+            0 => 0,
+            1 => u64::MAX,
+            2 => 1 << 63,
+            3 => (1 << 63) - 1,
+            _ => rng.next(),
+        })
+        .collect()
 }
 
 #[test]
-fn fold_kernels_match_the_naive_folds_bit_for_bit() {
+fn folds_match_their_twins_at_every_level() {
     let mut rng = Lcg(99);
-    for &len in LENGTHS {
-        for &stride in &[1usize, 2, 3, 5] {
-            for &offset in &[0usize, 1] {
-                if stride == 1 && offset > 0 {
-                    continue;
-                }
-                let slots = len * stride + offset + 1;
-                let values: Vec<u64> = (0..slots)
-                    .map(|_| match rng.next() % 6 {
-                        0 => 0,
-                        1 => u64::MAX,
-                        2 => 1 << 63,
-                        3 => (1 << 63) - 1,
-                        _ => rng.next(),
-                    })
-                    .collect();
-
-                let mut indices: Vec<u32> =
-                    (0..len).map(|i| u32::try_from(i).expect("small")).collect();
-                indices.reverse();
-                if len > 2 {
-                    indices.push(1);
-                    indices.push(1);
-                }
-
-                let at = |i: u32| values[i as usize * stride + offset];
-                let naive_sum_u: u128 = indices.iter().map(|&i| u128::from(at(i))).sum();
-                assert_eq!(
-                    fold_sum_u64_idx(&values, stride, offset, &indices),
-                    naive_sum_u
-                );
-                if !indices.is_empty() {
-                    let naive_min = indices.iter().map(|&i| at(i)).min().expect("nonempty");
-                    let naive_max = indices.iter().map(|&i| at(i)).max().expect("nonempty");
+    for level in every_level() {
+        for &len in LENGTHS {
+            for stride in [1usize, 2, 3, 5] {
+                for offset in [0usize, 1] {
+                    let values = fold_words(&mut rng, len * stride + offset + 1);
+                    let mut indices: Vec<u32> =
+                        (0..len).map(|i| u32::try_from(i).expect("small")).collect();
+                    indices.reverse();
+                    if len > 2 {
+                        indices.extend([1, 1]);
+                    }
+                    let context = format!("{} len {len} stride {stride}", level_name(level));
                     assert_eq!(
-                        fold_min_max_u64_idx(&values, stride, offset, &indices),
-                        (naive_min, naive_max)
+                        fold::sum_u64(level, &values, stride, offset, len),
+                        reference::fold_sum_u64(&values, stride, offset, len),
+                        "{context}"
                     );
-                }
-
-                let naive_dense_u: u128 = (0..len)
-                    .map(|i| u128::from(values[i * stride + offset]))
-                    .sum();
-                assert_eq!(fold_sum_u64(&values, stride, offset, len), naive_dense_u);
-                if len > 0 {
-                    let dmin = (0..len)
-                        .map(|i| values[i * stride + offset])
-                        .min()
-                        .expect("nonempty");
-                    let dmax = (0..len)
-                        .map(|i| values[i * stride + offset])
-                        .max()
-                        .expect("nonempty");
-                    assert_eq!(fold_min_max_u64(&values, stride, offset, len), (dmin, dmax));
+                    assert_eq!(
+                        gather::sum_u64_idx(level, &values, stride, offset, &indices),
+                        reference::fold_sum_u64_idx(&values, stride, offset, &indices),
+                        "{context}"
+                    );
+                    if len > 0 {
+                        assert_eq!(
+                            fold::min_max_u64(level, &values, stride, offset, len),
+                            reference::fold_min_max_u64(&values, stride, offset, len),
+                            "{context}"
+                        );
+                        assert_eq!(
+                            gather::min_max_u64_idx(level, &values, stride, offset, &indices),
+                            reference::fold_min_max_u64_idx(&values, stride, offset, &indices),
+                            "{context}"
+                        );
+                    }
                 }
             }
         }
     }
 }
 
-/// The strided extent guard is total over the input type: an extent whose
-/// `(count − 1) · stride` wraps usize is refused by the assert in every profile
-/// — the checked guard, not release-wrapping arithmetic, is what stands between
-/// the caller and the `get_unchecked` body.
+#[test]
+fn sums_carry_across_every_lane_and_tail_at_every_level() {
+    let values = vec![u64::MAX; 1040];
+    let mut indices: Vec<u32> = (0..1024).collect();
+    indices.extend(std::iter::repeat_n(7u32, 9));
+    for level in every_level() {
+        for len in [
+            0, 1, 3, 4, 5, 7, 8, 9, 255, 256, 257, 1023, 1024, 1025, 1033,
+        ] {
+            let expected = u128::from(u64::MAX) * len as u128;
+            assert_eq!(
+                gather::sum_u64_idx(level, &values, 1, 0, &indices[..len]),
+                expected
+            );
+            assert_eq!(fold::sum_u64(level, &values, 1, 0, len), expected);
+        }
+    }
+}
+
 #[test]
 #[should_panic(expected = "assertion failed")]
 fn fold_extent_guard_refuses_wrapping_extents() {
@@ -214,33 +231,6 @@ fn gathered_min_max_refuses_an_out_of_bounds_lane() {
 fn gathered_address_overflow_is_out_of_bounds() {
     let values = [1u64, 2, 3, 4];
     let _ = fold_sum_u64_idx(&values, usize::MAX / 2 + 1, 0, &[0, 0, 2, 0]);
-}
-
-#[test]
-fn gather_folds_pin_carries_tails_and_word_order_extrema() {
-    let values = vec![u64::MAX; 1024];
-    let mut indices: Vec<u32> = (0..1024).collect();
-    indices.extend(std::iter::repeat_n(7u32, 9));
-    // Every tail length, repeated carries, and both executor quantum and
-    // larger chunk boundaries. The existing randomized fold test separately
-    // spans strided/offset layouts and arbitrary word values.
-    for len in [
-        0, 1, 2, 3, 4, 5, 7, 8, 9, 255, 256, 257, 1023, 1024, 1025, 1033,
-    ] {
-        let selected = &indices[..len];
-        assert_eq!(
-            fold_sum_u64_idx(&values, 1, 0, selected),
-            u128::from(u64::MAX) * len as u128
-        );
-    }
-    assert_eq!(
-        fold_min_max_u64_idx(&values, 1, 0, &indices),
-        (u64::MAX, u64::MAX)
-    );
-
-    let words = [0u64, u64::MAX, 1 << 63, 0, u64::MAX, 1 << 63, 0];
-    let indices: Vec<u32> = (0..7).collect();
-    assert_eq!(fold_min_max_u64_idx(&words, 1, 0, &indices), (0, u64::MAX));
 }
 
 fn allen_corpus(len: usize, rng: &mut Lcg) -> (Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64>) {

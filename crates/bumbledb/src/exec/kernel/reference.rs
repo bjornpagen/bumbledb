@@ -1,46 +1,75 @@
-//! compare every kernel against, bit for bit. Deliberately SCALAR for
-//! oracle, so where the kernel adopted the portable lane form, the twin
-//! keeps the definitional scalar form — the differential's independence
-//! outranks the vocabulary win). The Allen twins likewise stay the
-//! `classify` decision tree (never the signature table) so the tests
-//! cross-check table against tree; [`allen_keep`] alone speaks
-#[cfg(test)]
+//! Scalar twins of every kernel, written in the definitional form: the
+//! differential oracle the tests hold each kernel bit-identical to at every
+//! SIMD level, and the bench's baseline. Allen twins use the `classify`
+//! decision tree, never a signature table, so the tests cross-check the two.
+
+/// Twin of [`super::filter_eq_u64`].
 pub fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {
     push_matching(col.len(), out, |i| col[i] == value);
 }
 
-/// Scalar reference of [`super::filter_range_u64`].
-#[cfg(test)]
+/// Twin of [`super::filter_range_u64`].
 pub fn filter_range_u64(col: &[u64], lo: u64, hi: u64, out: &mut Vec<u32>) {
     push_matching(col.len(), out, |i| (lo..=hi).contains(&col[i]));
 }
 
-/// Scalar reference of [`super::filter_eq_u8`].
-#[cfg(test)]
+/// Twin of [`super::filter_eq_u8`].
 pub fn filter_eq_u8(col: &[u8], value: u8, out: &mut Vec<u32>) {
     push_matching(col.len(), out, |i| col[i] == value);
 }
 
-/// Scalar reference of [`super::filter_point_in_u64`]: the half-open
-/// membership rule, `start <= p AND p < end`.
-#[cfg(test)]
+/// Twin of [`super::filter_point_in_u64`].
 pub fn filter_point_in_u64(starts: &[u64], ends: &[u64], point: u64, out: &mut Vec<u32>) {
     push_matching(starts.len(), out, |i| starts[i] <= point && point < ends[i]);
 }
 
-/// Scalar reference of [`super::filter_any_point_in_u64`]: the OR over
-/// per-point membership masks.
-#[cfg(test)]
+/// Twin of [`super::filter_any_point_in_u64`].
 pub fn filter_any_point_in_u64(starts: &[u64], ends: &[u64], points: &[u64], out: &mut Vec<u32>) {
     push_matching(starts.len(), out, |i| {
         points.iter().any(|p| starts[i] <= *p && *p < ends[i])
     });
 }
 
-/// Scalar reference of [`super::allen_code_batch`]'s core:
-/// signature table, so the property tests cross-check the NEON table
-/// against the tree, bit for bit. The code is the [`crate::allen::Basic`]
-/// discriminant (its bit index in the mask coordinate system).
+/// Twin of [`super::fold_sum_u64`].
+#[must_use]
+pub fn fold_sum_u64(values: &[u64], stride: usize, offset: usize, count: usize) -> u128 {
+    (0..count)
+        .map(|i| u128::from(values[i * stride + offset]))
+        .sum()
+}
+
+/// Twin of [`super::fold_min_max_u64`].
+#[must_use]
+pub fn fold_min_max_u64(values: &[u64], stride: usize, offset: usize, count: usize) -> (u64, u64) {
+    min_max((0..count).map(|i| values[i * stride + offset]))
+}
+
+/// Twin of [`super::fold_sum_u64_idx`].
+#[must_use]
+pub fn fold_sum_u64_idx(values: &[u64], stride: usize, offset: usize, indices: &[u32]) -> u128 {
+    indices
+        .iter()
+        .map(|&i| u128::from(values[i as usize * stride + offset]))
+        .sum()
+}
+
+/// Twin of [`super::fold_min_max_u64_idx`].
+#[must_use]
+pub fn fold_min_max_u64_idx(
+    values: &[u64],
+    stride: usize,
+    offset: usize,
+    indices: &[u32],
+) -> (u64, u64) {
+    min_max(
+        indices
+            .iter()
+            .map(|&i| values[i as usize * stride + offset]),
+    )
+}
+
+/// Twin of [`super::allen_code_batch`]: `codes[i]` is the
+/// [`crate::allen::Basic`] discriminant of pair `i`.
 pub fn allen_codes(
     a_starts: &[u64],
     a_ends: &[u64],
@@ -54,37 +83,26 @@ pub fn allen_codes(
     }
 }
 
-/// [`allen_codes`] with a constant right operand.
+/// Twin of [`super::allen_code_batch_const`].
 pub fn allen_codes_const(starts: &[u64], ends: &[u64], b_start: u64, b_end: u64, codes: &mut [u8]) {
     for (i, code) in codes.iter_mut().enumerate() {
         *code = crate::allen::classify_bounds(&starts[i], &ends[i], &b_start, &b_end) as u8;
     }
 }
 
-/// Reference of [`super::allen_filter_batch`]'s core:
-/// `keep[i] = 1` iff the mask holds `codes[i]` — one shift, one and
-/// (lane-parallel here; still never the kernel's `tbl` table).
+/// Twin of [`super::allen_filter_batch`]: `keep[i] = 1` iff the mask holds
+/// `codes[i]`.
 pub fn allen_keep(codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
-    use std::simd::prelude::*;
-    const N: usize = 16;
-    let mask = Simd::<u16, N>::splat(mask_bits);
-    let one = Simd::<u16, N>::splat(1);
-    let (chunks, tail) = codes.as_chunks::<N>();
-    let (keep_chunks, keep_tail) = keep.as_chunks_mut::<N>();
-    for (chunk, keep_chunk) in chunks.iter().zip(keep_chunks) {
-        let codes: Simd<u16, N> = Simd::from_array(*chunk).cast();
-        *keep_chunk = ((mask >> codes) & one).cast::<u8>().to_array();
-    }
-    for (keep, &code) in keep_tail.iter_mut().zip(tail) {
-        *keep = ((mask_bits >> u32::from(code)) & 1) as u8;
+    for (keep, &code) in keep.iter_mut().zip(codes) {
+        *keep = u8::from((mask_bits >> code) & 1 != 0);
     }
 }
 
-/// Scalar reference of [`super::compact_u32_by_mask`]: the fully
-/// safe-indexed cursor-write (the pre-diet shape — `items[write]`
-/// bounds-checked, keep judged as `mask[i] != 0`). The property test
-/// asserts bit-identity on 0/1 masks, the live kernel's contract.
-#[cfg(test)]
+/// Twin of [`super::compact_u32_by_mask`]: safe indexing, keep judged as
+/// `mask[i] != 0`.
+///
+/// # Panics
+/// If `mask` is shorter than `items`.
 pub fn compact_u32_by_mask(items: &mut Vec<u32>, mask: &[u8]) {
     assert!(mask.len() >= items.len());
     let mut write = 0usize;
@@ -95,14 +113,14 @@ pub fn compact_u32_by_mask(items: &mut Vec<u32>, mask: &[u8]) {
     items.truncate(write);
 }
 
-#[cfg(test)]
+fn min_max(words: impl Iterator<Item = u64>) -> (u64, u64) {
+    words.fold((u64::MAX, u64::MIN), |(lo, hi), w| (lo.min(w), hi.max(w)))
+}
+
 fn push_matching(len: usize, out: &mut Vec<u32>, keep: impl Fn(usize) -> bool) {
-    let start = out.len();
-    out.resize(start + len, 0);
-    let mut write = start;
-    for i in 0..len {
-        out[write] = u32::try_from(i).expect("positions fit u32");
-        write += usize::from(keep(i));
-    }
-    out.truncate(write);
+    out.extend(
+        (0..len)
+            .filter(|&i| keep(i))
+            .map(|i| u32::try_from(i).expect("positions fit u32")),
+    );
 }

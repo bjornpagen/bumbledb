@@ -1,6 +1,10 @@
+/// Hints the CPU to pull `ptr`'s cache line into L1 ahead of a read. A no-op
+/// off aarch64 and under Miri.
 #[inline]
-// `unsafe` exists only in the aarch64 body; the portable body is safe, so an
-#[allow(unsafe_code)]
+#[allow(
+    unsafe_code,
+    reason = "only the aarch64 body is unsafe, so an expect would go unfulfilled elsewhere"
+)]
 pub fn prefetch_read<T>(ptr: *const T) {
     #[cfg(all(target_arch = "aarch64", not(miri)))]
     // SAFETY: prfm is a hint; it cannot fault and has no memory effects.
