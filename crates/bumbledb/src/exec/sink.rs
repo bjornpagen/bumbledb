@@ -820,8 +820,10 @@ pub struct AggregateSink {
     /// Cancellation shared with scratch and deduplication; absent only in
     /// standalone kernel callers that have no operation context.
     work: Option<crate::work::WorkContext>,
-    /// The spilled group-state partition store, once the RAM group tables
-    /// reach their index limit ([`aggregate::spill::GroupSpill`]).
+    #[allow(
+        dead_code,
+        reason = "the numeric lane stops reading it before this lane deletes it"
+    )]
     spill: Option<Box<aggregate::spill::GroupSpill>>,
     /// Sticky spill/scratch failure recorded by the infallible fold paths;
     /// finalize refuses before any group publishes (Q-ATOMIC).
