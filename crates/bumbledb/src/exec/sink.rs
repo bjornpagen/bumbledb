@@ -21,7 +21,7 @@ pub use crate::ir::FoldOp;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggSpec {
     Count,
-    /// Exact F64 Sum/Mean; Min/Max operate directly on total-order words.
+    /// F64 argument: Sum/Mean exact, Min/Max over order keys with NaN propagating.
     Float {
         op: FoldOp,
         slot: usize,

@@ -319,3 +319,113 @@ fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
 
     assert_eq!(answers, vec![(1, 1), (3, 2)]);
 }
+
+fn reading_descriptor() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Reading".into(),
+            fields: [
+                ("group", ValueType::U64),
+                ("id", ValueType::U64),
+                ("value", ValueType::F64),
+            ]
+            .into_iter()
+            .map(|(name, value_type)| FieldDescriptor {
+                name: name.into(),
+                value_type,
+            })
+            .collect(),
+        }],
+        statements: vec![],
+    }
+}
+
+fn extrema_answers(fix: &Fix, rule: Rule) -> Vec<Vec<u64>> {
+    let mut prepared = fix.prepare(&Query::single(rule)).unwrap();
+    let answers = fix.execute(&mut prepared, &[] as &[BindValue]).unwrap();
+    let mut rows: Vec<Vec<u64>> = (0..answers.len())
+        .map(|row| {
+            (0..answers.arity())
+                .map(|col| match answers.get(row, col) {
+                    AnswerValue::U64(group) => group,
+                    AnswerValue::F64(value) => value.to_bits(),
+                    other => panic!("unexpected answer {other:?}"),
+                })
+                .collect()
+        })
+        .collect();
+    rows.sort();
+    rows
+}
+
+#[test]
+fn f64_min_and_max_propagate_nan_on_leaf_outer_and_ungrouped_inputs() {
+    use crate::F64;
+    let rows = [
+        (0, 1, F64::from(3.0)),
+        (0, 2, F64::NAN),
+        (0, 3, F64::from(-1.0)),
+        (1, 4, F64::from(2.0)),
+        (1, 5, F64::NEG_INFINITY),
+        (1, 6, F64::from(5.0)),
+        (2, 7, F64::NAN),
+        (3, 8, F64::INFINITY),
+        (3, 9, F64::from(0.0)),
+    ];
+    let facts: Vec<Vec<Value>> = rows
+        .iter()
+        .map(|&(group, id, value)| vec![Value::U64(group), Value::U64(id), Value::F64(value)])
+        .collect();
+    let fix = Fix::heap(reading_descriptor(), &[(RelationId(0), facts)]);
+    let reading = |id: VarId, value: VarId| Atom {
+        source: AtomSource::Edb(RelationId(0)),
+        bindings: vec![
+            (FieldId(0), Term::Var(VarId(0))),
+            (FieldId(1), Term::Var(id)),
+            (FieldId(2), Term::Var(value)),
+        ],
+    };
+    let extrema =
+        |over: VarId| [FoldOp::Min, FoldOp::Max].map(|op| FindTerm::Aggregate { op, over });
+    let grouped = vec![
+        vec![0, F64::NAN.to_bits(), F64::NAN.to_bits()],
+        vec![1, f64::NEG_INFINITY.to_bits(), 5.0f64.to_bits()],
+        vec![2, F64::NAN.to_bits(), F64::NAN.to_bits()],
+        vec![3, 0.0f64.to_bits(), f64::INFINITY.to_bits()],
+    ];
+
+    let mut finds = vec![FindTerm::Var(VarId(0))];
+    finds.extend(extrema(VarId(2)));
+    let leaf = Rule {
+        finds,
+        atoms: vec![reading(VarId(1), VarId(2))],
+        negated: vec![],
+        conditions: vec![],
+    };
+    assert_eq!(extrema_answers(&fix, leaf.clone()), grouped);
+
+    let mut joined = leaf.clone();
+    joined.atoms.push(reading(VarId(3), VarId(4)));
+    assert_eq!(extrema_answers(&fix, joined.clone()), grouped);
+    joined.finds.truncate(1);
+    joined.finds.extend(extrema(VarId(4)));
+    assert_eq!(extrema_answers(&fix, joined), grouped);
+
+    let mut ungrouped = leaf;
+    ungrouped.finds.remove(0);
+    ungrouped.conditions.push(ConditionTree::Leaf(Comparison {
+        op: CmpOp::Eq,
+        lhs: Term::Var(VarId(0)),
+        rhs: Term::Literal(Value::U64(1)),
+    }));
+    assert_eq!(
+        extrema_answers(&fix, ungrouped.clone()),
+        vec![vec![f64::NEG_INFINITY.to_bits(), 5.0f64.to_bits()]]
+    );
+    ungrouped.conditions.clear();
+    assert_eq!(
+        extrema_answers(&fix, ungrouped),
+        vec![vec![F64::NAN.to_bits(), F64::NAN.to_bits()]]
+    );
+}
