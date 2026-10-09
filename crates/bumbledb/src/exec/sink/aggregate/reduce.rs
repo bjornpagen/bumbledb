@@ -294,7 +294,6 @@ mod tests {
         let spec = AggSpec::Fold {
             op: FoldOp::Sum,
             slot: 0,
-            width: 1,
             signed: true,
         };
         let extremes = [i64::MIN, i64::MAX, -1, 0, 1, -999, 999];
@@ -340,7 +339,6 @@ mod tests {
         let spec = AggSpec::Fold {
             op: FoldOp::Sum,
             slot: 0,
-            width: 1,
             signed: true,
         };
         for count in [1, u64::from(u32::MAX), u64::MAX] {

@@ -26,10 +26,10 @@ pub(crate) enum AggSpec {
         op: FoldOp,
         slot: usize,
     },
+    /// A one-word integer argument.
     Fold {
         op: FoldOp,
         slot: usize,
-        width: usize,
         /// Signed (I64) argument; Sum decodes the biased word before accumulating.
         signed: bool,
     },

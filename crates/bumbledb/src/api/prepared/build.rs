@@ -933,7 +933,6 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
             FindTerm::Aggregate { op, over } => FindSpec::Agg(crate::exec::sink::AggSpec::Fold {
                 op: *op,
                 slot: layout.slot_of(*over),
-                width: layout.width_of(*over),
                 signed: matches!(rule.var_type(*over), ValueType::I64),
             }),
         })

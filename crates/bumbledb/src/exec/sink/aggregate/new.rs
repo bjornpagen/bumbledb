@@ -456,11 +456,9 @@ enum DedupRegime<'k> {
 
 fn union_span(find: &SinkSpec) -> Option<(usize, usize)> {
     match find {
-        SinkSpec::Var { slot, width } | SinkSpec::Agg(AggSpec::Fold { slot, width, .. }) => {
-            Some((*slot, *width))
-        }
+        SinkSpec::Var { slot, width } => Some((*slot, *width)),
         SinkSpec::Pack { slot } => Some((*slot, 2)),
-        SinkSpec::Agg(AggSpec::Float { slot, .. }) => Some((*slot, 1)),
+        SinkSpec::Agg(AggSpec::Fold { slot, .. } | AggSpec::Float { slot, .. }) => Some((*slot, 1)),
         SinkSpec::Agg(AggSpec::Count) => None,
     }
 }

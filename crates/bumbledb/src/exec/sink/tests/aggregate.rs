@@ -166,7 +166,6 @@ fn shared_batch_reductions_follow_selection_and_layout_changes() {
         FindSpec::Agg(AggSpec::Fold {
             op,
             slot,
-            width: 1,
             signed: slot == 1,
         })
     };
@@ -300,13 +299,11 @@ fn union_reaim_invalidates_fold_sources_even_with_the_same_leaf_layout() {
             FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Min,
                 slot: min_slot,
-                width: 1,
                 signed: false,
             }),
             FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Max,
                 slot: max_slot,
-                width: 1,
                 signed: false,
             }),
         ]
@@ -760,7 +757,6 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
             FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Sum,
                 slot: x,
-                width: 1,
                 signed: false,
             }),
             FindSpec::Agg(AggSpec::Count),
@@ -814,7 +810,6 @@ fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
             FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Sum,
                 slot: x,
-                width: 1,
                 signed: false,
             }),
         ]
@@ -906,7 +901,6 @@ fn dense_group_tables_match_the_hashed_map_word_for_word() {
         FindSpec::Agg(AggSpec::Fold {
             op: FoldOp::Sum,
             slot: 2,
-            width: 1,
             signed: false,
         }),
         FindSpec::Agg(AggSpec::Count),

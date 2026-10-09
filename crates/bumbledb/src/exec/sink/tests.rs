@@ -306,7 +306,6 @@ fn agg_spec(plan: &ValidatedPlan, op: FoldOp, over: u16, signed: bool) -> FindSp
     FindSpec::Agg(AggSpec::Fold {
         op,
         slot: plan.slot_of(VarId(over)),
-        width: plan.width_of(VarId(over)),
         signed,
     })
 }

@@ -127,7 +127,6 @@ fn sum_is_order_independent_near_the_boundary() {
     let sum_find = FindSpec::Agg(AggSpec::Fold {
         op: FoldOp::Sum,
         slot: 0,
-        width: 1,
         signed: true,
     });
     for order in [[0usize, 1, 2], [2, 1, 0], [1, 2, 0]] {
@@ -169,13 +168,11 @@ fn min_and_max_honor_logical_i64_order_across_the_sign_boundary() {
             FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Min,
                 slot: 0,
-                width: 1,
                 signed: true,
             }),
             FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Max,
                 slot: 0,
-                width: 1,
                 signed: true,
             }),
         ],

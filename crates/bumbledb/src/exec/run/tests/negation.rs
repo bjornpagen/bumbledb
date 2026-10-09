@@ -209,7 +209,6 @@ fn negation_under_an_aggregate_excludes_rejected_bindings() {
         FindSpec::Agg(AggSpec::Fold {
             op: FoldOp::Sum,
             slot: plan.slot_of(VarId(1)),
-            width: 1,
             signed: false,
         }),
         FindSpec::Agg(AggSpec::Count),

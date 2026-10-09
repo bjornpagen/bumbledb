@@ -317,13 +317,11 @@ fn borrowed_row_union_keys_keep_repeated_spans_across_reaim() {
             FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Sum,
                 slot: value,
-                width: 1,
                 signed: false,
             }),
             FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Sum,
                 slot: value,
-                width: 1,
                 signed: false,
             }),
             FindSpec::Agg(AggSpec::Count),
