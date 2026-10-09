@@ -326,7 +326,7 @@ pub(super) fn profile(
         &sets,
     ));
     let mut expected = Vec::with_capacity(sets.len());
-    let mut digest = bumbledb::digest::Digest::new();
+    let mut digest = blake3::Hasher::new();
     for params in &sets {
         let mut answers = engine.answers(stores, &types, params)?;
         expected.push(answers.len() as u64);
@@ -340,7 +340,7 @@ pub(super) fn profile(
         args,
         &expected,
         input_digest,
-        crate::worlds::corpus_gen::digest_hex(&digest.finalize()),
+        crate::worlds::corpus_gen::digest_hex(digest.finalize().as_bytes()),
         |index| engine.sample(stores, &sets[index], &mut buffer),
     )
 }

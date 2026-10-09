@@ -240,17 +240,13 @@ pub fn load(dir: &Path, seed: u64, rows: u64) -> Result<Stores, String> {
     let mut start = 0;
     while start < rows {
         let end = (start + CHUNK).min(rows);
-        db.write(harness::bench_work(), |tx| {
-            tx.insert_dyn(READING, (start..end).map(|i| row(seed, i)))
-                .map(bumbledb::MutationReport::changed)
-        })
-        .map_err(|e| format!("float_stats load: {e:?}"))
-        .and_then(|outcome| match outcome {
-            bumbledb::Admission::Accepted(_) => Ok(()),
-            bumbledb::Admission::Rejected(violations) => {
-                Err(format!("float_stats load rejected: {violations}"))
-            }
-        })?;
+        harness::committed(
+            "float_stats load",
+            db.write(harness::bench_work(), |tx| {
+                tx.insert_dyn(READING, (start..end).map(|i| row(seed, i)))
+                    .map(bumbledb::MutationReport::changed)
+            }),
+        )?;
         start = end;
     }
     let mut naive = NaiveDb::new(&descriptor);

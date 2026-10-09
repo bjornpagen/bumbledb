@@ -55,9 +55,7 @@ fn the_stamp_is_bound_to_the_binary() {
 
     let exe = std::env::current_exe().expect("exe");
     let bytes = std::fs::read(exe).expect("read");
-    let mut digest = bumbledb::digest::Digest::new();
-    digest.update(&bytes);
-    assert_eq!(binary_fingerprint(), digest.finalize());
+    assert_eq!(binary_fingerprint(), *blake3::hash(&bytes).as_bytes());
 
     let mut foreign = binary_fingerprint();
     foreign[0] ^= 0xFF;

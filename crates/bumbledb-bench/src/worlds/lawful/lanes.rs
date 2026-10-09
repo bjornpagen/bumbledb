@@ -369,7 +369,7 @@ fn refused_commit(
     violate: impl FnOnce(&mut bumbledb::WriteTx<'_, LawfulWorld>) -> bumbledb::Result<()>,
 ) -> Result<u64, String> {
     match db.write(crate::harness::bench_work(), violate) {
-        Ok(bumbledb::Admission::Rejected(violations)) => {
+        Ok(bumbledb::WriteOutcome::Rejected(violations)) => {
             if cites(&violations) {
                 Ok(1)
             } else {
@@ -379,8 +379,10 @@ fn refused_commit(
                 ))
             }
         }
-        Ok(bumbledb::Admission::Accepted(_)) => Err(format!(
-            "{family}: the violating commit was ACCEPTED — the refusal contract is broken"
+        Ok(
+            outcome @ (bumbledb::WriteOutcome::Committed(_) | bumbledb::WriteOutcome::Moved { .. }),
+        ) => Err(format!(
+            "{family}: the violating commit was not refused ({outcome:?}); the refusal contract is broken"
         )),
         Err(other) => Err(format!(
             "{family}: expected admission rejection, the engine said {other:?}"

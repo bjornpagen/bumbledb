@@ -496,13 +496,13 @@ pub fn all() -> &'static [CalFamily] {
 
 #[must_use]
 pub fn digest() -> [u8; 32] {
-    let mut digest = bumbledb::digest::Digest::new();
+    let mut digest = blake3::Hasher::new();
     for family in all() {
         digest.update(family.name.as_bytes());
         digest.update(format!("{:?}", (family.query)()).as_bytes());
         digest.update(family.golden_sql.as_bytes());
     }
-    digest.finalize()
+    *digest.finalize().as_bytes()
 }
 
 #[must_use]

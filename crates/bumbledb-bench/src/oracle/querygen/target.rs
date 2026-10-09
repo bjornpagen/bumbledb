@@ -1049,11 +1049,12 @@ mod tests {
                 }
             }
         }
-        let report = db.verify_store().expect("verify_store");
+        let report = db
+            .verify_store(&crate::harness::bench_work())
+            .expect("verify_store");
         assert!(
-            report.findings().is_empty(),
-            "the swept corpus convicts nothing: {:?}",
-            report.findings()
+            report.is_coherent(),
+            "the swept corpus convicts nothing: {report:?}"
         );
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);

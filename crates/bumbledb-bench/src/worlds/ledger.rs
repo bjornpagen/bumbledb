@@ -163,9 +163,6 @@ mod tests {
     use super::*;
     use bumbledb::schema::ValueType;
 
-    const PRE_FUNERAL_FINGERPRINT: &str =
-        "c64e3142a655bc9c60d0f0488540aa559210c650dd5ceb3e06761c7f3088cee8";
-
     fn fingerprint_hex() -> String {
         let fp = bumbledb::schema::fingerprint::fingerprint(schema());
         fp.0.iter().fold(String::new(), |mut acc, b| {
@@ -180,17 +177,8 @@ mod tests {
     fn the_fingerprint_is_pinned() {
         assert_eq!(
             fingerprint_hex(),
-            "e89545c6f681d66b89e8869c0584e3117c705c9dcad89e0a3b26f9b18199822b",
+            "4b07c184dd5044f172b64fd0274e70caa6ba2829f935b294e99076f6f6f1a7ee",
             "the ledger schema changed — re-baseline corpora and reports deliberately"
-        );
-    }
-
-    #[test]
-    fn the_funeral_moved_the_fingerprint() {
-        assert_ne!(
-            fingerprint_hex(),
-            PRE_FUNERAL_FINGERPRINT,
-            "the closed-relation ledger must not fingerprint like the enum ledger"
         );
     }
 

@@ -157,7 +157,7 @@ fn profile_query<S: Theory>(
         prepared.rendered_query(),
         draws,
     ));
-    let mut digest = bumbledb::digest::Digest::new();
+    let mut digest = blake3::Hasher::new();
     let mut expected = Vec::with_capacity(draws.len());
     for draw in draws {
         let params = param_args(draw);
@@ -172,7 +172,7 @@ fn profile_query<S: Theory>(
         args,
         &expected,
         input_digest,
-        crate::worlds::corpus_gen::digest_hex(&digest.finalize()),
+        crate::worlds::corpus_gen::digest_hex(digest.finalize().as_bytes()),
         |index| {
             before_read();
             let params = param_args(&draws[index]);
@@ -227,12 +227,10 @@ pub(crate) fn profile_cycles(
 /// Untimed descriptor/draw identity. Answer equality alone cannot distinguish
 /// a changed stream of misses or a different query with the same result.
 pub(crate) fn input_fingerprint(input: &impl std::fmt::Debug) -> String {
-    let mut digest = bumbledb::digest::Digest::new();
-    digest.update(format!("{input:?}").as_bytes());
-    crate::worlds::corpus_gen::digest_hex(&digest.finalize())
+    crate::worlds::corpus_gen::digest_hex(blake3::hash(format!("{input:?}").as_bytes()).as_bytes())
 }
 
-fn fingerprint_answers(answers: &Answers, digest: &mut bumbledb::digest::Digest) {
+fn fingerprint_answers(answers: &Answers, digest: &mut blake3::Hasher) {
     let mut rows: Vec<_> = answers
         .answers()
         .map(|answer| {

@@ -3,9 +3,11 @@ use bumbledb::{RelationId, Value};
 use crate::worlds::corpus_gen::{GenConfig, relation_rows};
 use crate::worlds::ledger::ids;
 
-fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
+fn value_bytes(digest: &mut blake3::Hasher, value: &Value) {
     match value {
-        Value::Bool(v) => digest.update(&[0, u8::from(*v)]),
+        Value::Bool(v) => {
+            digest.update(&[0, u8::from(*v)]);
+        }
         Value::U64(v) => {
             digest.update(&[1]);
             digest.update(&v.to_le_bytes());
@@ -38,8 +40,6 @@ fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
             digest.update(&interval.start().to_le_bytes());
             digest.update(&interval.end().to_le_bytes());
         }
-        // New canonical kinds extend the tag roster; existing tags never
-        // renumber, so old corpus digests stay stable.
         Value::Uuid(id) => {
             digest.update(&[9]);
             digest.update(id.as_bytes());
@@ -54,8 +54,8 @@ fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
 
 #[must_use]
 pub fn corpus_digest(cfg: GenConfig) -> [u8; 32] {
-    let mut digest = bumbledb::digest::Digest::new();
-    digest.update(&bumbledb::STORAGE_FORMAT_VERSION.to_le_bytes());
+    let mut digest = blake3::Hasher::new();
+    digest.update(&bumbledb::host::LAYOUT.to_le_bytes());
     digest.update(&cfg.seed.to_le_bytes());
     digest.update(cfg.scale.label().as_bytes());
     for rel in 0..ids::RELATIONS {
@@ -77,5 +77,5 @@ pub fn corpus_digest(cfg: GenConfig) -> [u8; 32] {
             }
         }
     }
-    digest.finalize()
+    *digest.finalize().as_bytes()
 }

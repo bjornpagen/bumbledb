@@ -1,7 +1,8 @@
 use std::fmt::Write as _;
 
+use bumbledb::host::StoreReport;
 use bumbledb::schema::render;
-use bumbledb::{Db, Schema, StatementId, StoreFinding, StoreReport};
+use bumbledb::{Db, Schema, Violations};
 
 use crate::cli::CorpusArgs;
 use crate::worlds::ledger::{Ledger, schema};
@@ -24,39 +25,32 @@ pub fn cmd_verify_store(corpus: &CorpusArgs) -> Result<i32, String> {
     let db = Db::open(&paths.db, Ledger, crate::harness::bench_work())
         .map_err(|e| format!("open db: {e:?}"))?;
     let report = db
-        .verify_store()
+        .verify_store(&crate::harness::bench_work())
         .map_err(|e| format!("verify store: {e:?}"))?;
     print!("{}", render_report(schema(), &report));
-    Ok(i32::from(!report.findings().is_empty()))
+    Ok(i32::from(!report.is_coherent()))
 }
 
-fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
-    match finding {
-        // The complete re-judgment's violation names its statement directly.
-        StoreFinding::Judgment(violation) => Some(violation.statement),
-        // Physical projections may serve several statements; do not invent
-        // a statement citation for a projection-level corruption.
-        StoreFinding::Corruption(_) => None,
-    }
-}
-
+/// Corruption cites no statement (a physical projection may serve several);
+/// each violation names its statement through the statement renderer.
 fn render_report(schema: &Schema, report: &StoreReport) -> String {
     let mut out = String::new();
-    for finding in report.findings() {
-        let _ = write!(out, "finding: {finding:?}");
-        if let Some(id) = finding_statement(finding) {
-            let _ = write!(out, " — statement: {}", render::render(schema, id));
-        }
-        out.push('\n');
+    for corruption in &report.corruption {
+        let _ = writeln!(out, "corruption: {corruption:?}");
     }
-    if report.findings().is_empty() {
-        let _ = writeln!(out, "verify-store OK: namespaces coherent, judgments hold");
-    } else {
+    for violation in report.violations.iter().flatten() {
         let _ = writeln!(
             out,
-            "verify-store FAILED: {} finding(s)",
-            report.findings().len()
+            "violation: {violation:?} — statement: {}",
+            render::render(schema, violation.statement_id(schema))
         );
+    }
+    if report.is_coherent() {
+        let _ = writeln!(out, "verify-store OK: namespaces coherent, judgments hold");
+    } else {
+        let findings =
+            report.corruption.len() + report.violations.as_ref().map_or(0, Violations::len);
+        let _ = writeln!(out, "verify-store FAILED: {findings} finding(s)");
     }
     out
 }
@@ -64,34 +58,37 @@ fn render_report(schema: &Schema, report: &StoreReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bumbledb::StoreVerdict;
+    use crate::fixture::TempDir;
+    use crate::worlds::ledger::{Account, AccountId, CurrencyId, HolderId};
 
     #[test]
     fn findings_render_through_the_statement_renderer() {
         let schema = schema();
+        let dir = TempDir::new("verify-store-render");
+        let db = Db::create(dir.path(), Ledger, crate::harness::bench_work())
+            .expect("create")
+            .unwrap();
+        let orphan = Account {
+            id: AccountId(1),
+            holder: HolderId(7),
+            currency: CurrencyId(0),
+        };
+        let outcome = db.write(crate::harness::bench_work(), |tx| tx.insert([&orphan]));
+        let Ok(bumbledb::WriteOutcome::Rejected(violations)) = outcome else {
+            panic!("an account without its holder is rejected: {outcome:?}");
+        };
+        let statement = violations
+            .get(0)
+            .expect("one violation")
+            .statement_id(schema);
 
-        let containment = (0..schema.keys().len() + schema.containments().len())
-            .map(|id| StatementId(u16::try_from(id).expect("small fixture")))
-            .find(|&id| render::render(schema, id).contains("<="))
-            .expect("the ledger schema declares containments");
         let report = StoreReport {
-            verdict: StoreVerdict::Desynced {
-                findings: vec![StoreFinding::Judgment(
-                    bumbledb::schema::judge::JudgedViolation {
-                        statement: containment,
-                        kind: bumbledb::schema::StatementKind::Containment,
-                        direction: None,
-                        measure: None,
-                        examples: Box::new([]),
-                        examples_truncated: false,
-                    },
-                )]
-                .into(),
-            },
+            corruption: Box::new([]),
+            violations: Some(violations),
         };
         let rendered = render_report(schema, &report);
         assert!(
-            rendered.contains(&render::render(schema, containment)),
+            rendered.contains(&render::render(schema, statement)),
             "{rendered}"
         );
         assert!(
@@ -99,9 +96,9 @@ mod tests {
             "{rendered}"
         );
 
-        let clean = StoreReport {
-            verdict: StoreVerdict::Coherent,
-        };
+        let clean = db
+            .verify_store(&crate::harness::bench_work())
+            .expect("verify_store");
         let rendered = render_report(schema, &clean);
         assert!(rendered.contains("verify-store OK"), "{rendered}");
     }

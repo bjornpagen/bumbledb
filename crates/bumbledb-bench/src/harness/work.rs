@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use bumbledb::schema::Theory;
-use bumbledb::{Admission, Db, WorkContext};
+use bumbledb::{Admission, Db, WorkContext, WriteOutcome};
 
 /// Each operation starts uncancelled, independent of earlier operations.
 #[must_use]
@@ -21,6 +21,19 @@ pub fn create_db<S: Theory>(path: &Path, schema: S) -> Result<Db<S>, String> {
             "create {}: empty state rejected: {violations}",
             path.display()
         )),
+    }
+}
+
+/// The value a write committed, or why it did not commit.
+/// # Errors
+pub fn committed<R>(what: &str, outcome: bumbledb::Result<WriteOutcome<R>>) -> Result<R, String> {
+    match outcome {
+        Ok(WriteOutcome::Committed(committed)) => Ok(committed.value),
+        Ok(WriteOutcome::Rejected(violations)) => Err(format!("{what} rejected: {violations:?}")),
+        Ok(WriteOutcome::Moved { witnessed, current }) => Err(format!(
+            "{what}: the store moved from {witnessed:?} to {current:?}"
+        )),
+        Err(error) => Err(format!("{what}: {error:?}")),
     }
 }
 

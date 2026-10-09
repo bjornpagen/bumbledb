@@ -282,7 +282,7 @@ fn every_lawful_commit_family_leaves_the_twins_value_identical() {
 /// Every rejection lane refuses on BOTH engines and commits NOTHING: after the
 /// untimed window setup, each of the four rejection families runs both runners
 /// to completion (the engine runner completing `Ok` IS the proof its closure
-/// observed `Admission::Rejected` with the expected citation — anything else
+/// observed `WriteOutcome::Rejected` with the expected citation — anything else
 /// aborts it), the engine generation stands still, and every mirror table's
 /// `COUNT(*)` is unchanged.
 #[test]
@@ -383,12 +383,10 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
     ) -> bumbledb::Result<()>|
      -> Vec<Cited> {
         match db.write(crate::harness::bench_work(), |tx| violate(tx)) {
-            Ok(bumbledb::Admission::Rejected(violations)) => {
+            Ok(bumbledb::WriteOutcome::Rejected(violations)) => {
                 differential::cited(&violations, db.schema())
             }
-            Ok(bumbledb::Admission::Accepted(_)) => {
-                panic!("{what}: the violating commit was accepted")
-            }
+            Ok(outcome) => panic!("{what}: the violating commit was not refused: {outcome:?}"),
             Err(other) => panic!("{what}: expected admission rejection, the engine said {other:?}"),
         }
     };

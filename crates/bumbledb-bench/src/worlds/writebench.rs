@@ -90,7 +90,7 @@ pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Meas
     let mut mint = PostingMint::probe(db)?;
     harness::measure(write_protocol("commit_witnessed"), || {
         db.read(crate::harness::bench_work(), |instance| {
-            db.write_from(crate::harness::bench_work(), &instance.witness()?, |tx| {
+            db.write_from(crate::harness::bench_work(), &instance.witness(), |tx| {
                 let id = mint.next();
                 tx.insert([&prepared_posting(&mut rng, &sizes, id)])
             })?

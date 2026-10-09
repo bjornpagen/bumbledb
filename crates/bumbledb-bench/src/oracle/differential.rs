@@ -1,11 +1,12 @@
 use std::collections::BTreeSet;
 
 #[cfg(test)]
-use bumbledb::ConditionalWrite;
-#[cfg(test)]
 use bumbledb::Witness;
 use bumbledb::schema::{Schema, SchemaDescriptor, ValidateDescriptor as _};
-use bumbledb::{Admission, AnswerValue, Db, Error, InstanceBuilder, Query, RelationId, Value};
+use bumbledb::{
+    Admission, AnswerValue, Db, Error, InstanceBuilder, Query, RelationId, Value, WriteOutcome,
+    WriteTx,
+};
 
 #[cfg(test)]
 use crate::oracle::naive::ConditionalAbort;
@@ -34,10 +35,8 @@ pub enum Verdict {
     Aborted(Vec<Violation>),
 }
 
-/// One conditional write's outcome, on either side: [`Verdict`] plus the
-/// witness refusal with its payload — compared whole, so verdict *and*
-/// generations must agree (error parity including typed identity, the
-/// direction-divergence lesson applied from birth).
+/// One write's outcome, on either side: [`Verdict`] plus the witness refusal
+/// with its generations, compared whole.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConditionalVerdict {
     Committed,
@@ -141,27 +140,46 @@ pub fn cited(violations: &bumbledb::Violations, schema: &Schema) -> Vec<Violatio
         .collect()
 }
 
-pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
-    let outcome = db.write(crate::harness::bench_work(), |tx| {
-        for (rel, fact) in &delta.deletes {
-            tx.delete_dyn(*rel, [fact])?;
-        }
-        for (rel, fact) in &delta.inserts {
-            tx.insert_dyn(*rel, [fact])?;
-        }
-        Ok(())
-    });
-    match outcome {
-        Ok(Admission::Accepted(_)) => Verdict::Committed,
-        Ok(Admission::Rejected(violations)) => Verdict::Aborted(cited(&violations, db.schema())),
-        Err(Error::ClosedRelationWrite { relation }) => {
-            Verdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
-        }
+fn stage_delta<S>(tx: &mut WriteTx<'_, S>, delta: &Delta) -> bumbledb::Result<()> {
+    for (rel, fact) in &delta.deletes {
+        tx.delete_dyn(*rel, [fact])?;
+    }
+    for (rel, fact) in &delta.inserts {
+        tx.insert_dyn(*rel, [fact])?;
+    }
+    Ok(())
+}
 
+/// One engine write's outcome as the oracle states it; the typed refusals the
+/// naive model also produces become violations, anything else is a defect.
+fn write_verdict<S>(db: &Db<S>, outcome: bumbledb::Result<WriteOutcome<()>>) -> ConditionalVerdict {
+    match outcome {
+        Ok(WriteOutcome::Committed(_)) => ConditionalVerdict::Committed,
+        Ok(WriteOutcome::Rejected(violations)) => {
+            ConditionalVerdict::Aborted(cited(&violations, db.schema()))
+        }
+        Ok(WriteOutcome::Moved { witnessed, current }) => ConditionalVerdict::Moved {
+            witnessed: witnessed.value(),
+            current: current.value(),
+        },
+        Err(Error::ClosedRelationWrite { relation }) => {
+            ConditionalVerdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
+        }
         Err(Error::CapacityRayMeasure { statement, .. }) => {
-            Verdict::Aborted(vec![Violation::CapacityRayMeasure { statement }])
+            ConditionalVerdict::Aborted(vec![Violation::CapacityRayMeasure { statement }])
         }
         Err(other) => panic!("engine refused a differential write: {other:?}"),
+    }
+}
+
+pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
+    let outcome = db.write(crate::harness::bench_work(), |tx| stage_delta(tx, delta));
+    match write_verdict(db, outcome) {
+        ConditionalVerdict::Committed => Verdict::Committed,
+        ConditionalVerdict::Aborted(violations) => Verdict::Aborted(violations),
+        moved @ ConditionalVerdict::Moved { .. } => {
+            panic!("a write without a witness moved: {moved:?}")
+        }
     }
 }
 
@@ -212,31 +230,9 @@ pub(crate) fn engine_write_from<S>(
     delta: &Delta,
 ) -> ConditionalVerdict {
     let outcome = db.write_from(crate::harness::bench_work(), witness, |tx| {
-        for (rel, fact) in &delta.deletes {
-            tx.delete_dyn(*rel, [fact])?;
-        }
-        for (rel, fact) in &delta.inserts {
-            tx.insert_dyn(*rel, [fact])?;
-        }
-        Ok(())
+        stage_delta(tx, delta)
     });
-    match outcome {
-        Ok(ConditionalWrite::Accepted(_)) => ConditionalVerdict::Committed,
-        Ok(ConditionalWrite::Rejected(violations)) => {
-            ConditionalVerdict::Aborted(cited(&violations, db.schema()))
-        }
-        Ok(ConditionalWrite::Moved { witnessed, current }) => ConditionalVerdict::Moved {
-            witnessed: witnessed.value(),
-            current: current.value(),
-        },
-        Err(Error::ClosedRelationWrite { relation }) => {
-            ConditionalVerdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
-        }
-        Err(Error::CapacityRayMeasure { statement, .. }) => {
-            ConditionalVerdict::Aborted(vec![Violation::CapacityRayMeasure { statement }])
-        }
-        Err(other) => panic!("engine refused a differential conditional write: {other:?}"),
-    }
+    write_verdict(db, outcome)
 }
 
 #[cfg(test)]

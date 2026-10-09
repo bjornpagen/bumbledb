@@ -1,13 +1,13 @@
 use crate::worlds::families::all;
 
 pub(super) fn digest_over<'a>(items: impl Iterator<Item = (&'a str, String, &'a str)>) -> [u8; 32] {
-    let mut digest = bumbledb::digest::Digest::new();
+    let mut digest = blake3::Hasher::new();
     for (name, query_debug, golden_sql) in items {
         digest.update(name.as_bytes());
         digest.update(query_debug.as_bytes());
         digest.update(golden_sql.as_bytes());
     }
-    digest.finalize()
+    *digest.finalize().as_bytes()
 }
 
 #[must_use]

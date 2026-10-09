@@ -19,7 +19,7 @@ mod work;
 pub use cold::{measure_cold, org_touch};
 pub use measure::{measure, measure_batched, measure_interleaved};
 pub use stats::stats;
-pub use work::{bench_work, create_db, open_db};
+pub use work::{bench_work, committed, create_db, open_db};
 
 /// Warmup and measured sample counts. Each family selects its protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

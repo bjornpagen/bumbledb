@@ -309,12 +309,7 @@ pub fn post_write_first_read(
                         .map(bumbledb::MutationReport::changed)
                 })
             };
-            let changed = match outcome.map_err(|e| format!("post-write mutation: {e:?}"))? {
-                bumbledb::Admission::Accepted(committed) => committed.value,
-                bumbledb::Admission::Rejected(violations) => {
-                    return Err(format!("post-write mutation rejected: {violations:?}"));
-                }
-            };
+            let changed = crate::harness::committed("post-write mutation", outcome)?;
             if changed != 1 {
                 return Err(format!(
                     "post-write setup changed {changed} rows, expected one"
@@ -334,18 +329,13 @@ pub fn post_write_first_read(
     // Odd sample counts leave the final measured state deleted. Restore it
     // outside timing so later regimes see the same canonical corpus.
     if !present.get() {
-        let outcome = db
-            .write(work(), |tx| {
+        let changed = crate::harness::committed(
+            "post-write restore",
+            db.write(work(), |tx| {
                 tx.insert_dyn(ids::POSTING_TAG, [victim])
                     .map(bumbledb::MutationReport::changed)
-            })
-            .map_err(|e| format!("post-write restore: {e:?}"))?;
-        let changed = match outcome {
-            bumbledb::Admission::Accepted(committed) => committed.value,
-            bumbledb::Admission::Rejected(violations) => {
-                return Err(format!("post-write restore rejected: {violations:?}"));
-            }
-        };
+            }),
+        )?;
         if changed != 1 {
             return Err("post-write restore did not insert the deleted row".to_owned());
         }

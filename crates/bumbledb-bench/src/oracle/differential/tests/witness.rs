@@ -1,5 +1,5 @@
 use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, StatementDescriptor, ValueType};
-use bumbledb::{ConditionalWrite, Db, Error, FieldId, RelationId, Value};
+use bumbledb::{Db, Error, FieldId, RelationId, Value, WriteOutcome};
 
 use super::{BOOKING, MARKER, schema};
 use crate::fixture::{TempDir, field, side};
@@ -54,11 +54,11 @@ fn the_interleaved_second_sequence_aborts_with_the_payload() {
     let second = pair(2, (10, 12), 5);
 
     db.read(crate::harness::bench_work(), |instance| {
-        let witness = instance.witness()?;
+        let witness = instance.witness();
         let witnessed = naive.generation();
 
         let engine_first = db.read(crate::harness::bench_work(), |inner| {
-            Ok(engine_write_from(&db, &inner.witness()?, &first))
+            Ok(engine_write_from(&db, &inner.witness(), &first))
         })?;
         let naive_first = naive_write_from(&mut naive, witnessed, &first);
         assert_eq!(engine_first, ConditionalVerdict::Committed);
@@ -81,7 +81,7 @@ fn the_interleaved_second_sequence_aborts_with_the_payload() {
         assert!(
             matches!(
                 raw,
-                ConditionalWrite::Moved { witnessed, current }
+                WriteOutcome::Moved { witnessed, current }
                     if witnessed.value() == 1 && current.value() == 2
             ),
             "expected Moved {{ 1, 2 }}: {raw:?}"
@@ -105,7 +105,7 @@ fn a_noop_commit_between_read_and_write_does_not_abort() {
     let follow = pair(1, (6, 9), 4);
 
     db.read(crate::harness::bench_work(), |instance| {
-        let witness = instance.witness()?;
+        let witness = instance.witness();
         let witnessed = naive.generation();
 
         let noop = Delta {
@@ -150,9 +150,11 @@ fn a_foreign_snapshot_is_rejected_typed() {
     foreign
         .read(crate::harness::bench_work(), |instance| {
             let raw = db
-                .write_from(crate::harness::bench_work(), &instance.witness()?, |_| {
-                    Ok(())
-                })
+                .write_from(
+                    crate::harness::bench_work(),
+                    &instance.witness(),
+                    |_| Ok(()),
+                )
                 .unwrap_err();
             assert!(
                 matches!(raw, Error::ForeignWitness),
@@ -207,7 +209,7 @@ fn write_from_with_no_intervening_commit_is_write() {
         let plain = engine_write(&db_w, delta);
         let witnessed = db_f
             .read(crate::harness::bench_work(), |instance| {
-                Ok(engine_write_from(&db_f, &instance.witness()?, delta))
+                Ok(engine_write_from(&db_f, &instance.witness(), delta))
             })
             .expect("read");
 
@@ -307,9 +309,9 @@ fn maintenance_world(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     (dir, db)
 }
 
-fn assert_generation_moved(outcome: &ConditionalWrite<()>) {
+fn assert_generation_moved(outcome: &WriteOutcome<()>) {
     assert!(
-        matches!(outcome, ConditionalWrite::Moved { .. }),
+        matches!(outcome, WriteOutcome::Moved { .. }),
         "expected Moved, got {outcome:?}"
     );
 }
@@ -338,7 +340,7 @@ fn update_where_refuses_generation_movement() {
         .unwrap();
         let ran = std::cell::Cell::new(false);
         let error = db
-            .write_from(crate::harness::bench_work(), &instance.witness()?, |tx| {
+            .write_from(crate::harness::bench_work(), &instance.witness(), |tx| {
                 ran.set(true);
                 for fact in &matches {
                     let Value::U64(id) = fact[0] else {
@@ -387,7 +389,7 @@ fn insert_select_refuses_generation_movement() {
         .unwrap();
         let ran = std::cell::Cell::new(false);
         let error = db
-            .write_from(crate::harness::bench_work(), &instance.witness()?, |tx| {
+            .write_from(crate::harness::bench_work(), &instance.witness(), |tx| {
                 ran.set(true);
                 for id in &selected {
                     tx.insert_dyn(MAINTENANCE_DERIVED, [&[Value::U64(*id)]])?;
@@ -425,7 +427,7 @@ fn snapshot_read_modify_write_refuses_generation_movement() {
         .unwrap();
         let ran = std::cell::Cell::new(false);
         let error = db
-            .write_from(crate::harness::bench_work(), &instance.witness()?, |tx| {
+            .write_from(crate::harness::bench_work(), &instance.witness(), |tx| {
                 ran.set(true);
                 tx.delete_dyn(MAINTENANCE_SOURCE, [&old])?;
                 tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
@@ -457,7 +459,7 @@ fn stale_derived_fact_is_rejected_after_source_movement() {
         tx.delete_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
         Ok(())
     }) {
-        Ok(bumbledb::Admission::Rejected(violations)) => violations,
+        Ok(WriteOutcome::Rejected(violations)) => violations,
         other => panic!("expected admission rejection, got {other:?}"),
     };
     let sources = db
@@ -488,18 +490,18 @@ fn increment(db: &Db<SchemaDescriptor>) -> u64 {
                 }
             }
             let current = value.expect("slot 0 is seeded");
-            db.write_from(crate::harness::bench_work(), &instance.witness()?, |tx| {
+            db.write_from(crate::harness::bench_work(), &instance.witness(), |tx| {
                 tx.delete_dyn(REGISTER, [&[Value::U64(0), Value::U64(current)]])?;
                 tx.insert_dyn(REGISTER, [&[Value::U64(0), Value::U64(current + 1)]])?;
                 Ok(())
             })
         });
         match attempt {
-            Ok(bumbledb::ConditionalWrite::Accepted(_)) => return retries,
-            Ok(bumbledb::ConditionalWrite::Rejected(violations)) => {
+            Ok(WriteOutcome::Committed(_)) => return retries,
+            Ok(WriteOutcome::Rejected(violations)) => {
                 panic!("increment rejected: {violations:?}")
             }
-            Ok(bumbledb::ConditionalWrite::Moved { .. }) => retries += 1,
+            Ok(WriteOutcome::Moved { .. }) => retries += 1,
             Err(other) => panic!("increment refused: {other:?}"),
         }
     }
