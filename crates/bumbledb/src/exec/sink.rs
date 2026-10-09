@@ -447,14 +447,6 @@ impl SeenSet {
 /// immediate.
 pub(crate) type StageRowVisit<'v> = &'v mut dyn FnMut(&[u64]) -> crate::error::Result<bool>;
 
-#[allow(dead_code, reason = "deleted with the numeric lane's stream_finalize")]
-pub(in crate::exec::sink) fn encode_stage_row(row: &[u64], out: &mut Vec<u8>) {
-    out.clear();
-    for word in row {
-        out.extend_from_slice(&word.to_be_bytes());
-    }
-}
-
 #[derive(Debug)]
 pub(in crate::exec::sink) enum DedupState {
     Bindings {
