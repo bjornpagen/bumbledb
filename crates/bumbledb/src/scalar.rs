@@ -1,6 +1,7 @@
-//! Typed scalar execution for queries.
-//! Partial operations are stage outputs, never speculative filter terms.
-use crate::exec::kernel::numeric::{NumericalGuard, environment};
+//! Typed scalar expressions for computed query outputs: typing, and the
+//! row-at-a-time evaluator. Partial operations are stage outputs, never
+//! speculative filter terms.
+use crate::exec::kernel::numeric::DefaultFloatEnvironment;
 use crate::schema::ValueType;
 use crate::{F64, F64CastError, Value, VarId};
 
@@ -75,7 +76,8 @@ pub enum ScalarError {
     DivisionByZero,
     NonPositiveDivisor,
     UnboundedMeasure,
-    UnsupportedPlatform,
+    /// F64 arithmetic under a float environment that is not the IEEE default.
+    NonDefaultFloatEnvironment,
     TooDeep,
 }
 
@@ -209,20 +211,22 @@ impl ScalarExpr {
     }
 }
 
-/// One thread-bound numerical execution operation. Create once, evaluate all
-/// admitted rows, then drop before callbacks/suspension; Drop restores the host.
+/// Evaluates scalar expressions one binding at a time under a float
+/// environment checked once at construction.
 pub struct ScalarEvaluator {
-    _guard: NumericalGuard,
+    float: DefaultFloatEnvironment,
 }
 
 impl ScalarEvaluator {
     /// # Errors
-    /// `UnsupportedPlatform` when the host cannot enter the numerical mode.
+    /// [`ScalarError::NonDefaultFloatEnvironment`] when this thread's float
+    /// environment is not the IEEE default.
     pub fn new() -> Result<Self, ScalarError> {
-        Ok(Self {
-            _guard: NumericalGuard::enter().map_err(|_| ScalarError::UnsupportedPlatform)?,
-        })
+        DefaultFloatEnvironment::check()
+            .map(|float| Self { float })
+            .map_err(|_| ScalarError::NonDefaultFloatEnvironment)
     }
+
     /// # Errors
     /// As [`ScalarExpr::result_type`].
     pub fn type_of(
@@ -231,35 +235,40 @@ impl ScalarEvaluator {
     ) -> Result<ValueType, ScalarError> {
         expression.result_type(variable)
     }
+
     /// # Errors
     /// The variable source's refusal, or a typed evaluation fault
     /// (division shape, unrepresentable cast).
     pub fn evaluate(
         &self,
         expression: &ScalarExpr,
-        variable: impl FnMut(VarId) -> Result<Value, ScalarError>,
+        mut variable: impl FnMut(VarId) -> Result<Value, ScalarError>,
     ) -> Result<Value, ScalarError> {
-        evaluate_in_operation(expression, variable)
+        evaluate(expression, Some(self.float), &mut variable, 0)
     }
 }
 
-/// Query entry owns the guard once for the complete numerical operation.
-pub(crate) fn evaluate_in_operation(
+/// Evaluates one binding. `float` is the checked environment, if any; F64
+/// arithmetic without one fails with
+/// [`ScalarError::NonDefaultFloatEnvironment`].
+pub(crate) fn evaluate_binding(
     expression: &ScalarExpr,
+    float: Option<DefaultFloatEnvironment>,
     mut variable: impl FnMut(VarId) -> Result<Value, ScalarError>,
 ) -> Result<Value, ScalarError> {
-    evaluate(expression, &mut variable, 0)
+    evaluate(expression, float, &mut variable, 0)
 }
 
 fn evaluate(
     expr: &ScalarExpr,
+    float: Option<DefaultFloatEnvironment>,
     variable: &mut impl FnMut(VarId) -> Result<Value, ScalarError>,
     depth: usize,
 ) -> Result<Value, ScalarError> {
     if depth > 128 {
         return Err(ScalarError::TooDeep);
     }
-    let eval = |value: &ScalarExpr, variable: &mut _| evaluate(value, variable, depth + 1);
+    let eval = |value: &ScalarExpr, variable: &mut _| evaluate(value, float, variable, depth + 1);
     match expr {
         ScalarExpr::Var(var) => variable(*var),
         ScalarExpr::Literal(value) => Ok(value.clone()),
@@ -316,13 +325,16 @@ fn evaluate(
         | ScalarExpr::Divide(a, b) => {
             let (a, b) = (eval(a, variable)?, eval(b, variable)?);
             match (a, b) {
-                (Value::F64(a), Value::F64(b)) => Ok(Value::F64(match expr {
-                    ScalarExpr::Add(..) => environment::add(a, b),
-                    ScalarExpr::Subtract(..) => environment::subtract(a, b),
-                    ScalarExpr::Multiply(..) => environment::multiply(a, b),
-                    ScalarExpr::Divide(..) => environment::divide(a, b),
-                    _ => unreachable!(),
-                })),
+                (Value::F64(a), Value::F64(b)) => {
+                    let float = float.ok_or(ScalarError::NonDefaultFloatEnvironment)?;
+                    Ok(Value::F64(match expr {
+                        ScalarExpr::Add(..) => float.add(a, b),
+                        ScalarExpr::Subtract(..) => float.subtract(a, b),
+                        ScalarExpr::Multiply(..) => float.multiply(a, b),
+                        ScalarExpr::Divide(..) => float.divide(a, b),
+                        _ => unreachable!(),
+                    }))
+                }
                 (Value::I64(a), Value::I64(b)) => {
                     if matches!(expr, ScalarExpr::Divide(..)) && b == 0 {
                         return Err(ScalarError::DivisionByZero);
@@ -454,6 +466,31 @@ mod tests {
             divisor: Box::new(ScalarExpr::Literal(d)),
             rounding,
         }
+    }
+
+    #[test]
+    fn float_arithmetic_without_a_checked_environment_is_refused() {
+        let literal = |value| Box::new(ScalarExpr::Literal(value));
+        let unbound = |v| Err(ScalarError::UnboundVariable(v));
+        let float_sum = ScalarExpr::Add(
+            literal(Value::F64(F64::from(1.0))),
+            literal(Value::F64(F64::from(2.0))),
+        );
+        assert_eq!(
+            evaluate_binding(&float_sum, None, unbound),
+            Err(ScalarError::NonDefaultFloatEnvironment)
+        );
+        let integer_sum = ScalarExpr::Add(literal(Value::I64(1)), literal(Value::I64(2)));
+        assert_eq!(
+            evaluate_binding(&integer_sum, None, unbound),
+            Ok(Value::I64(3))
+        );
+        let negated = ScalarExpr::Negate(literal(Value::F64(F64::from(2.0))));
+        assert_eq!(
+            evaluate_binding(&negated, None, unbound),
+            Ok(Value::F64(F64::from(-2.0)))
+        );
+        assert_eq!(run(float_sum), Ok(Value::F64(F64::from(3.0))));
     }
 
     #[test]

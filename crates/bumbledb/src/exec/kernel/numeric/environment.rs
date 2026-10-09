@@ -1,176 +1,170 @@
-//! The only floating-control-register island. The guard is thread-bound and
-//! restores the complete relevant control/status registers even on unwind.
-//! Engine code must not call host callbacks or suspend while a guard is live.
-//! A signal handler/foreign native code modifying these registers during an
-//! operation is outside the supported embedding contract.
+//! The float environment check. Rust and LLVM compile `f64` arithmetic for
+//! the IEEE default environment: round to nearest even, subnormals kept, all
+//! traps masked. A host that changed the control register would silently
+//! change results, so float arithmetic first proves the register is default.
+//! The check only reads the register; nothing here ever writes it.
 
-#![expect(
-    unsafe_code,
-    reason = "audited control-register and single-operation assembly boundary"
-)]
-
-use super::UnsupportedNumericalPlatform;
 use bumbledb_theory::F64;
 
-pub(crate) struct NumericalGuard {
-    saved: Environment,
-    // A guard may neither migrate to another thread nor be used concurrently.
-    _thread: core::marker::PhantomData<std::rc::Rc<()>>,
+/// The thread's float control register is not the IEEE default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NonDefaultFloatEnvironment {
+    control: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Environment {
-    #[cfg(target_arch = "aarch64")]
-    pub(super) control: u64,
-    #[cfg(target_arch = "aarch64")]
-    pub(super) status: u64,
-    #[cfg(target_arch = "x86_64")]
-    pub(super) mxcsr: u32,
+impl NonDefaultFloatEnvironment {
+    /// The control register image that failed the check (FPCR on aarch64,
+    /// MXCSR on x86-64).
+    #[must_use]
+    pub const fn control(self) -> u64 {
+        self.control
+    }
 }
 
-impl NumericalGuard {
-    #[cfg_attr(
-        any(target_arch = "aarch64", target_arch = "x86_64"),
-        expect(
-            clippy::unnecessary_wraps,
-            reason = "unsupported targets return a typed refusal with the identical API"
+impl core::fmt::Display for NonDefaultFloatEnvironment {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "the float environment is not the IEEE default (control register {:#x})",
+            self.control
         )
-    )]
-    pub(crate) fn enter() -> Result<Self, UnsupportedNumericalPlatform> {
-        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-        {
-            // SAFETY: only this thread's architected numerical registers are
-            // read/written. The RAII owner restores the saved state on exit.
-            let saved = unsafe { Environment::read() };
-            unsafe {
-                Environment::canonical().install();
-            }
-            Ok(Self {
-                saved,
-                _thread: core::marker::PhantomData,
-            })
-        }
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-        Err(UnsupportedNumericalPlatform)
     }
 }
 
-impl Drop for NumericalGuard {
-    fn drop(&mut self) {
-        // SAFETY: !Send/!Sync keeps this guard on the originating thread, and
-        // saved is an actual prior register image, not caller-provided bits.
-        unsafe {
-            self.saved.install();
+impl std::error::Error for NonDefaultFloatEnvironment {}
+
+/// Proof that the executing thread's float environment was the IEEE default
+/// when checked. Holders check again for each execution, since the register
+/// is per thread.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DefaultFloatEnvironment(());
+
+impl DefaultFloatEnvironment {
+    /// Reads the control register once.
+    pub(crate) fn check() -> Result<Self, NonDefaultFloatEnvironment> {
+        Self::from_control(read_control())
+    }
+
+    fn from_control(control: u64) -> Result<Self, NonDefaultFloatEnvironment> {
+        if control & CONTROL_MASK == CONTROL_DEFAULT {
+            Ok(Self(()))
+        } else {
+            Err(NonDefaultFloatEnvironment { control })
         }
     }
 }
 
-impl Environment {
-    /// All traps masked, nearest-even, gradual underflow, zero status flags.
-    pub(super) const fn canonical() -> Self {
-        Self {
-            #[cfg(target_arch = "aarch64")]
-            control: 0,
-            #[cfg(target_arch = "aarch64")]
-            status: 0,
-            #[cfg(target_arch = "x86_64")]
-            mxcsr: 0x1f80,
-        }
+#[expect(
+    clippy::unused_self,
+    reason = "the receiver is the proof that the environment was checked"
+)]
+impl DefaultFloatEnvironment {
+    pub(crate) fn add(self, left: F64, right: F64) -> F64 {
+        F64::from(left.to_f64() + right.to_f64())
     }
 
-    pub(super) unsafe fn read() -> Self {
-        #[cfg(target_arch = "aarch64")]
-        {
-            let control: u64;
-            let status: u64;
-            // SAFETY: FPCR/FPSR are unprivileged registers. No memory or vector
-            // value is accessed; default asm barriers preserve operation order.
-            unsafe {
-                core::arch::asm!("mrs {control}, fpcr", "mrs {status}, fpsr",
-                    control = out(reg) control, status = out(reg) status, options(nostack));
-            }
-            Self { control, status }
-        }
-        #[cfg(target_arch = "x86_64")]
-        {
-            let mut mxcsr = 0_u32;
-            // SAFETY: stmxcsr stores exactly four bytes into this valid local.
-            unsafe {
-                core::arch::asm!("stmxcsr [{ptr}]", ptr = in(reg) &raw mut mxcsr, options(nostack));
-            }
-            Self { mxcsr }
-        }
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-        Self {}
+    pub(crate) fn subtract(self, left: F64, right: F64) -> F64 {
+        F64::from(left.to_f64() - right.to_f64())
     }
 
-    pub(super) unsafe fn install(self) {
-        #[cfg(target_arch = "aarch64")]
-        // SAFETY: caller supplies an architected/saved FPCR/FPSR image. FPCR's
-        // ARM rounding/flush/trap layout is not inferred from x86 MXCSR.
-        unsafe {
-            core::arch::asm!("msr fpcr, {control}", "msr fpsr, {status}",
-                control = in(reg) self.control, status = in(reg) self.status, options(nostack));
-        }
-        #[cfg(target_arch = "x86_64")]
-        // SAFETY: caller supplies a saved or known-valid MXCSR image; reserved
-        // bits remain clear. SSE2 is baseline on x86_64. We execute no x87 code,
-        // so x87 state is unrelated and remains untouched.
-        unsafe {
-            core::arch::asm!("ldmxcsr [{ptr}]", ptr = in(reg) &raw const self.mxcsr, options(nostack));
-        }
+    pub(crate) fn multiply(self, left: F64, right: F64) -> F64 {
+        F64::from(left.to_f64() * right.to_f64())
+    }
+
+    pub(crate) fn divide(self, left: F64, right: F64) -> F64 {
+        F64::from(left.to_f64() / right.to_f64())
     }
 }
 
-// Fixed instruction spellings make the expression-node boundary immune to
-// LLVM constant folding, reassociation and implicit multiply-add contraction.
-// No native f64 arithmetic occurs outside this guarded instruction island.
-macro_rules! binary {
-    ($name:ident, $arm:literal, $x86:literal) => {
-        impl NumericalGuard {
-            pub(crate) fn $name(&self, left: F64, right: F64) -> F64 {
-                $name(left, right)
-            }
-        }
-        /// Internal operation body. The owning engine/evaluator operation
-        /// holds a `NumericalGuard`; never call this across a host callback.
-        pub(crate) fn $name(left: F64, right: F64) -> F64 {
-                #[cfg(target_arch = "aarch64")]
-                {
-                    let bits: u64;
-                    // SAFETY: the live guard establishes IEEE controls. The
-                    // declared scalar/vector clobbers cover every register.
-                    unsafe {
-                        core::arch::asm!("fmov d0, {left}", "fmov d1, {right}",
-                            $arm, "fmov {result}, d0",
-                            left = in(reg) left.to_bits(), right = in(reg) right.to_bits(),
-                            result = out(reg) bits, out("v0") _, out("v1") _, options(nostack));
-                    }
-                    F64::from_bits(bits)
-                }
-                #[cfg(target_arch = "x86_64")]
-                {
-                    let bits: u64;
-                    // SAFETY: SSE2 is baseline; guard/clobber contract as above.
-                    unsafe {
-                        core::arch::asm!("movq xmm0, {left}", "movq xmm1, {right}",
-                            $x86, "movq {result}, xmm0",
-                            left = in(reg) left.to_bits(), right = in(reg) right.to_bits(),
-                            result = out(reg) bits, out("xmm0") _, out("xmm1") _, options(nostack));
-                    }
-                    F64::from_bits(bits)
-                }
-                #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-                {
-                    let _ = (left, right);
-                    // No NumericalGuard can be constructed on this target.
-                    unreachable!("unsupported targets refuse NumericalGuard::enter")
-                }
-        }
-    };
+/// FPCR bits that change `f64` results or trap: FIZ and AH (0, 1), the
+/// trap enables (8..=12, 15), the rounding mode (22, 23) and FZ (24). DN
+/// (25) only changes NaN payloads, which canonicalization erases.
+#[cfg(all(target_arch = "aarch64", not(miri)))]
+const CONTROL_MASK: u64 = 0b11 | 0x9f00 | (0b111 << 22);
+#[cfg(all(target_arch = "aarch64", not(miri)))]
+const CONTROL_DEFAULT: u64 = 0;
+
+/// MXCSR bits that change `f64` results or trap: DAZ (6), the exception
+/// masks (7..=12), the rounding control (13, 14) and FTZ (15). The sticky
+/// status flags (0..=5) are ignored.
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+const CONTROL_MASK: u64 = 0xffc0;
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+const CONTROL_DEFAULT: u64 = 0x1f80;
+
+/// Other targets and Miri have no register to read; Rust's own default
+/// environment assumption stands.
+#[cfg(any(miri, not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
+const CONTROL_MASK: u64 = 0;
+#[cfg(any(miri, not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
+const CONTROL_DEFAULT: u64 = 0;
+
+#[cfg(all(target_arch = "aarch64", not(miri)))]
+#[expect(unsafe_code, reason = "one read-only FPCR read")]
+fn read_control() -> u64 {
+    let control: u64;
+    // SAFETY: FPCR is readable at EL0; `mrs` writes only the output register
+    // and touches no memory, flags or float state.
+    unsafe {
+        core::arch::asm!("mrs {control}, fpcr", control = out(reg) control,
+            options(nomem, nostack, preserves_flags));
+    }
+    control
 }
 
-binary!(add, "fadd d0, d0, d1", "addsd xmm0, xmm1");
-binary!(subtract, "fsub d0, d0, d1", "subsd xmm0, xmm1");
-binary!(multiply, "fmul d0, d0, d1", "mulsd xmm0, xmm1");
-binary!(divide, "fdiv d0, d0, d1", "divsd xmm0, xmm1");
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[expect(unsafe_code, reason = "one read-only MXCSR read")]
+fn read_control() -> u64 {
+    let mut mxcsr = 0_u32;
+    // SAFETY: SSE is baseline on x86-64; `stmxcsr` stores exactly four bytes
+    // into this local and changes no register state.
+    unsafe {
+        core::arch::asm!("stmxcsr [{ptr}]", ptr = in(reg) &raw mut mxcsr,
+            options(nostack, preserves_flags));
+    }
+    u64::from(mxcsr)
+}
+
+#[cfg(any(miri, not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
+fn read_control() -> u64 {
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn this_test_thread_runs_the_default_environment() {
+        assert!(DefaultFloatEnvironment::check().is_ok());
+    }
+
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    #[test]
+    fn fpcr_images_that_change_results_or_trap_are_refused() {
+        for bit in [0, 1, 8, 9, 10, 11, 12, 15, 22, 23, 24] {
+            let control = 1u64 << bit;
+            assert_eq!(
+                DefaultFloatEnvironment::from_control(control).map(|_| ()),
+                Err(NonDefaultFloatEnvironment { control }),
+                "bit {bit}"
+            );
+        }
+        for harmless in [1u64 << 25, 1 << 19, 1 << 2] {
+            assert!(DefaultFloatEnvironment::from_control(harmless).is_ok());
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn mxcsr_images_that_change_results_or_trap_are_refused() {
+        for flip in [6, 7, 8, 9, 10, 11, 12, 13, 14, 15] {
+            let control = 0x1f80 ^ (1u64 << flip);
+            assert!(
+                DefaultFloatEnvironment::from_control(control).is_err(),
+                "bit {flip}"
+            );
+        }
+        assert!(DefaultFloatEnvironment::from_control(0x1f80 | 0x3f).is_ok());
+    }
+}

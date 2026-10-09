@@ -7,16 +7,12 @@
 //! (chapter 12's stage error boundary).
 //!
 //! Errors are sticky: the first scalar failure is recorded and every
-//! later row is dropped — `finalize` refuses to publish any answer for
-//! this execution (`Q-ATOMIC`: no partial published result). The FPU
-//! environment is established ONCE per engine operation by the query
-//! entry (`execute.rs` holds the [`NumericalGuard`] across the whole
-//! run), not per row and not per arithmetic node.
-//!
-//! [`NumericalGuard`]: crate::exec::kernel::numeric::NumericalGuard
+//! later row is dropped, so finalize publishes nothing for the execution.
+//! The float environment is checked once per execution, at reset.
 use std::sync::Arc;
 
 use super::EitherSink;
+use crate::exec::kernel::numeric::DefaultFloatEnvironment;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafSource, Sink};
 use crate::exec::sink::FindSpec;
 use crate::schema::ValueType;
@@ -48,6 +44,8 @@ pub(in crate::api) struct ComputedSink {
     pieces: Vec<(usize, [[u64; 2]; 2], usize, usize)>,
     /// The first scalar failure of this execution; sticky until reset.
     pub(super) error: Option<Error>,
+    /// This execution's float environment, if it is the IEEE default.
+    float: Option<DefaultFloatEnvironment>,
 }
 
 /// A lowered find-spec list: the rewritten specs, the `(slot, program)`
@@ -83,6 +81,7 @@ pub(super) fn lower(finds: &[FindSpec], slots: usize) -> Lowered {
 impl ComputedSink {
     pub(super) fn reset(&mut self) {
         self.error = None;
+        self.float = DefaultFloatEnvironment::check().ok();
         if self.bindings.slot_count() == 0 {
             self.bindings.resize(
                 self.slots
@@ -121,6 +120,7 @@ impl ComputedSink {
             bindings: Bindings::new(total),
             slots,
             error: None,
+            float: None,
             pieces: Vec::new(),
         }
     }
@@ -179,7 +179,7 @@ impl ComputedSink {
             let FindTerm::Compute(expression) = &program.expression else {
                 continue;
             };
-            let value = crate::scalar::evaluate_in_operation(expression, |var| {
+            let value = crate::scalar::evaluate_binding(expression, self.float, |var| {
                 read_value(&self.bindings, program, var)
             });
             let word = match value {

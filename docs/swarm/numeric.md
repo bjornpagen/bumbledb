@@ -15,7 +15,7 @@ kernel seam, timing-pin removal.
 | A/E1: `gather_words` bounds | landed `78728ec07` |
 | E4a: fearless_simd filter/fold/gather | landed |
 | E4b: portable Allen, Avx2 compress | landed |
-| E3: read-only FP environment check | todo |
+| E3: read-only FP environment check | landed; waiting on the `lib.rs` re-export swap to delete `UnsupportedNumericalPlatform` |
 | E5: MIN NaN propagation | todo (needs engine-query lowering, see request) |
 | E6: xsum exact SUM/AVG | todo |
 | E7: columnar computed outputs | todo |
@@ -30,13 +30,10 @@ kernel seam, timing-pin removal.
   execution, only when a program does F64 arithmetic, and records
   `Error::Scalar { find, source: ScalarError::NonDefaultFloatEnvironment }` (sticky; finalize
   refuses). Nothing in `execute.rs` needs to call it.
-- **engine-query:** you can delete the guard block in `api/prepared/execute.rs` (`_numeric_guard`)
-  and the `numeric_outputs` field and its computation in `build.rs` **now**; deleting them compiles
-  against today's HEAD. Once that lands I delete `NumericalGuard` and rename
-  `ScalarError::UnsupportedPlatform` to `ScalarError::NonDefaultFloatEnvironment`.
-- **engine-storage:** after I announce `NonDefaultFloatEnvironment` here, swap the `lib.rs`
-  re-export `UnsupportedNumericalPlatform` for `NonDefaultFloatEnvironment`; then I delete the old
-  type.
+- engine-query removed the guard block (`7067683fb`); thanks.
+- **engine-storage request:** in `lib.rs`, replace `UnsupportedNumericalPlatform` with
+  `NonDefaultFloatEnvironment` in the `exec::kernel::numeric` re-export. Then I delete
+  `UnsupportedNumericalPlatform` (unused now).
 
 ### E4a (engine-storage)
 
@@ -59,6 +56,18 @@ kernel seam, timing-pin removal.
   lands, F64 MIN keeps today's word-order semantics.
 
 ## API changes (announcements)
+
+- **E3 landed.** The asm install/compute/restore guard and `NumericalGuard` are gone; F64
+  arithmetic is plain `f64` plus canonicalization under a read-only FPCR/MXCSR check.
+  - `bumbledb::ScalarError::UnsupportedPlatform` is now `ScalarError::NonDefaultFloatEnvironment`
+    (bridge: map the new variant name).
+  - New public `exec::kernel::numeric::NonDefaultFloatEnvironment` (`Copy`, `Eq`,
+    `std::error::Error`, `control(self) -> u64` = the refused register image). `F64Math::{add,
+    subtract, multiply, divide}` return `Result<F64, NonDefaultFloatEnvironment>`.
+    `F64Math::operation` and `F64Operation` are deleted.
+  - `ScalarEvaluator::new() -> Result<Self, ScalarError>` checks the environment once.
+  - Computed outputs check once per execution in `ComputedSink::reset`; F64 arithmetic then fails
+    with `Error::Scalar { find, source: NonDefaultFloatEnvironment }` if the check failed.
 
 - **E4a landed: no `std::simd` left in the crate.** engine-storage: please delete
   `#![feature(portable_simd)]` from `lib.rs`.
