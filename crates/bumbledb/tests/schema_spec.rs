@@ -915,10 +915,9 @@ fn the_weighted_floor_is_legal_where_the_unit_floor_is_banned() {
         .expect("`<=[w]{1..*}` is the legal weighted floor");
 }
 
-/// The path BOUND refuses at the spec surface exactly as the weight does
-/// (ruling 6, one law both slots): the typed `BoundPathRefused` naming the
-/// pinned-column idiom — never the accidental `UnknownField` a dotted name fell
-/// to before the symmetry landed.
+/// A dotted bound path refuses at the spec surface exactly as a weight path
+/// does: the typed `BoundPathRefused` naming the pinned-column idiom, never
+/// `UnknownField`.
 #[test]
 fn a_path_bound_is_refused_naming_the_pinned_column_idiom() {
     let mut spec = everything_spec();
@@ -973,8 +972,8 @@ fn a_path_weight_is_refused_naming_the_pinned_column_idiom() {
     );
 }
 
-/// Dependent bounds are hi-slot only (ruled 2026-07-24, C6): a dependent floor
-/// is a typed refusal naming the ruling.
+/// Dependent bounds are hi-slot only: a dependent floor is a typed
+/// refusal.
 #[test]
 fn a_dependent_floor_is_refused_hi_slot_only() {
     let mut spec = everything_spec();

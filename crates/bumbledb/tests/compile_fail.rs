@@ -1,10 +1,8 @@
-//! Every `.rs` file under `tests/compile_fail/` must fail to compile. Each
-//! `//@ error: <text>` line names text the diagnostics must contain, and an
-//! optional `//@ line: <n>` the fixture line an error points at.
-//!
-//! `bumbledb` is built once into a private target directory; cargo's JSON
-//! messages name its metadata and every dependency artifact, so the runner never
-//! reads cargo's directory layout. Each fixture is then one `rustc` run.
+//! Every `.rs` file under `tests/compile_fail/` must fail to compile, with
+//! diagnostics containing each `//@ error: <text>` and, if given, pointing at
+//! `//@ line: <n>`. `bumbledb` is built once into a private target directory;
+//! cargo's JSON messages name every artifact, so the runner never reads cargo's
+//! directory layout. Each fixture is one `rustc` run.
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;

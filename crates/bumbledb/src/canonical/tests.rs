@@ -566,7 +566,7 @@ fn independent_all_scalar_golden_and_every_truncation() {
 
 /// Uuid (tag 8) and the dense float interval (tag 9) have exact golden
 /// wire bytes: endpoints are canonical binary64 payload bits, big endian,
-/// never index order keys (E-CODEC, F-WIRE, F-INTERVAL).
+/// never index order keys.
 #[test]
 fn uuid_and_dense_interval_golden_roundtrip() {
     let fields = fields(&[
@@ -600,7 +600,7 @@ fn uuid_and_dense_interval_golden_roundtrip() {
 
 /// A forged dense-interval wire value cannot parse into a successful
 /// canonical row: noncanonical endpoint bits, NaN endpoints, equal or
-/// inverted bounds each refuse with their own diagnostic (E-CODEC).
+/// inverted bounds each refuse with their own diagnostic.
 #[test]
 fn forged_dense_interval_bytes_refuse() {
     let ctx = work();

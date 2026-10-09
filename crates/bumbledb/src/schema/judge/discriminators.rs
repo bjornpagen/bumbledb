@@ -47,11 +47,11 @@ fn parent_users(n: u64) -> Vec<(RelationId, Vec<Value>)> {
         .collect()
 }
 
-/// D04 — complete, incremental and the independent streaming judge agree
+/// Complete, incremental and the independent streaming judge agree
 /// on admission, violated statements and canonical witnesses. Eligible
 /// key laws visit only the touched group while unrelated groups scale.
 #[test]
-fn d04_compiled_indexes_earn_locality() {
+fn compiled_indexes_earn_locality() {
     let schema = keyed_users();
     let parent = parent_users(64);
     let adds = vec![(RelationId(0), user(1000, "0@ex"))];
@@ -95,10 +95,10 @@ fn d04_compiled_indexes_earn_locality() {
     );
 }
 
-/// D04 — floor from source removal and selected target replacement match
+/// Floor from source removal and selected target replacement match
 /// the independent final-state model.
 #[test]
-fn d04_capacity_floor_and_target_replacement_match_complete() {
+fn capacity_floor_and_target_replacement_match_complete() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -197,12 +197,12 @@ fn d04_capacity_floor_and_target_replacement_match_complete() {
     );
 }
 
-/// D04 — incremental containment consumes interned group visits. A selected
+/// Incremental containment consumes interned group visits. A selected
 /// target removal rejects with the same verdict as complete judgment; the
 /// compiled path must not stream unrelated rooms or bookings, and extra
 /// lawful groups must not add walks.
 #[test]
-fn d04_incremental_containment_consumes_compiled_groups() {
+fn incremental_containment_consumes_compiled_groups() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -289,12 +289,12 @@ fn agree_reject(
     );
 }
 
-/// D04 — closed Source[a,b] ⊆ Target[b,a]: closed projected (a=1,b=2)
+/// Closed Source[a,b] ⊆ Target[b,a]: closed projected (a=1,b=2)
 /// and lawful target (a=2,b=1) share one logical group (`group_key`).
 /// Intern order is `index_key` at `visit_compiled_group` only. Removing
 /// that target must reject under complete and incremental judgment.
 #[test]
-fn d04_permuted_closed_source_target_deletion_agrees() {
+fn permuted_closed_source_target_deletion_agrees() {
     let schema = SchemaDescriptor {
         relations: vec![
             closed(
@@ -425,11 +425,11 @@ fn d04_permuted_closed_source_target_deletion_agrees() {
     );
 }
 
-/// D05 — opposite insertion order, reminted identities and resident versus
+/// Opposite insertion order, reminted identities and resident versus
 /// forced-scratch citation keep the same evidence bytes. Selection is by
 /// logical fact bytes before the budget, not by row id.
 #[test]
-fn d05_rejection_evidence_is_portable() {
+fn rejection_evidence_is_portable() {
     let schema = keyed_users();
     let mut forward = MapState::new();
     let mut reverse = MapState::new();
@@ -498,11 +498,11 @@ fn d05_rejection_evidence_is_portable() {
     assert_eq!(live, imported, "receipt bytes survive remint");
 }
 
-/// D26 — complete judgment cannot borrow a lawful-parent premise. A
+/// Complete judgment cannot borrow a lawful-parent premise. A
 /// populated invalid stage with an empty delta must reject under complete
 /// judgment; incremental-with-parent would incorrectly admit.
 #[test]
-fn d26_complete_judgment_cannot_borrow_a_lawful_parent() {
+fn complete_judgment_cannot_borrow_a_lawful_parent() {
     let schema = keyed_users();
     let mut populated = MapState::new();
     populated.insert(RelationId(0), user(1, "dup@ex"));
@@ -537,10 +537,10 @@ fn d26_complete_judgment_cannot_borrow_a_lawful_parent() {
     );
 }
 
-/// D26 positive dual: a nonempty-required law rejects the empty final
+/// a nonempty-required law rejects the empty final
 /// state and admits once the required ordinary witness is present.
 #[test]
-fn d26_valid_nonempty_required_state_admits() {
+fn valid_nonempty_required_state_admits() {
     let schema = SchemaDescriptor {
         relations: vec![
             closed(

@@ -11,7 +11,7 @@ use crate::error::{Error, HostKeyFault, Result};
 use crate::work::WorkContext;
 
 /// One host record change. Keys in one [`HostChanges`] are strictly
-/// increasing and at most [`HOST_KEY_MAX`] bytes.
+/// increasing and at most [`crate::host::MAX_KEY`] bytes.
 #[derive(Debug, Clone, Copy)]
 pub enum HostRecord<'a> {
     Put { key: &'a [u8], value: &'a [u8] },

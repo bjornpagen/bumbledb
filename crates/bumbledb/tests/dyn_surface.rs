@@ -135,10 +135,6 @@ fn dyn_identity_rewrite_and_fresh_explicit_ids_preserve_identity() {
     );
 }
 
-// The old `a_non_fresh_field_earns_no_witness` test retired with the fresh
-// machinery (E-NO-RESERVE): `fresh_field` and `NotAFreshField` no longer
-// exist.
-
 #[test]
 fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
     let dir = common::TempDir::new("dyn-write-sweep");

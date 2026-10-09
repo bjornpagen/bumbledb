@@ -1,10 +1,6 @@
-//! The segment sweep: one covered-frontier walk, two continuation shapes
-//! .
-//! "Walk start-ordered segments, tracking the covered frontier" is one
-//! algorithm with two owners: the containment judgment's coverage walk —
-//! is the window `[s, e)` jointly covered, or where is the gap? — and
-//! copy can drift: the walk lives here once, and a caller is its
-//! segments of a claim set? The anti-probe precedent, replayed before a
+//! The segment sweep: one walk over start-ordered segments that tracks the
+//! covered frontier, shared by every caller that asks whether a window is
+//! covered or where its gaps are.
 pub(crate) trait Continuation<W, P> {
     type Error;
 

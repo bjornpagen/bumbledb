@@ -1,8 +1,6 @@
-//! Admitted heap instance: an immutable admitted final set plus query.
-//! Mutation is unrepresentable; construction is [`super::InstanceBuilder::admit`]
-//! (or the query lane's own materialization seams). `Send + Sync`: hosts
-//! may share an admitted instance across threads.
-//!
+//! An admitted heap instance: an immutable final set that answers point reads
+//! and queries. [`super::InstanceBuilder::admit`] constructs it; mutation is
+//! unrepresentable. `Send + Sync`.
 //! ```compile_fail
 //! fn require_load(instance: &mut bumbledb::OwnedInstance<()>) {
 //!     let _ = instance.load::<()>([]);
@@ -73,8 +71,8 @@ impl<S> OwnedInstance<S> {
         self.schema.as_ref()
     }
 
-    /// The shared schema witness behind this instance (C05 seam: prepared
-    /// queries pin the `Arc` rather than re-clone the sealed schema).
+    /// The shared schema behind this instance; prepared queries pin the
+    /// `Arc`.
     pub(crate) fn schema_arc(&self) -> &Arc<Schema> {
         &self.schema
     }
@@ -119,13 +117,13 @@ impl<S> OwnedInstance<S> {
     }
 
     /// # Errors
-    /// Prepare-time validation (C05; produced by the query lane).
+    /// Prepare-time validation.
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
         crate::api::prepared::prepare_owned(self, query)
     }
 
     /// # Errors
-    /// Execution failure (C05; produced by the query lane).
+    /// Execution failure.
     pub fn execute(
         &self,
         prepared: &mut PreparedQuery<S>,

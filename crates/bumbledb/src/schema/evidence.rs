@@ -1,47 +1,11 @@
-//! The canonical bounded rejection-evidence codec.
-//!
-//! A durable rejection receipt must carry the COMPLETE violated-statement
-//! set with bounded, explicitly labeled example facts.
-//! This module owns the one canonical byte spelling of that evidence: the
-//! log (`bumbledb-log::writer::decide`) frames these bytes verbatim into
-//! decisions and receipts, and the native runtime decodes them back for the
-//! public TS `Violation[]` surface via
-//! [`crate::schema::evidence::ViolationEvidence::to_violations`]
-//! plus the existing [`crate::schema::render_rejection`].
-//!
-//! Properties, all load-bearing for the durable protocol:
-//!
-//! - **Deterministic.** The bytes are a pure function of the judgment, the
-//!   schema and the byte budget — never of available RAM, iteration
-//!   nondeterminism or a caller's timeout. Historical replay recomputes the
-//!   judgment at the exact predecessor and must reproduce the recorded
-//!   evidence byte for byte (`bumbledb-log::apply` compares exactly).
-//!   Cancellation is an error, never different bytes.
-//! - **Complete or refused.** Every violated statement always appears; only
-//!   EXAMPLES are dropped under the byte budget, deterministically and with
-//!   a per-violation truncation label. If even the example-free statement
-//!   skeleton exceeds the budget, encoding refuses
-//!   ([`crate::schema::evidence::EvidenceError::Budget`]) so the caller can refuse *before deciding*
-//!   rather than record a falsely complete rejection.
-//! - **Versioned and domain-separated.** The frame opens with its own
-//!   family magic and layout counter; no other frame family shares them,
-//!   so evidence bytes cannot be misread as a command, decision, receipt or
-//!   canonical row (and vice versa). Incompatible byte changes bump
-//!   [`crate::schema::evidence::LAYOUT`].
-//! - **Strict decode.** [`crate::schema::evidence::decode`] refuses foreign families/layouts,
-//!   unsorted or duplicated statement ids, malformed tags, oversized
-//!   counts, truncation and trailing bytes. Example facts stay opaque
-//!   canonical row bytes at this layer; interpreting them against a schema
-//!   ([`crate::schema::evidence::ViolationEvidence::to_judged`] /
-//!   [`crate::schema::evidence::ViolationEvidence::to_violations`])
-//!   re-validates every row through the strict canonical decoder.
-//!
-//! Example facts are spelled as `(relation id, canonical row bytes)` — the
-//! same portable [`crate::canonical::CanonicalRow`] encoding a store row
-//! carries, so evidence never invents a second value vocabulary.
+//! The rejection-evidence codec: one deterministic byte spelling of a
+//! complete violated-statement set with bounded, labeled examples. Every
+//! violated statement appears; only examples drop under the byte budget, and
+//! a skeleton that cannot fit refuses. Examples are canonical rows; strict
+//! decode refuses foreign families, unsorted statements and trailing bytes.
 
 use crate::canonical::{CanonicalRow, RowError};
-use crate::error::{CitedFact, Conflict, Direction, Violation, Violations};
+use crate::error::{CitedFact, Direction, Violation, Violations};
 use crate::work::WorkError;
 use crate::{Value, WorkContext};
 
@@ -87,10 +51,6 @@ pub enum EvidenceError {
     /// Violations must arrive in strictly increasing statement-id order
     /// (the judge's canonical diagnostic order, one row per statement).
     Unordered,
-    /// The old engine's pointwise-incumbent conflict detail has no
-    /// canonical spelling: the successor judge cites both competing rows
-    /// as ordinary examples instead. Unreachable from the landed judge.
-    PointwiseConflict,
     /// The cited statement does not exist in this schema.
     ForeignStatement,
     /// A cited example names a relation this schema does not have.
@@ -344,9 +304,7 @@ impl ViolationEvidence {
                 .first()
                 .map_or_else(|| Box::<[u8]>::from([]), |example| example.fact.clone());
             let typed = match violation.kind {
-                StatementKind::Functionality => {
-                    Violation::functionality(reference, fact, Conflict::Scalar)
-                }
+                StatementKind::Functionality => Violation::functionality(reference, fact),
                 StatementKind::Containment => Violation::containment(
                     reference,
                     violation.direction.unwrap_or(Direction::SourceUnsatisfied),
@@ -445,21 +403,17 @@ impl Part {
     }
 }
 
-/// Encodes the live rejection value — the entry the log's decide path
-/// calls with `Limits.evidence_bytes` as the budget. Deterministic for a
-/// given `(schema, violations, max_bytes)`; historical replay reproduces
-/// the exact recorded bytes.
+/// Encodes a rejection under a byte budget; deterministic for a given
+/// `(schema, violations, max_bytes)`.
 ///
 /// The public [`Violations`] carries the judge's own per-statement
 /// example-truncation label ([`Violations::examples_truncated`]); the
 /// frame's truncation label is the OR of that label and this codec's own
-/// byte-budget drops — exactly as [`encode_judged`] spells it, so live and
-/// replay bytes agree.
+/// byte-budget drops.
 ///
 /// # Errors
 /// Refuses stopped work, malformed examples, foreign statements/relations,
-/// a pointwise-incumbent conflict (unreachable from the landed judge), an
-/// unordered or empty violation set, and a budget the complete statement
+/// an unordered or empty violation set, and a budget the complete statement
 /// skeleton cannot fit ([`EvidenceError::Budget`] — refuse before
 /// deciding, never a shorter verdict).
 pub fn encode_violations(
@@ -476,12 +430,7 @@ pub fn encode_violations(
         work.checkpoint()?;
         let (statement, kind) = statement_slot(schema, violation.statement())?;
         let (direction, measure) = match violation {
-            Violation::Functionality { conflict, .. } => {
-                if matches!(conflict, Conflict::Pointwise { .. }) {
-                    return Err(EvidenceError::PointwiseConflict);
-                }
-                (None, None)
-            }
+            Violation::Functionality { .. } => (None, None),
             Violation::Containment { direction, .. } => (Some(*direction), None),
             Violation::Capacity { measure, .. } => (None, Some(*measure)),
         };
@@ -746,7 +695,7 @@ impl<'a> Reader<'a> {
 /// Strict, schema-free frame decode. `max_bytes` is the caller's evidence
 /// cap (the log passes `Limits.evidence_bytes`). Example facts stay opaque
 /// canonical row bytes; interpret them with
-/// [`ViolationEvidence::to_judged`] / [`ViolationEvidence::to_violations`].
+/// [`ViolationEvidence::to_violations`].
 ///
 /// # Errors
 /// Every grammar refusal in [`EvidenceDecodeError`]; never partial data.

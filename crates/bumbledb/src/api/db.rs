@@ -1,10 +1,7 @@
-//! The embedding surface: [`Db`], read frames and write transactions, the
-//! typed write path, heap instances, and the host surface.
-//!
-//! The handle is `Send + Sync`; readers run concurrently on owned LMDB
-//! snapshots; writes serialize on the store's one writer. A write
-//! transaction is an in-memory net delta over the committed parent, judged
-//! incrementally and committed once; an abort never wrote a fact.
+//! The embedding surface: [`Db`], read frames, write transactions, heap
+//! instances and the host surface. `Db` is `Send + Sync`; readers run on owned
+//! snapshots and writes serialize on the one writer. A write is a net delta over
+//! the committed parent, judged incrementally and committed once.
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -40,7 +37,6 @@ pub use builder::InstanceBuilder;
 pub use collection::AcceptedCollection;
 pub use mutation::MutationReport;
 pub use owned::OwnedInstance;
-pub(crate) use read_instance::ReadInstance;
 pub use read_instance::{OwnedRead, ReadFrame};
 pub use row_reader::RowReader;
 pub use tx::WriteTx;

@@ -1,11 +1,6 @@
-//! Unproved heap candidate: collection mutation and overlay point reads
-//! from an empty base. No query preparation or execution — an unproved
-//! candidate cannot be queried. [`InstanceBuilder::admit`] runs the
-//! complete production final-state judgment and consumes the builder into
-//! an [`super::OwnedInstance`].
-//!
-//! `Send + !Sync`: a host may move the builder onto another thread for
-//! admission.
+//! An unjudged instance: staged rows with point reads, no queries.
+//! [`InstanceBuilder::admit`] judges the whole staged state and seals it into an
+//! [`super::OwnedInstance`]. `Send`, not `Sync`.
 //! ```compile_fail
 //! fn require_sync<T: Sync>() {}
 //! require_sync::<bumbledb::InstanceBuilder<()>>();

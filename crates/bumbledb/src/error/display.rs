@@ -294,7 +294,6 @@ impl fmt::Display for Error {
             }
             Self::Scalar { find, source } => write!(f, "find {find}: {source}"),
             Self::Capacity(capacity) => write!(f, "capacity reached: {capacity}"),
-            Self::ResultBytesOverflow => f.write_str("the result byte heap exceeds u32 offsets"),
             Self::Cancelled => f.write_str("operation cancelled"),
             Self::Allocation => f.write_str("allocation refused"),
         }

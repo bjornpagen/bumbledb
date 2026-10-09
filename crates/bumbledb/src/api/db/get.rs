@@ -1,19 +1,7 @@
-//! Shared point-read machinery: keyed lookup by decoded value equality.
-//!
-//! A key statement's determinant is the projected value tuple. The indexed
-//! read projects the key's scalar determinant through the store's one
-//! projection convention, walks that determinant bucket, and confirms each
-//! candidate with exact decoded values — value equality over canonical
-//! scalars decides, never a fingerprint (a forced collision widens the
-//! bucket, never an answer). Work is bucket-shaped, not relation-shaped.
-//!
-//! The bounded reference walk ([`find_snapshot_row_scan`]) stays available
-//! as the exact oracle and the fallback for a projection the compiled
-//! determinant table does not carry; it is a scan and is named one.
-//!
-//! Closed relations read from the schema's sealed extension (no store row
-//! can exist for them); their sealed rows decode through the sealed-row
-//! codec, which refuses text columns by construction.
+//! Keyed point reads: the key's scalar determinant selects one bucket, and
+//! each candidate is confirmed by exact decoded values, never a fingerprint.
+//! [`find_snapshot_row_scan`] is the exact scan for a projection without a
+//! compiled bucket. Closed relations read the schema's sealed rows.
 
 use crate::error::{DynIdError, Result};
 use crate::ir::Value;

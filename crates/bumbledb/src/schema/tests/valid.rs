@@ -413,10 +413,9 @@ fn a_closed_relation_seals_its_rows_as_values_and_canonical_rows() {
     assert_eq!(relation.keys(), &[KeyId(0)]);
 }
 
-/// Holder declares AFTER Currency; only closed auto-handle keys are
-/// materialized before declared statements (no fresh auto-key exists —
-/// E-NO-RESERVE). The declared containment also proves the closed
-/// auto-key targetable like any key.
+/// Holder declares after Currency; only closed auto-handle keys are
+/// materialized before declared statements. The declared containment also
+/// proves the closed auto-key targetable like any key.
 #[test]
 fn closed_auto_keys_sit_before_declared_statements() {
     let decl = SchemaDescriptor {
@@ -724,11 +723,8 @@ fn a_calendar_capacity_validates_and_seals_its_tails() {
     assert!(matches!(statement.hi, SealedBound::Duration { .. }));
 }
 
-/// `<=[w]{1..*}` — the weighted floor of 1 is LEGAL: "positive total" is no
-/// existence claim over rows (zero-weight rows satisfy nothing), so the
-/// containment-respelled ban fires on the unit instance only (the per-aggregate
-/// ban law, ruled 2026-07-24; the unit refusal is the reject suite's
-/// `rejects_the_containment_respelled_as_a_window`).
+/// `<=[w]{1..*}`: a weighted floor of 1 is legal; "positive total" is no
+/// existence claim over rows (zero-weight rows satisfy nothing).
 #[test]
 fn a_weighted_floor_of_one_validates() {
     let mut decl = power_tree();

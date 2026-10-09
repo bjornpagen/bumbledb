@@ -1,6 +1,4 @@
-//! Collection-valued mutation reports. The fresh-id range machinery is
-//! deleted with the fresh mechanism itself (E-NO-RESERVE): identities are
-//! application-owned values, never engine-minted counters.
+//! Collection-valued mutation reports.
 
 /// Facts consumed vs facts that changed the in-memory final-state view at
 /// call time. The length-1 report is `{ submitted: 1, changed: 0|1 }`.

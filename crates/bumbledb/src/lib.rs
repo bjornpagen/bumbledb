@@ -87,7 +87,7 @@ pub use bumbledb_theory::interval::SegmentOp;
 pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Uuid};
 pub use changes::{ChangeError, ChangeSet, ChangeSetBuilder};
 pub use error::{
-    Admission, Capacity, Conflict, CorruptionError, Counter, Direction, Error, ErrorKind, Exceeded,
+    Admission, Capacity, CorruptionError, Counter, Direction, Error, ErrorKind, Exceeded,
     HostKeyFault, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation, Violations,
 };
 pub use exec::kernel::numeric::{F64Math, FloatCardinalityOverflow, NonDefaultFloatEnvironment};

@@ -1,6 +1,6 @@
 //! The stored-row codec: portable logical rows, independent of LMDB keys and
 //! hosts. The schema supplies field types; every field also carries a tag
-//! ([`tag`]). Integers, lengths and canonical F64 payloads are big endian;
+//! (`tag`). Integers, lengths and canonical F64 payloads are big endian;
 //! there is no padding.
 use crate::schema::compiled::{ExactScalarRef, exact_scalar_width, with_exact_scalar_bytes};
 use crate::schema::{FieldDescriptor, ValueType, value_matches};
@@ -563,9 +563,9 @@ fn utf8(bytes: &[u8], field: usize, own: bool) -> Result<Option<String>, RowErro
     Ok(Some(owned))
 }
 
-/// Canonical row owner for stable logical fact ordering (C4). Independent
-/// of local row ids, cursor order and reminting — the sort key for bounded
-/// diagnostic selection before truncation. Compare through
+/// A fact's canonical row as its stable logical sort key, independent of
+/// row ids and cursor order: citations are chosen by it before the example
+/// budget truncates. Compare through
 /// [`CanonicalRow::as_bytes`] to borrow the encoding without another copy.
 /// # Errors
 /// Rejects wrong shape, cancellation, or an unallocatable capacity.

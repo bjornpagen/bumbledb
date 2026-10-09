@@ -18,7 +18,7 @@ use crate::error::SchemaError;
 /// a [`Schema`].
 pub trait ValidateDescriptor: Sized {
     /// # Errors
-    /// The first [`SchemaError`] of [`check`].
+    /// The first [`SchemaError`] of [`bumbledb_theory::schema::check()`].
     fn validate(self) -> Result<Schema, SchemaError>;
 }
 

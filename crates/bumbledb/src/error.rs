@@ -1,9 +1,5 @@
-//! The one engine error and the domain verdicts.
-//!
-//! Everything reachable from user input or disk returns these typed values.
-//! Payloads are ids and owned bytes, never formatted strings; `Display`
-//! formats only when the host prints. Panics are programmer-invariant
-//! violations.
+//! The one engine error and the domain verdicts. Payloads are ids and owned
+//! bytes, never formatted strings; `Display` formats only when the host prints.
 
 mod convert;
 mod display;
@@ -179,24 +175,13 @@ impl<T> Admission<T> {
     }
 }
 
-/// Scalar put-conflict vs pointwise neighbor probe — two conviction
-/// shapes, not an optional incumbent.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Conflict {
-    Scalar,
-
-    Pointwise { incumbent: Box<[u8]> },
-}
-
-/// [`Violations`]. One body: the typed spine slot, the convicting fact
-/// bytes, and a per-law detail. Storage row ids never appear
-/// .
+/// One violated statement of a [`Violations`]: the statement, the
+/// convicting fact's canonical row, and a per-law detail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Violation {
     Functionality {
         statement: StatementRef,
         fact: Box<[u8]>,
-        conflict: Conflict,
     },
 
     Containment {
@@ -212,23 +197,14 @@ pub enum Violation {
 
         fact: Box<[u8]>,
 
-        /// width crosses untruncated (ruled 2026-07-24, C3). On
-        /// 2026-07-24, C14: the clip serves the verdict, the full sum
+        /// The group's exact widened measure.
         measure: u128,
     },
 }
 
 impl Violation {
-    pub(crate) fn functionality(
-        statement: StatementRef,
-        fact: Box<[u8]>,
-        conflict: Conflict,
-    ) -> Self {
-        Self::Functionality {
-            statement,
-            fact,
-            conflict,
-        }
+    pub(crate) fn functionality(statement: StatementRef, fact: Box<[u8]>) -> Self {
+        Self::Functionality { statement, fact }
     }
 
     pub(crate) fn containment(
@@ -271,22 +247,6 @@ impl Violation {
             Self::Functionality { fact, .. }
             | Self::Containment { fact, .. }
             | Self::Capacity { fact, .. } => fact,
-        }
-    }
-
-    #[must_use]
-    pub fn incumbent(&self) -> Option<&[u8]> {
-        match self {
-            Self::Functionality {
-                conflict: Conflict::Pointwise { incumbent },
-                ..
-            } => Some(incumbent),
-            Self::Functionality {
-                conflict: Conflict::Scalar,
-                ..
-            }
-            | Self::Containment { .. }
-            | Self::Capacity { .. } => None,
         }
     }
 }
@@ -648,7 +608,6 @@ pub enum Error {
     },
     /// An in-memory representation reached its fixed capacity.
     Capacity(Capacity),
-    ResultBytesOverflow,
     /// The operation's [`crate::WorkContext`] was cancelled.
     Cancelled,
     /// The host refused an in-memory allocation.
@@ -730,7 +689,7 @@ impl Error {
             | Self::PointParamAtCeiling { .. } => ErrorKind::Param,
             Self::Overflow(_) => ErrorKind::Overflow,
             Self::Scalar { .. } => ErrorKind::Scalar,
-            Self::Capacity(_) | Self::ResultBytesOverflow => ErrorKind::Capacity,
+            Self::Capacity(_) => ErrorKind::Capacity,
             Self::Cancelled => ErrorKind::Cancelled,
             Self::Allocation => ErrorKind::Allocation,
         }

@@ -110,8 +110,3 @@ fn kill_during_commit_leaves_a_consistent_database() {
         assert!(count >= 1);
     }
 }
-
-// The counters-only crash tests (`crash_child_reserve_loop`,
-// `kill_during_counters_only_commit_leaves_q_consistent`) retired with the
-// fresh reservation machinery (E-NO-RESERVE): the successor has no Q
-// counter and no counters-only commit to tear.

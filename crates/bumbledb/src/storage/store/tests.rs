@@ -1,13 +1,6 @@
-//! Store tests, by area:
-//! - `lifecycle`: create, open, format and schema refusal, locks, close.
-//! - `candidate`: private candidates, judgment over the final state, seals.
-//! - `ceiling`: the fixed virtual map.
-//! - `collision`: forced fingerprints through every row and index path.
-//! - `indexed`: determinant entries and keyed groups.
-//! - `coherence`: snapshot isolation, export order and content digests.
-//! - `images`: compacted images and their installation.
-//! - `incremental`: incremental against complete judgment.
-//! - `crash`: process death around the commit boundary.
+//! Store tests: lifecycle, candidates, the map ceiling, forced fingerprint
+//! collisions, determinant indexes, coherence, images, incremental judgment and
+//! crashes, one module each.
 
 use bumbledb_theory::schema::RelationId;
 

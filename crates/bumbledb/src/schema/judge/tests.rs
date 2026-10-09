@@ -56,8 +56,7 @@ fn user(id: u8, email: &str) -> Vec<Value> {
     ]
 }
 
-/// The original E-ADMIT counterexample, without the old fresh mechanism:
-/// two NEW rows with distinct application ids share one email. A physical
+/// Two new rows with distinct application ids share one email. A physical
 /// unique index would install one and blame the other; the judged
 /// multimap reports the email-key statement with BOTH competing rows,
 /// under every insertion order.
@@ -224,7 +223,7 @@ fn containment_judges_the_final_state_not_the_landing_order() {
 }
 
 /// `Student(id) <=[units]{0..budget} Attempt(student)`: exact grouped
-/// measures over whole scalar-key groups (E-ADMIT capacity children).
+/// measures over whole scalar-key groups.
 fn capacity_schema(weight: Weight, lo: u64, hi: Option<Bound>) -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -301,9 +300,8 @@ fn empty_parent_zero_totals_and_missing_parent_vacuity_are_distinct() {
     assert_eq!(judge(&floor, &orphans), Judgment::Admitted);
 }
 
-/// Count is unit weight over DISTINCT facts: the two-enrollment
-/// counterexample from chapter 02 — each state fits capacity one, their
-/// union measures two and refuses.
+/// Count is unit weight over distinct facts: two enrollments that each fit
+/// capacity one measure two together and refuse.
 #[test]
 fn unit_count_over_distinct_children_exceeds_the_ceiling() {
     let schema = capacity_schema(Weight::Unit, 0, Some(Bound::Lit(1)));
@@ -391,7 +389,7 @@ fn dependent_bounds_and_ray_duration_refusal() {
 
 /// Pointwise keys over the DENSE float line: same scalar prefix with
 /// overlapping float spans is a key conflict; a gap of one representable
-/// float is a real gap (F-INTERVAL through admission).
+/// float is a real gap.
 #[test]
 fn pointwise_float_interval_keys_use_exact_dense_endpoint_order() {
     let schema = SchemaDescriptor {

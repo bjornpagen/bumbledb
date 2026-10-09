@@ -458,8 +458,7 @@ mod tests {
     }
 
     /// The materialized order holds only closed auto-handle keys and
-    /// declared statements: no fresh auto-key exists anywhere — E-NO-RESERVE
-    /// at the descriptor layer.
+    /// declared statements.
     #[test]
     fn materialized_statements_have_no_generated_identity_keys() {
         let descriptor = SchemaDescriptor {

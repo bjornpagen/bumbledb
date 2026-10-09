@@ -4,7 +4,7 @@ use crate::image::CacheGeneration;
 use crate::image::intern::TextInterner;
 use std::sync::{Arc, Mutex, Weak};
 
-/// Shared generation owner: resolver storage and generation identity (C3).
+/// Shared generation owner: resolver storage and generation identity.
 /// Every token-bearing image holds this owner. Individual text payloads
 /// are pinned separately, so keeping a generation does not retain its history.
 #[derive(Debug)]

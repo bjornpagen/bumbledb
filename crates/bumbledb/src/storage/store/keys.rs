@@ -1,13 +1,8 @@
-//! Fixed-width physical keys under LMDB's default byte order.
-//!
-//! `rows`: `[relation u16][home 16][ordinal u64]` → canonical row bytes.
-//! `det`:  `[projection u16][routing 16][ordinal u64]` → the row's home.
-//!
-//! A home is the relation's selected exact scalar key, zero-padded, or else
-//! the row's fingerprint; a routing is a projection's exact scalar bytes,
-//! zero-padded, or else its fingerprint. Within one relation or projection
-//! every home or routing has the same width, so padding preserves order.
-//! Equality is always decided by full canonical bytes.
+//! Fixed-width keys under LMDB's default byte order. `rows`: `[relation u16]
+//! [home 16][ordinal u64]` → canonical row; `det`: `[projection u16][routing 16]
+//! [ordinal u64]` → the row's home. A home or routing is exact scalar bytes,
+//! zero-padded, or the fingerprint; one width per relation or projection, so
+//! padding preserves order. Full canonical bytes decide equality.
 
 use bumbledb_theory::schema::RelationId;
 

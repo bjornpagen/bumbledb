@@ -1,9 +1,6 @@
-//! Allen's interval algebra — the classification half
-//! .
-//! The mask vocabulary — [`Basic`], [`AllenMask`], the palindromic bit
-//! order, and the one-instruction converse — lives in `bumbledb-theory`
-//! and is re-exported here as this crate's own surface. What stays
-//! engine-side is classification: [`classify`], the total scalar
+//! Allen classification: [`classify`] maps an interval pair to its basic
+//! relation. The mask vocabulary ([`Basic`], [`AllenMask`]) is re-exported from
+//! `bumbledb-theory`.
 use bumbledb_theory::Interval;
 
 pub use bumbledb_theory::allen::{AllenMask, Basic};
@@ -276,7 +273,7 @@ mod dense_tests {
         Interval::<F64>::new(start, end).expect("checked dense fixture")
     }
 
-    /// F-INTERVAL: Allen classification serves the dense line through the
+    /// Allen classification serves the dense line through the
     /// same exact endpoint order — equal endpoints meet, a gap of one
     /// representable value is Before, and unbounded endpoints are ordinary
     /// bounds under the canonical total order.

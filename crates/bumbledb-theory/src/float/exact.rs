@@ -1,13 +1,7 @@
-//! Exact, FPU-independent binary64 subtraction with one rounding.
-//!
-//! Every finite binary64 value is an integer multiple of 2⁻¹⁰⁷⁴, so the
-//! difference of two finite values is exactly representable as a signed
-//! integer at that scale; this module computes it in integer arithmetic
-//! and rounds once, nearest with ties to even. The host thread's floating
-//! rounding mode, FTZ/DAZ and FPCR flush controls cannot influence the
-//! result: no floating instruction executes here. `Interval<F64>::length`
-//! is the consumer; the engine's guarded scalar kernels are a separate,
-//! differentially tested implementation of the same specification.
+//! Exact binary64 subtraction with one rounding, in integer arithmetic: every
+//! finite binary64 is an integer multiple of 2⁻¹⁰⁷⁴, so the difference is exact
+//! at that scale and is rounded once, nearest-even. No floating instruction runs,
+//! so rounding modes and flush controls cannot change the result.
 use super::{EXPONENT, F64, FRACTION, SIGN};
 
 /// One finite operand as sign, exact integer mantissa and true exponent:
@@ -230,7 +224,7 @@ mod tests {
     /// The integer implementation matches the host's default-mode IEEE
     /// subtraction bit for bit across structured operand classes. The host
     /// runs round-to-nearest-even here; this differential is an authored
-    /// oracle for F-ARITH, independent of the engine's guarded kernels.
+    /// oracle, independent of the engine's kernels.
     #[test]
     fn differential_against_host_subtraction_over_structured_operands() {
         let atoms: &[u64] = &[

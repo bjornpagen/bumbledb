@@ -1,11 +1,7 @@
-//! Compiled theory: one sealed schema's physical access paths (chapter 10 §2,
-//! chapter 61). Storage, admission, keyed lookup and planning consume this
-//! table — they do not each reinterpret the schema.
-//!
-//! A [`ProjectionId`] is deterministic under the sealed schema and physical
-//! format; incidental hash-map iteration does not assign persistent ids.
-//! Identical physical projections share one index even when statement-side
-//! selections differ.
+//! Compiled theory: one sealed schema's physical access paths, consumed by
+//! storage, admission, keyed lookup and planning instead of each reinterpreting
+//! the schema. A [`ProjectionId`] is a deterministic function of the schema;
+//! identical physical projections share one index whatever their selections.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -26,7 +22,7 @@ use crate::schema::ValueType;
 pub struct ProjectionId(pub u16);
 
 /// Compile failed because the sealed schema needs more interned projections
-/// than [`ProjectionId`] can name.
+/// than a `u16` projection id can name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompileError {
     ProjectionIdExhausted,
@@ -42,12 +38,11 @@ impl std::fmt::Display for CompileError {
 
 impl std::error::Error for CompileError {}
 
-/// Compile-time physical key encoding (chapter 40 §exact keys versus
-/// fingerprints). Selected once per compiled access path, never per row.
+/// A compiled access path's key encoding: exact scalar bytes or a
+/// fingerprint, selected once per path, never per row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum KeyEncoding {
-    /// Order-preserving scalar grouping bytes (≤16 encoded scalar bytes,
-    /// complete LMDB physical key fits the backend bound).
+    /// Order-preserving scalar grouping bytes (at most 16).
     ExactBounded { scalar_width: u8 },
     /// Fixed 16-byte BLAKE3 fingerprint; canonical projection confirms equality.
     FingerprintBucket,
@@ -65,7 +60,7 @@ impl KeyEncoding {
     }
 }
 
-/// Intern identity for one physical projection (C1). Distinct from a
+/// Intern identity for one physical projection. Distinct from a
 /// statement id: storage, judge and planner share this key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProjectionInternKey {
@@ -74,7 +69,7 @@ pub struct ProjectionInternKey {
     pub encoding: KeyEncoding,
 }
 
-/// Checked optimization witness consumed by planner/fallback (C1).
+/// Checked optimization witness consumed by the planner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DistinctnessWitness {
     /// Full-row exact equality is the identity; collisions remain visible.
@@ -90,7 +85,7 @@ pub enum DistinctnessWitness {
 }
 
 /// Cross-relation positional map between a statement-side projection and
-/// interned physical field order (C1). Present even when the side has no
+/// interned physical field order. Present even when the side has no
 /// physical index: closed data keeps the coordinate, not a dummy index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectionBinding {
@@ -176,7 +171,7 @@ fn permute_by_fields(values: &[Value], from: &[FieldId], to: &[FieldId]) -> Opti
     Some(out)
 }
 
-/// Visitor decision for descriptor-based candidate walks (D10).
+/// Visitor decision for descriptor-based candidate walks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VisitControl {
     /// Candidate was not a sufficient witness; keep scanning.
@@ -389,7 +384,7 @@ impl CompiledTheory {
         &self.projections
     }
 
-    /// Intern key for a compiled projection (C1 descriptor identity).
+    /// Intern key for a compiled projection.
     #[must_use]
     pub fn intern_key(projection: &CompiledProjection) -> ProjectionInternKey {
         ProjectionInternKey {
@@ -399,7 +394,7 @@ impl CompiledTheory {
         }
     }
 
-    /// Containment/capacity source reverse or group projection (C1).
+    /// Containment/capacity source reverse or group projection.
     /// `None` when the side has no physical index (closed data).
     #[must_use]
     pub fn source_projection(&self, statement: StatementId) -> Option<&CompiledProjection> {
@@ -408,7 +403,7 @@ impl CompiledTheory {
             .and_then(|id| self.projection(id))
     }
 
-    /// Containment/capacity target lookup projection (C1).
+    /// Containment/capacity target lookup projection.
     /// `None` when the side has no physical index (closed data).
     #[must_use]
     pub fn target_projection(&self, statement: StatementId) -> Option<&CompiledProjection> {
@@ -474,7 +469,7 @@ impl CompiledTheory {
             .and_then(|access| access.key_witness)
     }
 
-    /// Full-row collision check is never sacrificed for a compact key (C1).
+    /// Full-row collision check is never sacrificed for a compact key.
     #[must_use]
     pub const fn full_row_witness() -> DistinctnessWitness {
         DistinctnessWitness::FullRowEquality
@@ -1251,7 +1246,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_key_and_containment_target_share_one_physical_index() {
+    fn key_and_containment_target_share_one_physical_index() {
         let schema = SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
@@ -1316,7 +1311,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_reordered_cross_relation_columns_preserve_inverse() {
+    fn reordered_cross_relation_columns_preserve_inverse() {
         let schema = SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
@@ -1366,7 +1361,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_selected_predicates_share_one_unfiltered_index() {
+    fn selected_predicates_share_one_unfiltered_index() {
         let schema = SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
@@ -1415,7 +1410,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_capacity_source_and_target_are_real_descriptors() {
+    fn capacity_source_and_target_are_real_descriptors() {
         let schema = SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
@@ -1465,7 +1460,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_pointwise_interval_field_is_not_scalar_uniqueness() {
+    fn pointwise_interval_field_is_not_scalar_uniqueness() {
         let iv = ValueType::Interval {
             element: IntervalElement::I64,
         };
@@ -1519,7 +1514,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_logical_group_survives_closed_source_permutation() {
+    fn logical_group_survives_closed_source_permutation() {
         let schema = SchemaDescriptor {
             relations: vec![
                 closed(
@@ -1593,7 +1588,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_closed_target_keeps_identity_coordinates() {
+    fn closed_target_keeps_identity_coordinates() {
         let schema = SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
@@ -1631,7 +1626,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_conflicting_tentative_rows_keep_candidate_multiplicity() {
+    fn conflicting_tentative_rows_keep_candidate_multiplicity() {
         let schema = SchemaDescriptor {
             relations: vec![RelationDescriptor {
                 extension: None,
@@ -1660,7 +1655,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_forced_fingerprint_collision_still_requires_exact_bytes() {
+    fn forced_fingerprint_collision_still_requires_exact_bytes() {
         let schema = SchemaDescriptor {
             relations: vec![RelationDescriptor {
                 extension: None,
@@ -1705,7 +1700,7 @@ mod tests {
     }
 
     #[test]
-    fn d10_existence_only_stops_after_first_sufficient() {
+    fn existence_only_stops_after_first_sufficient() {
         let witness = DistinctnessWitness::ExistenceOnly {
             projection: ProjectionId(0),
         };
@@ -1720,7 +1715,7 @@ mod tests {
     }
 
     #[test]
-    fn d10_sink_stop_and_source_error_forbid_later_visits() {
+    fn sink_stop_and_source_error_forbid_later_visits() {
         let witness = DistinctnessWitness::ScalarKeyUnique {
             projection: ProjectionId(0),
         };

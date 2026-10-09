@@ -103,9 +103,6 @@ fn empty_strings_and_bytes_round_trip() {
     .expect("scan");
 }
 
-// The reserve-exhaustion half of the old `explicit_max_fresh_exhausts_the
-// _generator` test retired with the fresh machinery (E-NO-RESERVE); the
-// legality of the extreme explicit id survives.
 #[test]
 fn explicit_max_id_is_a_legal_value() {
     let dir = common::TempDir::new("edge-fresh-max");

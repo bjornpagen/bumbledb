@@ -1,9 +1,7 @@
-//! Incremental judgment against complete judgment on the real candidate:
-//! verdicts, violation sets and canonical evidence bytes are equal over
-//! randomized mutations of every statement family, also under forced
-//! fingerprint collisions. The lawful-parent premise is pinned honestly:
-//! an unlawful parent hides from incremental judgment, and the sweeper's
-//! complete judgment convicts it.
+//! Incremental against complete judgment on the real candidate: equal
+//! verdicts, violation sets and evidence bytes over randomized mutations of every
+//! statement family, also under forced fingerprint collisions. An unlawful
+//! parent hides from incremental judgment; complete judgment convicts it.
 
 use super::*;
 use crate::schema::judge::{JudgedViolation, Judgment};

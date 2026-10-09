@@ -4,7 +4,7 @@
 //! bytes are the first example's canonical row.
 
 use crate::canonical::CanonicalRow;
-use crate::error::{CitedFact, Conflict, Direction, Result, Violation, Violations};
+use crate::error::{CitedFact, Direction, Result, Violation, Violations};
 use crate::schema::judge::{JudgedDirection, JudgedViolation};
 use crate::schema::{Schema, StatementView};
 use crate::work::WorkContext;
@@ -37,7 +37,7 @@ pub(crate) fn violations_from_judged(
                 // The judge's evidence lists every competing proposal; the
                 // physical scalar/pointwise split of the old engine is not
                 // part of the verdict — the cited facts are.
-                Violation::functionality(statement_ref, fact, Conflict::Scalar)
+                Violation::functionality(statement_ref, fact)
             }
             crate::schema::StatementRef::Containment(_) => {
                 let direction = match violation.direction {

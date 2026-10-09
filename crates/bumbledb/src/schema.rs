@@ -1,14 +1,10 @@
 //! Schema validation, sealed witnesses, and compiled enforcement indexes.
 //! Declaration types and [`spec`] lowering are shared with `bumbledb-theory`.
-//! Validation seals declarations; [`compiled`] derives the access paths used
+//! Validation seals declarations; the compiled theory derives the access paths used
 //! by storage, judgment, and query planning.
 
 pub(crate) mod compiled;
-/// The canonical bounded rejection-evidence codec: the one byte
-/// spelling of a complete violated-statement set with labeled examples and
-/// truncation evidence. The log frames these bytes verbatim into decisions
-/// and receipts; strict decode plus schema interpretation reproduces the
-/// judge's verdict or the public [`crate::Violations`] value.
+/// The rejection-evidence codec.
 pub mod evidence;
 pub mod fingerprint;
 /// Final-state judgment and the candidate-state interface shared by the
@@ -179,7 +175,7 @@ impl KeyForm {
 }
 
 /// One sealed containment: its canonical declaration, enforcement proof,
-/// and optional `==` partner. Physical access paths live in [`CompiledTheory`].
+/// and optional `==` partner.
 #[derive(Debug, Clone)]
 pub struct ContainmentStatement {
     pub id: StatementId,
@@ -320,8 +316,8 @@ pub struct Schema {
 }
 
 impl Schema {
-    /// The sealed schema's compiled projection/law machine (C1). Compiled
-    /// once and shared by storage, admission and planning consumers.
+    /// The sealed schema's compiled access paths, compiled once and shared
+    /// by storage, admission and planning.
     ///
     /// # Errors
     /// [`CompileError::ProjectionIdExhausted`] when interned projection ids run out.

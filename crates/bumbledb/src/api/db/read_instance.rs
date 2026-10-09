@@ -1,7 +1,6 @@
 //! [`OwnedRead`] owns one LMDB snapshot with the shared schema and image
-//! cache: `Send`, not `Sync`. [`ReadFrame`] borrows it for
-//! one operation and carries that operation's [`WorkContext`].
-//!
+//! cache: `Send`, not `Sync`. [`ReadFrame`] borrows it for one operation and
+//! carries that operation's [`WorkContext`].
 //! ```compile_fail
 //! fn require_sync<T: Sync>() {}
 //! require_sync::<bumbledb::OwnedRead<()>>();
@@ -52,8 +51,6 @@ pub struct ReadFrame<'read, S> {
     pub(super) marker: PhantomData<fn() -> S>,
 }
 
-pub(crate) type ReadInstance<'read, S> = ReadFrame<'read, S>;
-
 impl<S> OwnedRead<S> {
     #[cfg(test)]
     pub(crate) fn snapshot(&self) -> &OwnedSnapshot {
@@ -84,7 +81,7 @@ impl<S> OwnedRead<S> {
     }
 
     /// # Errors
-    /// Prepare-time validation (C05; produced by the query lane).
+    /// Prepare-time validation.
     pub fn prepare(&self, query: &Query, work: &WorkContext) -> Result<PreparedQuery<S>> {
         self.frame(work).prepare(query)
     }
@@ -155,13 +152,13 @@ impl<S> ReadFrame<'_, S> {
     }
 
     /// # Errors
-    /// Prepare-time validation (C05; produced by the query lane).
+    /// Prepare-time validation.
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
         crate::api::prepared::prepare_on(self, query)
     }
 
     /// # Errors
-    /// Execution failure (C05; produced by the query lane).
+    /// Execution failure.
     pub fn execute<'p, P: crate::api::prepared::BindArgs<'p>>(
         &self,
         prepared: &mut PreparedQuery<S>,
@@ -172,7 +169,7 @@ impl<S> ReadFrame<'_, S> {
     }
 
     /// # Errors
-    /// Execution failure (C05; produced by the query lane).
+    /// Execution failure.
     pub fn execute_collect<'p, P: BindArgs<'p>>(
         &self,
         prepared: &mut PreparedQuery<S>,
@@ -205,7 +202,7 @@ impl<S> ReadFrame<'_, S> {
     }
 
     /// # Errors
-    /// Execution failure (C05; produced by the query lane).
+    /// Execution failure.
     #[doc(hidden)]
     pub fn introspect(
         &self,
@@ -315,7 +312,7 @@ impl<S> ReadFrame<'_, S> {
 
 impl<S> PreparedQuery<S> {
     /// Execute against an owned pin. Work controls cancellation; the
-    /// pin is not a `ReadInstance` Send wrapper.
+    /// pin is held for the whole execution.
     ///
     /// # Errors
     /// Binding or snapshot-identity mismatch, query execution failure, or

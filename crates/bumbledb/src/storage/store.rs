@@ -1,20 +1,8 @@
-//! The physical store: one LMDB environment with three databases (`meta`,
-//! `rows`, `det`), owned coherent snapshots, a fixed virtual map, and the
-//! private candidate (prepare, judge, seal, commit).
-//!
-//! Rows live once, under `[relation][home][ordinal]`, as canonical bytes;
-//! the home is the relation's narrowest exact scalar key or the row's
-//! fingerprint, so membership and the home key share one bucket. Every
-//! other key projection keeps a `det` multimap entry, so competing proposals
-//! coexist until judgment; uniqueness is judged, never an LMDB constraint.
-//!
-//! | Capability | Send | Sync | Lifetime |
-//! | --- | --- | --- | --- |
-//! | [`Store`] | yes | yes | Owner; drop closes the env, then releases the lock |
-//! | [`OwnedSnapshot`] | yes | no | Owns env clone + read txn; delays close |
-//! | `WriteOwner` | no | no | Holds the writer slot; stays on its worker |
-//! | `PreparedWrite` | no | no | Owns the uncommitted `RwTxn` |
-//! | `SealedWrite` | no | no | Commit or abort only |
+//! The physical store: one LMDB environment with `meta`, `rows` and `det`.
+//! Rows live once under `[relation][home][ordinal]` as canonical rows; the home
+//! is the relation's narrowest exact scalar key or the row's fingerprint. Every
+//! other key projection keeps a `det` multimap entry, so competing rows coexist
+//! until judgment: uniqueness is judged, never an LMDB constraint.
 
 pub(crate) mod candidate;
 pub(crate) mod det_index;

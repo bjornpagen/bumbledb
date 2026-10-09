@@ -1,10 +1,5 @@
 //! [`Db::snapshot`]: one owned coherent snapshot the caller pins.
-//! [`Db::read`]: one ephemeral frame borrowing database metadata and a scoped snapshot.
-//!
-//! The store's admission gate reuses at most one unborrowed transaction
-//! during write-free periods, evicting it before writes, resize or close.
-//! A caller's own pinned [`super::OwnedRead`] still blocks resize as a typed
-//! refusal; live mapped pages are never invalidated.
+//! [`Db::read`]: one frame over a scoped snapshot for the duration of a closure.
 
 use std::marker::PhantomData;
 use std::sync::Arc;

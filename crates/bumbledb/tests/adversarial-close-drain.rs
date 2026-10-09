@@ -60,7 +60,7 @@ fn insert(db: &Db<SchemaDescriptor>, id: u64) {
 /// makes `close` report `Incomplete` with a nonzero live count; the retained
 /// lease keeps reading its exact coherent snapshot; after the lease ends the
 /// repeated close drains to `Closed`, every new verb refuses typed, and the
-/// released directory admits a successor open.
+/// released directory admits a later open.
 #[test]
 fn close_under_load_reports_reality_then_drains_and_releases() {
     let dir = common::TempDir::new("adversarial-close-load");
@@ -136,12 +136,12 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
         "writes after close refuse: {write_refused:?}"
     );
     // Real reclamation: dropping the closed owner releases the kernel lock
-    // and a successor opens the same directory with the durable facts.
+    // and a later open sees the same directory with the durable facts.
     drop(db);
-    let successor =
+    let reopened =
         Db::open(dir.path(), theory(), common::work()).expect("the released directory reopens");
-    assert_eq!(scan_ids(&successor), vec![1]);
-    drop(successor);
+    assert_eq!(scan_ids(&reopened), vec![1]);
+    drop(reopened);
 }
 
 /// A result collected before close is OWNED: closing (and dropping) the
@@ -169,8 +169,7 @@ fn retained_owned_results_survive_close_byte_for_byte() {
 /// Writers hammering the store while it closes: every submission either
 /// commits whole or refuses typed; no panic, no torn state. The reopened
 /// store passes the full offline sweep (the production judge re-run), so
-/// no admission raced the teardown into corruption (G06 close family,
-/// SDK-002 "close revokes admission" at the core boundary).
+/// no admission raced the teardown into corruption.
 #[test]
 fn writers_racing_close_refuse_typed_and_leave_a_coherent_store() {
     let dir = common::TempDir::new("adversarial-close-race");
@@ -204,12 +203,12 @@ fn writers_racing_close_refuse_typed_and_leave_a_coherent_store() {
     assert_eq!(db.close(&work()), CloseReport::Closed);
     drop(db);
 
-    let successor =
+    let reopened =
         Db::open(dir.path(), theory(), common::work()).expect("reopen after racing close");
-    let report = successor.verify_store(&work()).expect("offline sweep runs");
+    let report = reopened.verify_store(&work()).expect("offline sweep runs");
     assert!(
         report.is_coherent(),
         "no admission raced the teardown into corruption: {report:?}"
     );
-    drop(successor);
+    drop(reopened);
 }

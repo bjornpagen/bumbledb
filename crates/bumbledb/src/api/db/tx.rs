@@ -1,15 +1,8 @@
-//! One write transaction: an in-memory net delta over the committed
-//! parent snapshot. Operations are set arithmetic — order is semantically
-//! irrelevant, and `delete(old); insert(new)` in either order is the
-//! blessed mutation idiom. Handed to [`super::Db::write`] closures; offers
-//! no queries — point reads only ([`WriteTx::contains`] / [`WriteTx::get`]
-//! / [`WriteTx::get_dyn`]), which observe the final-state view the
-//! judgment phase will judge. Nothing touches LMDB until commit.
-//!
-//! The pending map is net-normalized against the parent: it holds exactly
-//! the rows whose final presence differs from the committed parent, keyed
-//! in canonical (relation, full canonical bytes) order — the exact
-//! one-command normalized set effect a sealed [`crate::ChangeSet`] carries.
+//! One write transaction: a net delta over the committed parent, as set
+//! arithmetic (`delete(old); insert(new)` in either order). Point reads observe
+//! the final state the judgment will judge; there are no queries, and nothing
+//! touches LMDB until commit. The pending map holds exactly the rows whose
+//! presence differs from the parent, in canonical order.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;

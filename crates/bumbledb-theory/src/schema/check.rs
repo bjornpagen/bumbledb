@@ -1,10 +1,8 @@
-//! Schema checking: every judgment over a declaration that needs no
-//! storage. A descriptor that checks has a [`Checked`] form, with each
-//! statement's target key resolved and every closed-relation statement
-//! decided against the closed rows; the engine seals that form.
-//!
-//! Relations are checked first, in declaration order, then statements in
-//! materialized order. The first failure is the error.
+//! Schema checking: every judgment over a declaration that needs no storage.
+//! A declaration that checks has a [`Checked`] form, with each statement's target
+//! key resolved and every closed-relation statement decided against the closed
+//! rows. Relations are checked in declaration order, then statements in
+//! materialized order; the first failure is the error.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;

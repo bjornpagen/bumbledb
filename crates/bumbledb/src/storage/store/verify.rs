@@ -1,16 +1,8 @@
-//! The offline sweeper: one coherent snapshot, one pass per physical
-//! database, then complete judgment. Every derivation is the engine's own
-//! (keys, homes, routings, the canonical codec, the production judge).
-//!
-//! ```text
-//! rows   key shape, known ordinary relation, canonical row, home agreement,
-//!        unique ordinals, every non-home determinant entry present
-//! det    known non-home projection, live row at the stored home, routing
-//!        agreement
-//! meta   format, schema, identity, generation, relation counts, row-id
-//!        high-water mark
-//! judge  every statement over the full state
-//! ```
+//! The offline sweeper: one coherent snapshot, one pass per database, then
+//! complete judgment, every derivation the engine's own. `rows`: key shape,
+//! canonical row, home agreement, unique ordinals, every determinant entry.
+//! `det`: a live row at the stored home and routing agreement. `meta`: format,
+//! schema, identity, generation, counts and the row-id high-water mark.
 
 use std::collections::{BTreeMap, BTreeSet};
 

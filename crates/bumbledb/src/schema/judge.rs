@@ -1,10 +1,8 @@
-//! Judgment of a proposed final state against the sealed statements.
-//!
-//! [`judge_complete`] judges every statement over the whole state.
-//! [`judge_incremental`] assumes the committed parent is lawful and judges
-//! only the groups the delta can affect, through the state's group indexes
-//! when it has them. Both name every violated statement, with citations
-//! chosen by canonical fact bytes before the example budget truncates.
+//! Judgment of a proposed final state. [`judge_complete`] judges every
+//! statement over the whole state; [`judge_incremental`] assumes a lawful
+//! parent and judges only the groups the delta can affect, through the state's
+//! group indexes when it has them. Both name every violated statement, citing
+//! examples chosen by canonical fact bytes before the budget truncates.
 use std::ops::ControlFlow::{self, Break, Continue};
 
 use crate::canonical::append_value;

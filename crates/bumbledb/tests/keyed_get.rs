@@ -28,8 +28,8 @@ bumbledb::schema! {
     Grp(label) -> Grp;
 
     Meta(grp) -> Meta;
-    // Containment/equality targets must be declared keys (chapter 10 checked
-    // schema premise). Declared last so the mirror-offset id assertions
+    // Containment and equality targets must be declared keys. Declared last
+    // so the mirror-offset id assertions
     // (TaskByKindSubject = 4, GrpByLabel = 5) stay put.
     Grp(id) -> Grp;
 }

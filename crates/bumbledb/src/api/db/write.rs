@@ -1,9 +1,7 @@
-//! The durable write path: [`Db::write`], [`Db::write_from`], [`Db::apply`]
-//! and [`Db::apply_from`] share one private commit path. The writer is
-//! taken first, a witness is checked against the true parent, the change
-//! set is applied to a private candidate, judged incrementally, and
-//! committed once. An abort (closure error, rejection, panic) never wrote a
-//! fact.
+//! The write path: [`Db::write`], [`Db::write_from`], [`Db::apply`] and
+//! [`Db::apply_from`] share one commit path. The writer is taken first, a witness
+//! is checked against the true parent, and the change is applied to a private
+//! candidate, judged incrementally and committed once.
 
 use super::{Db, OwnedRead, ReadFrame, WriteTx};
 use crate::error::{Error, Result, Violations};

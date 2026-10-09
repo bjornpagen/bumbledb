@@ -1,10 +1,8 @@
-//! The one store owner: environment lifecycle, the fixed virtual map, the
-//! writer slot, directory ownership and close.
-//!
-//! Open takes the kernel directory lock first, then checks format and
-//! schema before touching anything. The map is one virtual reservation fixed
-//! at open: it costs address space, not RAM or disk, because without
-//! `WRITEMAP` the file grows only as pages are written.
+//! The store owner: environment lifecycle, the fixed virtual map, the writer
+//! slot, the directory lock and close. Open takes the lock, then checks format
+//! and schema before touching anything. The map is fixed at open; it costs
+//! address space, not RAM or disk, because without `WRITEMAP` the file grows
+//! only as pages are written.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};

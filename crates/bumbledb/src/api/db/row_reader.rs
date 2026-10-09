@@ -1,10 +1,7 @@
-//! Borrowed sequential decode of one stored canonical row.
-//!
-//! Canonical rows hold text inline, so a typed fact's `&str` and `&[u8]`
-//! fields borrow the stored bytes (a snapshot's mapped pages or a
-//! transaction's pending row) without a copy. Fields are read in declaration
-//! order, the order `schema!`-generated `Fact::decode` consumes them. Every
-//! step bounds-checks and refuses malformed bytes as corruption.
+//! Borrowed sequential decode of one stored canonical row: text and bytes
+//! fields borrow the stored bytes without a copy, in declaration order (the
+//! order `schema!`'s `Fact::decode` reads them). Malformed bytes refuse as
+//! corruption.
 
 use crate::error::{CorruptionError, Error, Result};
 use bumbledb_theory::{F64, Interval, Uuid};

@@ -1,19 +1,8 @@
-//! The host-facing Interval value.
-//! Construction is the validation boundary (parse, don't validate): the
-//! constructors return `Option`, so a held [`Interval`] always satisfies
-//! `start < end` over valid endpoints, and the encoder never re-checks it.
-//! The engine's coalescing segment sweep is not theory and stays engine-side
-//! (`bumbledb::interval::sweep`).
-//!
-//! Two point domains share the one half-open algebra:
-//! - **Discrete integers** (`u64`, `i64`): the maximum integer is reserved
-//!   as the ray endpoint and is never a represented temporal point.
-//!   Fixed-width construction and exact integer duration exist here only.
-//! - **The dense numeric line** (`F64`): canonical binary64 endpoints
-//!   embedded as exact rationals; `-Infinity`/`+Infinity` are unbounded
-//!   endpoints, never points; NaN is refused at either endpoint. There is
-//!   deliberately no `FixedInterval<F64>` — rounded `start + width` is not
-//!   an exact fixed-width representation — and no epsilon anywhere.
+//! The checked half-open [`Interval`]: constructors refuse `start >= end`, so a
+//! held value is always nonempty. Discrete integers reserve their maximum as the
+//! ray endpoint and have exact durations and fixed widths; the dense `F64` line
+//! takes canonical endpoints, treats ±Infinity as unbounded ends and refuses NaN.
+//! There is no fixed-width dense interval and no epsilon.
 use crate::F64;
 
 mod sealed {
@@ -452,7 +441,7 @@ mod tests {
         assert_eq!(crate::Value::IntervalF64(dense), dense.into());
     }
 
-    // ---- The dense float line (F-INTERVAL fixtures). ----
+    // ---- The dense float line. ----
 
     fn dense(start: f64, end: f64) -> Option<Interval<F64>> {
         Interval::<F64>::new(F64::from(start), F64::from(end))

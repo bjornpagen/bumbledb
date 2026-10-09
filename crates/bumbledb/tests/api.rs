@@ -34,9 +34,8 @@ bumbledb::schema! {
         balance: i64,
     }
 
-    // Containment targets must be declared keys of the target relation
-    // (chapter 10: "the target key/selection requirements remain checked
-    // schema premises"); the statement order below is load-bearing —
+    // Containment targets must be declared keys of the target relation;
+    // the statement order below is load-bearing:
     // violation tests assert StatementId(1) is the Account key and
     // StatementId(2) the containment.
     Holder(id) -> Holder;
@@ -1140,8 +1139,8 @@ fn create_refuses_a_foreign_lmdb_environment() {
         let wtxn = env.write_txn().expect("txn");
         wtxn.commit().expect("commit nothing");
     }
-    // A half-created foreign environment is not a recognizable store: the
-    // successor refuses the open before adopting anything.
+    // A half-created foreign environment is not a recognizable store: open
+    // refuses before adopting anything.
     let err = Db::open(dir.path(), Ledger, common::work())
         .map(|_| ())
         .unwrap_err();
@@ -1164,8 +1163,8 @@ fn nested_write_is_a_typed_refusal_instead_of_deadlocking() {
     let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    // The successor refuses reentrancy with the typed
-    // `Error::ReentrantWriter` — never a deadlock, never a panic.
+    // Reentrancy refuses with the typed `Error::ReentrantWriter`, never a
+    // deadlock or a panic.
     let err = db
         .write(common::work(), |_| {
             db.write(common::work(), |_| Ok(())).map(|_| ())
@@ -1267,10 +1266,7 @@ fn prepared_executions_observe_exactly_one_generation() {
     });
 }
 
-/// The old escaped-fresh-id halves retired with the fresh machinery
-/// (E-NO-RESERVE): there is no bare reserve and no `Q` mark. What
-/// survives is the state-change law itself — a write that nets to
-/// nothing must not move the generation.
+/// A write that nets to nothing does not move the generation.
 #[test]
 fn a_nets_to_nothing_write_is_not_a_state_change() {
     let dir = common::TempDir::new("api-fresh-escape");

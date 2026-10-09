@@ -1,9 +1,6 @@
-//! `SchemaSpec` — the bindings contract: a schema as **named plain data**,
-//! the runtime peer of the `schema!` grammar. A foreign host (the Node
-//! bindings, ETL tooling, any language that can build owned strings,
-//! vectors, and integers) describes its theory here and lowers it to the
-//! produce indistinguishable descriptors, so the same theory built either
-//! way carries the same fingerprint.
+//! [`SchemaSpec`]: a schema as named plain data, the runtime peer of the
+//! `schema!` grammar. [`SchemaSpec::descriptor`] resolves names to ids exactly
+//! as the macro does, so a theory built either way has the same fingerprint.
 use std::collections::BTreeMap;
 
 use super::{
@@ -33,7 +30,7 @@ pub struct RelationSpec {
     pub name: Box<str>,
     pub fields: Vec<FieldSpec>,
 
-    /// (ruled 2026-07-23, R7).
+    /// The handle newtype and rows of a closed relation.
     pub closed: Option<ClosedSpec>,
 }
 
@@ -112,7 +109,7 @@ pub struct SideSpec {
 /// the path spelling — representable here (a wire crossing carries what
 /// it carries) and refused by [`SchemaSpec::descriptor`] as
 /// [`SpecIssue::WeightPathRefused`], whose `Display` names the
-/// pinned-column composition idiom (ruled 2026-07-24, ruling 6).
+/// pinned-column composition idiom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WeightSpec {
     Unit,
@@ -124,9 +121,9 @@ pub enum WeightSpec {
 
 /// One capacity bound as spelled: an integer literal, a field of
 /// TARGET's row by name (the dependent bound — resolved against the
-/// target's WHOLE field roster, ruled 2026-07-24, C1), or a TARGET
+/// target's whole field roster), or a target
 /// interval position's measure (`Duration(field)`). Dependent bounds
-/// are hi-slot only (ruled 2026-07-24, C6): a dependent floor or exact
+/// are hi-slot only: a dependent floor or exact
 /// is representable here and refused by [`SchemaSpec::descriptor`] as
 /// [`SpecIssue::CapacityDependentFloor`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,7 +168,7 @@ pub enum StatementSpec {
         bidirectional: bool,
     },
 
-    /// weight, window, source (ruled 2026-07-24, C2).
+    /// Fields in spelling order: target, weight, window, source.
     Capacity {
         target: SideSpec,
         weight: WeightSpec,
@@ -295,18 +292,19 @@ pub enum SpecIssue {
         hi: u64,
     },
 
-    /// are hi-slot only (ruled 2026-07-24, C6): a dependent floor has no
+    /// A dependent bound in the floor slot; dependent bounds are hi-slot
+    /// only.
     CapacityDependentFloor {
         statement: usize,
     },
 
-    /// vocabulary is closed at the row (ruled 2026-07-24, ruling 6):
+    /// A dotted weight path; a weight reads a field of the source row.
     WeightPathRefused {
         statement: usize,
         path: Box<str>,
     },
 
-    /// spelling, one refusal, every authoring wall.
+    /// A dotted bound path; a bound reads a field of the target row.
     BoundPathRefused {
         statement: usize,
         path: Box<str>,
@@ -396,8 +394,7 @@ impl std::fmt::Display for SpecIssue {
             Self::CapacityDependentFloor { statement } => write!(
                 f,
                 "statement {statement}: a dependent bound in the floor slot — \
-                 dependent bounds are hi-slot only (ruled 2026-07-24, C6): a \
-                 dependent floor has no use case; write a literal floor"
+                 dependent bounds are hi-slot only; write a literal floor"
             ),
             Self::WeightPathRefused { statement, path } => write!(
                 f,
@@ -718,11 +715,9 @@ impl<'spec> Resolver<'spec> {
     /// Harmless equivalent spellings normalize here without an issue:
     /// `{n..n}` is the exact window `{n}`, `{0..0}` the exclusion, and
     /// floors (including the unit existence window `{1..*}` and the
-    /// vacuous `{0..*}`) are ordinary grouped-measure windows — the
-    /// `{0..*}` acceptance as a trivially satisfied law preserving its
-    /// authored statement attribution is a confirmed P00 decision, not a
-    /// provisional lenience. Genuinely different semantics still refuse:
-    /// inverted literal bounds and dependent bounds in the floor slot.
+    /// vacuous `{0..*}`) are ordinary grouped-measure windows; `{0..*}` is a
+    /// trivially satisfied law that keeps its statement. Inverted literal
+    /// bounds and dependent bounds in the floor slot refuse.
     fn capacity_window(
         &mut self,
         statement: usize,

@@ -1,11 +1,5 @@
-//! The one literal-value sum.
-//! Query literals (the engine IR's `Term::Literal`) and statement
-//! selection literals ([`crate::schema::Side::selection`]) are the same
-//! type — this module is the shared value home both the IR and
-//! `schema` import, so neither layer owes the other anything.
-//! denotation: interval variants carry the checked [`crate::Interval`] type,
-//! and [`Value::Uuid`] carries the application-owned identity bytes —
-//! ordinary canonical data, never database-issued authority.
+//! The one literal value: query literals and statement selection literals are
+//! the same type. Interval variants carry the checked [`crate::Interval`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Bool(bool),

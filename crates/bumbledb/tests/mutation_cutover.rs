@@ -15,10 +15,6 @@ bumbledb::schema! {
     }
 }
 
-// The old `empty_fresh_range_cannot_yield_a_minted_id` test retired with
-// the fresh reservation machinery (E-NO-RESERVE): there is no FreshRange,
-// no reserve, and the database issues no identity.
-
 #[test]
 fn a_noop_insert_does_not_mark_applied_so_shape_fail_stays_clean() {
     let dir = common::TempDir::new("mutation-noop-not-applied");

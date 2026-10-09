@@ -223,7 +223,7 @@ mod tests {
     use super::{F64, F64ParseError};
     use crate::F64CastError;
 
-    /// F-GOLDEN: the checked-in boundary-class bit fixtures.
+    /// Boundary-class bit fixtures.
     const GOLDEN_CANONICAL: &[u64] = &[
         0x0000_0000_0000_0000, // +0 (the only zero)
         0x0000_0000_0000_0001, // smallest subnormal
@@ -259,7 +259,7 @@ mod tests {
         z ^ (z >> 31)
     }
 
-    /// F-CANON: canonicalization is idempotent over golden classes and
+    /// Canonicalization is idempotent over golden classes and
     /// random 64-bit patterns, and every NaN class and both zeros collapse.
     #[test]
     fn canonicalization_is_idempotent_and_total() {
@@ -293,7 +293,7 @@ mod tests {
         assert_eq!(F64::from(-0.0), F64::ZERO);
     }
 
-    /// F-ORDER: the total order is antisymmetric/transitive/consistent with
+    /// The total order is antisymmetric/transitive/consistent with
     /// equality, byte order equals logical order, and the placement is
     /// -Infinity < negative finite < 0 < positive finite < +Infinity < NaN.
     #[test]
@@ -399,7 +399,7 @@ mod tests {
         assert_eq!(F64::from(1.5).negated(), F64::from(-1.5));
     }
 
-    /// The in-crate independent cast oracle (P11 review concern, confirmed):
+    /// An independent cast oracle:
     /// integer-only round-to-nearest-ties-to-even of an exact integer to a
     /// binary64 payload, structured as the bench `verify::f64_oracle`
     /// technique (twice-the-remainder dyadic comparison over the exact
@@ -471,7 +471,7 @@ mod tests {
         }
     }
 
-    /// F-GOLDEN (cast half): pinned, hand-computed conversion bits at the
+    /// Pinned, hand-computed conversion bits at the
     /// precision boundaries — independent constants that hold even if the
     /// production cast, the host conversion and the oracle all changed.
     #[test]
@@ -520,7 +520,7 @@ mod tests {
     /// Three-way differential over random u64/i64 values: production,
     /// the host conversion (the hardware subject) and the independent
     /// integer oracle must all agree bit for bit — a shared host
-    /// assumption can no longer mask a production bug.
+    /// assumption cannot mask a production bug.
     #[test]
     fn integer_conversion_differential_against_host_and_oracle() {
         let mut state = 17;

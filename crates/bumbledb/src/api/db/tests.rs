@@ -32,8 +32,8 @@ fn content<S>(db: &Db<S>) -> Vec<(RelationId, Vec<u8>)> {
 }
 use super::{Fact, Key};
 
-// --- Test theory: one keyed relation, hand-built (the exact Fact/Key
-// roster the schema! macro targets — P07's C-contract witness). ---
+// --- Test theory: one keyed relation with hand-written Fact and Key impls,
+// the shape schema! generates. ---
 
 const ENTRY: RelationId = RelationId(0);
 const ENTRY_NAME_KEY: StatementId = StatementId(0);
@@ -331,7 +331,7 @@ fn accepted_collection_is_send() {
     assert_send::<crate::AcceptedCollection>();
 }
 
-// --- Reports, no-ops, and the ENG-006 remainder. ---
+// --- Reports and no-ops. ---
 
 #[test]
 fn a_typo_delete_is_a_counted_noop_and_moves_nothing() {
@@ -358,7 +358,7 @@ fn a_typo_delete_is_a_counted_noop_and_moves_nothing() {
     })
     .expect("write")
     .unwrap();
-    // A no-op command does not move the generation (G06 remainder).
+    // A no-op command does not move the generation.
     assert_eq!(db.generation(operation()).expect("generation"), before);
     assert_eq!(
         db.read(operation(), |snap| snap.count(ENTRY))
@@ -406,8 +406,7 @@ fn deleted_text_is_unreachable_after_delete_and_reopen() {
         );
     }
     // Reopen: canonical rows own their text inline; the deleted tuple left
-    // no independently live text entry anywhere (ENG-006: no dictionary
-    // namespace even exists in the store).
+    // no text entry anywhere.
     let db = Db::open(dir.path(), Ledger, operation()).expect("open");
     let rows: Vec<crate::canonical::DecodedRow> = db
         .read(operation(), |snap| snap.scan(ENTRY)?.collect::<Result<_>>())
@@ -827,7 +826,7 @@ fn typed_get_borrows_decoded_text_from_the_lease() {
     .expect("read");
 }
 
-// --- The historical shared-key counterexample, full public path. ---
+// --- A shared key, through the public path. ---
 
 #[test]
 fn a_key_conflict_is_rejected_with_both_competing_rows_cited() {
@@ -854,8 +853,8 @@ fn a_key_conflict_is_rejected_with_both_competing_rows_cited() {
         ENTRY_NAME_KEY,
         "the stable materialized statement id is cited"
     );
-    // Both competing proposals are evidence (ENG-005: the judge saw the
-    // whole final state, not an install failure).
+    // Both competing rows are evidence: the judge saw the whole final
+    // state.
     let cited = violations.cited_facts(0);
     assert!(
         cited.len() >= 2,
@@ -1229,9 +1228,7 @@ fn a_reentrant_write_is_refused_typed_not_deadlocked() {
     let db = create(&dir);
     let err = db
         .write(operation(), |_outer| {
-            // The transitional surface panicked here; the successor refuses
-            // with the store's typed reentrancy error (same safety intent,
-            // now an answer instead of an abort).
+            // A nested write refuses with the typed reentrancy error.
             match db.write(operation(), |_inner| Ok(())) {
                 Err(error) => Err::<(), _>(error),
                 Ok(_) => panic!("nested write must not run"),

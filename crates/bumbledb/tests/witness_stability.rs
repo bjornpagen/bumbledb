@@ -27,8 +27,8 @@ bumbledb::schema! {
 
     WChild(parent) <= WParent(id);
     WParent(id) <={0..2} WChild(parent);
-    // Containment/capacity targets must be declared keys (chapter 10 checked
-    // schema premise); declared last so the containment stays StatementId(0)
+    // Containment and capacity targets must be declared keys; declared last
+    // so the containment stays StatementId(0)
     // and the capacity StatementId(1).
     WParent(id) -> WParent;
 }
@@ -202,7 +202,7 @@ fn the_source_witness_is_the_canonical_least_violator() {
         (9005, 500),
         (9006, 450),
     ];
-    // The successor judge cites in the state's deterministic iteration
+    // The judge cites in the state's deterministic iteration
     // order: canonical row bytes, i.e. the least child id — never a hash
     // order and (proved by the reversed run below) never call order.
     let expected = kids[0];
@@ -263,7 +263,7 @@ fn the_source_witness_is_the_canonical_least_violator() {
 /// NON-NORMATIVE PIN, capacity side: the capacity check list is a B-tree of
 /// touched parents, so a multi-parent capacity rejection's witness is the
 /// KEY-LEAST violating parent — already what a sorted source side would
-/// produce; the W8 sort must not change this one.
+/// produce.
 #[test]
 fn citation_examples_are_canonical_least_not_insertion_order() {
     let run = |tag: &str, reverse: bool| -> Violations {

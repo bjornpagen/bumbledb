@@ -1,9 +1,8 @@
-//! Schema-derived determinant indexing: the physical arm of
-//! [`CompiledTheory`]. Each relation's home projection is its narrowest
-//! exact scalar key; every other interned projection keeps one multimap
-//! entry per live row, so conflicting proposals coexist until judgment.
-//! Routing is exact scalar bytes (at most 16) or a 16-byte fingerprint over
-//! the canonical projected encoding; consumers confirm by decoded values.
+//! Determinant indexing, the physical arm of [`CompiledTheory`]: a relation's
+//! home projection is its narrowest exact scalar key; every other projection
+//! keeps one multimap entry per row, so conflicting rows coexist until judgment.
+//! Routing is exact scalar bytes (at most 16) or a 16-byte fingerprint;
+//! consumers confirm by decoded values.
 
 use bumbledb_theory::schema::{RelationId, StatementId};
 
@@ -467,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_emit_decoded_uses_projection_ids_and_compact_u64_bytes() {
+    fn emit_decoded_uses_projection_ids_and_compact_u64_bytes() {
         let schema = SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
@@ -554,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_unrelated_groups_do_not_increase_one_row_visits() {
+    fn unrelated_groups_do_not_increase_one_row_visits() {
         let schema = SchemaDescriptor {
             relations: vec![RelationDescriptor {
                 extension: None,
@@ -590,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_conflicting_rows_emit_the_same_projection_twice() {
+    fn conflicting_rows_emit_the_same_projection_twice() {
         let schema = SchemaDescriptor {
             relations: vec![RelationDescriptor {
                 extension: None,
@@ -620,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_pointwise_emit_groups_distinct_intervals_by_scalars_only() {
+    fn pointwise_emit_groups_distinct_intervals_by_scalars_only() {
         let iv = ValueType::Interval {
             element: IntervalElement::U64,
         };
@@ -658,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn d10_existence_suffix_and_sink_stop_use_compiled_owner() {
+    fn existence_suffix_and_sink_stop_use_compiled_owner() {
         let schema = SchemaDescriptor {
             relations: vec![RelationDescriptor {
                 extension: None,

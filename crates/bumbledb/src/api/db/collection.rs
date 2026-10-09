@@ -1,12 +1,6 @@
-//! The bridge crates' parse-once internal write representation, built once
-//! at the boundary, carrying its own shape proof, consumed by borrow until
-//! the rows enter a transaction.
-//!
-//! Construction IS the parse: [`CollectionBuilder`] performs the whole
-//! shape judgment — arity per row, type-kind per cell against the sealed
-//! roster — before any row is staged. `Send` by construction (owned arenas,
-//! no borrow of the feeding thread): built on the caller's thread,
-//! consumable on the transaction's.
+//! The bridge's parse-once write representation: [`CollectionBuilder`] checks
+//! arity and every cell's type against the sealed roster before any row is
+//! staged, and the result carries that proof. `Send`: owned arenas.
 
 use crate::error::{FactShapeError, Mismatch, Result};
 use crate::ir::Value;
@@ -45,7 +39,7 @@ enum Cell {
 }
 
 /// A shape-proved collection of dynamic rows for exactly one relation.
-/// Built by [`CollectionBuilder`] / [`AcceptedCollection::from_value_rows`].
+/// Built by [`AcceptedCollection::from_value_rows`] or the bridge's builder.
 #[derive(Debug)]
 pub struct AcceptedCollection {
     relation: RelationId,

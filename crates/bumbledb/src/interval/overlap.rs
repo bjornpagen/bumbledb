@@ -1,9 +1,6 @@
-//! The order-based overlap index:
-//! per key group, the start-sorted position list under an implicit
-//! max-end tree, so "every position whose interval pair overlaps
-//! `[q_start, q_end)`" enumerates in ~O(log n + out) instead of the
-//! group's full n — the `Σ n_k²` all-pairs walk becomes
-//! `Σ n_k log n_k + out` across a per-key self-join. Small groups skip
+//! The order-based overlap index: per key group, start-sorted positions under
+//! an implicit max-end tree, so the positions whose intervals overlap
+//! `[q_start, q_end)` enumerate in O(log n + out) instead of n.
 use std::num::NonZeroU32;
 
 const FLAT_SWEEP_CEILING: usize = 128;

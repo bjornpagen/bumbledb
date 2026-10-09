@@ -1,16 +1,12 @@
-//! Authored acceptance tests for the canonical rejection-evidence codec
-//! (C01/C03 → C06 receipts): deterministic complete-or-refused encoding,
-//! strict decode, schema interpretation, and the exact judge round-trip.
-//! Mapped to ENG-005/ENG-007, E-ADMIT (evidence half), PROTO-02/-03
-//! (recorded-outcome byte determinism half) and OPS-006 (bounded
-//! diagnostics). Executed in F3, never before.
+//! The rejection-evidence codec: deterministic complete-or-refused encoding,
+//! strict decode, schema interpretation and the exact judge round-trip.
 
 use super::{
     EvidenceDecodeError, EvidenceError, EvidenceInterpretError, FAMILY, LAYOUT, decode,
     encode_judged, encode_violations,
 };
 use crate::Value;
-use crate::error::{CitedFact, Conflict, Direction, Violation, Violations};
+use crate::error::{CitedFact, Direction, Violation, Violations};
 use crate::schema::judge::{JudgeBudget, JudgedViolation, Judgment, MapState, judge_complete};
 use crate::schema::tests::{capacity_weighted, containment, fd, field, id_field, side};
 use crate::schema::{
@@ -120,9 +116,7 @@ fn public_violations(schema: &Schema, judged: &[JudgedViolation]) -> Violations 
                 },
             );
             let typed = match violation.kind {
-                StatementKind::Functionality => {
-                    Violation::functionality(reference, fact, Conflict::Scalar)
-                }
+                StatementKind::Functionality => Violation::functionality(reference, fact),
                 StatementKind::Containment => {
                     Violation::containment(reference, Direction::SourceUnsatisfied, fact)
                 }
@@ -152,7 +146,7 @@ fn public_violations(schema: &Schema, judged: &[JudgedViolation]) -> Violations 
 
 const BUDGET: usize = 64 * 1024;
 
-/// C03 round-trip: `encode_judged` → decode → `to_judged` reproduces the
+/// Round trip: `encode_judged` → decode → `to_judged` reproduces the
 /// judge's complete verdict exactly — statement set, kinds, direction,
 /// exact widened measure, every labeled example and the truncation flags.
 #[test]
@@ -623,27 +617,12 @@ fn empty_unordered_and_pointwise_inputs_refuse() {
         encode_judged(&schema, &unsorted, BUDGET, &work()),
         Err(EvidenceError::Unordered)
     );
-
-    let pointwise = Violations::from_pairs(Box::from([(
-        Violation::functionality(
-            schema.cite(StatementId(0)),
-            Box::<[u8]>::from([]),
-            Conflict::Pointwise {
-                incumbent: Box::from([1, 2, 3]),
-            },
-        ),
-        Box::<[CitedFact]>::from([]),
-    )]));
-    assert_eq!(
-        encode_violations(&schema, &pointwise, BUDGET, &work()),
-        Err(EvidenceError::PointwiseConflict)
-    );
 }
 
-/// D05 — evidence bytes are a function of logical facts, not insertion or
+/// Evidence bytes are a function of logical facts, not insertion or
 /// remint order. Sorting already-selected row-id examples would fail this.
 #[test]
-fn d05_evidence_bytes_survive_opposite_insertion_and_remint() {
+fn evidence_bytes_survive_opposite_insertion_and_remint() {
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,

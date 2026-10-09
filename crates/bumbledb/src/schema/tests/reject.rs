@@ -48,11 +48,6 @@ fn rejects_duplicate_field_name() {
     );
 }
 
-// The fresh-generation refusals are deleted with the mechanism itself:
-// `FieldDescriptor` carries no generation attribute, so `fresh` on the
-// wrong type or on a closed relation is UNREPRESENTABLE, not rejected
-// (E-NO-RESERVE: no database-issued identity capability survives).
-
 #[test]
 fn rejects_fixed_bytes_widths_outside_the_range() {
     for len in [0u16, 65] {
@@ -1501,7 +1496,7 @@ fn rejects_a_duration_bound_over_a_scalar() {
 
 #[test]
 fn rejects_a_unit_window_against_a_duration_bound() {
-    // Dimension mixing (ruled 2026-07-24, C18): a count of facts
+    // A count of rows cannot be bounded by a duration.
 
     let mut decl = extension_tree();
     decl.relations[0].fields.push(field(
@@ -1623,12 +1618,10 @@ fn rejects_an_inverted_window() {
     );
 }
 
-/// The spelling-ban table is deleted: the vacuous `{0..*}` window and the
-/// unit existence window `{1..*}` are accepted canonical grouped-measure
-/// laws (chapter 10's normalization decision), preserving each statement's
-/// authored attribution instead of policing its utterance. The vacuous
-/// window is trivially satisfied; the existence window is judged like any
-/// floor. Inverted literal bounds remain a genuine semantic refusal.
+/// The vacuous `{0..*}` window and the unit existence window `{1..*}` are
+/// ordinary grouped-measure laws: the vacuous window is trivially
+/// satisfied, the existence window is judged like any floor. Inverted
+/// literal bounds refuse.
 #[test]
 fn accepts_vacuous_and_existence_windows_as_canonical_laws() {
     for lo in [0u64, 1, 4] {

@@ -1,9 +1,5 @@
-//! The host-facing Interval value — the checked type lives in
-//! `bumbledb-theory` (parse, don't validate: a held [`Interval`] always
-//! satisfies `start < end`); this module re-exports it and keeps the
-//! engine-only half behind: the coalescing segment sweep and the
-//! order-based overlap index, which are commit/exec machinery, not
-//! theory.
+//! The checked [`Interval`] (from `bumbledb-theory`) and the engine's interval
+//! machinery: the segment sweep and the overlap index.
 pub(crate) mod overlap;
 pub(crate) mod sweep;
 
