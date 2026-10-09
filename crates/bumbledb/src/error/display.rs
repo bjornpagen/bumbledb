@@ -897,6 +897,17 @@ impl fmt::Display for ValidationError {
     }
 }
 
+impl fmt::Display for super::Capacity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::ResidentRows => "a relation image exceeds u32 row positions",
+            Self::DistinctRows => "a distinct-row index is full",
+            Self::Groups => "a group-by table is full",
+            Self::ResultBytes => "a result byte heap exceeds u32 offsets",
+        })
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1029,6 +1040,7 @@ impl fmt::Display for Error {
                     "the result buffer's byte heap exceeds u32 offsets (4 GiB)"
                 )
             }
+            Self::Capacity(capacity) => write!(f, "capacity reached: {capacity}"),
             Self::Corruption(err) => write!(f, "corruption: {err}"),
             Self::Store(err) => err.fmt(f),
         }

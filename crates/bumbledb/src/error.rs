@@ -1156,6 +1156,19 @@ pub enum OverflowKind {
     OriginCapacity,
 }
 
+/// The in-memory representation whose fixed capacity a query or write reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Capacity {
+    /// A relation image holds more rows than its 32-bit positions address.
+    ResidentRows,
+    /// A distinct-row index is full.
+    DistinctRows,
+    /// A group-by table is full.
+    Groups,
+    /// A result buffer's byte heap exceeds its 32-bit offsets.
+    ResultBytes,
+}
+
 /// An OS I/O failure owned by [`Error`]: kind plus raw errno, never a
 /// foreign `std::io::Error` whose clone is lossy.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1331,6 +1344,9 @@ pub enum Error {
     /// limit — NOT the map size; do not sweep it with the map constant.)
     ResultBytesOverflow,
 
+    /// An in-memory representation reached its fixed capacity.
+    Capacity(Capacity),
+
     Corruption(CorruptionError),
 
     /// A successor-store condition, surfaced with its full typed roster
@@ -1368,6 +1384,7 @@ pub enum ErrorFamily {
     Overflow,
     Scalar,
     ResultBytesOverflow,
+    Capacity,
     Corruption,
     Store,
 }
@@ -1442,6 +1459,7 @@ impl Error {
             Self::Overflow(_) => family_only(ErrorFamily::Overflow),
             Self::Scalar { .. } => family_only(ErrorFamily::Scalar),
             Self::ResultBytesOverflow => family_only(ErrorFamily::ResultBytesOverflow),
+            Self::Capacity(_) => family_only(ErrorFamily::Capacity),
             Self::Corruption(_) => family_only(ErrorFamily::Corruption),
             Self::Store(err) => family_source(ErrorFamily::Store, err.as_ref()),
         }

@@ -101,8 +101,9 @@ pub mod integration {
     };
 }
 pub use error::{
-    Admission, Check, Committed, ConditionalWrite, Conflict, Direction, Error, ErrorFamily,
-    Exceeded, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation, Violations,
+    Admission, Capacity, Check, Committed, ConditionalWrite, Conflict, Direction, Error,
+    ErrorFamily, Exceeded, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation,
+    Violations,
 };
 pub use exec::kernel::numeric::{F64Math, FloatCardinalityOverflow, UnsupportedNumericalPlatform};
 pub use interval::{Discrete, Element, FloatMeasureError, Interval};

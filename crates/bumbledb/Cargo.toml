@@ -6,11 +6,10 @@ publish = false
 
 [features]
 alloc-counter = []
-
 ground-off = []
-
-# Bench-only forced-fingerprint store constructors (HASH-02 collision probes).
 collision-probe = []
+# Test support for dependent crates' test suites. Never enabled by a product build.
+testing = []
 
 [dependencies]
 blake3 = "1.8.7"
