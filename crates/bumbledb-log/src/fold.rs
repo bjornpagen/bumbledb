@@ -2,9 +2,9 @@
 //! next head plus the receipts and committed changes it records. Every
 //! replica, the machine and the reference fold in the tests share it.
 
-use bumbledb::ChangeSet;
+use bumbledb::{ChangeSet, SchemaFingerprint};
 
-use crate::entry::{Body, Entry, Genesis, Migration, Thaw, Verdict};
+use crate::entry::{Body, Entry, Genesis, MigrationId, Thaw, Verdict};
 use crate::head::{Head, Ledger, Mode, Rejection};
 use crate::ids::{Millis, Seq};
 use crate::receipt::{Delta, Receipt};
@@ -69,7 +69,9 @@ pub fn fold<'e>(
                 since: at,
             };
         }
-        Body::Migration(migration) => next = migrated_head(head, seq, migration),
+        Body::Migration(migration) => {
+            next = migrated_head(head, seq, &migration.migration, migration.schema);
+        }
         Body::Thaw(Thaw::Lifted) => next.mode = Mode::Open,
         Body::Thaw(Thaw::Rejected(rejection)) => {
             next.ledger.rejected.push(Rejection::clone(rejection));
@@ -83,16 +85,21 @@ pub fn fold<'e>(
     })
 }
 
-/// The head a migration entry at `seq` produces from `head`.
+/// The head that applying `migration` at `seq` produces from `head`.
 #[must_use]
-pub fn migrated_head(head: &Head, seq: Seq, migration: &Migration) -> Head {
+pub fn migrated_head(
+    head: &Head,
+    seq: Seq,
+    migration: &MigrationId,
+    schema: SchemaFingerprint,
+) -> Head {
     let mut ledger = head.ledger.clone();
-    ledger.applied.push(migration.migration.clone());
+    ledger.applied.push(migration.clone());
     Head {
         database: head.database,
         seq,
         revision: head.revision.next(),
-        schema: migration.schema,
+        schema,
         ledger,
         mode: Mode::Open,
     }

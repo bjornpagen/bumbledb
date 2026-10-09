@@ -629,8 +629,12 @@ pub fn replay(world: &World) -> Vec<State> {
             let (image, _) = &world.checkpoints[&image_key(migration.image)];
             let path = dir.path().join("migration.img");
             std::fs::write(&path, image).expect("image");
-            let expected =
-                bumbledb_log::migrated_head(model.head().expect("a head"), seq, migration);
+            let expected = bumbledb_log::migrated_head(
+                model.head().expect("a head"),
+                seq,
+                &migration.migration,
+                migration.schema,
+            );
             model
                 .install(&path, migration.image, migration.schema)
                 .expect("a migration image installs");

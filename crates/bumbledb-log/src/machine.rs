@@ -1,9 +1,8 @@
-//! The sans-IO protocol. [`Machine::step`] consumes one [`Input`] and returns
-//! the object-store requests to execute plus the tickets it settled. The
-//! machine owns every protocol invariant: one entry write in flight, byte
-//! comparison of every unclear write, receipts before decisions, freeze
-//! deadlines on store time, checkpoint cadence. It never sleeps or reads a
-//! clock; time arrives only as the store's `Date` and `Last-Modified`.
+//! The sans-IO protocol: [`Machine::step`] turns one [`Input`] into store
+//! requests and settled tickets. It owns every invariant: one entry write in
+//! flight, byte comparison of every unclear write, receipts before decisions,
+//! freeze deadlines on store time, checkpoint cadence. It never sleeps or
+//! reads a clock; time arrives only as the store's `Date` and `Last-Modified`.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -167,7 +166,8 @@ enum Life {
     Open,
     /// Stopped before an entry that applies an unbundled migration.
     Advanced,
-    Broken(CacheError),
+    /// Stopped by a local failure or a log it cannot follow.
+    Broken(Refusal),
     Closed,
 }
 
@@ -228,12 +228,11 @@ struct Flight {
     entry: Entry,
     cargo: Cargo,
     state: FlightState,
-    /// An entry PUT was issued, so the entry may land.
-    written: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FlightState {
+    /// The migration image is uploading; no entry PUT was issued yet.
     Uploading(IoId),
     Putting(IoId),
     /// A write came back unclear; any slot GET issued at or after `need`
@@ -326,7 +325,7 @@ impl<R: Replica> Machine<R> {
                 self.control(ticket, Control::Migrate(ticket, population));
             }
             Input::Response(response) => self.respond(response),
-            Input::Close => self.halt(&Life::Closed),
+            Input::Close => self.halt(Life::Closed, &Refusal::Closed),
         }
         self.drive();
         std::mem::take(&mut self.out)
@@ -338,14 +337,12 @@ impl<R: Replica> Machine<R> {
         self.refill();
     }
 
-    // ----- inputs -----
-
     fn refusal(&self) -> Option<Refusal> {
         match &self.life {
             Life::Fresh => Some(Refusal::NotOpen),
             Life::Opening | Life::Open => None,
             Life::Advanced => Some(Refusal::SchemaAdvanced),
-            Life::Broken(error) => Some(Refusal::Cache(error.clone())),
+            Life::Broken(refusal) => Some(refusal.clone()),
             Life::Closed => Some(Refusal::Closed),
         }
     }
@@ -435,8 +432,6 @@ impl<R: Replica> Machine<R> {
             wait,
         });
     }
-
-    // ----- responses -----
 
     fn respond(&mut self, response: IoResponse) {
         if let Some(date) = response.date {
@@ -628,7 +623,7 @@ impl<R: Replica> Machine<R> {
             unreachable!("a migration install holds a migration entry")
         };
         let head = self.replica.head().expect("a migration follows a head");
-        let expected = migrated_head(head, seq, migration);
+        let expected = migrated_head(head, seq, &migration.migration, migration.schema);
         let path = self.replica.download_path();
         match self
             .replica
@@ -659,8 +654,6 @@ impl<R: Replica> Machine<R> {
             );
         }
     }
-
-    // ----- the tail -----
 
     fn next_slot(&self) -> Seq {
         self.replica
@@ -755,7 +748,7 @@ impl<R: Replica> Machine<R> {
                 if let Some(flight) = lost {
                     self.abandon(flight, &Refusal::SchemaAdvanced);
                 }
-                return self.halt(&Life::Advanced);
+                return self.halt(Life::Advanced, &Refusal::SchemaAdvanced);
             }
             let io = self.request(
                 Bucket::Checkpoints,
@@ -817,7 +810,7 @@ impl<R: Replica> Machine<R> {
                 unreachable!("migration cargo rides a migration entry")
             };
             let head = self.replica.head().expect("a migration follows a head");
-            let expected = migrated_head(head, seq, migration);
+            let expected = migrated_head(head, seq, &migration.migration, migration.schema);
             let ticket = *ticket;
             self.settle(ticket, Settled::Migrated(seq));
             match self
@@ -950,8 +943,6 @@ impl<R: Replica> Machine<R> {
         );
     }
 
-    // ----- opening -----
-
     /// Caught up during opening, or after a re-open.
     fn opened(&mut self) {
         if self.life == Life::Opening {
@@ -967,10 +958,7 @@ impl<R: Replica> Machine<R> {
                         self.launch(body, Cargo::Genesis);
                     }
                 } else {
-                    for ticket in std::mem::take(&mut self.opens) {
-                        self.settle(ticket, Settled::Refused(Refusal::NotFound));
-                    }
-                    self.halt(&Life::Fresh);
+                    self.halt(Life::Fresh, &Refusal::NotFound);
                 }
                 return;
             }
@@ -1006,8 +994,6 @@ impl<R: Replica> Machine<R> {
             Comparison::Diverged { index } => Err(Refusal::MigrationsDiverged { index }),
         }
     }
-
-    // ----- writing -----
 
     /// Start the next write when the writer is idle and the head is current.
     fn plan(&mut self) {
@@ -1191,23 +1177,20 @@ impl<R: Replica> Machine<R> {
                     let refusal = Refusal::Stale { head: head.seq };
                     return self.settle(ticket, Settled::Refused(refusal));
                 }
-                let migration = Migration {
-                    migration: pending.id,
-                    schema: pending.fingerprint,
-                    image: crate::ids::ImageDigest([0; 32]),
-                };
-                let target = migrated_head(&head, head.seq.next(), &migration);
+                let target =
+                    migrated_head(&head, head.seq.next(), &pending.id, pending.fingerprint);
                 match self.replica.migrate(&population, &target) {
                     Ok(Migrated::Image(image)) => {
                         let body = Body::Migration(Migration {
+                            migration: pending.id,
+                            schema: pending.fingerprint,
                             image: image.digest,
-                            ..migration
                         });
                         self.launch(body, Cargo::Migration(ticket, image));
                     }
                     Ok(Migrated::Rejected(evidence)) => {
                         let rejection = Rejection {
-                            migration: migration.migration,
+                            migration: pending.id,
                             evidence,
                         };
                         self.launch(
@@ -1227,32 +1210,28 @@ impl<R: Replica> Machine<R> {
             body,
         };
         let bytes = entry.encode();
-        let upload = match &cargo {
-            Cargo::Migration(_, image) => Some(image.clone()),
-            _ => None,
+        let slot = self.next_slot();
+        let state = match &cargo {
+            Cargo::Migration(_, image) => FlightState::Uploading(self.request(
+                Bucket::Checkpoints,
+                image_key(image.digest),
+                Op::PutIfAbsent(IoBody::File(image.path.clone())),
+                Purpose::Upload,
+            )),
+            _ => FlightState::Putting(self.request(
+                Bucket::Log,
+                log_key(slot),
+                Op::PutIfAbsent(IoBody::Bytes(bytes.clone())),
+                Purpose::Put,
+            )),
         };
         self.writer = Writer::InFlight(Box::new(Flight {
-            slot: self.next_slot(),
+            slot,
             bytes,
             entry,
             cargo,
-            state: FlightState::Verifying { need: 0 },
-            written: false,
+            state,
         }));
-        match upload {
-            Some(image) => {
-                let id = self.request(
-                    Bucket::Checkpoints,
-                    image_key(image.digest),
-                    Op::PutIfAbsent(IoBody::File(image.path)),
-                    Purpose::Upload,
-                );
-                if let Writer::InFlight(flight) = &mut self.writer {
-                    flight.state = FlightState::Uploading(id);
-                }
-            }
-            None => self.put_entry(),
-        }
     }
 
     /// PUT the in-flight entry's exact bytes at its slot.
@@ -1269,7 +1248,6 @@ impl<R: Replica> Machine<R> {
         );
         if let Writer::InFlight(flight) = &mut self.writer {
             flight.state = FlightState::Putting(id);
-            flight.written = true;
         }
     }
 
@@ -1282,8 +1260,6 @@ impl<R: Replica> Machine<R> {
         nonce.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
         Nonce(nonce)
     }
-
-    // ----- checkpoints -----
 
     fn maybe_checkpoint(&mut self) {
         let Some(head) = self.replica.head() else {
@@ -1316,8 +1292,6 @@ impl<R: Replica> Machine<R> {
             Err(error) => self.break_down(Refusal::Cache(error)),
         }
     }
-
-    // ----- plumbing -----
 
     fn request(&mut self, bucket: Bucket, key: String, op: Op, purpose: Purpose) -> IoId {
         let id = IoId(self.next_io);
@@ -1352,42 +1326,28 @@ impl<R: Replica> Machine<R> {
     }
 
     fn break_down(&mut self, refusal: Refusal) {
-        let life = match &refusal {
-            Refusal::Cache(error) => Life::Broken(error.clone()),
-            _ => Life::Broken(CacheError::Local(format!("{refusal:?}"))),
-        };
-        self.halt_with(&life, &refusal);
+        self.halt(Life::Broken(refusal.clone()), &refusal);
     }
 
-    /// Stop: settle everything pending and forget outstanding requests.
-    fn halt(&mut self, life: &Life) {
-        let refusal = match life {
-            Life::Fresh => Refusal::NotFound,
-            Life::Advanced => Refusal::SchemaAdvanced,
-            Life::Broken(error) => Refusal::Cache(error.clone()),
-            _ => Refusal::Closed,
-        };
-        self.halt_with(life, &refusal);
-    }
-
-    fn halt_with(&mut self, life: &Life, refusal: &Refusal) {
-        self.life = life.clone();
+    /// Stop in `life`: settle everything pending with `refusal` (an unwritten
+    /// command of a closed machine is `NotSubmitted`) and forget outstanding
+    /// requests.
+    fn halt(&mut self, life: Life, refusal: &Refusal) {
+        self.life = life;
         self.io.clear();
         self.tail = Tail::default();
         self.install = None;
         self.clock = Clock::Unchecked;
         if let Writer::InFlight(flight) = std::mem::replace(&mut self.writer, Writer::Idle) {
-            let unclear = if flight.written {
-                Refusal::Unknown
-            } else {
-                Refusal::NotSubmitted
+            let unclear = match flight.state {
+                FlightState::Uploading(_) => Refusal::NotSubmitted,
+                FlightState::Putting(_) | FlightState::Verifying { .. } => Refusal::Unknown,
             };
             self.abandon(flight, &unclear);
         }
-        let unwritten = match life {
-            Life::Advanced => Refusal::SchemaAdvanced,
-            Life::Closed => Refusal::NotSubmitted,
-            _ => refusal.clone(),
+        let unwritten = match refusal {
+            Refusal::Closed => Refusal::NotSubmitted,
+            other => other.clone(),
         };
         for ticket in std::mem::take(&mut self.queue)
             .into_iter()
