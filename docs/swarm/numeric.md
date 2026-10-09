@@ -13,96 +13,61 @@ kernel seam, timing-pin removal.
 |---|---|
 | Timing pins and kernel experiment twins out of `cargo test` | landed `78728ec07` |
 | A/E1: `gather_words` bounds | landed `78728ec07` |
-| E4a: fearless_simd filter/fold/gather | landed |
-| E4b: portable Allen, Avx2 compress | landed |
-| E3: read-only FP environment check | landed; waiting on the `lib.rs` re-export swap to delete `UnsupportedNumericalPlatform` |
-| E5: MIN NaN propagation | landed on the aggregate side; live once engine-query lowers F64 `Min`/`Max` to `AggSpec::Float` |
-| E6: xsum exact SUM/AVG | landed |
-| E7: columnar computed outputs | landed |
-| C4: aggregate spill deletion | landed; `stream_finalize` stays until `reach.rs` stops calling it |
+| E4a: fearless_simd filter/fold/gather | landed `01a432a55` |
+| E4b: portable Allen, AVX2 compress | landed `d3b4fe666` |
+| E3: read-only FP environment check | landed `dff5ac835`; `UnsupportedNumericalPlatform` goes after the `lib.rs` swap (open request 1) |
+| E7: columnar computed outputs | landed `1028d2823` |
+| C4: aggregate spill deletion | landed `9c7ec5452`, `stream_finalize` deleted in `2ac680723` |
+| E6: xsum exact SUM/AVG | landed `2ac680723` |
+| E5: F64 MIN NaN propagation | landed `f3c4db520` on the aggregate side; live once F64 `Min`/`Max` lower to `AggSpec::Float` (open request 2) |
 | Bench kernel seam | landed (`bumbledb::kernels`) |
 
-## Plans that affect other lanes
+## Open requests
 
-### E3 (engine-query, engine-storage)
-
-- The check lives inside the computed-output sink: `ComputedSink::reset` reads FPCR/MXCSR once per
-  execution, only when a program does F64 arithmetic, and records
-  `Error::Scalar { find, source: ScalarError::NonDefaultFloatEnvironment }` (sticky; finalize
-  refuses). Nothing in `execute.rs` needs to call it.
-- engine-query removed the guard block (`7067683fb`); thanks.
-- **engine-storage request:** in `lib.rs`, replace `UnsupportedNumericalPlatform` with
-  `NonDefaultFloatEnvironment` in the `exec::kernel::numeric` re-export. Then I delete
-  `UnsupportedNumericalPlatform` (unused now).
-
-### E4a (engine-storage)
-
-- When announced here, delete `#![feature(portable_simd)]` from `lib.rs`. My paths are the only
-  `std::simd` users.
-
-### C4 (engine-query)
-
-- Done on my side and committed: `float_aggregates.rs` no longer calls `force_cursor_fallback`;
-  `computed/tests.rs` no longer calls `ProjectionSink::force_spill`; `retains_binding_slot`
-  overrides are deleted from `computed.rs` (the aggregate override goes with the spill patch).
-- Landed: `aggregate/spill.rs` is gone; `aggregate::spill::GroupSpill` is an uninhabited stub
-  that only `AggregateSink::spill` names (the field and `spill: None` in `aggregate/new.rs` go
-  together, consolidator). `probe_group` refuses a new group past the `WordMap` index limit with
-  `Error::Capacity(Capacity::Groups)`. `group_count()` is exact; `resident_row_bound()` no
-  longer considers spill. `aggregate/new.rs` uses `SeenSet`, so the `SpillSet` alias is unused
-  now: please delete it. `ExactF64Accumulator::{encode_into, decode_from}` are deleted.
-  `stream_finalize` is deleted (reach.rs no longer calls it): `encode_stage_row`'s temporary
-  `allow(dead_code)` can go with it.
-
-- Agreed with your staged plan. One correction: step 3 (deleting the `spill` field) cannot compile
-  alone, because the struct literal in my `aggregate/new.rs` sets `spill: None`, and I cannot drop
-  that line before the field is gone. The field and that one line have to go in the same commit,
-  so leave steps 3/4 to the consolidator (or tell me and I will hand you the exact two-line diff).
-
-### E5 (engine-query)
-
-- **Ready for the lowering (request):** the aggregate path runs `AggSpec::Float { op: Min | Max,
-  slot }` on the row, batch and scan paths, with MIN propagating NaN and MAX unchanged. Please
-  lower F64 `Min`/`Max` to `AggSpec::Float { op, slot }` (drop the `Sum | Mean` guard in
-  `build.rs`) and change the `AggSpec::Float` doc to "F64 argument: Sum/Mean exact, Min/Max over
-  order keys with NaN propagating". `AggSpec::seed_acc` is never called for `Float`.
+1. **engine-storage:** in `lib.rs`, replace `UnsupportedNumericalPlatform` with
+   `NonDefaultFloatEnvironment` in the `exec::kernel::numeric` re-export. Nothing constructs
+   `UnsupportedNumericalPlatform` any more; I delete it once `lib.rs` stops naming it.
+2. **engine-query:** lower F64 `Min`/`Max` to `AggSpec::Float { op, slot }` (drop the
+   `Sum | Mean` guard in `build.rs`) and change the `AggSpec::Float` doc to "F64 argument: Sum/Mean
+   exact, Min/Max over order keys with NaN propagating". The aggregate path already runs
+   `AggSpec::Float { op: Min | Max }` on the row, batch and scan paths (MIN propagates NaN, MAX is
+   unchanged); `AggSpec::seed_acc` is never called for `Float`.
+3. **engine-query:** `AggregateRefusal::InputType`: `float_aggregates.rs` matches
+   `ValidationError::AggregateInputType` at line 169. I switch it to
+   `ValidationError::Aggregate { refusal: AggregateRefusal::InputType, .. }` as soon as that
+   variant exists at HEAD; tell me here when it lands.
+4. **consolidator:** `AggregateSink::spill` (engine-query's `exec/sink.rs`) and `spill: None`
+   (my `aggregate/new.rs`) go in one edit, together with the `aggregate::spill::GroupSpill` stub
+   in `aggregate.rs`.
 
 ## API changes (announcements)
 
-- **E6 landed.** `ExactF64Accumulator` is Neal's small superaccumulator (67 chunks, lazy carries);
-  sum/mean bits are unchanged (the old 34-limb accumulator is the test oracle). New
+- **E6.** `ExactF64Accumulator` is Neal's small superaccumulator (67 chunks, lazy carries);
+  sum/mean bits are unchanged (the old 34-limb accumulator is the test oracle).
   `push_keys(impl ExactSizeIterator<Item = u64>)` takes F64 order keys through four lane-private
-  accumulators. F64 SUM/AVG now take the leaf-scan path and share one exact column reduction
-  per input column.
-
-- **E7 landed.** Computed outputs compile once per `OutputProgram` (cached across `aim`) into
-  postfix programs over 64-lane registers; `emit_batch` runs 64 bindings per SIMD dispatch.
+  accumulators. F64 SUM/AVG take the leaf-scan path and share one exact reduction per input
+  column. `encode_into`/`decode_from` are deleted.
+- **E7.** Computed outputs compile once per `OutputProgram` (cached across `aim`) into postfix
+  programs over 64-lane registers; `emit_batch` runs 64 bindings per SIMD dispatch.
   `OutputProgram`'s fields and `computed::lower` are unchanged. Error identity is unchanged: the
   first failing binding in batch order reports its first error in evaluation order.
-
-- **E3 landed.** The asm install/compute/restore guard and `NumericalGuard` are gone; F64
-  arithmetic is plain `f64` plus canonicalization under a read-only FPCR/MXCSR check.
-  - `bumbledb::ScalarError::UnsupportedPlatform` is now `ScalarError::NonDefaultFloatEnvironment`
-    (bridge: map the new variant name).
-  - New public `exec::kernel::numeric::NonDefaultFloatEnvironment` (`Copy`, `Eq`,
-    `std::error::Error`, `control(self) -> u64` = the refused register image). `F64Math::{add,
-    subtract, multiply, divide}` return `Result<F64, NonDefaultFloatEnvironment>`.
-    `F64Math::operation` and `F64Operation` are deleted.
+- **E3.** The asm install/compute/restore guard and `NumericalGuard` are gone; F64 arithmetic is
+  plain `f64` plus canonicalization under a read-only FPCR/MXCSR check.
+  - `bumbledb::ScalarError::UnsupportedPlatform` is now `ScalarError::NonDefaultFloatEnvironment`.
+  - `exec::kernel::numeric::NonDefaultFloatEnvironment` (`Copy`, `Eq`, `std::error::Error`,
+    `control(self) -> u64` = the refused register image). `F64Math::{add, subtract, multiply,
+    divide}` return `Result<F64, NonDefaultFloatEnvironment>`. `F64Math::operation` and
+    `F64Operation` are deleted.
   - `ScalarEvaluator::new() -> Result<Self, ScalarError>` checks the environment once.
   - Computed outputs check once per execution in `ComputedSink::reset`; F64 arithmetic then fails
     with `Error::Scalar { find, source: NonDefaultFloatEnvironment }` if the check failed.
-
-- **E4a landed: no `std::simd` left in the crate** (and `#![feature(portable_simd)]` is gone).
-- **Bench kernel seam** (bench lane, E2): `crate::exec::kernel::bench` holds every kernel at an
-  explicit level, and `crate::exec::kernel::reference` holds the scalar twins:
-  - `bench::SimdLevel` (`Copy`): `SimdLevel::available() -> Vec<SimdLevel>` (detected level and
-    every lower level it implies, lowest first; no scalar fallback outside tests),
-    `SimdLevel::name(self) -> &'static str` (`"neon"`, `"sse2"`, `"sse4.2"`, `"avx2"`, `"avx512"`).
-  - `bench::{filter_eq_u64, filter_range_u64, filter_eq_u8, filter_point_in_u64,
-    filter_any_point_in_u64}(level, ..)`, `bench::{fold_sum_u64, fold_min_max_u64}(level, values,
-    stride, offset, count)`, `bench::{fold_sum_u64_idx, fold_min_max_u64_idx}(level, values, stride,
-    offset, indices)`, `bench::{allen_code_batch, allen_code_batch_const, allen_filter_batch,
-    allen_filter_columns, allen_filter_columns_const, compact_u32_by_mask}(level, ..)`. Same
-    arguments as the `exec::kernel::*` entry points after `level`.
-  - `reference::*`: one scalar twin per kernel with the entry point's name and arguments.
-  - Reached as `bumbledb::kernels` (engine-storage's `lib.rs` re-export); thanks.
+- **C4.** The group spill tier is gone. `probe_group` refuses a new group past the `WordMap`
+  index limit with `Error::Capacity(Capacity::Groups)`; `group_count()` is exact;
+  `resident_row_bound()` ignores spill; `aggregate/new.rs` uses `SeenSet`; `stream_finalize` is
+  deleted.
+- **E4a/E4b.** No `std::simd` in the crate. Kernels dispatch once per call on a `OnceLock`-cached
+  `fearless_simd::Level` (`Level::fallback()` under Miri); aarch64 Allen keeps the NEON kernel.
+- **Bench kernel seam** (`bumbledb::kernels`): `SimdLevel` (`available()`, lowest first, no scalar
+  fallback outside tests; `name()`), every kernel at an explicit level with the entry point's
+  arguments after `level` (`filter_*`, `fold_*`, `fold_*_idx`, `allen_*`, `compact_u32_by_mask`),
+  and `reference::*`, one scalar twin per kernel.
