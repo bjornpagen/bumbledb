@@ -78,9 +78,8 @@ pub(crate) fn assemble_inner(db: Engine, schema: Arc<schema::SchemaHandle>) -> D
     }
 }
 
-/// The one database owner: a registry-held [`runtime::owners::ManagedDb`].
-/// Every native database lives in the runtime registry behind a kernel-held
-/// directory lock, so a retained JS wrapper never keeps an engine, mapping,
+/// One open database, held in the runtime registry behind its directory's
+/// kernel lock, so a retained JS wrapper never keeps an engine, mapping,
 /// file descriptor or lock alive after a completed close.
 pub struct DbHandle {
     inner: runtime::owners::ManagedDb,
