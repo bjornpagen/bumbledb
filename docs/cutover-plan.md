@@ -536,6 +536,7 @@ All lanes run at once on `main`. Every agent owns disjoint paths, builds and tes
 - Integration: a full green gate (fmt, 2 clippy configs, rustdoc, `nextest --workspace`, TS build and tests, notes).
 - The strict **comment purge** across the whole repo.
 - The **legacy cull** grep gate (L).
+- The **D20 `bdb` extension** grep gate: no `bumbledb.lock`, `bumbledb.<kind>.v1`, `bumbledb.node`/`bumbledb.<platform>.node`, `.bumbledb/` or `bumbledb.*` brand remains anywhere; database dirs and checkpoint images use `.bdb`.
 - Docs and README rewritten for 2.0; `docs/release-2.0.md`; versions bumped to 2.0.0.
 - Commit `Cargo.lock`.
 - Delete `scripts/swarm/` and `docs/swarm/`.
