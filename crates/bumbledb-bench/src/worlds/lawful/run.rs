@@ -18,7 +18,6 @@ pub struct LawRow {
     pub work: u64,
 }
 
-/// # Errors
 pub fn run(
     dir: &Path,
     seed: u64,
@@ -31,7 +30,6 @@ pub fn run(
 /// The full lawful run: returns `(markdown, json)` only after the post-state
 /// comparison passes. `samples` overrides measured samples, not warmups.
 /// `only` selects registry names; unknown names refuse before loading.
-/// # Errors
 pub fn run_with(
     dir: &Path,
     seed: u64,

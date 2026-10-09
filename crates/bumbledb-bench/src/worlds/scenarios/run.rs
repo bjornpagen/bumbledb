@@ -5,7 +5,6 @@ use super::run_query::{gate, run_query};
 use super::{QueryReport, Scenario, all, render};
 use crate::harness::Protocol;
 
-/// # Errors
 pub fn run(
     dir: &Path,
     seed: u64,
@@ -31,7 +30,6 @@ pub fn run(
     Ok((render(&reports, proto), reports))
 }
 
-/// # Errors
 pub fn gate_scenario(dir: &Path, scenario: &Scenario, seed: u64) -> Result<(), String> {
     let stores = load(dir, scenario, seed)?;
     for sq in (scenario.queries)() {

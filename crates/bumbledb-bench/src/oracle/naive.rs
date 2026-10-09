@@ -162,8 +162,8 @@ impl NaiveDb {
         }
     }
 
-    /// refuses those before any final state is formed).
-    /// # Panics
+    /// Stages ordinary facts for complete admission without judging them;
+    /// [`Self::judge_complete`] judges the whole candidate.
     pub fn load_candidate(&mut self, facts: &[(RelationId, Vec<Value>)]) {
         for (rel, fact) in facts {
             assert!(
@@ -181,7 +181,8 @@ impl NaiveDb {
         }
     }
 
-    /// incremental `judge` cannot see without a holds-before premise.
+    /// Judges the whole state, including violations an incremental judgment
+    /// cannot see without a holds-before premise.
     #[must_use]
     pub fn judge_complete(&self) -> Vec<Violation> {
         self.judge_state(&self.relations, &[], None)
@@ -276,13 +277,12 @@ impl NaiveDb {
         &self.relations[rel.0 as usize]
     }
 
-    /// never a claim — the recorded refusal).
+    /// Counts the writes that changed the state; a witness records it.
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// # Errors
     pub fn apply_from(&mut self, witnessed: u64, delta: &Delta) -> Result<(), ConditionalAbort> {
         if witnessed != self.generation {
             return Err(ConditionalAbort::Moved {
@@ -293,7 +293,6 @@ impl NaiveDb {
         self.apply(delta).map_err(ConditionalAbort::Violations)
     }
 
-    /// # Errors
     pub fn apply(&mut self, delta: &Delta) -> Result<(), Vec<Violation>> {
         let (next, minted) = self.judged(delta)?;
 

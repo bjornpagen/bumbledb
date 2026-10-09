@@ -115,7 +115,9 @@ impl Builder<'_> {
         }
     }
 
-    /// columns are refused before any rule renders).
+    /// The SQL column an atom field reads, and whether it is an interval
+    /// (interior columns never are: interval-typed derived columns are refused
+    /// before any rule renders).
     fn source_column(&self, atom: &Atom, field: bumbledb::FieldId) -> (String, bool) {
         match atom.source {
             bumbledb::AtomSource::Edb(relation) => {

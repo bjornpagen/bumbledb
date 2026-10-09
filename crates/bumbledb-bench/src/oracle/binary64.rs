@@ -1,9 +1,8 @@
-//! The independent binary64 model, computed from raw `u64` bit patterns with
-//! integer and rational arithmetic only: canonical quotient (one zero, one
-//! NaN), total order key, exact scaled-integer decomposition (units of
-//! 2^-1074), the exact sum/mean accumulator with its merge table, and one
-//! final round-to-nearest-ties-to-even. No production helper or host float
-//! operation contributes to an expected value.
+//! The independent binary64 model over raw `u64` bit patterns, with integer
+//! and rational arithmetic only: canonical quotient (one zero, one NaN), total
+//! order key, exact scaled-integer decomposition (units of 2^-1074), the exact
+//! sum/mean accumulator, and one final round-to-nearest-ties-to-even. No
+//! production helper or host float operation contributes to an expected value.
 
 /// The canonical quiet-NaN payload.
 pub const NAN: u64 = 0x7ff8_0000_0000_0000;

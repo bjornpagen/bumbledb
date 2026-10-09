@@ -1,6 +1,5 @@
 use super::Stats;
 
-/// # Panics
 #[must_use]
 pub fn stats(samples: &mut [u64]) -> Stats {
     assert!(!samples.is_empty(), "stats over zero samples");

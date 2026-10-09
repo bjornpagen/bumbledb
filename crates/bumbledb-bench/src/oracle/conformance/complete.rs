@@ -338,7 +338,6 @@ pub fn generate_complete_corpus() -> Vec<(String, String)> {
         .collect()
 }
 
-/// # Panics
 #[must_use]
 pub fn replay_complete_case(name: &str) -> String {
     let fixture = fixtures()

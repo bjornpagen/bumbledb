@@ -1,32 +1,8 @@
-//! The generator's target schema seam.
-//!
-//! The query grammar is schema-specific by design;
-//! this
-//! module is the one place the grammar touches a concrete schema:
-//! relation/field ids, per-relation domains, literal vocabularies, and
-//! the deterministic corpus value functions the dressing recomputes
-//! (in-vocabulary hits are *actual* seeded values, never guesses). The
-//! declarations here are the bench schema and its corpus; the grammar
-//! above does not depend on them.
-//!
-//! The declared ledger is `60-validation.md`'s, with the coverage
-//! extensions the six-type matrix needs: `Posting.{memo, reconciled}`
-//! (interned-string vocabulary and the Bool column) and
-//! `Transfer { extref: bytes<32>, window: interval<u64>, tag7..tag64 }`
-//! (the `bytes<N>` exerciser — extref is a keyed adversarial digest and
-//! the tags cover the pad-boundary widths 7/8/9/16/63/64 — and the
-//! U64-element interval lane; `Mandate.active` is the I64-element
-//! lane) — plus, for the grounding shapes (`shapes_ground.rs`),
-//! the ledger's containment statements and one discriminated-union pair
-//! `JournalEntry(id | source == Import) == ImportBatch(entry)`, so the
-//! randomized lane exercises the occurrence elimination and its
-//! refusals against corpora that satisfy the statements by
-//! construction — plus the closed-relation write surface: `Currency` carries
-//! a payload column (`minor_units`), `CurrencyBacking` is the small
-//! keyed relation the domain quantification `Currency(id) <=
-//! CurrencyBacking(currency)` targets, and `CashRounding` rides the
-//! ψ-sub-vocabulary `Currency(id | minor_units == 0)` — the three
-//! write-scenario classes and the closed query shapes draw from here.
+//! The query generator's target schema: relation and field ids, per-relation
+//! domains, literal vocabularies, and the deterministic corpus value functions
+//! the dressing recomputes (in-vocabulary hits are actual seeded values). The
+//! ledger is widened to every value type, one discriminated-union pair for the
+//! grounding shapes, and the closed-relation write surface.
 use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
 use std::sync::OnceLock;

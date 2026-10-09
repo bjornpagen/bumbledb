@@ -102,7 +102,7 @@ struct ScratchDir(PathBuf);
 
 impl ScratchDir {
     fn new(tag: &str) -> Self {
-        // a concurrent or wedged prior run collide on the LMDB flock.
+        // Process id and clock keep concurrent and wedged runs off one LMDB lock.
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock after epoch")
@@ -122,7 +122,6 @@ impl Drop for ScratchDir {
     }
 }
 
-/// # Panics
 #[must_use]
 pub fn build_world(seed: u64) -> World {
     let cfg = GenConfig {
@@ -1117,7 +1116,6 @@ fn positional(draw: &ParamDraw) -> Vec<ParamValue> {
     out
 }
 
-/// # Panics
 fn one_case(
     world: &World,
     name: &str,
@@ -1468,7 +1466,6 @@ pub fn hand_corpus() -> Vec<(String, String)> {
 }
 
 /// The first [`SEEDED_CASES`] expressible random queries, alternating worlds.
-/// # Panics
 #[must_use]
 pub fn seeded_corpus() -> (Report, Vec<SeededCase>) {
     let mut report = Report::default();
@@ -1575,7 +1572,6 @@ pub fn replay_checked_in_corpus() -> usize {
 }
 
 /// Rewrites every curated case from the current generators.
-/// # Panics
 pub fn bless_curated_corpus() {
     let dir = corpus_dir();
     for path in checked_in_cases() {

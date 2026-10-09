@@ -58,7 +58,6 @@ pub mod ids {
     }
 }
 
-/// # Panics
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -107,10 +106,9 @@ impl DispSizes {
     }
 }
 
-/// The doubling loop here uses `(distinct + 1)` — exact whenever any position
-/// follows the last keys are unknown before the pass), then rehash-doubling per
-/// ingested
-/// # Panics
+/// The bytes a hash map sized for `positions` grows to once `distinct` keys
+/// land: the initial guess from `positions` (distinct keys are unknown before
+/// the pass), then rehash-doubling at a 5/16 load bound.
 #[must_use]
 pub fn forced_spoke_map_bytes(positions: u64, distinct: u64) -> u64 {
     let count = usize::try_from(positions).expect("64-bit usize");
@@ -208,7 +206,6 @@ pub struct ForeignStream {
 }
 
 impl ForeignStream {
-    /// # Panics
     #[must_use]
     pub fn new(mib: u64) -> Self {
         Self {
@@ -295,8 +292,8 @@ pub fn ddl() -> Vec<String> {
     sqlmap::schema_ddl(schema())
 }
 
-/// mirror file — targets before sources, the loader law.
-/// # Errors
+/// Loads the engine store and the SQLite mirror file, targets before sources
+/// (the loader law).
 pub fn load_stores(
     dir: &Path,
     cfg: GenConfig,
@@ -336,7 +333,6 @@ pub fn draws() -> Vec<Draw> {
     vec![scalar_draw(vec![])]
 }
 
-/// # Errors
 pub fn verify_family(
     db: &Db<DisplacedWorld>,
     conn: &rusqlite::Connection,
@@ -377,7 +373,6 @@ pub fn verify_family(
 /// measure both engines under the interleaved protocol — the foreign stream
 /// runs between passes on BOTH arms (the mirror is displaced exactly like the
 /// engine), report-only rows beside the read families.
-/// # Errors
 pub fn bench_families(
     cfg: GenConfig,
     scratch: &Path,

@@ -13,7 +13,6 @@ use super::{LawSizes, LawfulWorld, corpus, enforcement, ids, schema};
 /// map-derived DDL, the same row streams, `ANALYZE`, a truncating WAL
 /// checkpoint, and the parity readback.
 /// misconfigured twin refuses here, before any lane runs.
-/// # Errors
 pub fn load_stores(
     dir: &Path,
     _seed: u64,

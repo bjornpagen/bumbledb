@@ -13,8 +13,9 @@ pub enum CapOutcome<T> {
 
 const CAP_GRANULARITY_OPS: std::ffi::c_int = 50_000;
 
-/// handler with the deadline, ALWAYS clears it before returning, and
-/// # Errors
+/// Runs `run` under a wall-clock cap: installs a progress handler with the
+/// deadline, ALWAYS clears it before returning, and reports an interrupted run
+/// as [`CapOutcome::Tripped`].
 pub fn with_cap<T>(
     conn: &rusqlite::Connection,
     cap: CapMs,

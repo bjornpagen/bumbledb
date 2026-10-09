@@ -5,7 +5,6 @@ use bumbledb::{AtomSource, InteriorId, ParamId, Query, Rule, Schema, Term, Value
 use super::query::{QueryShape, SharedParams, arm_body, rule_core};
 use super::{Translated, VarCols, derived_cte_name};
 
-/// # Errors
 pub fn translate_query(
     query: &Query,
     schema: &Schema,
@@ -238,7 +237,6 @@ fn main_select(
     super::query::translate_rules(rules, schema, sets, params)
 }
 
-/// # Errors
 pub fn refuse_interval_columns(query: &Query, schema: &Schema) -> Result<(), String> {
     match query {
         Query {

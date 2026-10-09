@@ -69,7 +69,6 @@ pub fn from_fact(fact: &[Value]) -> Answer {
     fact.iter().map(owned_value).collect()
 }
 
-/// # Errors
 /// # Panics
 /// On a set arg bound to a placeholder slot (a translator invariant).
 pub fn from_sqlite(
@@ -133,7 +132,6 @@ impl std::fmt::Display for Mismatch {
     }
 }
 
-/// # Errors
 pub fn multisets(mut ours: Vec<Answer>, mut theirs: Vec<Answer>) -> Result<(), Mismatch> {
     ours.sort();
     theirs.sort();

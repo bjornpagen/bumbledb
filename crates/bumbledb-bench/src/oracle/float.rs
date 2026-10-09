@@ -1,9 +1,7 @@
-//! Independent scalar comparison and lossless SQLite relational mirror.
-//!
-//! SQLite REAL turns NaN into NULL. All F64 values therefore use eight-byte
-//! ordered BLOBs in the mirror, not a mixture of SQL storage classes. This
-//! preserves set equality, order, keys and min/max; ordinary SQL sum/avg are
-//! not a numerical oracle for this representation or for exact reductions.
+//! Independent scalar comparison and the lossless SQLite relational mirror.
+//! SQLite REAL turns NaN into NULL, so every F64 is an eight-byte ordered BLOB
+//! in the mirror. That preserves set equality, order, keys and MIN/MAX; SQL
+//! SUM/AVG are no numerical oracle for this representation.
 
 use std::cmp::Ordering;
 

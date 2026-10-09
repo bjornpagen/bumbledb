@@ -35,7 +35,6 @@ pub struct Translated {
     pub params: Vec<ParamSlot>,
 }
 
-/// # Panics
 #[must_use]
 pub fn keyed_get(schema: &Schema, relation: RelationId, statement: &KeyStatement) -> Translated {
     let rel = schema.relation(relation);
@@ -138,13 +137,12 @@ pub enum Inexpressible {
     FloatArithmetic,
 }
 
-/// Callers do not choose a gate by shape — one function,
-/// # Errors
+/// Whether `case` has a SQLite twin over the querygen target schema. Callers
+/// do not choose a gate by shape: one function decides.
 pub fn sqlite_expressible(case: &LaneCase<'_>) -> Result<(), Inexpressible> {
     sqlite_expressible_on(case, crate::oracle::querygen::target::schema())
 }
 
-/// # Errors
 pub fn sqlite_expressible_on(case: &LaneCase<'_>, schema: &Schema) -> Result<(), Inexpressible> {
     match case {
         LaneCase::Query(query) => {

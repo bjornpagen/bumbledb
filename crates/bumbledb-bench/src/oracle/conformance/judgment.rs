@@ -1239,7 +1239,6 @@ fn render_fixture(fixture: &JudgmentFixture) -> String {
     )
 }
 
-/// # Panics
 #[must_use]
 pub fn generate_judgment_corpus() -> Vec<(String, String)> {
     fixtures()
@@ -1248,7 +1247,6 @@ pub fn generate_judgment_corpus() -> Vec<(String, String)> {
         .collect()
 }
 
-/// # Panics
 #[must_use]
 pub fn replay_judgment_case(name: &str) -> String {
     let fixture = fixtures()

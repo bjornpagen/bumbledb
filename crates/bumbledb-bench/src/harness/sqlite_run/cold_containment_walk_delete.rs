@@ -10,9 +10,8 @@ use crate::worlds::writebench::write_protocol;
 use super::commits::sqlite_posting_params;
 use super::{POSTING_INSERT, PreparedFamily, sample_args};
 
-/// protocol behind the identical delete-bearing touch — one
-/// # Errors
-/// # Panics
+/// The SQLite twin of the cold containment walk: the same family and protocol
+/// behind the identical delete-bearing touch.
 pub fn cold_containment_walk_delete(
     conn: &Connection,
     cfg: GenConfig,

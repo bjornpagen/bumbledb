@@ -1,13 +1,8 @@
-//! The independent staged relation-expression evaluator.
-//!
-//! Stages evaluate in an acyclic order — each is a total function of the
-//! EARLIER stages' complete outputs, producing a complete deduplicated row
-//! set or a semantic error. Aggregate/computed stages are ordinary stages
-//! whose outputs later stages consume; a name never forces materialization;
-//! a required producer's error surfaces through every consumer; and the
-//! restricted recursive node stays inside its frozen finite domain. Float
-//! aggregate expectations come from the independent bit/rational oracle,
-//! never host float folds or production kernels.
+//! The independent staged relation-expression evaluator. Stages run in acyclic
+//! order, each a total function of earlier stages' complete outputs, yielding a
+//! deduplicated row set or a semantic error that surfaces through every
+//! consumer. The recursive node stays inside its frozen finite domain; float
+//! aggregates come from the bit/rational oracle, never host float folds.
 
 use std::collections::BTreeSet;
 

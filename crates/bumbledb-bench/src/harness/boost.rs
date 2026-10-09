@@ -39,7 +39,6 @@ fn wants_boost(value: Option<&str>) -> Result<bool, String> {
     }
 }
 
-/// # Errors
 pub fn engage_from_env() -> Result<(), String> {
     if !wants_boost(std::env::var(ENV).ok().as_deref())? {
         return Ok(());
@@ -58,7 +57,6 @@ pub fn engaged() -> Option<Engaged> {
     ENGAGED.get().copied()
 }
 
-/// # Errors
 #[cfg(target_os = "macos")]
 #[expect(
     unsafe_code,
@@ -100,7 +98,6 @@ pub fn claim_qos() -> Result<(), String> {
     Ok(())
 }
 
-/// # Errors
 #[cfg(target_os = "linux")]
 pub fn claim_qos() -> Result<(), String> {
     claim_linux_nice(-10)
@@ -145,7 +142,6 @@ fn claim_linux_nice(priority: core::ffi::c_int) -> Result<(), String> {
     Ok(())
 }
 
-/// # Errors
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn claim_qos() -> Result<(), String> {
     Err("scheduler priority control is unsupported on this platform".to_owned())

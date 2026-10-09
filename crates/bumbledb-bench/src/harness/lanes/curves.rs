@@ -1,9 +1,8 @@
-//! A scale curve is data, not a script: `CURVE_FAMILIES` is a `point` from
-//! [`crate::worlds::families`] (point is the crud/point-regime key probe), `busy_scan`
-//! from [`crate::worlds::calendar::families`], and ([`crate::oracle::compare::multisets`])
-//! before anything reaches a timer. The REGION (one gate pass or one whole
-//! timing protocol block); a capped [`crate::harness::sqlite_run::FairnessCheck`]
-//! asserted before timing gated exactly like the canonical before it is timed.
+//! Scale curves: each family in `CURVE_FAMILIES` is timed on both engines at
+//! every scale, gated first so the engines agree
+//! ([`crate::oracle::compare::multisets`]) before anything reaches a timer. A
+//! [`crate::harness::sqlite_run::FairnessCheck`] holds before timing, and a
+//! capped SQLite run is reported as a cap event, not a sample.
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -245,10 +244,11 @@ struct DnfCap {
 }
 
 impl DnfCap {
-    /// Runs one region (one gate pass or one whole timing protocol
-    /// deadline captured at entry, ALWAYS clears it before returning,
-    /// observed after the region completed keeps its finished result;
-    /// first op — excluded before entry.
+    /// Runs one region (one gate pass or one whole timing protocol) under a
+    /// deadline captured at entry, and ALWAYS clears the handler before
+    /// returning. `None` is a capped region: a zero cap excludes it before
+    /// entry, and an error after the deadline is the cap. A region that
+    /// finished keeps its result even if the deadline passed after it.
     fn guarded<T>(
         self,
         conn: &rusqlite::Connection,
@@ -283,8 +283,8 @@ impl DnfCap {
     }
 }
 
-/// Gated exactly like the canonical before it is ever timed; both are reported
-/// — we never flatter ourselves.
+/// The hand-written SQLite twin of `busy_scan`, gated exactly like the
+/// canonical translation before it is timed; both are reported.
 const BUSY_SCAN_HAND: &str = "SELECT DISTINCT t0.\"person\", t0.\"span_start\", t0.\"span_end\" FROM \"Claim\" AS t0 WHERE t0.\"arm\" = 0 AND t0.\"span_start\" < ?2 AND ?1 < t0.\"span_end\"";
 
 const BUSY_SCAN_HAND_SLOTS: [ParamSlot; 2] =
@@ -921,7 +921,6 @@ fn render(report: &CurvesReport) -> String {
     out
 }
 
-/// # Errors
 pub fn run(args: &crate::cli::CurvesArgs) -> Result<i32, String> {
     let selected = select(args.families.as_deref())?;
     if args.scales.is_empty() {
@@ -1274,7 +1273,8 @@ mod tests {
         assert!(l / m >= 8, "M→L edges grew {l}/{m}");
     }
 
-    /// refusal, proving the hand twin cannot reach a timer unverified.
+    /// A wrong hand twin is refused and the real one agrees, so a hand twin
+    /// cannot reach a timer unverified.
     #[test]
     fn hand_twin_is_gated_before_timing() {
         let dir = scratch("curves-hand-gate");

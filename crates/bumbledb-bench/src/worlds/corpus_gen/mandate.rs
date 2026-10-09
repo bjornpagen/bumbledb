@@ -12,7 +12,6 @@ pub struct Segment {
     pub end: i64,
 }
 
-/// # Panics
 #[must_use]
 pub fn mandate_segments(seed: u64, sizes: &Sizes, account: u64) -> [Segment; 4] {
     let mut rng = Rng::new(mix(seed, ids::MANDATE, account));

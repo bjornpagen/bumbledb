@@ -83,7 +83,6 @@ pub mod ids {
     pub const OUTCOME: RelationId = RelationId(7);
 }
 
-/// # Panics
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     use bumbledb::schema::ValidateDescriptor as _;

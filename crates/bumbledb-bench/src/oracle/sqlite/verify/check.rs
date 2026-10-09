@@ -90,7 +90,8 @@ impl<S> Run<'_, S> {
                 .join(format!("mismatch-{}", self.bundles.len()));
             std::fs::create_dir_all(&bundle).expect("bundle dir");
 
-            // raw IR after for arbitration by structure.
+            // The rendered query first, the raw IR after, for arbitration by
+            // structure.
             std::fs::write(
                 bundle.join("query.txt"),
                 format!(

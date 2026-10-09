@@ -108,7 +108,6 @@ fn render_reach_case(
     ))
 }
 
-/// # Panics
 fn one_reach_case(
     world: &World,
     name: &str,
@@ -287,7 +286,6 @@ pub fn hand_reach_corpus(world: &World) -> Vec<(String, String)> {
 }
 
 /// The first [`REACH_SEEDED_CASES`] expressible random recursive queries.
-/// # Panics
 #[must_use]
 pub fn seeded_reach_corpus(world: &World) -> (ReachReport, Vec<SeededCase>) {
     let mut report = ReachReport::default();

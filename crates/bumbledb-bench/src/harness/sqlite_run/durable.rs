@@ -11,7 +11,6 @@ pub const DURABILITY: &str = "Db::create (LMDB issues F_FULLFSYNC unconditionall
 
 pub const SQLITE_SYNC: &str = "wal+synchronous=FULL+fullfsync=ON";
 
-/// # Errors
 pub fn configure_durable(conn: &Connection) -> Result<(), String> {
     crate::worlds::corpus::configure_sqlite(conn)
         .map_err(|e| format!("configure (durable): {e}"))?;
@@ -20,7 +19,6 @@ pub fn configure_durable(conn: &Connection) -> Result<(), String> {
     super::mmap_whole_file(conn)
 }
 
-/// # Errors
 pub fn assert_durable_parity(conn: &Connection) -> Result<(), String> {
     let journal: String = conn
         .query_row("PRAGMA journal_mode", [], |row| row.get(0))

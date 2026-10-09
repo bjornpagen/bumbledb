@@ -34,7 +34,6 @@ pub struct CrudRow {
 /// stages the real run takes.
 pub(crate) type StoreLoader<'a> = dyn Fn(&Path) -> Result<(Db<CrudWorld>, Connection), String> + 'a;
 
-/// # Errors
 pub fn run(
     dir: &Path,
     seed: u64,
@@ -44,7 +43,6 @@ pub fn run(
     run_with(dir, seed, CrudSizes::of(Scale::S), samples, only)
 }
 
-/// # Errors
 pub fn run_with(
     dir: &Path,
     seed: u64,

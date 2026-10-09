@@ -4,7 +4,6 @@ use super::stats::stats;
 use super::{Measurement, Protocol};
 
 /// Each round invalidates through `touch`, then times `f`. Warmup rounds execute identically but do not enter the statistics.
-/// # Errors
 pub fn measure_cold<T, F>(proto: Protocol, mut touch: T, mut f: F) -> Result<Measurement, String>
 where
     T: FnMut() -> Result<(), String>,

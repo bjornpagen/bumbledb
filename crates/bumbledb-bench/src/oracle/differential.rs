@@ -75,8 +75,6 @@ pub struct Summary {
     pub queries: u64,
 }
 
-/// # Errors
-/// # Panics
 pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Divergence> {
     let mut summary = Summary::default();
     for (index, op) in ops.iter().enumerate() {

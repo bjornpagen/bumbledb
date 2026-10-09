@@ -12,7 +12,6 @@ pub fn bench_work() -> WorkContext {
 }
 
 /// A fresh store holding the empty state of `schema`.
-/// # Errors
 pub fn create_db<S: Theory>(path: &Path, schema: S) -> Result<Db<S>, String> {
     match Db::create(path, schema, bench_work()) {
         Err(error) => Err(format!("create {}: {error:?}", path.display())),
@@ -25,7 +24,6 @@ pub fn create_db<S: Theory>(path: &Path, schema: S) -> Result<Db<S>, String> {
 }
 
 /// The value a write committed, or why it did not commit.
-/// # Errors
 pub fn committed<R>(what: &str, outcome: bumbledb::Result<WriteOutcome<R>>) -> Result<R, String> {
     match outcome {
         Ok(WriteOutcome::Committed(committed)) => Ok(committed.value),
@@ -37,7 +35,6 @@ pub fn committed<R>(what: &str, outcome: bumbledb::Result<WriteOutcome<R>>) -> R
     }
 }
 
-/// # Errors
 pub fn open_db<S: Theory>(path: &Path, schema: S) -> Result<Db<S>, String> {
     Db::open(path, schema, bench_work())
         .map_err(|error| format!("open {}: {error:?}", path.display()))

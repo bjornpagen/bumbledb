@@ -879,7 +879,8 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
         Err(Inexpressible::ContainmentJudgment)
     );
 
-    // equally inexpressible (the SUM is a query, not a typed refusal);
+    // A capacity judgment is equally inexpressible (the SUM is a query, not
+    // a typed refusal).
 
     let capacity = StatementDescriptor::Capacity {
         target: Side {

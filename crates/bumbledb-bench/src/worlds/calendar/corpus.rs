@@ -27,12 +27,10 @@ const ORDER: [RelationId; 8] = [
 
 const CHUNK: usize = 4096;
 
-/// # Errors
 pub fn load_bumbledb(db: &Db<Scheduling>, cfg: GenConfig) -> Result<LoadStats, bumbledb::Error> {
     load_bumbledb_sized(db, cfg, CalSizes::of(cfg.scale))
 }
 
-/// # Errors
 pub fn load_bumbledb_sized(
     db: &Db<Scheduling>,
     cfg: GenConfig,
@@ -82,7 +80,6 @@ fn flush(
     Ok(facts)
 }
 
-/// # Errors
 /// # Panics
 /// When WAL does not engage.
 pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection, LoadStats)> {
@@ -91,7 +88,6 @@ pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection,
     load_sqlite_into(&conn, cfg, CalSizes::of(cfg.scale)).map(|stats| (conn, stats))
 }
 
-/// # Errors
 pub fn load_sqlite_into(
     conn: &Connection,
     cfg: GenConfig,
@@ -125,7 +121,6 @@ pub fn ddl() -> Vec<String> {
     statements
 }
 
-/// # Panics
 pub fn assert_loaded_equal(db: &Db<Scheduling>, conn: &Connection, cfg: GenConfig) {
     let schema = schema();
     let sizes = CalSizes::of(cfg.scale);

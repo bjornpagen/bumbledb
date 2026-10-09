@@ -272,7 +272,6 @@ fn seed_delete_rows(
 /// sentinel abort drops the delta whole, so a refused delete never commits the
 /// batch's earlier deletes, and the lane can never silently degrade into an
 /// insert-only (or partial) measurement.
-/// # Panics
 fn delete_recorded(
     db: &Db<Ledger>,
     recorded: &mut VecDeque<Posting>,
@@ -375,7 +374,6 @@ fn cell_i64(row: &[Value], index: usize) -> Result<i64, String> {
 
 type Body = (u64, u64, u64, i64, i64);
 
-/// # Errors
 fn verify_post_state(
     db: &Db<Ledger>,
     conn: &Connection,
@@ -527,7 +525,6 @@ fn run_ladder(
     Ok(rows)
 }
 
-/// # Errors
 pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(

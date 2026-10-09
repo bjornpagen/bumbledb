@@ -424,7 +424,6 @@ impl Env<'_> {
 impl NaiveDb {
     /// # Errors
     /// The query's runtime refusal.
-    /// # Panics
     pub fn query(
         &self,
         query: &Query,
@@ -437,7 +436,6 @@ impl NaiveDb {
     /// Evaluates `query` visiting at most `budget` facts.
     /// # Errors
     /// [`Exhausted`] when the budget runs dry; otherwise the evaluation's own result.
-    /// # Panics
     pub fn query_within(
         &self,
         query: &Query,
@@ -507,6 +505,7 @@ impl NaiveDb {
         self.rows_for(head, rules, params, &derived)
     }
 
+    /// The least fixpoint of `rec`, pushed as the next derived table; its
     /// index is assigned here before the empty table is pushed.
     fn rec_lfp(
         &self,

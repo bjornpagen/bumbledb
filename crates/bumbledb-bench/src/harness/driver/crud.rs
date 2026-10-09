@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use crate::harness::report;
 
 /// Run the oracle-gated CRUD families and publish their reports.
-/// # Errors
 pub fn cmd_crud(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(

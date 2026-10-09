@@ -6,15 +6,15 @@ use crate::worlds::ledger::schema;
 use super::FairnessCheck;
 
 impl FairnessCheck {
-    /// as a checked invariant, finding 074 — LMDB maps the whole store
-    /// # Errors
+    /// Checks the mirror is configured for a fair comparison: WAL, synchronous
+    /// FULL, full fsync, the whole file memory-mapped (as LMDB maps the whole
+    /// store), the expected indexes, and ANALYZE statistics.
     pub fn run(conn: &Connection) -> Result<(), String> {
         let mut expected = sqlmap::expected_indexes(schema());
         expected.extend(crate::worlds::families::expected_indexes());
         Self::run_with(conn, &expected)
     }
 
-    /// # Errors
     pub fn run_calendar(conn: &Connection) -> Result<(), String> {
         let mut expected = sqlmap::expected_indexes(crate::worlds::calendar::schema());
         expected.extend(crate::worlds::calendar::families::expected_indexes());
@@ -55,7 +55,8 @@ impl FairnessCheck {
                 .map_err(|e| format!("mmap_size: {e}"))?;
             if u64::try_from(mmap).unwrap_or(0) < file_bytes {
                 return Err(format!(
-                    "fairness: mmap_size {mmap} < the {file_bytes}-byte file —                      the memory-residency parity claim is broken"
+                    "fairness: mmap_size {mmap} < the {file_bytes}-byte file; \
+                     the memory-residency parity claim is broken"
                 ));
             }
         }

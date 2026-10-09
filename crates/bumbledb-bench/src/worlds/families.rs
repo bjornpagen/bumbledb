@@ -59,7 +59,6 @@ pub fn param_args(draw: &[ParamValue]) -> Vec<ParamArg<'_>> {
         .collect()
 }
 
-/// # Panics
 #[must_use]
 pub fn scalar_values(draw: &[ParamValue]) -> Vec<BindValue<'_>> {
     draw.iter()
@@ -70,7 +69,6 @@ pub fn scalar_values(draw: &[ParamValue]) -> Vec<BindValue<'_>> {
         .collect()
 }
 
-/// # Panics
 #[must_use]
 pub fn set_bindings(draw: &[ParamValue]) -> Vec<(ParamId, Vec<Value>)> {
     draw.iter()
@@ -145,7 +143,8 @@ pub fn expected_indexes() -> Vec<(String, String)> {
     out
 }
 
-/// its report-only classification, and its write-appropriate protocol.
+/// A write family: its name, its report-only classification, and its
+/// write-appropriate protocol.
 pub struct WriteFamily {
     pub name: &'static str,
     pub kind: Kind,

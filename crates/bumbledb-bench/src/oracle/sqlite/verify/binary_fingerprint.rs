@@ -1,4 +1,3 @@
-/// # Panics
 #[must_use]
 pub fn binary_fingerprint() -> [u8; 32] {
     static FINGERPRINT: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();

@@ -43,6 +43,7 @@ pub(super) fn infer(rule: &Rule, schema: &Schema) -> TermTypes {
     let mut types = TermTypes::default();
     for atom in rule.atoms.iter().chain(&rule.negated) {
         for (field, term) in &atom.bindings {
+            // Interior columns are scalar: `refuse_interval_columns` refuses
             // interval-typed derived columns before any rule renders.
             let interval_field = match atom.source {
                 bumbledb::AtomSource::Edb(relation) => schema.relation(relation).fields()

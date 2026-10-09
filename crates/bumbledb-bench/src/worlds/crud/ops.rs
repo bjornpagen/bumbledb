@@ -57,7 +57,6 @@ pub struct UpdateOp {
     pub next: i64,
 }
 
-/// # Panics
 #[must_use]
 pub fn update_stream(
     seed: u64,
@@ -100,7 +99,6 @@ pub struct UpsertOp {
     pub next: i64,
 }
 
-/// # Panics
 #[must_use]
 pub fn upsert_stream(
     seed: u64,
@@ -120,8 +118,9 @@ pub fn upsert_stream(
         .collect()
 }
 
-/// to the lane model, so any family after rmw models the store rmw
-/// # Panics
+/// The read-modify-write key stream over the loaded counters. Each increment
+/// is applied to the lane model, so any family after rmw models the store rmw
+/// leaves.
 #[must_use]
 pub fn rmw_stream(seed: u64, sizes: CrudSizes, count: usize, model: &mut CounterModel) -> Vec<u64> {
     let mut rng = Rng::new(seed ^ RMW_SALT);

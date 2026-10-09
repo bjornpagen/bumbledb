@@ -32,7 +32,6 @@ pub fn corpus_paths(dir: &Path, cfg: GenConfig) -> CorpusPaths {
 
 const CORPUS_MARKER: &str = "corpus.ok";
 
-/// # Errors
 pub fn ensure_corpus_with(
     dir: &Path,
     cfg: GenConfig,
@@ -50,7 +49,6 @@ pub fn ensure_corpus_with(
     Ok(paths)
 }
 
-/// # Errors
 pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> {
     ensure_corpus_with(dir, cfg, &mut |paths| {
         eprintln!(

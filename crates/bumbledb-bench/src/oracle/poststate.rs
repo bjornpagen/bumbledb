@@ -25,7 +25,6 @@ fn owned(value: &Value) -> Owned {
     }
 }
 
-/// # Errors
 pub fn engine_rows<S>(db: &Db<S>, rel: RelationId) -> Result<Vec<Answer>, String> {
     let rows: Vec<bumbledb::canonical::DecodedRow> = db
         .read(crate::harness::bench_work(), |snap| {
@@ -38,7 +37,6 @@ pub fn engine_rows<S>(db: &Db<S>, rel: RelationId) -> Result<Vec<Answer>, String
         .collect())
 }
 
-/// # Errors
 pub fn sqlite_rows(conn: &Connection, relation: &Relation) -> Result<Vec<Answer>, String> {
     let mut columns: Vec<String> = Vec::new();
     for field in relation.fields() {
@@ -76,7 +74,6 @@ pub fn sqlite_rows(conn: &Connection, relation: &Relation) -> Result<Vec<Answer>
     Ok(out)
 }
 
-/// # Errors
 pub fn assert_identical(
     world: &str,
     relation: &str,

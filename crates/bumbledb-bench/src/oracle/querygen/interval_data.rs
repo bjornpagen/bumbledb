@@ -43,7 +43,6 @@ pub fn group_i64(seed: u64, group: u64, k: u64) -> (i64, i64) {
     }
 }
 
-/// # Panics
 #[must_use]
 pub fn group_u64(seed: u64, group: u64, k: u64) -> (u64, u64) {
     let (lo, hi, sentinel) = offsets(seed, group, k);
@@ -72,7 +71,6 @@ fn draw_rung(rng: &mut Rng) -> Rung {
     }
 }
 
-/// # Panics
 #[must_use]
 pub fn ladder_i64(seed: u64, group: u64, rng: &mut Rng) -> ((i64, i64), Rung) {
     let drawn = draw_rung(rng);

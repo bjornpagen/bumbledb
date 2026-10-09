@@ -58,7 +58,6 @@ pub struct ArityOpsCase {
     pub coverage: ArityCoverage,
 }
 
-/// # Panics
 #[must_use]
 pub fn arity_descriptor(
     arity: usize,
@@ -69,7 +68,6 @@ pub fn arity_descriptor(
     build_case(arity, selection, equality, ArityExpectation::Accepted)
 }
 
-/// # Panics
 #[must_use]
 pub fn random_arity_descriptor(rng: &mut Rng) -> ArityDescriptorCase {
     let selection = random_selection(rng);
@@ -108,7 +106,6 @@ pub fn random_arity_descriptor(rng: &mut Rng) -> ArityDescriptorCase {
     }
 }
 
-/// # Panics
 #[must_use]
 pub fn random_valid_arity_descriptor(rng: &mut Rng) -> ArityDescriptorCase {
     let selection = random_selection(rng);

@@ -89,7 +89,6 @@ pub fn random_crash_scenario(rng: &mut Rng) -> CrashScenario {
 
 pub const CRASH_MATRIX_CELLS: usize = 3;
 
-/// # Panics
 #[must_use]
 pub fn crash_matrix_scenario(cell: usize) -> CrashScenario {
     let a = matrix_world_seed(0);

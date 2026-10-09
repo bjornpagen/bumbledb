@@ -48,7 +48,6 @@ bumbledb::schema! {
     Bomb2(src, dst) -> Bomb2;
 }
 
-/// # Panics
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();

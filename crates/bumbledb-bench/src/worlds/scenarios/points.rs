@@ -34,7 +34,6 @@ bumbledb::schema! {
     Doc(bucket) <= Bucket(id);
 }
 
-/// # Panics
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -141,7 +140,6 @@ fn key_params(seed: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// # Panics
 fn doc_key_statement(schema: &bumbledb::Schema) -> bumbledb::StatementId {
     schema
         .keys()

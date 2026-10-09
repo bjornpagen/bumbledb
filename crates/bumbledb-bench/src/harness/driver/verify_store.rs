@@ -10,7 +10,6 @@ use crate::worlds::ledger::{Ledger, schema};
 use super::corpus::gen_config;
 use super::corpus_paths;
 
-/// # Errors
 pub fn cmd_verify_store(corpus: &CorpusArgs) -> Result<i32, String> {
     let paths = corpus_paths(&corpus.dir, gen_config(corpus));
     if !paths.db.exists() {

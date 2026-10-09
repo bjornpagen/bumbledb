@@ -111,7 +111,6 @@ fn mint_doc_sqlite(conn: &Connection, seed: u64, cursor: &mut MintCursor) -> Res
     Ok(())
 }
 
-/// # Errors
 pub fn insert_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -134,7 +133,6 @@ pub fn insert_bumbledb(
     })
 }
 
-/// # Errors
 pub fn insert_sqlite(
     conn: &Connection,
     proto: Protocol,
@@ -464,7 +462,6 @@ pub fn delete_sqlite(
     })
 }
 
-/// # Errors
 pub fn mixed_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -497,7 +494,6 @@ pub fn mixed_bumbledb(
     })
 }
 
-/// # Errors
 pub fn mixed_sqlite(
     conn: &Connection,
     proto: Protocol,

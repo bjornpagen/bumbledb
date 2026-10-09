@@ -531,7 +531,6 @@ fn to_markdown(args: &MicroArgs, kernels: &[KernelRow], floats: &[FloatStatsRow]
 }
 
 /// The `micro` command: writes `micro.json` (at `--out`) and `micro.md`.
-/// # Errors
 pub fn run(args: &MicroArgs) -> Result<i32, String> {
     let json_path = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out")

@@ -50,7 +50,6 @@ pub mod ids {
     }
 }
 
-/// # Panics
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -225,8 +224,8 @@ pub fn ddl() -> Vec<String> {
     sqlmap::schema_ddl(schema())
 }
 
-/// mirror file — targets before sources, the loader law.
-/// # Errors
+/// Loads the engine store and the SQLite mirror file, targets before sources
+/// (the loader law).
 pub fn load_stores(
     dir: &Path,
     cfg: GenConfig,
@@ -234,7 +233,6 @@ pub fn load_stores(
     load_stores_sized(dir, ClosSizes::of(cfg.scale))
 }
 
-/// # Errors
 pub fn load_stores_sized(
     dir: &Path,
     sizes: ClosSizes,
@@ -275,7 +273,6 @@ fn translated() -> Translated {
     }
 }
 
-/// # Errors
 pub fn verify_family(
     db: &Db<Reachability>,
     conn: &rusqlite::Connection,
@@ -315,7 +312,6 @@ pub fn verify_family(
 /// The timed closure lane: build the scratch world, verify every family × draw,
 /// then measure both engines under the exact warm protocol — report-only rows
 /// beside the read families.
-/// # Errors
 pub fn bench_families(
     cfg: GenConfig,
     scratch: &Path,

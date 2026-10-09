@@ -34,7 +34,6 @@ fn next_posting_id(conn: &Connection) -> Result<u64, String> {
     .map_err(|e| format!("next id: {e}"))
 }
 
-/// # Errors
 pub fn commit_single(conn: &Connection, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0001);
@@ -52,7 +51,6 @@ pub fn commit_single(conn: &Connection, cfg: GenConfig) -> Result<Measurement, S
     })
 }
 
-/// # Errors
 pub fn commit_batch(conn: &Connection, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0002);

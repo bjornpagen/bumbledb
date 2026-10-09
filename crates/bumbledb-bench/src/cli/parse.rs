@@ -401,7 +401,6 @@ fn parse_micro(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Micro(args))
 }
 
-/// # Errors
 pub fn parse(args: &[String]) -> Result<Cmd, String> {
     let mut tokens = Tokens { args, index: 0 };
     let Some(command) = tokens.next() else {

@@ -1,16 +1,8 @@
-//! The independent dense float-interval oracle.
-//!
-//! `Interval<F64>` denotes a half-open range on a DENSE numeric line, not a
-//! set of representable machine floats. This oracle models exactly the
-//! fragment the fixtures need without big rationals: a dense point is either
-//! a representable canonical payload or the open midpoint strictly between a
-//! representable value and its successor — enough to witness every
-//! adjacency/gap/ray fixture, because interval endpoints are always
-//! representable and any two distinct reals with a representable between
-//! them are separated at this granularity.
-//!
-//! Nothing here consults production interval, Allen, or comparison helpers;
-//! ordering is the sibling `binary64::order_key` (itself independent).
+//! The independent dense float-interval oracle. `Interval<F64>` is a half-open
+//! range on a dense line; a dense point is a representable canonical payload or
+//! the open midpoint after one, enough for every adjacency, gap and ray fixture.
+//! Ordering is `binary64::order_key`; no production interval, Allen or
+//! comparison helper is consulted.
 
 use super::binary64::{Class, INF, NEG_INF, SIGN, canonical, classify, order_key};
 
@@ -245,17 +237,12 @@ mod tests {
         // The distinguishing dense fixture: no representable finite F64
         // lies inside [-Infinity, -MAX_FINITE), yet the dense line does.
         let ray = FInterval::new(NEG_INF, NEG_MAX).expect("a valid left ray");
-        // No representable probe is inside…
+        // No representable probe is inside.
         assert!(!ray.contains_probe(NEG_MAX));
         assert!(!ray.contains_probe(NEG_INF), "nonfinite probes are false");
         assert!(!ray.contains_probe(ONE));
-        // …but the dense point just above -MAX's PREDECESSOR side — i.e.
-        // strictly beyond every finite value — is: the gap point above
-        // -inf's neighbor is modeled from the other side: the point just
-        // below -MAX is `JustAbove` of nothing representable, so witness
-        // density from the interval's own frame: the dense point strictly
-        // between -MAX and its successor is NOT in the ray (it is above
-        // -MAX)…
+        // The dense point strictly between -MAX and its successor is above
+        // -MAX, so it is not in the ray either.
         assert!(!ray.contains_dense(Dense::JustAbove(NEG_MAX)));
         // [-infinity, -MAX) has no representable binary64 member but denotes
         // a nonempty dense interval. Enumerating representable values would

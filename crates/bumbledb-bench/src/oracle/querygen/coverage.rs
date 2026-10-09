@@ -245,7 +245,6 @@ impl Coverage {
         }
     }
 
-    /// near-miss refusal classes.
     fn record_ground(&mut self, ground: Option<GroundVariant>) {
         match ground {
             Some(GroundVariant::Walk) => self.ground_eliminable += 1,

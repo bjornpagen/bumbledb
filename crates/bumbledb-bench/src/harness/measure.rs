@@ -3,7 +3,6 @@ use std::time::Instant;
 use super::stats::stats;
 use super::{Measurement, Protocol};
 
-/// # Errors
 pub fn measure<F>(proto: Protocol, f: F) -> Result<Measurement, String>
 where
     F: FnMut() -> Result<u64, String>,
@@ -12,7 +11,6 @@ where
 }
 
 /// Work counts sum across every call; batch 1 is the plain protocol.
-/// # Errors
 pub fn measure_batched<F>(proto: Protocol, batch: u32, f: F) -> Result<Measurement, String>
 where
     F: FnMut() -> Result<u64, String>,
@@ -21,7 +19,6 @@ where
 }
 
 /// `between` runs before each warmup and measured batch, outside the timer.
-/// # Errors
 /// # Panics
 /// On a zero batch.
 pub fn measure_interleaved<B, F>(

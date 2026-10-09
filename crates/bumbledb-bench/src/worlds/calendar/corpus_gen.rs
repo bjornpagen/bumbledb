@@ -131,7 +131,6 @@ pub struct CalSegment {
     pub ooo: bool,
 }
 
-/// # Panics
 #[must_use]
 pub fn chain(seed: u64, sizes: &CalSizes, person: u64) -> Vec<CalSegment> {
     let n = sizes.segments_of(person);
@@ -162,7 +161,6 @@ pub fn chain(seed: u64, sizes: &CalSizes, person: u64) -> Vec<CalSegment> {
     segments
 }
 
-/// # Panics
 #[must_use]
 pub fn work_chain(seed: u64, person: u64) -> [(i64, i64); WORK_SEGMENTS] {
     let mut rng = Rng::new(crate::worlds::corpus_gen::mix(
@@ -182,7 +180,6 @@ pub fn work_chain(seed: u64, person: u64) -> [(i64, i64); WORK_SEGMENTS] {
     ]
 }
 
-/// # Panics
 #[must_use]
 pub fn created_at(seed: u64, event: u64) -> i64 {
     let word = crate::worlds::corpus_gen::mix(seed, ids::EVENT, event);
@@ -335,7 +332,6 @@ fn claim_row(sizes: &CalSizes, row: &SegmentRow) -> Vec<Value> {
     ]
 }
 
-/// # Panics
 #[must_use]
 pub fn slot_span(k: u64) -> (i64, i64) {
     let triple = i64::try_from(k / 3).expect("fits");
@@ -377,7 +373,6 @@ pub fn relation_rows(cfg: GenConfig, rel: RelationId) -> Box<dyn Iterator<Item =
     relation_rows_sized(cfg, sizes, rel)
 }
 
-/// # Panics
 pub fn relation_rows_sized(
     cfg: GenConfig,
     sizes: CalSizes,

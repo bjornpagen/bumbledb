@@ -9,9 +9,9 @@ use crate::worlds::corpus_gen::GenConfig;
 use crate::worlds::ledger::schema;
 use crate::worlds::writebench::{non_posting_relations, write_protocol};
 
-/// minus postings, built before any timing), the full posting stream
-/// # Errors
-/// # Panics
+/// The SQLite twin of `insert_stream`: into a fresh durable mirror per sample
+/// (the corpus minus postings, built before any timing), the full posting
+/// stream and its tags.
 pub fn insert_stream(cfg: GenConfig, scratch: &Path) -> Result<Measurement, String> {
     use std::cell::RefCell;
     let proto = write_protocol("insert_stream");

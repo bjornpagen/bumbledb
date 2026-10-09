@@ -1,13 +1,8 @@
-//! Mutable-consulted-relation support and the one-command delta algebra —
-//! independent model for consulted relation sets and change normalization.
-//!
-//! The support derivation here is INDEPENDENT: it reads the schema
-//! descriptor as data and computes the consulted/mutable relation sets
-//! itself; judgments come from the [`crate::oracle::naive::NaiveDb`] reference
-//! judge, never the engine. Differential tests compare the production
-//! support planner against [`mutable_support`] per accepted
-//! statement form — shared closed targets, closed sources, selections,
-//! capacity weights and isolated relations included.
+//! An independent model of consulted relation sets and change normalization:
+//! the support derivation reads the schema descriptor as data, and judgments
+//! come from the [`crate::oracle::naive::NaiveDb`] reference judge, never the
+//! engine. Differential tests compare the engine's support planner against
+//! [`mutable_support`] per accepted statement form.
 
 use std::collections::BTreeSet;
 

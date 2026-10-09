@@ -177,7 +177,6 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
             ids::INSTRUMENT => string_cmp(b, rng, atom, ids::INSTRUMENT, ids::instrument::SYMBOL),
             ids::TRANSFER => {
                 if rng.chance(1, 3) {
-                    // and must not be compared against interval values.
                     let Some(var) = b.var_at(atom, ids::transfer::WINDOW) else {
                         continue;
                     };

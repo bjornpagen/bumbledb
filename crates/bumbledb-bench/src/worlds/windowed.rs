@@ -110,7 +110,6 @@ pub fn relation_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec
     }
 }
 
-/// # Errors
 pub fn load<S>(db: &Db<S>, mass: Mass) -> Result<(), String> {
     for rel in [ids::PARENT, ids::CHILD] {
         db.write(crate::harness::bench_work(), |tx| {
@@ -132,8 +131,6 @@ fn unselected_parent(rng: &mut Rng) -> u64 {
     }
 }
 
-/// # Errors
-/// # Panics
 pub fn commit_window_admission(
     db: &Db<world::WindowedWorld>,
     proto: Protocol,
@@ -159,8 +156,6 @@ pub fn commit_window_admission(
     })
 }
 
-/// # Errors
-/// # Panics
 pub fn commit_window_baseline(
     db: &Db<baseline::UnwindowedWorld>,
     proto: Protocol,
@@ -186,8 +181,6 @@ pub fn commit_window_baseline(
     })
 }
 
-/// # Errors
-/// # Panics
 pub fn commit_window_exclusion(
     db: &Db<world::WindowedWorld>,
     proto: Protocol,
@@ -213,7 +206,6 @@ pub fn commit_window_exclusion(
     })
 }
 
-/// # Errors
 pub fn write_families(
     _cfg: GenConfig,
     scratch: &Path,

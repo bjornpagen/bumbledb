@@ -33,7 +33,6 @@ bumbledb::schema! {
     Edge(src, dst) -> Edge;
 }
 
-/// # Panics
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();

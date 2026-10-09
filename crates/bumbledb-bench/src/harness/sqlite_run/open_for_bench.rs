@@ -20,7 +20,6 @@ pub fn open_for_bench(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-/// # Errors
 pub fn mmap_whole_file(conn: &Connection) -> Result<(), String> {
     const FLOOR: u64 = 1 << 30;
     const HEADROOM: u64 = 256 << 20;
@@ -40,7 +39,8 @@ pub fn mmap_whole_file(conn: &Connection) -> Result<(), String> {
         .map_err(|e| format!("mmap parity: readback: {e}"))?;
     if u64::try_from(effective).unwrap_or(0) < file_bytes {
         return Err(format!(
-            "mmap parity: {effective} bytes mapped < the {file_bytes}-byte file —              raise SQLITE_MAX_MMAP_SIZE in the bundled build"
+            "mmap parity: {effective} bytes mapped < the {file_bytes}-byte file; \
+             raise SQLITE_MAX_MMAP_SIZE in the bundled build"
         ));
     }
     Ok(())

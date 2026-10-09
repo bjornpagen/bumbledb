@@ -41,7 +41,6 @@ impl Regime {
         }
     }
 
-    /// # Errors
     pub fn parse(label: &str) -> Result<Self, String> {
         REGIMES
             .into_iter()
@@ -194,8 +193,6 @@ pub struct RegimeRow {
 
 /// Cold open: time `open + prepare + first projection + drop` over an existing
 /// corpus directory.
-///
-/// # Errors
 pub fn cold_open(dir: &Path, samples: Option<u32>) -> Result<RegimeRow, String> {
     let query = projection(ids::ACCOUNT);
     let expected = {
@@ -235,8 +232,6 @@ pub fn cold_open(dir: &Path, samples: Option<u32>) -> Result<RegimeRow, String> 
 }
 
 /// Prepared full-account projection, gated against canonical-row scanning.
-///
-/// # Errors
 pub fn warm_scan(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, String> {
     let mut prepared = db
         .prepare(&projection(ids::ACCOUNT), work())
@@ -270,8 +265,6 @@ pub fn warm_scan(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, Str
 /// alternate — two separate commands, so one-command normalization cannot
 /// erase the mutation and the store returns to its loaded state every two
 /// samples.
-///
-/// # Errors
 pub fn post_write_first_read(
     db: &Db<Ledger>,
     cfg: GenConfig,
@@ -354,8 +347,6 @@ pub fn post_write_first_read(
 /// Large-result delivery: execute and seal, then pull actual cursor pages
 /// and visit every typed value. `end_to_end` is measured
 /// around both; segments are attributed, never summed into the headline.
-///
-/// # Errors
 pub fn large_result(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, String> {
     let count = samples.unwrap_or(16);
     let mut prepared = db
@@ -434,9 +425,6 @@ pub fn open_fd_count() -> Option<u64> {
 /// schedule (half the activations hit the two hottest tenants), each
 /// activation = open + prepare + full-account projection + close. Reports
 /// latency and before/after descriptor growth, not a sampled resource peak.
-///
-/// # Errors
-/// # Panics
 pub fn tenant_churn(
     base: &Path,
     tenants: u32,
@@ -544,8 +532,6 @@ fn push_row(out: &mut String, row: &RegimeRow) {
 
 /// The `app-perf` CLI lane: build the corpus once, run the requested regimes,
 /// write `app-perf.json` and `app-perf.md` into a fresh output directory.
-///
-/// # Errors
 pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(

@@ -5,18 +5,15 @@ use crate::oracle::naive::ParamValue;
 
 use super::{CapMs, CapOutcome, PreparedFamily, bind_args, bind_params, with_cap};
 
-/// # Errors
 pub fn sample(family: &mut PreparedFamily<'_>, params: &[Value]) -> Result<u64, String> {
     drain_typed(family, bind_params(&family.param_order, params))
         .map_err(|e| format!("sample: {e}"))
 }
 
-/// # Errors
 pub fn sample_args(family: &mut PreparedFamily<'_>, draw: &[ParamValue]) -> Result<u64, String> {
     drain_typed(family, bind_args(&family.param_order, draw)).map_err(|e| format!("sample: {e}"))
 }
 
-/// # Errors
 pub fn sample_capped(
     family: &mut PreparedFamily<'_>,
     conn: &rusqlite::Connection,

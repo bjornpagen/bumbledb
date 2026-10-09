@@ -43,7 +43,6 @@ impl PostingMint {
 
 /// The registered protocol for a write family (shared with the `SQLite` mirror
 /// runners in `sqlite_run`).
-/// # Panics
 pub(crate) fn write_protocol(name: &str) -> Protocol {
     families::write_families()
         .iter()
@@ -63,8 +62,6 @@ pub(crate) fn prepared_posting(rng: &mut Rng, sizes: &Sizes, id: PostingId) -> P
     }
 }
 
-/// # Errors
-/// # Panics
 pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0001);
@@ -82,8 +79,6 @@ pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measure
     })
 }
 
-/// # Errors
-/// # Panics
 pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0003);
@@ -101,8 +96,6 @@ pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Meas
     })
 }
 
-/// # Errors
-/// # Panics
 pub fn commit_batch_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0002);
@@ -129,9 +122,8 @@ pub(crate) fn non_posting_relations() -> impl Iterator<Item = RelationId> {
         .filter(|rel| *rel != ids::POSTING && *rel != ids::POSTING_TAG)
 }
 
+/// Every posting and posting tag in one commit, into a fresh store per sample
 /// under `scratch` (S-minus-postings, built before any timing starts).
-/// # Errors
-/// # Panics
 pub fn insert_stream_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, String> {
     let proto = write_protocol("insert_stream");
     let mut pending = VecDeque::new();
@@ -177,8 +169,6 @@ pub fn insert_stream_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurem
 /// First read after an unrelated Org insert, excluded from the timed window.
 /// "Cold" does not imply image invalidation: relation versions keep the
 /// Posting/Account/Holder images warm.
-/// # Errors
-/// # Panics
 pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let family = families::all()
         .iter()
@@ -209,8 +199,6 @@ pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
 /// aborts and a refused swap leaves the store byte-identical — the lane can
 /// never drift into measuring the insert-only fork, and a refusal never commits
 /// the replacement insert it would otherwise have smuggled in.
-/// # Errors
-/// # Panics
 pub(crate) fn posting_swap(
     db: &Db<Ledger>,
     rng: &mut Rng,
@@ -235,8 +223,6 @@ pub(crate) fn posting_swap(
 
 /// The first swap target — one seeded posting committed before any timing, so
 /// every touch (warmups included) has a revision to delete.
-/// # Errors
-/// # Panics
 pub(crate) fn posting_swap_seed(
     db: &Db<Ledger>,
     rng: &mut Rng,
@@ -255,8 +241,6 @@ pub(crate) fn posting_swap_seed(
 
 /// First read after replacing one Posting, with the swap outside the timer.
 /// Every round changes the relation this query reads, invalidating its image.
-/// # Errors
-/// # Panics
 pub fn cold_containment_walk_delete(
     db: &Db<Ledger>,
     cfg: GenConfig,
@@ -323,7 +307,8 @@ mod tests {
         db
     }
 
-    /// and the refusal commits NOTHING (the generation does not move).
+    /// A swap is one state-changing commit; a swap whose delete is a no-op
+    /// refuses, and the refusal commits NOTHING (the generation does not move).
     #[test]
     fn posting_swap_touch_is_delete_bearing_by_contract() {
         let dir = scratch("swap-shape");

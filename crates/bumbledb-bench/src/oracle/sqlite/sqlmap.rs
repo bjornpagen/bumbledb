@@ -197,7 +197,6 @@ pub fn schema_ddl(schema: &Schema) -> Vec<String> {
     statements
 }
 
-/// # Panics
 fn sql_literal(value: &Value) -> String {
     match value {
         Value::Bool(v) => format!("{}", i64::from(*v)),
@@ -248,7 +247,8 @@ pub fn extension_rows(relation: &bumbledb::schema::RelationDescriptor) -> Vec<Ve
         .collect()
 }
 
-/// mirror must never consume engine encodings.
+/// One `INSERT` per closed-relation row, rendered from the descriptor's own
+/// values: the mirror never consumes engine encodings.
 #[must_use]
 pub fn extension_ddl(descriptor: &bumbledb::schema::SchemaDescriptor) -> Vec<String> {
     let mut statements = Vec::new();
@@ -306,7 +306,6 @@ pub fn insert_sql(relation: &Relation) -> String {
     )
 }
 
-/// # Panics
 #[must_use]
 pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
     use rusqlite::types::Value as Sql;
@@ -326,7 +325,6 @@ pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
     }
 }
 
-/// # Panics
 #[must_use]
 pub fn interval_halves(value: &Value) -> (rusqlite::types::Value, rusqlite::types::Value) {
     use rusqlite::types::Value as Sql;
@@ -366,7 +364,6 @@ pub fn to_sql_row(fact: &[Value]) -> Vec<rusqlite::types::Value> {
     out
 }
 
-/// # Errors
 pub fn from_sql_value(
     value: &rusqlite::types::Value,
     expected: &ValueType,

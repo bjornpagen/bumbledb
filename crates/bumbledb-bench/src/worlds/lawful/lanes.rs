@@ -1,9 +1,7 @@
-//! Six families ([`super::families`]): two LEGAL commit lanes (fsync-bound,
-//! both engines folding ONE precomputed [`AttemptOp`] stream — the crud
-//! representation, so post-state equality is structural) and four REJECTION
-//! lanes, where the refusal IS the measured work. **The refusal contract rides
-//! in the closure's type** (the runner per family, explicit [`Protocol`],
-//! `harness::measure` legal lane ever mints after them.
+//! The lawful world's six families ([`super::families`]): two legal commit
+//! lanes, where both engines fold one precomputed [`AttemptOp`] stream so
+//! post-state equality is structural, and four rejection lanes, where the
+//! refusal is the measured work.
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{Db, Schema, StatementId, Theory};
 use rusqlite::Connection;
@@ -83,7 +81,6 @@ fn lawful_schema() -> Schema {
         .expect("LawfulWorld is a valid theory")
 }
 
-/// # Panics
 #[must_use]
 pub fn psi_statement() -> StatementId {
     let index = enforcement::MAP
@@ -160,8 +157,8 @@ fn insert_attempt_sqlite(
     Ok(())
 }
 
-/// The window setup, engine side (untimed, before any measuring): one
-/// # Errors
+/// The window setup, engine side (untimed, before any measuring): task 0's
+/// attempts filled up to the window cap in one commit.
 pub fn fill_window_target_engine(
     db: &Db<LawfulWorld>,
     sizes: LawSizes,
@@ -178,7 +175,6 @@ pub fn fill_window_target_engine(
     Ok(())
 }
 
-/// # Errors
 pub fn fill_window_target_sqlite(
     conn: &Connection,
     sizes: LawSizes,
@@ -228,7 +224,6 @@ pub fn commit_attempt_engine(
     })
 }
 
-/// # Errors
 pub fn commit_attempt_sqlite(
     conn: &Connection,
     proto: Protocol,
@@ -291,8 +286,9 @@ pub fn commit_cluster_engine(
     })
 }
 
-/// immediate FK and trigger checks pass (Attempt before its Verdict,
-/// # Errors
+/// The SQLite twin of the commit cluster, inserted in an order whose immediate
+/// FK and trigger checks pass (Attempt before its Verdict, the steer before its
+/// scope).
 pub fn commit_cluster_sqlite(
     conn: &Connection,
     proto: Protocol,
@@ -423,7 +419,6 @@ fn refused_insert_sqlite<P: rusqlite::Params>(
     }
 }
 
-/// # Errors
 pub fn reject_key_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Measurement, String> {
     let mut sample = 0u64;
     harness::measure(proto, || {
@@ -449,7 +444,6 @@ pub fn reject_key_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Measur
 /// `law_reject_key` on `SQLite`: the same duplicate `(task 1, n 0)` binding
 /// (the identical sacrificial id) expecting the UNIQUE violation, then
 /// `ROLLBACK` — the refused round trip is the sample.
-/// # Errors
 pub fn reject_key_sqlite(conn: &Connection, proto: Protocol) -> Result<Measurement, String> {
     let mut sample = 0u64;
     harness::measure(proto, || {
@@ -459,7 +453,6 @@ pub fn reject_key_sqlite(conn: &Connection, proto: Protocol) -> Result<Measureme
     })
 }
 
-/// # Errors
 pub fn reject_containment_engine(
     db: &Db<LawfulWorld>,
     proto: Protocol,
@@ -487,7 +480,6 @@ pub fn reject_containment_engine(
     })
 }
 
-/// # Errors
 pub fn reject_containment_sqlite(
     conn: &Connection,
     proto: Protocol,
@@ -507,8 +499,9 @@ pub fn reject_containment_sqlite(
     })
 }
 
-/// `law_reject_window` on bumbledb (after the untimed setup filled task
-/// # Errors
+/// `law_reject_window` on bumbledb: after the untimed setup filled task 0's
+/// window, each sample's attempt at `n = WINDOW_CAP` is refused by the
+/// capacity law.
 pub fn reject_window_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Measurement, String> {
     let mut sample = 0u64;
     harness::measure(proto, || {
@@ -525,7 +518,6 @@ pub fn reject_window_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Mea
     })
 }
 
-/// # Errors
 pub fn reject_window_sqlite(conn: &Connection, proto: Protocol) -> Result<Measurement, String> {
     let mut sample = 0u64;
     harness::measure(proto, || {
@@ -540,7 +532,6 @@ pub fn reject_window_sqlite(conn: &Connection, proto: Protocol) -> Result<Measur
     })
 }
 
-/// # Errors
 pub fn reject_scope_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Measurement, String> {
     harness::measure(proto, || {
         refused_commit(
@@ -559,7 +550,6 @@ pub fn reject_scope_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Meas
     })
 }
 
-/// # Errors
 pub fn reject_scope_sqlite(conn: &Connection, proto: Protocol) -> Result<Measurement, String> {
     harness::measure(proto, || {
         refused_insert_sqlite(conn, "law_reject_scope", SCOPE_INSERT, (0i64, 0i64))

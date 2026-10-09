@@ -203,8 +203,6 @@ fn join_query() -> Query {
     })
 }
 
-/// # Errors
-/// # Panics
 pub fn run(args: &HeapArgs) -> Result<i32, String> {
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(

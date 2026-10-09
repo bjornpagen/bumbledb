@@ -37,7 +37,6 @@ pub struct CalFamily {
 }
 
 impl CalFamily {
-    /// # Errors
     pub fn sql_for(
         &self,
         query: &Query,
@@ -550,7 +549,6 @@ pub fn translator_unpaired() -> Vec<&'static str> {
 
 pub const RANDOM_DRAWS: u32 = 4;
 
-/// # Panics
 #[must_use]
 pub fn random_draw(
     name: &str,

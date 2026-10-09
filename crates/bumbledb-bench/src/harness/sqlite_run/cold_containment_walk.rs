@@ -8,10 +8,9 @@ use crate::worlds::writebench::write_protocol;
 
 use super::{PreparedFamily, sample_args};
 
-/// `cold_containment_walk` on `SQLite`: the identical cold protocol — a write
-/// commit (the org touch, mirroring `harness::org_touch`) before every
-/// # Errors
-/// # Panics
+/// `cold_containment_walk` on `SQLite`: the identical cold protocol, a write
+/// commit (the org touch, mirroring `harness::org_touch`) before every timed
+/// read.
 pub fn cold_containment_walk(conn: &Connection, cfg: GenConfig) -> Result<Measurement, String> {
     let family = crate::worlds::families::all()
         .iter()

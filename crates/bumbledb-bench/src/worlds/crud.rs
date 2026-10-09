@@ -39,7 +39,6 @@ pub mod ids {
     pub const COUNTER: RelationId = RelationId(1);
 }
 
-/// # Panics
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     use bumbledb::schema::ValidateDescriptor as _;

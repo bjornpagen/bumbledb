@@ -26,8 +26,6 @@ pub fn run(cfg: &VerifyConfig) -> Result<VerifyReport, VerifyFailure> {
     run_with_sql_override(cfg, |_| None)
 }
 
-/// # Errors
-/// # Panics
 pub fn run_with_sql_override(
     cfg: &VerifyConfig,
     override_sql: impl Fn(&str) -> Option<String>,
@@ -292,8 +290,6 @@ pub(super) fn case_total(cfg: &VerifyConfig) -> u64 {
         + (u64::from(cfg.random_cases) + u64::from(EMPTY_STORE_RANDOM_CASES)) * 4
 }
 
-/// # Errors
-/// # Panics
 pub fn run_prepared(
     cfg: &VerifyConfig,
     db: &Db<Ledger>,

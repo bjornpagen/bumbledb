@@ -39,7 +39,6 @@ pub fn relation_rows(
 /// with the durable pragma set and the schema-derived DDL (which emits the
 /// UNIQUE indexes for both key statements, the upsert lane's `ON CONFLICT`
 /// target), `ANALYZE`, a truncating WAL checkpoint, and the parity readback.
-/// # Errors
 pub fn load_stores(
     dir: &Path,
     seed: u64,

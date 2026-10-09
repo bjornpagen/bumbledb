@@ -104,7 +104,6 @@ impl Builder {
     }
 }
 
-/// # Panics
 #[must_use]
 pub(super) fn builder_relation(atom: &Atom) -> RelationId {
     atom.source

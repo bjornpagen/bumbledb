@@ -139,7 +139,6 @@ pub fn power_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Va
     }
 }
 
-/// # Panics
 pub fn calendar_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
     let interval = |start: u64, end: u64| {
         Value::IntervalU64(bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"))
@@ -161,7 +160,6 @@ pub fn calendar_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec
     }
 }
 
-/// # Errors
 pub fn load<S>(
     db: &Db<S>,
     mass: Mass,
@@ -178,9 +176,8 @@ pub fn load<S>(
     Ok(())
 }
 
-/// The protocol threads in
-/// # Errors
-/// # Panics
+/// One device per sample under a random pool's power budget; `mint` threads
+/// the next device id through the protocol.
 pub fn commit_capacity_sum(
     db: &Db<power::PowerWorld>,
     proto: Protocol,
@@ -202,8 +199,6 @@ pub fn commit_capacity_sum(
     })
 }
 
-/// # Errors
-/// # Panics
 pub fn commit_capacity_baseline(
     db: &Db<power_baseline::UnbudgetedWorld>,
     proto: Protocol,
@@ -225,8 +220,6 @@ pub fn commit_capacity_baseline(
     })
 }
 
-/// # Errors
-/// # Panics
 pub fn commit_capacity_duration(
     db: &Db<calendar::CalendarCapacityWorld>,
     proto: Protocol,
@@ -259,12 +252,13 @@ pub fn commit_capacity_duration(
 
 /// The POLARITY TABLE decides the trigger set per law: a non-negative-weight
 /// ceiling is insert-violable on the weighed side (a new device) AND on the
-/// bound-carrying side (a re-inserted pool lowering its own supply — the engine
-/// models an complete set is the two BEFORE INSERT triggers; a floor law would
-/// owe a BEFORE DELETE twin instead.
+/// bound-carrying side (a re-inserted pool lowering its own supply), so the
+/// complete set is the two BEFORE INSERT triggers; a floor law would owe a
+/// BEFORE DELETE twin instead.
 pub mod sqlite {
 
-    /// because BEFORE INSERT sees pre-row state.
+    /// The mirror's tables and triggers. The budget trigger adds the new row to
+    /// the sum, because BEFORE INSERT sees pre-row state.
     pub const DDL: &[&str] = &[
         "CREATE TABLE \"Pool\" (\"id\" INTEGER NOT NULL, \"supply\" INTEGER NOT NULL, \
          PRIMARY KEY (\"id\")) STRICT",
@@ -283,7 +277,6 @@ pub mod sqlite {
     ];
 }
 
-/// # Errors
 pub fn write_families(
     _cfg: GenConfig,
     scratch: &Path,

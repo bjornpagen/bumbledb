@@ -27,7 +27,6 @@ impl LoadStats {
     }
 }
 
-/// # Errors
 pub fn load_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<LoadStats, bumbledb::Error> {
     let start = Instant::now();
     let mut facts = 0u64;
@@ -45,7 +44,6 @@ pub fn load_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<LoadStats, bumbl
     Ok(LoadStats::of(facts, start.elapsed()))
 }
 
-/// # Errors
 /// # Panics
 /// If WAL refuses to engage — the fairness protocol is unconditional.
 pub fn configure_sqlite(conn: &Connection) -> rusqlite::Result<()> {
@@ -60,8 +58,6 @@ pub fn configure_sqlite(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// # Errors
-/// # Panics
 pub fn insert_rows(
     conn: &Connection,
     relation: &bumbledb::schema::Relation,
@@ -84,8 +80,6 @@ pub fn insert_rows(
     Ok(facts)
 }
 
-/// # Errors
-/// # Panics
 pub fn load_sqlite_relation(
     conn: &Connection,
     cfg: GenConfig,
@@ -94,7 +88,6 @@ pub fn load_sqlite_relation(
     insert_rows(conn, schema().relation(rel), relation_rows(cfg, rel))
 }
 
-/// # Errors
 /// # Panics
 /// When WAL does not engage.
 pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection, LoadStats)> {
@@ -117,7 +110,6 @@ pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection,
     Ok((conn, LoadStats::of(facts, start.elapsed())))
 }
 
-/// # Panics
 pub fn assert_loaded_equal(db: &Db<Ledger>, conn: &Connection, cfg: GenConfig) {
     let schema = schema();
     let sizes = Sizes::of(cfg.scale);

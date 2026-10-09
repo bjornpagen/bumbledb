@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use crate::harness::report;
 
-/// # Errors
 pub fn cmd_lawful(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(

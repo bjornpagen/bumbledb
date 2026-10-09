@@ -6,7 +6,6 @@ use crate::oracle::sqlite::translate::Translated;
 use super::PreparedFamily;
 
 impl<'c> PreparedFamily<'c> {
-    /// # Errors
     pub fn new(
         conn: &'c Connection,
         translated: &Translated,

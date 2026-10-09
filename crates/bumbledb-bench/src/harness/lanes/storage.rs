@@ -197,7 +197,8 @@ fn measure_world<S: bumbledb::Theory + Copy>(
     }
     drop(db);
 
-    // connection, truncating checkpoint, drop, stat.
+    // Each SQLite twin: load on one connection, truncating checkpoint, drop,
+    // stat.
     let indexed_file = scale_dir.join(format!("{world}-indexed.sqlite"));
     let conn = (spec.load_indexed)(&indexed_file)?;
     let indexed_counts =
@@ -370,7 +371,6 @@ fn render(report: &StorageReport) -> String {
     out
 }
 
-/// # Errors
 pub fn run(args: &StorageArgs) -> Result<i32, String> {
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(

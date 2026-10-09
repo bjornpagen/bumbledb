@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use crate::harness::Protocol;
 use crate::harness::report;
 
-/// # Errors
 pub fn cmd_scenarios(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
     let proto = Protocol {
         warmups: 8,

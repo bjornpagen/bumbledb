@@ -73,7 +73,6 @@ bumbledb::schema! {
     Mandate(account, active) -> Mandate;
 }
 
-/// # Panics
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -101,7 +100,8 @@ pub mod ids {
     pub const SOURCE: RelationId = RelationId(10);
     pub const TAG: RelationId = RelationId(11);
 
-    /// ids 9..12) sit after every ordinary relation by declaration:
+    /// The ordinary relations; the closed relations (ids 9..12) sit after them
+    /// by declaration.
     pub const RELATIONS: u32 = 9;
 
     pub mod holder {
