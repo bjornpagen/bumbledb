@@ -15,7 +15,7 @@ Owns: `ts/**` (except `ts/src/native/binding.d.ts`), `ts-log/**`, `examples/**`.
 | F7/F8 consumption (generated `binding.d.ts`, JSON inputs, `_tag` outputs) | landed |
 | D6 stores (MemStore with faults, FsStore, S3Store), I/O executor, machine driver | landed |
 | D6/F9 `Database.make/layer/pool`, submit, consistency, migrations on open | landed |
-| D7 migrations + CLI | after D6 |
+| D7 `bumbledb generate / check / migrate` | landed |
 | D8 notes | after D6/D7 |
 
 ## How TS loads the addon (for bridge)
@@ -121,6 +121,13 @@ TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `impo
     name and fields are copied by default; `populate({ from: QueryReader<From>, into: ChangeDraft<To> })`
     adds rows. `onOpen: "verify"` fails with `DbError` reason `Engine { kind: "MigrationPending" }`.
   - `RequestId` (32 hex digits) and `Database.requestId()`.
+
+- `bumbledb` bin (`ts/src/bin.ts`, `dist/bin.js`): `generate --schema <file>#<export> --name <name>
+  [--migrations dir]` writes `NNNN_name/{schema.json, schema.ts, migration.ts}` and `index.ts`
+  (`export const migrations = [...] as const`); `check --schema ...` verifies hashes, the index and
+  that the schema has no ungenerated change; `migrate --config <file>` opens the config's database
+  (default export: the app's `Database` options) with `onOpen: "migrate"`. A migration hash is
+  sha256 over `id + "\n" + schema.json`. `@effect/platform-node` is no longer a dependency.
 
 ### For ci
 - `examples/consumers/{log-ts,native-ledger}` are deleted (they used bumbledb-log).
