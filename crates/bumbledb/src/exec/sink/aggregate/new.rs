@@ -218,7 +218,6 @@ impl AggregateSink {
             group_counts: Vec::new(),
             cardinality_overflow: false,
             work: None,
-            spill: None,
             error: None,
             finished: false,
             terminal: crate::exec::sink::SinkProgress::Continue,

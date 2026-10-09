@@ -656,13 +656,8 @@ pub struct AggregateSink {
     /// Cancellation shared with scratch and deduplication; absent only in
     /// standalone kernel callers that have no operation context.
     work: Option<crate::work::WorkContext>,
-    #[allow(
-        dead_code,
-        reason = "the numeric lane stops reading it before this lane deletes it"
-    )]
-    spill: Option<Box<aggregate::spill::GroupSpill>>,
-    /// Sticky spill/scratch failure recorded by the infallible fold paths;
-    /// finalize refuses before any group publishes (Q-ATOMIC).
+    /// Sticky failure recorded by the infallible fold paths; finalize
+    /// refuses before any group publishes.
     error: Option<crate::error::Error>,
     /// Successful finalize has published every group (L05 Finish).
     finished: bool,

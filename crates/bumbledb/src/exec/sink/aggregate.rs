@@ -7,12 +7,6 @@ mod new;
 pub(in crate::exec::sink) mod reduce;
 mod sink;
 
-/// The group state never leaves RAM: `AggregateSink::spill` is always `None`.
-pub(in crate::exec::sink) mod spill {
-    #[derive(Debug)]
-    pub(crate) enum GroupSpill {}
-}
-
 pub(in crate::exec::sink) use new::{parse_finds, parse_finds_into};
 
 /// The order key of F64 NaN, the largest key: MAX propagates it unchanged.
