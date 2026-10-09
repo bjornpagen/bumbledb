@@ -199,13 +199,10 @@ fn shared_batch_reductions_follow_selection_and_layout_changes() {
         i64_to_word(5),
         f(-1e16),
     ];
-    for disk in [false, true] {
+    {
         let mut sink = AggregateSink::new(&finds, 3);
         let mut reference = AggregateSink::new(&finds, 3);
         sink.begin(Some(crate::api::db::test_operation()));
-        if disk {
-            sink.spill_groups().unwrap();
-        }
         let mut feed = |key_slots: &[usize], keys: &[u64], survivors: &[u32], outer: [u64; 3]| {
             feed_batch_and_reference(
                 &mut sink,
@@ -374,20 +371,11 @@ fn constant_group_batches_fold_once_per_run() {
     };
 
     let mut reference: Option<Vec<Vec<u64>>> = None;
-    for (batch, distinct, disk) in [
-        (1usize, true, false),
-        (7, true, false),
-        (128, true, false),
-        (128, false, false),
-        (128, true, true),
-    ] {
+    for (batch, distinct) in [(1usize, true), (7, true), (128, true), (128, false)] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = aggregate_sink(&plan, finds(&plan), distinct);
         sink.begin(Some(crate::api::db::test_operation()));
-        if disk {
-            sink.spill_groups().unwrap();
-        }
         let mut execute = |sink: &mut AggregateSink| {
             Executor::with_batch_size(&plan, batch)
                 .execute(
@@ -420,7 +408,7 @@ fn constant_group_batches_fold_once_per_run() {
             .collect();
         expected.sort_unstable();
         let rerun = sorted_aggregate_rows(&mut sink);
-        assert_eq!(rerun, expected, "aliases survive aim/reset and spill");
+        assert_eq!(rerun, expected, "aliases survive aim and reset");
 
         assert_eq!(rows.len(), 8, "batch {batch} distinct {distinct}");
         assert_eq!(
@@ -868,186 +856,34 @@ fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
     );
 }
 
-/// Force aggregate spill before, during, and after group creation. Every
-/// regime must produce identical answer words, including exact float bits;
-/// partition merges retain the accumulator limbs without rounding.
+/// Past the group map's index limit, existing groups still fold but a new
+/// group refuses with `Capacity::Groups`, and nothing publishes.
 #[test]
-fn group_state_spill_matches_resident_bits_before_during_and_after_first_group() {
-    use crate::exec::run::{Bindings, Sink as _};
-    use bumbledb_theory::F64;
-
-    let finds = vec![
-        FindSpec::Var { slot: 0, width: 1 },
-        FindSpec::Agg(AggSpec::Float {
-            op: FoldOp::Sum,
-            slot: 1,
-        }),
-        FindSpec::Agg(AggSpec::Float {
-            op: FoldOp::Mean,
-            slot: 1,
-        }),
-        FindSpec::Agg(AggSpec::Fold {
-            op: FoldOp::Sum,
-            slot: 2,
-            width: 1,
-            signed: true,
-        }),
-        FindSpec::Agg(AggSpec::Count),
-        FindSpec::Agg(AggSpec::Fold {
-            op: FoldOp::Min,
-            slot: 2,
-            width: 1,
-            signed: true,
-        }),
-    ];
-    let feed = |sink: &mut AggregateSink, partition: Option<usize>| {
-        let mut bindings = Bindings::new(3);
-        // Catastrophic-cancellation floats across interleaved groups, so
-        // flush partitions cut through every group repeatedly.
-        for i in 0..96u64 {
-            let group = i % 5;
-            bindings.reset();
-            bindings.set(0, group);
-            bindings.set(
-                1,
-                F64::from(
-                    if i.is_multiple_of(2) { 1e16 } else { -1e16 }
-                        + f64::from(u32::try_from(i).expect("96 rows")) * 0.25,
-                )
-                .to_order_key(),
-            );
-            bindings.set(2, i64_to_word(i.cast_signed() - 48));
-            sink.emit(&bindings);
-            if partition.is_some_and(|rows| (usize::try_from(i).unwrap() + 1).is_multiple_of(rows))
-            {
-                sink.spill_groups().unwrap();
-            }
-        }
-    };
-    let work = crate::work::WorkContext::new();
-    let mut resident = AggregateSink::new(finds.clone(), 3);
-    feed(&mut resident, None);
-    assert!(!resident.group_state_spilled());
-    let mut expected = resident.into_answers().expect("resident");
-    expected.sort_unstable();
-    assert_eq!(expected.len(), 5, "five groups");
-
-    // Explicit partitions cut across groups at different points.
-    for partition in [1usize, 7, 29] {
-        let mut spilled = AggregateSink::new(finds.clone(), 3);
-        spilled.begin(Some(work.clone()));
-        feed(&mut spilled, Some(partition));
-        assert!(
-            spilled.group_state_spilled(),
-            "partition {partition} forces the transition"
-        );
-        let mut got = spilled.into_answers().expect("spilled");
-        got.sort_unstable();
-        assert_eq!(got, expected, "partition {partition}: exact word parity");
-    }
-
-    // Ordinary execution remains resident for this representable fixture.
-    let mut roomy = AggregateSink::new(finds, 3);
-    roomy.begin(Some(work));
-    feed(&mut roomy, None);
-    assert!(!roomy.group_state_spilled());
-    let mut got = roomy.into_answers().expect("roomy");
-    got.sort_unstable();
-    assert_eq!(got, expected);
-}
-
-/// The spilled Pack drain streams maximal segments from the scratch map's
-/// key order — same segments as the resident sweep, claims interleaved
-/// across groups and out of start order.
-#[test]
-fn pack_group_spill_streams_the_same_maximal_segments() {
-    use crate::exec::run::{Bindings, Sink as _};
-
-    let finds = vec![
-        FindSpec::Var { slot: 0, width: 1 },
-        FindSpec::Pack { slot: 1 },
-    ];
-    let claims: &[(u64, u64, u64)] = &[
-        (1, 30, 40),
-        (2, 10, u64::MAX),
-        (1, 10, 20),
-        (2, 1, 2),
-        (1, 10, 15),
-        (1, 5, 12),
-        (1, 30, 40), // duplicate claim from a distinct binding
-        (3, 7, 8),
-    ];
-    let feed = |sink: &mut AggregateSink, partition: Option<usize>| {
-        let mut bindings = Bindings::new(4);
-        for (i, (group, start, end)) in claims.iter().enumerate() {
-            bindings.reset();
-            // Slot 3 makes each binding distinct, so the duplicate claim
-            // survives dedup and exercises the scratch set's exact
-            // insert-if-absent.
-            bindings.set(0, *group);
-            bindings.set(1, *start);
-            bindings.set(2, *end);
-            bindings.set(3, i as u64);
-            sink.emit(&bindings);
-            if partition.is_some_and(|rows| (i + 1).is_multiple_of(rows)) {
-                sink.spill_groups().unwrap();
-            }
-        }
-    };
-    // Pack claims sit in slots (1, 2): slot 1 carries start, slot 1+1 end.
-    let mut resident = AggregateSink::new(finds.clone(), 4);
-    feed(&mut resident, None);
-    let mut expected = resident.into_answers().expect("resident");
-    expected.sort_unstable();
-    assert_eq!(
-        expected,
-        vec![
-            vec![1, 5, 20],
-            vec![1, 30, 40],
-            vec![2, 1, 2],
-            vec![2, 10, u64::MAX],
-            vec![3, 7, 8],
-        ]
-    );
-
-    let work = crate::work::WorkContext::new();
-    for partition in [1usize, 3] {
-        let mut spilled = AggregateSink::new(finds.clone(), 4);
-        spilled.begin(Some(work.clone()));
-        feed(&mut spilled, Some(partition));
-        assert!(spilled.group_state_spilled(), "partition {partition}");
-        let mut got = spilled.into_answers().expect("spilled");
-        got.sort_unstable();
-        assert_eq!(got, expected, "partition {partition}");
-    }
-}
-
-/// Cardinality stays total across spilled partition merges: a merged group
-/// count past `u64::MAX` is the same typed overflow the resident fold
-/// raises, and no group publishes (Q-ATOMIC).
-#[test]
-fn spilled_partition_merge_refuses_cardinality_overflow() {
+fn group_exhaustion_refuses_new_groups_with_capacity_groups() {
     use crate::exec::run::{Bindings, Sink as _};
 
     let finds = vec![
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Agg(AggSpec::Count),
     ];
-    let work = crate::work::WorkContext::new();
     let mut sink = AggregateSink::new(finds, 2);
-    sink.begin(Some(work));
+    sink.begin(Some(crate::work::WorkContext::new()));
     let mut bindings = Bindings::new(2);
     bindings.set(0, 7);
     bindings.set(1, 1);
-    sink.emit(&bindings); // group 7 folds in RAM
-    sink.spill_groups().unwrap(); // retain count one in scratch
+    sink.emit(&bindings);
+    let super::super::GroupTable::Hashed(map) = &mut sink.groups else {
+        panic!("hashed groups")
+    };
+    map.assume_full();
     bindings.set(1, 2);
-    sink.emit(&bindings); // fresh RAM partition counts the second binding
-    assert!(sink.group_state_spilled());
-    // Synthetic boundary (no impossible allocation): the next flush merges
-    // RAM count u64::MAX into the spilled count 1.
-    sink.group_counts[0] = u64::MAX;
-
+    assert!(
+        !sink.emit(&bindings).is_terminal(),
+        "an existing group folds"
+    );
+    assert!(sink.error.is_none());
+    bindings.set(0, 8);
+    assert!(sink.emit(&bindings).is_terminal(), "a new group refuses");
     let mut emitted = 0;
     let refused = sink.finalize_into(&mut Vec::new(), |_| {
         emitted += 1;
@@ -1055,51 +891,9 @@ fn spilled_partition_merge_refuses_cardinality_overflow() {
     });
     assert_eq!(
         refused,
-        Err(Error::Overflow(crate::error::OverflowKind::Cardinality))
+        Err(Error::Capacity(crate::error::Capacity::Groups))
     );
     assert_eq!(emitted, 0, "no partial group published");
-    // Failure → success reuse: reset disposes the scratch tier.
-    sink.reset();
-    assert!(!sink.group_state_spilled());
-    bindings.set(0, 9);
-    bindings.set(1, 1);
-    sink.emit(&bindings);
-    assert_eq!(sink.into_answers().unwrap(), vec![vec![9, 1]]);
-}
-
-/// Legal multi-word Pack group heads survive a partition flush. Ten words remain the narrow
-/// (inline-key) regime; token tables start only past `MAX_INLINE_KEY`.
-#[test]
-fn wide_pack_group_heads_survive_explicit_partition_flush() {
-    use crate::exec::run::{Bindings, Sink as _};
-
-    // Ten u64 group-key words plus interval endpoints still fit inline.
-    let finds = vec![
-        FindSpec::Var { slot: 0, width: 10 },
-        FindSpec::Pack { slot: 10 },
-    ];
-    let work = crate::work::WorkContext::new();
-    let mut sink = AggregateSink::new(finds, 12);
-    sink.begin(Some(work));
-    let mut bindings = Bindings::new(12);
-    for word in 0..10 {
-        bindings.set(word, word as u64 + 1);
-    }
-    bindings.set(10, 5);
-    bindings.set(11, 20);
-    sink.emit(&bindings);
-    sink.spill_groups().unwrap();
-    assert!(
-        sink.group_state_spilled(),
-        "wide Pack must not opt out of spill"
-    );
-    assert_eq!(
-        sink.pack_wide_mode(),
-        Some(false),
-        "10 group words plus endpoints still fit the inline key bound"
-    );
-    let answers = sink.into_answers().expect("wide pack spill");
-    assert_eq!(answers, vec![vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 5, 20]]);
 }
 
 #[test]

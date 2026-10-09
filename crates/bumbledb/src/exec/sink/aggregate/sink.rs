@@ -7,22 +7,6 @@ use super::super::FoldSource;
 use super::reduce::{Partial, merge};
 
 impl Sink for AggregateSink {
-    fn retains_binding_slot(&self, slot: usize) -> bool {
-        let in_spans = |spans: &[(usize, usize)]| {
-            spans
-                .iter()
-                .any(|&(start, width)| slot >= start && slot - start < width)
-        };
-        in_spans(&self.group_spans)
-            || match &self.dedup {
-                DedupState::Bindings { .. } => slot < self.real_slots,
-                DedupState::Union { spans, .. } | DedupState::DnfUnion { spans, .. } => {
-                    in_spans(spans)
-                }
-                DedupState::Elided { .. } => false,
-            }
-    }
-
     #[inline]
     fn may_use_distinct_traversal() -> bool {
         true
@@ -99,12 +83,13 @@ impl Sink for AggregateSink {
 
     fn end_scan(&mut self, scan: &LeafScan<'_>) -> u64 {
         let count = self.scan_count;
-        self.maybe_spill_groups();
         if count == 0 || self.error.is_some() || self.cardinality_overflow {
             return 0;
         }
 
-        let group_idx = self.probe_group();
+        let Some(group_idx) = self.probe_group() else {
+            return 0;
+        };
         if !self.advance_group(group_idx, count) {
             return 0;
         }

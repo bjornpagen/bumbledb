@@ -1,6 +1,6 @@
 use crate::exec::sink::{
     AggSpec, AggregateSink, DENSE_GROUPS_CAP, DedupState, FindSpec, GroupState, GroupTable,
-    SinkSpec, SpillSet,
+    SeenSet, SinkSpec,
 };
 use crate::exec::wordmap::WordMap;
 
@@ -148,7 +148,7 @@ impl AggregateSink {
         let (dedup, union_words) = match regime {
             DedupRegime::Bindings => (
                 DedupState::Bindings {
-                    seen: SpillSet::with_capacity_hint(scratch_words, hint, false),
+                    seen: SeenSet::with_capacity_hint(scratch_words, hint, false),
                 },
                 0,
             ),
@@ -157,7 +157,7 @@ impl AggregateSink {
                 let words: usize = spans.iter().map(|(_, width)| width).sum();
                 (
                     DedupState::Union {
-                        seen: SpillSet::with_capacity_hint(words, hint, false),
+                        seen: SeenSet::with_capacity_hint(words, hint, false),
                         spans,
                     },
                     words,
@@ -168,7 +168,7 @@ impl AggregateSink {
                 let words: usize = spans.iter().map(|(_, width)| width).sum();
                 (
                     DedupState::DnfUnion {
-                        seen: SpillSet::with_capacity_hint(words, hint, false),
+                        seen: SeenSet::with_capacity_hint(words, hint, false),
                         spans,
                     },
                     words,
@@ -275,24 +275,15 @@ impl AggregateSink {
         }
     }
 
-    /// Live groups. Exact while resident; once the group state spilled it
-    /// is an upper bound (a group folded across flushes counts in both
-    /// tiers). Downstream consumers use it only as a capacity hint.
+    /// Live groups.
     #[must_use]
     pub fn group_count(&self) -> usize {
         self.groups.len()
-            + self.spill.as_ref().map_or(0, |spill| {
-                usize::try_from(spill.groups).expect("64-bit usize")
-            })
     }
 
-    /// A resident fold emits one row per group; Pack emits no more
-    /// segments than its retained claims. Spilled state has no cheap
-    /// resident bound and streams to the scratch destination instead.
+    /// An upper bound on finalized rows: one per fold group; Pack emits no
+    /// more segments than its claims.
     pub(crate) fn resident_row_bound(&self) -> Option<usize> {
-        if self.group_state_spilled() {
-            return None;
-        }
         match &self.group_state {
             GroupState::Folds { .. } => Some(self.groups.len()),
             GroupState::Pack { claims, .. } => claims[..self.groups.len()]
@@ -304,7 +295,7 @@ impl AggregateSink {
     #[must_use]
     #[cfg(test)]
     pub fn distinct_seen(&self) -> Option<usize> {
-        self.dedup.seen().map(SpillSet::len)
+        self.dedup.seen().map(SeenSet::len)
     }
 
     /// Only the single resident scalar rule may enable this. Keep the
@@ -342,13 +333,13 @@ impl AggregateSink {
         self.work = work;
     }
 
-    /// The sticky failure recorded by the infallible emit path, if any —
-    /// the group-spill failure first, then the dedup seen-set's.
+    /// The sticky failure recorded by the infallible emit path, if any: the
+    /// sink's own first, then the dedup seen-set's.
     pub(crate) fn take_error(&mut self) -> Option<crate::error::Error> {
         let error = self
             .error
             .take()
-            .or_else(|| self.dedup.seen_mut().and_then(SpillSet::take_error));
+            .or_else(|| self.dedup.seen_mut().and_then(SeenSet::take_error));
         if let Some(error) = &error {
             self.terminal = crate::exec::sink::classify_progress(error);
         }
@@ -373,7 +364,7 @@ impl AggregateSink {
         }
         self.dedup
             .seen()
-            .map_or(SinkProgress::Continue, SpillSet::progress)
+            .map_or(SinkProgress::Continue, SeenSet::progress)
     }
 
     #[cfg(test)]
@@ -411,9 +402,6 @@ impl AggregateSink {
         self.float_accs.clear();
         self.group_counts.clear();
         self.cardinality_overflow = false;
-        // Dropping the spill closes its scratch environment before
-        // unlinking the directory (the relation's drop-order contract).
-        self.spill = None;
         self.error = None;
         self.finished = false;
         self.terminal = crate::exec::sink::SinkProgress::Continue;

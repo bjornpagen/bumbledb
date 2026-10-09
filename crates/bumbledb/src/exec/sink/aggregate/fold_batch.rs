@@ -86,7 +86,6 @@ impl AggregateSink {
 
     /// Count-only folds may omit survivors; key reductions require them.
     fn fold_constant_group(&mut self, batch: &LeafBatch<'_>, count: u64, survivors: &[u32]) {
-        self.maybe_spill_groups();
         if self.error.is_some() || self.cardinality_overflow {
             return;
         }
@@ -94,7 +93,9 @@ impl AggregateSink {
             batch.bindings.get(slot)
         });
 
-        let group_idx = self.probe_group();
+        let Some(group_idx) = self.probe_group() else {
+            return;
+        };
         if !self.advance_group(group_idx, count) {
             return;
         }

@@ -11,9 +11,6 @@ impl AggregateSink {
         bindings: &[u64],
         get: impl Fn(usize, &[Option<NonZeroU32>]) -> u64,
     ) {
-        // A full dense-index representation flushes before another group
-        // could be inserted. This is not an estimated-byte threshold.
-        self.maybe_spill_groups();
         if self.error.is_some()
             || self.cardinality_overflow
             || (!self.distinct_bindings()
@@ -25,7 +22,9 @@ impl AggregateSink {
         super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
             get(slot, &self.cached_leaf_words)
         });
-        let group_idx = self.probe_group();
+        let Some(group_idx) = self.probe_group() else {
+            return;
+        };
         if matches!(self.group_state, GroupState::Folds { .. }) && !self.advance_group(group_idx, 1)
         {
             return;

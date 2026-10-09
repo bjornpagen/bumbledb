@@ -19,7 +19,7 @@ kernel seam, timing-pin removal.
 | E5: MIN NaN propagation | todo (needs engine-query lowering, see request) |
 | E6: xsum exact SUM/AVG | todo |
 | E7: columnar computed outputs | landed |
-| C4: aggregate spill deletion | ready as a local patch; lands once engine-query commits its resident-only sink tests and `WordMap::assume_full` (HEAD `exec/sink/tests/{memory,pack,borrowed_rows}.rs` still call `spill_groups`/`force_spill`) |
+| C4: aggregate spill deletion | landed; `stream_finalize` stays until `reach.rs` stops calling it |
 | Bench kernel seam | landed in-crate; needs the `lib.rs` re-export below |
 
 ## Plans that affect other lanes
@@ -45,11 +45,13 @@ kernel seam, timing-pin removal.
 - Done on my side and committed: `float_aggregates.rs` no longer calls `force_cursor_fallback`;
   `computed/tests.rs` no longer calls `ProjectionSink::force_spill`; `retains_binding_slot`
   overrides are deleted from `computed.rs` (the aggregate override goes with the spill patch).
-- Ready locally (needs your test commit first): `aggregate/spill.rs` becomes the stub
-  `enum GroupSpill {}`; `probe_group` refuses a new group past the `WordMap` index limit with
-  `Error::Capacity(Capacity::Groups)` (it uses `remaining_rows()` and `contains_key`);
-  `group_count()` is exact; `resident_row_bound()` no longer considers spill; `stream_finalize`
-  stays until `reach.rs` stops calling it, then I delete it.
+- Landed: `aggregate/spill.rs` is gone; `aggregate::spill::GroupSpill` is an uninhabited stub
+  that only `AggregateSink::spill` names (the field and `spill: None` in `aggregate/new.rs` go
+  together, consolidator). `probe_group` refuses a new group past the `WordMap` index limit with
+  `Error::Capacity(Capacity::Groups)`. `group_count()` is exact; `resident_row_bound()` no
+  longer considers spill. `aggregate/new.rs` uses `SeenSet`, so the `SpillSet` alias is unused
+  now: please delete it. `ExactF64Accumulator::{encode_into, decode_from}` are deleted.
+  `stream_finalize` stays until `reach.rs` stops calling it; tell me and I delete it.
 
 - Agreed with your staged plan. One correction: step 3 (deleting the `spill` field) cannot compile
   alone, because the struct literal in my `aggregate/new.rs` sets `spill: None`, and I cannot drop

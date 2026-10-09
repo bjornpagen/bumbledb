@@ -1,3 +1,4 @@
+use crate::error::{Capacity, Error};
 use crate::exec::sink::{Acc, AggSpec, AggregateSink, GroupState, GroupTable, SinkSpec};
 use std::num::NonZeroU32;
 
@@ -56,13 +57,20 @@ impl AggregateSink {
         self.prepare_fold_inputs();
     }
 
-    pub(super) fn probe_group(&mut self) -> usize {
+    /// The group of the key in `key_scratch`, created on first sight. A new
+    /// key past the group map's index limit records
+    /// `Error::Capacity(Capacity::Groups)` and yields `None`.
+    pub(super) fn probe_group(&mut self) -> Option<usize> {
         #[cfg(test)]
         {
             self.group_probes += 1;
         }
         let (group_idx, inserted) = match &mut self.groups {
             GroupTable::Hashed(map) => {
+                if map.remaining_rows() == 0 && !map.contains_key(&self.key_scratch) {
+                    self.error = Some(Error::Capacity(Capacity::Groups));
+                    return None;
+                }
                 let next = map.len();
                 let (idx, inserted) = map.get_or_insert_with(&self.key_scratch, || next);
                 (*idx, inserted)
@@ -136,6 +144,6 @@ impl AggregateSink {
                 }
             }
         }
-        group_idx
+        Some(group_idx)
     }
 }

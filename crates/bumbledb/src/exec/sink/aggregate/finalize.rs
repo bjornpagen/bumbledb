@@ -1,7 +1,9 @@
 use crate::error::{Error, FindIndex, OverflowKind, Result};
 use crate::exec::kernel::numeric::ExactF64Accumulator;
 use crate::exec::scratch::{ScratchAppend, ScratchMapId, ScratchRelation};
-use crate::exec::sink::{Acc, AggregateSink, GroupState, SinkSpec, encode_stage_row, i64_to_word};
+use crate::exec::sink::{
+    Acc, AggregateSink, GroupState, GroupTable, SinkSpec, encode_stage_row, i64_to_word,
+};
 use crate::interval::sweep::{Continuation, sweep};
 
 impl AggregateSink {
@@ -11,28 +13,12 @@ impl AggregateSink {
         answer_scratch: &mut Vec<u64>,
         mut emit: impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
-        // A sticky dedup/spill failure spoiled this execution: no group may
-        // publish (the seen-set's misses would have double-counted, and a
-        // half-flushed partition would double-fold).
+        // A sticky failure spoiled this execution: no group may publish.
         if let Some(error) = self.take_error() {
             return Err(error);
         }
         if self.cardinality_overflow {
             return Err(Error::Overflow(OverflowKind::Cardinality));
-        }
-        if self.group_state_spilled() {
-            // Flush the residual RAM partition, then emit each merged
-            // group exactly once from the scratch tier.
-            self.spill_groups()?;
-            if let Some(error) = self.take_error() {
-                return Err(error);
-            }
-            if self.cardinality_overflow {
-                return Err(Error::Overflow(OverflowKind::Cardinality));
-            }
-            self.finalize_spilled(answer_scratch, &mut emit)?;
-            self.finished = true;
-            return Ok(());
         }
         let live = self.group_count();
         if let GroupState::Pack { claims, .. } = &mut self.group_state {
@@ -41,7 +27,7 @@ impl AggregateSink {
             }
         }
 
-        super::spill::for_each_ram_group(&self.groups, &mut |key, group_idx| {
+        for_each_group(&self.groups, &mut |key, group_idx| {
             self.emit_group(key, group_idx, answer_scratch, &mut emit)
         })?;
         self.finished = true;
@@ -174,12 +160,40 @@ impl AggregateSink {
     }
 }
 
-/// Assemble and emit one fold group's answer row: Var columns from the
-/// group-key words, aggregate columns finalized from the given accumulator
-/// bank. Shared by the resident arm (sink-global float bank) and the
-/// spilled arm (decoded group-local bank) — one rounding, at exactly this
-/// output boundary, in both regimes.
-pub(in crate::exec::sink) fn emit_fold_row(
+/// Walks every group as `(key words, group index)`; dense ordinals rebuild
+/// their key words positionally.
+fn for_each_group(
+    groups: &GroupTable,
+    visit: &mut dyn FnMut(&[u64], usize) -> Result<()>,
+) -> Result<()> {
+    match groups {
+        GroupTable::Hashed(map) => {
+            for (key, group_idx) in map.iter() {
+                visit(key, *group_idx)?;
+            }
+            Ok(())
+        }
+        GroupTable::Dense {
+            radixes, ordinals, ..
+        } => {
+            let mut key = vec![0u64; radixes.len()];
+            for (group_idx, ordinal) in ordinals.iter().enumerate() {
+                let mut rest = usize::try_from(*ordinal).expect("capped product");
+                for (word, radix) in key.iter_mut().zip(radixes.iter()).rev() {
+                    *word = (rest % usize::from(*radix)) as u64;
+                    rest /= usize::from(*radix);
+                }
+                visit(&key, group_idx)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Assembles and emits one fold group's answer row: Var columns from the
+/// group-key words, aggregate columns finalized from the accumulators. The
+/// only rounding of a float total happens here.
+fn emit_fold_row(
     finds: &[SinkSpec],
     key: &[u64],
     accs: &[Acc],
@@ -222,9 +236,8 @@ pub(in crate::exec::sink) fn emit_fold_row(
     emit(answer_scratch)
 }
 
-/// Assemble and emit one Pack group's maximal segment — shared by the
-/// resident sweep and the spilled streaming frontier walk.
-pub(in crate::exec::sink) fn emit_pack_row(
+/// Assembles and emits one Pack group's maximal segment.
+fn emit_pack_row(
     finds: &[SinkSpec],
     key: &[u64],
     start: u64,
