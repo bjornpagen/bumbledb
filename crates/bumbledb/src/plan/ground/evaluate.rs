@@ -8,13 +8,12 @@ use std::collections::BTreeSet;
 
 use crate::error::Error;
 use crate::image::TextEq;
-use crate::image::view::{Const, FilterPredicate};
+use crate::image::view::{Const, FilterPredicate, Loaded, OperandAddr};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
 use crate::ir::{VarId, WordCmp};
 use crate::plan::fj::OccBind;
 use crate::schema::{Relation, Schema};
-use crate::work::{GenerationHandle, GenerationState};
-use bumbledb_theory::schema::{FieldId, RelationId, ValueType};
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 use super::var_is_dead;
 
@@ -82,8 +81,7 @@ fn fold_positive(
         }
         Vec::new()
     };
-    let Some(survivors) = fold_surviving_ids(relation, &normalized.occurrences[c_idx].filters)
-    else {
+    let Ok(survivors) = surviving_ids(relation, &normalized.occurrences[c_idx].filters) else {
         return false;
     };
     if survivors.is_empty() {
@@ -115,8 +113,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
     {
         return false;
     }
-    let Some(survivors) = fold_surviving_ids(relation, &normalized.occurrences[c_idx].filters)
-    else {
+    let Ok(survivors) = surviving_ids(relation, &normalized.occurrences[c_idx].filters) else {
         return false;
     };
     if survivors.is_empty() {
@@ -213,122 +210,55 @@ pub(super) fn join_id_var(
         .filter(|var| !var_is_dead(normalized, c_idx, *var, output_vars))
 }
 
-struct SealedRow<'a> {
-    fact: crate::encoding::FactView<'a, 'a>,
-}
+/// One closed row's values as filter operands. A sealed value and a query
+/// literal share one word convention, so each field lowers like a literal.
+/// Closed relations hold no text, so no field compares through [`TextEq`].
+struct ClosedRow<'a>(&'a [crate::ir::Value]);
 
-impl crate::image::view::Operands for SealedRow<'_> {
+impl crate::image::view::Operands for ClosedRow<'_> {
     type Error = std::convert::Infallible;
 
-    fn word(&self, at: crate::image::view::OperandAddr) -> Result<u64, Self::Error> {
+    fn word(&self, at: OperandAddr) -> Result<u64, Self::Error> {
         Ok(match self.loaded(at)? {
-            crate::image::view::Loaded::Word(w) => w,
-            crate::image::view::Loaded::Byte(b) => u64::from(b),
-            crate::image::view::Loaded::Pair(..) | crate::image::view::Loaded::Block { .. } => {
+            Loaded::Word(w) => w,
+            Loaded::Byte(b) => u64::from(b),
+            Loaded::Pair(..) | Loaded::Block { .. } => {
                 unreachable!("validated: word operands are scalar")
             }
         })
     }
 
-    fn pair(&self, at: crate::image::view::OperandAddr) -> Result<(u64, u64), Self::Error> {
+    fn pair(&self, at: OperandAddr) -> Result<(u64, u64), Self::Error> {
         Ok(match self.loaded(at)? {
-            crate::image::view::Loaded::Pair(s, e) => (s, e),
-            crate::image::view::Loaded::Word(_)
-            | crate::image::view::Loaded::Byte(_)
-            | crate::image::view::Loaded::Block { .. } => {
+            Loaded::Pair(s, e) => (s, e),
+            Loaded::Word(_) | Loaded::Byte(_) | Loaded::Block { .. } => {
                 unreachable!("validated: interval predicates read interval fields")
             }
         })
     }
 
-    fn loaded(
-        &self,
-        at: crate::image::view::OperandAddr,
-    ) -> Result<crate::image::view::Loaded, Self::Error> {
-        Ok(match sealed_operand(self.fact, at.field()) {
-            crate::exec::dispatch::FactOperand::Word(w) => crate::image::view::Loaded::Word(w),
-            crate::exec::dispatch::FactOperand::Pair(s, e) => {
-                crate::image::view::Loaded::Pair(s, e)
-            }
-            crate::exec::dispatch::FactOperand::Block { words, count } => {
-                crate::image::view::Loaded::Block { words, count }
-            }
-        })
-    }
-
-    fn string_field(&self, at: crate::image::view::OperandAddr) -> bool {
-        matches!(
-            self.fact.layout().field_type(usize::from(at.field().0)),
-            ValueType::String
+    fn loaded(&self, at: OperandAddr) -> Result<Loaded, Self::Error> {
+        Ok(
+            match crate::ir::normalize::lower_literal(&self.0[usize::from(at.field().0)]) {
+                Const::Word(word) => Loaded::Word(word),
+                Const::Byte(byte) => Loaded::Word(u64::from(byte)),
+                Const::Interval { start, end } => Loaded::Pair(start, end),
+                Const::Words(words) => {
+                    let mut block = [0u64; 8];
+                    block[..words.len()].copy_from_slice(&words);
+                    Loaded::Block {
+                        words: block,
+                        count: u8::try_from(words.len()).expect("bytes width is at most 8 words"),
+                    }
+                }
+                _ => unreachable!("closed relations hold no text"),
+            },
         )
     }
 }
 
-/// One sealed row field as column words, sliced straight out of the dense
-/// [`crate::encoding::FactLayout`] encoding the extension was sealed with
-/// at validate. The stored bytes already carry the physical word
-/// conventions (U64 big-endian, I64 sign-flipped, F64 total-order key,
-/// Uuid two big-endian words, intervals two order words — a fixed-width
-/// slot stores the start word and the layout width recovers the end), so
-/// each word is a direct big-endian load; the span widths mirror
-/// [`crate::image::column_spans`].
-fn sealed_operand(
-    fact: crate::encoding::FactView<'_, '_>,
-    field: FieldId,
-) -> crate::exec::dispatch::FactOperand {
-    use crate::encoding::{field_bytes, interval_words};
-    use crate::exec::dispatch::FactOperand;
-
-    let idx = usize::from(field.0);
-    let ty = fact.layout().field_type(idx);
-    let bytes = field_bytes(fact, idx);
-    match ty {
-        ValueType::Bool => FactOperand::Word(u64::from(bytes[0])),
-        ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => FactOperand::Word(
-            u64::from_be_bytes(bytes.try_into().expect("word field: layout-derived width")),
-        ),
-        ValueType::Uuid => {
-            let mut words = [0u64; 8];
-            words[0] = u64::from_be_bytes(bytes[..8].try_into().expect("uuid is sixteen bytes"));
-            words[1] = u64::from_be_bytes(bytes[8..].try_into().expect("uuid is sixteen bytes"));
-            FactOperand::Block { words, count: 2 }
-        }
-        ValueType::FixedBytes { .. } => {
-            let count = bytes.len() / 8;
-            debug_assert_eq!(bytes.len() % 8, 0, "padded bytes<N> is whole words");
-            if count == 1 {
-                FactOperand::Word(u64::from_be_bytes(
-                    bytes.try_into().expect("one padded word"),
-                ))
-            } else {
-                let mut words = [0u64; 8];
-                let (chunks, rest) = bytes.as_chunks::<8>();
-                debug_assert!(rest.is_empty(), "padded bytes<N> is whole words");
-                for (word, chunk) in words.iter_mut().zip(chunks) {
-                    *word = u64::from_be_bytes(*chunk);
-                }
-                FactOperand::Block {
-                    words,
-                    count: u8::try_from(count).expect("bytes width is at most 8 words"),
-                }
-            }
-        }
-        ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
-            let (start, end) =
-                interval_words(ty, bytes).expect("sealed rows are validated interval encodings");
-            FactOperand::Pair(start, end)
-        }
-    }
-}
-
-/// Closed-row σ. String columns compare through [`TextEq`]; a resolver
-/// `Err` is not a dropped id.
-pub(crate) fn surviving_ids(
-    relation: &Relation,
-    filters: &[FilterPredicate],
-    text: TextEq<'_>,
-) -> Result<Vec<u64>, Error> {
-    let layout = relation.layout();
+/// Closed-row σ: the ids of the rows every filter holds on.
+fn surviving_ids(relation: &Relation, filters: &[FilterPredicate]) -> Result<Vec<u64>, Error> {
     let mut ids = Vec::new();
     for (id, row) in relation
         .body()
@@ -337,46 +267,21 @@ pub(crate) fn surviving_ids(
         .iter()
         .enumerate()
     {
-        let ops = SealedRow {
-            fact: layout.encoded(&row.fact),
-        };
-        if sealed_row_survives(&ops, filters, text)? {
+        if closed_row_survives(&ClosedRow(&row.values), filters)? {
             ids.push(id as u64);
         }
     }
     Ok(ids)
 }
 
-fn sealed_row_survives(
-    ops: &SealedRow<'_>,
-    filters: &[FilterPredicate],
-    text: TextEq<'_>,
-) -> Result<bool, Error> {
+fn closed_row_survives(row: &ClosedRow<'_>, filters: &[FilterPredicate]) -> Result<bool, Error> {
     for filter in filters {
-        match crate::image::view::holds(filter, ops, &[], text)? {
+        match crate::image::view::holds(filter, row, &[], TextEq::from_optional_generation(None))? {
             Some(true) => {}
             Some(false) | None => return Ok(false),
         }
     }
     Ok(true)
-}
-
-fn closed_layout_has_string(relation: &Relation) -> bool {
-    let layout = relation.layout();
-    (0..layout.field_count()).any(|idx| matches!(layout.field_type(idx), ValueType::String))
-}
-
-/// This fold has no image/generation. Numeric closed rows never consult
-/// `TextEq`; String columns must not take a dummy resolver (raw word
-/// compare / `Ok(false)`).
-fn fold_surviving_ids(relation: &Relation, filters: &[FilterPredicate]) -> Option<Vec<u64>> {
-    if closed_layout_has_string(relation) {
-        return None;
-    }
-    let generation = GenerationHandle::new(GenerationState::new(
-        crate::image::CacheGeneration::initial(),
-    ));
-    surviving_ids(relation, filters, generation.text_eq()).ok()
 }
 
 pub(super) fn membership_binders(
@@ -487,5 +392,3 @@ pub(crate) fn folded_picture(
 
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod text_eq;

@@ -29,8 +29,8 @@ pub(crate) fn lower_literal(value: &Value) -> Const {
             start: i64_word(interval.start()),
             end: i64_word(interval.end()),
         },
-        // Dense-line endpoints lower to their order-key words — the same
-        // words the image columns hold (`image/decode.rs`).
+        // Dense-line endpoints lower to their order-key words, the words the
+        // image columns hold.
         Value::IntervalF64(interval) => Const::Interval {
             start: interval.start().to_order_key(),
             end: interval.end().to_order_key(),

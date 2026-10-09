@@ -1,7 +1,6 @@
 //! against the honest pipeline (validate → normalize → grounding) over a
 //! condition's refusal shape is easier to pin in isolation.
 use super::*;
-use crate::image::CacheGeneration;
 use crate::image::view::{Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, normalize_rules};
 use crate::ir::validate::validate;
@@ -10,7 +9,6 @@ use crate::ir::{CmpOp, WordCmp};
 use crate::plan::ground::{ground, with_grounding_disabled};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::work::{GenerationHandle, GenerationState};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{
     FieldDescriptor, IntervalElement, RelationDescriptor, Row, SchemaDescriptor, Side,
@@ -536,10 +534,8 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
                 .iter()
                 .all(crate::image::view::is_prepare_resolvable)
         );
-        let generation = GenerationHandle::new(GenerationState::new(CacheGeneration::initial()));
         assert_eq!(
-            surviving_ids(schema.relation(relation), &original, generation.text_eq(),)
-                .expect("numeric closed rows do not consult TextEq"),
+            surviving_ids(schema.relation(relation), &original).unwrap(),
             expected
         );
     }

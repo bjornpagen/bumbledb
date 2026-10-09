@@ -12,7 +12,6 @@ mod build;
 #[cfg(test)]
 pub(crate) use build::test_generation;
 pub(crate) mod canon;
-mod decode;
 mod distinct;
 mod epoch;
 pub(crate) mod intern;
@@ -26,7 +25,8 @@ pub(crate) use bind::SourceImages;
 pub(crate) use build::build_from_source;
 pub(crate) use epoch::{CacheGeneration, ViewEpoch};
 
-pub use build::{TransientImage, synthesize_closed};
+pub use build::TransientImage;
+pub(crate) use build::synthesize_closed;
 pub use text_eq::TextEq;
 
 // M2 Max's measured stream-tracker pitch period. Small nonzero residues

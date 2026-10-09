@@ -1,7 +1,7 @@
-use crate::encoding::{encode_bool, encode_interval_u64, encode_u64};
+use crate::encoding::{encode_bool, encode_u64};
 use crate::image::{ColumnWidth, synthesize_closed};
 use crate::ir::Value;
-use crate::work::{GenerationHandle, GenerationState};
+use crate::work::{GenerationHandle, GenerationState, WorkContext};
 use bumbledb_theory::schema::{IntervalElement, Row};
 
 use super::*;
@@ -108,7 +108,7 @@ fn closed_generation() -> GenerationHandle {
 #[test]
 fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
     let schema = theory();
-    let image = synthesize_closed(SEASON, schema.relation(SEASON), closed_generation())
+    let image = synthesize_closed(&schema, SEASON, &closed_generation(), &WorkContext::new())
         .expect("closed synthesis");
 
     assert_eq!(image.row_count(), 3);
@@ -121,23 +121,17 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
 
     let span = image.span(bumbledb_theory::schema::FieldId(1));
     assert_eq!(span.width, ColumnWidth::WordPair);
-    let spans = [(1u64, 90u64), (172, 265), (265, 355)];
-    let encoded: Vec<[u8; 16]> = spans
+    let (expected_starts, expected_ends): (Vec<u64>, Vec<u64>) = schema
+        .closed_rows(SEASON)
+        .expect("closed relation")
         .iter()
-        .map(|(s, e)| {
-            encode_interval_u64(
-                bumbledb_theory::Interval::<u64>::new(*s, *e).expect("nonempty interval"),
-            )
+        .map(|row| match &row.values[1] {
+            Value::IntervalU64(interval) => (interval.start(), interval.end()),
+            other => panic!("span field holds {other:?}"),
         })
-        .collect();
-    let expected_starts: Vec<u64> = encoded
-        .iter()
-        .map(|enc| word(crate::encoding::split_halves(*enc).0))
-        .collect();
-    let expected_ends: Vec<u64> = encoded
-        .iter()
-        .map(|enc| word(crate::encoding::split_halves(*enc).1))
-        .collect();
+        .unzip();
+    assert_eq!(expected_starts, [1, 172, 265]);
+    assert_eq!(expected_ends, [90, 265, 355]);
     assert_eq!(
         image.column_words(usize::from(span.first_column)),
         expected_starts.as_slice()
@@ -184,7 +178,7 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
 #[test]
 fn a_columnless_vocabulary_synthesizes_to_its_id_column_alone() {
     let schema = theory();
-    let image = synthesize_closed(STATUS, schema.relation(STATUS), closed_generation())
+    let image = synthesize_closed(&schema, STATUS, &closed_generation(), &WorkContext::new())
         .expect("closed synthesis");
     assert_eq!(image.row_count(), 2);
     let id_span = image.span(bumbledb_theory::schema::FieldId(0));

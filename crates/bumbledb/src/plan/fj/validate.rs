@@ -64,12 +64,12 @@ fn build_occurrences(
             // Derived atoms address their head columns positionally.
 
             let field_types: Vec<bumbledb_theory::schema::ValueType> = match occurrence.source() {
-                crate::ir::AtomSource::Edb(relation) => {
-                    let layout = schema.relation(relation).layout();
-                    (0..layout.field_count())
-                        .map(|idx| layout.field_type(idx))
-                        .collect()
-                }
+                crate::ir::AtomSource::Edb(relation) => schema
+                    .relation(relation)
+                    .fields()
+                    .iter()
+                    .map(|field| field.value_type)
+                    .collect(),
                 crate::ir::AtomSource::Interior(id) => signatures[id.index()]
                     .columns
                     .iter()

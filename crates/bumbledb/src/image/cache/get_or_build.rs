@@ -41,7 +41,7 @@ impl ImageCache {
     ) -> Result<Arc<RelationImage>> {
         match (self.slot(rel), epoch) {
             (RelationSlot::Closed(slot), ViewEpoch::Closed) => {
-                self.get_or_synthesize(schema, rel, slot, generation)
+                self.get_or_synthesize(schema, rel, slot, generation, source.work())
             }
             (RelationSlot::Ordinary(cache), ViewEpoch::Store(version)) => {
                 self.get_or_build_ordinary(source, schema, rel, cache, version, generation)
@@ -109,13 +109,14 @@ impl ImageCache {
         rel: RelationId,
         slot: &Mutex<Option<Arc<RelationImage>>>,
         generation: &GenerationHandle,
+        work: &crate::work::WorkContext,
     ) -> Result<Arc<RelationImage>> {
         if let Some(image) = slot.lock().expect("closed cache mutex").as_ref()
             && image.generation().ptr_eq(generation)
         {
             return Ok(Arc::clone(image));
         }
-        let built = synthesize_closed(rel, schema.relation(rel), generation.clone())?;
+        let built = synthesize_closed(schema, rel, generation, work)?;
         let mut slot = slot.lock().expect("closed cache mutex");
         if let Some(winner) = slot.as_ref()
             && winner.generation().ptr_eq(generation)

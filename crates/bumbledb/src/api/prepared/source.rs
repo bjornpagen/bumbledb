@@ -178,18 +178,11 @@ impl<'a> QuerySource<'a> {
         sink: &mut dyn FnMut(&[u8]) -> Result<bool>,
     ) -> Result<()> {
         let work = self.work();
-        let descriptor = schema.relation(relation);
-        if let Some(extension) = descriptor.body().closed_rows() {
-            for row in extension {
+        if let Some(rows) = schema.closed_rows(relation) {
+            for row in rows {
                 work.checkpoint()?;
                 self.note_visits(1);
-                let values = crate::canonical::decode_sealed(descriptor, &row.fact, work)?;
-                let canonical = crate::canonical::CanonicalRow::encode(
-                    descriptor.fields(),
-                    values.values(),
-                    work,
-                )?;
-                if !sink(canonical.as_bytes())? {
+                if !sink(row.row.as_bytes())? {
                     break;
                 }
             }

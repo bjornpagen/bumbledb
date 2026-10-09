@@ -1,18 +1,16 @@
 //! The build path: one sequential canonical-row scan decodes every column
-//! of a relation into structure-of-arrays slabs — and the synthesis path,
-//! which fills the same slabs from a closed relation's sealed extension
-//! with no storage anywhere.
+//! of a relation into structure-of-arrays slabs, whether the rows come from
+//! a source or from a closed relation's sealed extension.
 use std::sync::Arc;
 
 use crate::api::prepared::source::QuerySource;
 use crate::error::{CorruptionError, Error, Result};
 use crate::image::canon::{TextWords, row_words};
-use crate::schema::{Relation, Schema};
+use crate::schema::Schema;
 use crate::work::GenerationHandle;
 use bumbledb_theory::schema::RelationId;
 use bumbledb_theory::schema::ValueType;
 
-use super::decode::{decode_fact, decode_plan};
 use super::{
     Column, ColumnSpan, ColumnWidth, LINE, PAD_MIN_STRIDE, RelationImage, SET_STRIDE, StridePadder,
     column_spans,
@@ -195,10 +193,6 @@ pub(crate) fn test_generation() -> GenerationHandle {
 /// A scan yielding a different number of rows than the source's committed
 /// count is corruption; malformed stored bytes refuse; stopped work and
 /// allocation refusal are typed resource failures.
-/// # Panics
-/// Only on programmer-invariant violations (`rel` names a closed relation —
-/// closed images synthesize from the theory, and the cache branches before
-/// this path).
 pub(crate) fn build_from_source(
     source: &QuerySource<'_>,
     schema: &Schema,
@@ -208,7 +202,7 @@ pub(crate) fn build_from_source(
     let relation = schema.relation(rel);
     debug_assert!(
         relation.body().closed_rows().is_none(),
-        "closed relations synthesize from the theory, never from a scan"
+        "closed relations build from their sealed rows"
     );
     let claimed = source.row_count(rel)?;
     build_from_scan(schema, generation, rel, claimed, source.work(), |sink| {
@@ -507,40 +501,22 @@ fn drain_encoded_rows(
     Ok(position)
 }
 
-/// Synthesizes a closed relation's image from its sealed extension. Sealed
-/// canonical fact bytes use the same decoding and stride-padded columns as
-/// stored rows, including the leading implicit `id` column (`0..rows`).
-/// # Errors
-/// A slab length that cannot be represented.
+/// Builds a closed relation's image from its sealed canonical rows, through
+/// the same row decoder as stored rows (the leading `id` column is `0..rows`).
 /// # Panics
-/// Only if `relation` is ordinary or its sealed rows violate the validated schema.
-pub fn synthesize_closed(
+/// Only if `rel` names an ordinary relation.
+pub(crate) fn synthesize_closed(
+    schema: &Schema,
     rel: RelationId,
-    relation: &Relation,
-    generation: GenerationHandle,
+    generation: &GenerationHandle,
+    work: &crate::work::WorkContext,
 ) -> Result<Arc<RelationImage>> {
-    let extension = relation
-        .body()
-        .closed_rows()
+    let rows = schema
+        .closed_rows(rel)
         .expect("synthesize_closed takes a closed relation");
-    let layout = relation.layout();
-    let row_count = extension.len();
-    let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
-    let mut frame = allocate(&field_types, row_count)?;
-    let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
-    for (position, row) in extension.iter().enumerate() {
-        decode_fact(
-            rel,
-            &plan,
-            layout.fact_width(),
-            &row.fact,
-            position,
-            &mut frame.words,
-            &mut frame.bytes,
-        )
-        .expect("sealed rows hold canonical fact bytes, encoded at validate");
-    }
-    Ok(seal(row_count, frame, generation))
+    build_from_scan(schema, generation, rel, rows.len() as u64, work, |visit| {
+        rows.iter().try_for_each(|row| visit(row.row.as_bytes()))
+    })
 }
 
 #[cfg(test)]
