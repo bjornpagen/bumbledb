@@ -2,7 +2,6 @@ import { createReadStream, createWriteStream } from "node:fs"
 import * as fs from "node:fs/promises"
 import type { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
-import type { S3Client } from "@aws-sdk/client-s3"
 import { Effect } from "effect"
 import { DbError } from "../errors.ts"
 import type { Body, Bucket, Created, Deleted, Fetched, Listed, Millis, ObjectStore, Reply, Target } from "./io.ts"
@@ -11,9 +10,17 @@ type Sdk = typeof import("@aws-sdk/client-s3")
 
 let sdk: Promise<Sdk> | undefined
 
+/**
+ * The part of an AWS SDK v3 `S3Client` the store calls. Declared here so the package's types do not
+ * require the optional `@aws-sdk/client-s3` peer.
+ */
+interface S3Sender {
+	send(command: never, options: { readonly abortSignal: AbortSignal }): Promise<unknown>
+}
+
 interface S3StoreOptions {
-	/** The application's own client: it owns credentials, region, endpoint and SDK retries. */
-	readonly client: S3Client
+	/** The application's own `S3Client`: it owns credentials, region, endpoint and SDK retries. */
+	readonly client: S3Sender
 	/** The commit log bucket, ideally an S3 Express directory bucket (`name--azid--x-s3`). */
 	readonly log: { readonly bucket: string }
 	/** The checkpoint bucket: an S3 Standard bucket, whose LIST is lexicographic. */
@@ -52,7 +59,7 @@ function refusalOf(cause: unknown): Refusal {
  * outputs. The middleware sits innermost in the deserialize step, so it sees every raw response.
  */
 async function send<O>(
-	client: S3Client,
+	client: S3Sender,
 	command: { middlewareStack: { add: (...args: never[]) => void } },
 	signal: AbortSignal
 ): Promise<Answer<O>> {
@@ -191,5 +198,5 @@ function make(options: S3StoreOptions): ObjectStore {
 
 const S3Store = Object.freeze({ make })
 
-export type { S3StoreOptions }
+export type { S3Sender, S3StoreOptions }
 export { S3Store }
