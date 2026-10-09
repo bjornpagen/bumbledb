@@ -1,11 +1,15 @@
 //! Public-path regressions for unrestricted ownership and borrowed delivery.
-//! Run allocation windows with nextest (one process per test), not parallel
-//! libtest threads: the allocation counters are process-global.
+//! Allocation windows assume one test per process (nextest): the counters are
+//! process-global.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use bumbledb::alloc_counter::CountingAllocator;
 use bumbledb::{AnswerValue, BindValue, Db, DeliveryTicket, Error, RelationId, Value, WorkContext};
+
+#[global_allocator]
+static GLOBAL: CountingAllocator = CountingAllocator;
 
 bumbledb::schema! {
     pub AllocationFixture;
@@ -84,7 +88,6 @@ fn borrowed_complete_rows_and_pages_allocate_nothing_and_consumption_moves_stora
     assert_eq!(result.len(), fixture.labels.len() as u64);
     let mut seen = vec![false; fixture.labels.len()];
     let work = WorkContext::new();
-    #[cfg(feature = "alloc-counter")]
     let before = bumbledb::alloc_counter::snapshot().window;
     result
         .visit_rows(&work, |row| {
@@ -104,7 +107,6 @@ fn borrowed_complete_rows_and_pages_allocate_nothing_and_consumption_moves_stora
             Ok(())
         })
         .unwrap();
-    #[cfg(feature = "alloc-counter")]
     assert_eq!(bumbledb::alloc_counter::snapshot().window, before);
     assert!(seen.iter().all(|seen| *seen));
 
@@ -112,10 +114,8 @@ fn borrowed_complete_rows_and_pages_allocate_nothing_and_consumption_moves_stora
         AnswerValue::String(text) => text.as_ptr(),
         _ => panic!("text"),
     };
-    #[cfg(feature = "alloc-counter")]
     let before = bumbledb::alloc_counter::snapshot().window;
     let answers = result.into_answers();
-    #[cfg(feature = "alloc-counter")]
     assert_eq!(bumbledb::alloc_counter::snapshot().window, before);
     assert!(
         matches!(answers.get(0, 1), AnswerValue::String(text) if text.as_ptr() == first_pointer)
@@ -129,7 +129,6 @@ fn borrowed_complete_rows_and_pages_allocate_nothing_and_consumption_moves_stora
         .unwrap();
     let mut cursor = complete.into_cursor(17);
     let mut total = 0;
-    #[cfg(feature = "alloc-counter")]
     let before = bumbledb::alloc_counter::snapshot().window;
     loop {
         let mut ticket = DeliveryTicket::open(&mut cursor);
@@ -144,7 +143,6 @@ fn borrowed_complete_rows_and_pages_allocate_nothing_and_consumption_moves_stora
         assert!((1..=17).contains(&rows));
         ticket.commit();
     }
-    #[cfg(feature = "alloc-counter")]
     assert_eq!(bumbledb::alloc_counter::snapshot().window, before);
     assert_eq!(total, fixture.labels.len());
 }

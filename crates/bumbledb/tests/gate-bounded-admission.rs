@@ -1,7 +1,7 @@
 //! Public integration admission: exact diagnostics, cancellation, durable
 //! publication, and observed allocation cost for an indexed one-group update.
-//! Allocation windows are meaningful with `alloc-counter` under nextest's
-//! one-process-per-test execution; they are not RSS or physical-read counters.
+//! Allocation windows assume nextest's one process per test; they are not RSS
+//! or physical-read counters.
 
 use bumbledb::integration::Preparation;
 use bumbledb::integration::{AttachmentChange, HostChanges, IntegrationError};
@@ -9,6 +9,10 @@ use bumbledb::work::WorkContext;
 use bumbledb::{Db, RelationId, Value, WorkError};
 
 mod common;
+
+#[global_allocator]
+static GLOBAL: bumbledb::alloc_counter::CountingAllocator =
+    bumbledb::alloc_counter::CountingAllocator;
 
 bumbledb::schema! {
     pub GateBounded;
@@ -90,7 +94,6 @@ fn small_change_to_a_large_relation_avoids_relation_sized_allocations() {
     let work = WorkContext::new();
     let changes = small_change(&db, &work, rows + 1, &body(rows + 1));
     let mut session = db.integration_writer(&work).expect("writer");
-    #[cfg(feature = "alloc-counter")]
     let before_alloc = bumbledb::alloc_counter::snapshot().window.alloc_bytes;
     let prepared = match session.prepare(&changes).expect("prepare") {
         Preparation::Accepted(prepared) => prepared,
@@ -100,7 +103,6 @@ fn small_change_to_a_large_relation_avoids_relation_sized_allocations() {
     };
     assert_eq!(prepared.application_changes().added, 1);
     assert_eq!(prepared.application_changes().removed, 0);
-    #[cfg(feature = "alloc-counter")]
     assert!(
         bumbledb::alloc_counter::snapshot().window.alloc_bytes - before_alloc < 64 << 10,
         "indexed admission must not materialize the existing relation"

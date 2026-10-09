@@ -1,8 +1,7 @@
-//! Allocation accounting for correctness gates and benchmark diagnostics.
-//! The `alloc-counter` feature registers this allocator globally. Test
-//! binaries can register [`crate::alloc_counter::CountingAllocator`] directly
-//! when the feature is off. Counters are process-global: isolate measured
-//! windows from unrelated allocations on other threads.
+//! Allocation accounting for allocation gates and benchmark diagnostics.
+//! This crate's unit tests register [`CountingAllocator`] globally; another
+//! test binary registers it with its own `#[global_allocator]`. Counters are
+//! process-global, so measured windows assume one test per process (nextest).
 #![allow(unsafe_code)] // GlobalAlloc delegates to the system allocator below.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,8 +18,7 @@ fn bump_live(add: u64) {
     PEAK_LIVE.fetch_max(prev.saturating_add(add), Ordering::Relaxed);
 }
 
-/// The wrapping allocator. The lib registers it under `alloc-counter`;
-/// the ordinary-tier budget binary registers it when that feature is off.
+/// The counting wrapper around the system allocator.
 pub struct CountingAllocator;
 
 // SAFETY: every method forwards the caller's GlobalAlloc contract to System.
@@ -70,7 +68,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 }
 
-#[cfg(feature = "alloc-counter")]
+#[cfg(test)]
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
@@ -139,7 +137,7 @@ pub fn dealloc_count() -> u64 {
     DEALLOCATIONS.load(Ordering::Relaxed)
 }
 
-#[cfg(all(test, feature = "alloc-counter"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;

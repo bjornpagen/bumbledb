@@ -4,8 +4,8 @@
 //! allocator counters so concurrent test bodies cannot contaminate measurement.
 // Debug invariant checks intentionally allocate (for example, checking
 // disjoint set-selection positions). This is the release cost contract.
-#![cfg(all(feature = "alloc-counter", not(debug_assertions)))]
-use bumbledb::alloc_counter;
+#![cfg(not(debug_assertions))]
+use bumbledb::alloc_counter::{self, CountingAllocator};
 use bumbledb::ir::{
     Atom, AtomSource, CmpOp, Comparison, FindTerm, FoldOp, HeadTerm, Interior, InteriorId, ParamId,
     Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId,
@@ -20,6 +20,9 @@ use bumbledb::{
 };
 
 mod common;
+
+#[global_allocator]
+static GLOBAL: CountingAllocator = CountingAllocator;
 
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {

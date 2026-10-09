@@ -21,6 +21,10 @@ use bumbledb::{BindValue, Db};
 
 mod common;
 
+#[global_allocator]
+static GLOBAL: bumbledb::alloc_counter::CountingAllocator =
+    bumbledb::alloc_counter::CountingAllocator;
+
 bumbledb::schema! {
     pub GateIdx;
 
@@ -64,8 +68,8 @@ fn seeded_db(dir: &common::TempDir, accounts: u64) -> Db<GateIdx> {
     db
 }
 
-/// Actual allocation requests inside one read closure. Use `alloc-counter`
-/// with nextest's process isolation. Core no-scan doubles independently
+/// Actual allocation requests inside one read closure, under nextest's process
+/// isolation. Core no-scan doubles independently
 /// check access locality; allocation counts do not measure physical reads.
 fn lease_allocations<R>(
     db: &Db<GateIdx>,

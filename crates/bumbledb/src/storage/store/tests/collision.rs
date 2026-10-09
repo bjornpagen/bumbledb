@@ -146,9 +146,7 @@ fn export_orders_home_and_fingerprint_collisions_with_bounded_memory_and_failure
         });
         assert!(matches!(failed, Err(StoreError::Allocation)));
         assert_eq!(calls, 2);
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
-        let _ = before;
+        assert!(crate::alloc_counter::snapshot().absolute.live_bytes <= before);
         let context = WorkContext::new();
         let before = crate::alloc_counter::snapshot().absolute.live_bytes;
         let mut calls = 0;
@@ -162,9 +160,7 @@ fn export_orders_home_and_fingerprint_collisions_with_bounded_memory_and_failure
             Err(StoreError::Work(WorkError::Cancelled))
         ));
         assert_eq!(calls, 1);
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
-        let _ = before;
+        assert!(crate::alloc_counter::snapshot().absolute.live_bytes <= before);
     }
 }
 

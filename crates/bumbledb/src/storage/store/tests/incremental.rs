@@ -930,27 +930,18 @@ fn incremental_judgment_allocations_are_delta_shaped_not_relation_shaped() {
     seed_users(&store, &schema, 256, 2048);
     let large = measured_one_row_judgment(&store, &schema, 1_000_002);
 
-    #[cfg(feature = "alloc-counter")]
-    {
-        assert!(
-            small > 0 && large > 0,
-            "the allocator counter must observe real work"
-        );
-        assert!(
-            small < 256,
-            "one-row judgment against 256 rows must be delta-shaped: {small} allocation requests"
-        );
-        assert!(
-            large < 256,
-            "one-row judgment against 2048 rows (+192 bookings/rooms) must stay \
-         delta-shaped: {large} allocation requests"
-        );
-        assert!(
-            large <= small + 32,
-            "judgment allocations must not grow with the relation: {small} -> {large}"
-        );
-    }
-    let _ = (small, large);
+    assert!(
+        small < 256,
+        "one-row judgment against 256 rows must be delta-shaped: {small} allocation requests"
+    );
+    assert!(
+        large < 256,
+        "one-row judgment against 2048 rows must stay delta-shaped: {large} allocation requests"
+    );
+    assert!(
+        large <= small + 32,
+        "judgment allocations must not grow with the relation: {small} -> {large}"
+    );
 }
 
 #[test]

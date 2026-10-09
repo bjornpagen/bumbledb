@@ -15,7 +15,7 @@
 //!   bytes equal, across adds, deletes, replaces and multi-statement
 //!   rejections (forced-collision variant under `collision-probe`);
 //! - allocation regression: a one-row mutation's allocation requests do not
-//!   scale with the parent relation. Run with `alloc-counter` under nextest;
+//!   scale with the parent relation (one process per test under nextest);
 //!   these counts are not physical-read counters. Core no-scan doubles
 //!   independently exercise the indexed access contract.
 //!
@@ -38,6 +38,10 @@ use bumbledb::work::WorkContext;
 use bumbledb::{ChangeSet, Interval, Value};
 
 mod common;
+
+#[global_allocator]
+static GLOBAL: bumbledb::alloc_counter::CountingAllocator =
+    bumbledb::alloc_counter::CountingAllocator;
 
 const USER: RelationId = RelationId(0);
 const BOOKING: RelationId = RelationId(1);

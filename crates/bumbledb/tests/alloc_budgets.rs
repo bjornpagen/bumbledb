@@ -1,14 +1,10 @@
-use bumbledb::alloc_counter::{self, AllocWindow};
+use bumbledb::alloc_counter::{self, AllocWindow, CountingAllocator};
 use bumbledb::ir::{Atom, AtomSource, FindTerm, Query, Rule, Term, VarId};
 use bumbledb::schema::FieldId;
 use bumbledb::{Answers, BindValue, Db, Fact, InstanceBuilder, ParamArg, ParamId, PreparedQuery};
 
-#[cfg(not(feature = "alloc-counter"))]
-use bumbledb::alloc_counter::CountingAllocator;
-
 mod common;
 
-#[cfg(not(feature = "alloc-counter"))]
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 

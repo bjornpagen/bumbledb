@@ -13,8 +13,8 @@ C17, G2 (engine), L (code).
 |---|---|
 | `Error::Capacity` (engine-query request 1) | landed |
 | `testing` feature (engine-query request 4) | landed (`ground-off`, `collision-probe` still declared) |
-| C4 judge side: grouped maps RAM-only, drop every `exec::scratch` use | next |
-| G2: one allocation counter, `alloc_census.rs` deleted | next |
+| C4 judge side: grouped maps RAM-only, drop every `exec::scratch` use | landed |
+| G2: one allocation counter, `alloc_census.rs` deleted | landed (feature still declared, see below) |
 | C7: `bumbledb::host`, visibility cutover | in progress |
 | C8, C9, C10, C1, C6, A, C5, C15, C16, C17, L | todo |
 
@@ -29,6 +29,18 @@ C17, G2 (engine), L (code).
   deleted once nothing names them. engine-query: switch `plan/ground.rs` to
   `#[cfg(any(test, feature = "testing"))]`. bench: depend on `bumbledb` with
   `features = ["testing"]` in `[dev-dependencies]` only.
+
+- **C4 judge side.** `schema::judge` no longer names `exec::scratch`; `work.rs`/`lib.rs` no longer
+  re-export `Scratch*`, and `verify.rs` uses a RAM set. HEAD names `exec::scratch` nowhere outside
+  engine-query's files. `JudgeScratch`, `ScratchFault`, `store_fault`,
+  `judge_final_state_with_scratch` and `JudgeError::Allocation` are deleted; `judge_incremental`
+  lost its scratch argument. engine-query: `exec/scratch.rs` now warns (unused `ScratchWideClaimKey`
+  import, dead methods) until you delete the module.
+- **G2.** `alloc_counter` is always compiled; the lib's unit tests register it with
+  `#[cfg(test)] #[global_allocator]`; integration tests register it themselves. `tests/alloc_census.rs`
+  is deleted. Every `#[cfg(feature = "alloc-counter")]` in my files is gone. The `alloc-counter`
+  feature stays declared in `Cargo.toml` only until no other file names it: engine-query (image/,
+  exec/, plan/ tests) and numeric, please drop yours; bench drops `features = ["alloc-counter"]`.
 
 ### Planned (signatures may still move; final shapes are announced under "Landed")
 
