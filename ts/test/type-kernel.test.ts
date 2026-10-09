@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import { closed, closedId } from "#closed.ts"
-import { bool, bytes, i64, interval, literalOf, str, u64 } from "#fields.ts"
-import { relation } from "#relation.ts"
-import { select } from "#selection.ts"
+import { closed, closedId } from "../src/closed.ts"
+import { bool, bytes, i64, interval, literalOf, str, u64 } from "../src/fields.ts"
+import { relation } from "../src/relation.ts"
+import { select } from "../src/selection.ts"
 
 function buildLedgerPieces() {
 	const Kind = closed("Kind", ["Checking", "Savings"])

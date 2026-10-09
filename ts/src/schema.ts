@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util"
-import { AuthoringError, SdkInvariantError } from "#errors.ts"
+import { AuthoringError, SdkInvariantError } from "./errors.ts"
 /**
  * `schema` — assembles relations and statements into a theory value (the
  * `Theory` analog; what `Db.create`/`Db.open` take). Construction-time
@@ -17,16 +17,16 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
  * this wall just makes the SDK agree with it first.
  */
 
-import type { AnyClosed } from "#closed.ts"
-import { isClosedMember, memberDescriptor, membersAgree, sealedFieldOf } from "#closed.ts"
-import type { AnyFace } from "#face.ts"
-import { assertDeclarationOrderKey, assertDeclarationRecord, rosterOf } from "#fields.ts"
-import { descriptorCache, isImmutable } from "#immutable.ts"
-import { type ClassesOf, classesComplete, computeClasses, type LawfulStatements, type SchemaClasses } from "#law.ts"
-import type { AnyRelation } from "#relation.ts"
-import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
-import { renderStatement, type Statement, statementDescriptor } from "#statements.ts"
-import { arrayValue, recordValue } from "#values.ts"
+import type { AnyClosed } from "./closed.ts"
+import { isClosedMember, memberDescriptor, membersAgree, sealedFieldOf } from "./closed.ts"
+import type { AnyFace } from "./face.ts"
+import { assertDeclarationOrderKey, assertDeclarationRecord, rosterOf } from "./fields.ts"
+import { descriptorCache, isImmutable } from "./immutable.ts"
+import { type ClassesOf, classesComplete, computeClasses, type LawfulStatements, type SchemaClasses } from "./law.ts"
+import type { AnyRelation } from "./relation.ts"
+import type { LiteralSetSpec, LiteralSpec } from "./spec.ts"
+import { renderStatement, type Statement, statementDescriptor } from "./statements.ts"
+import { arrayValue, recordValue } from "./values.ts"
 
 interface ImpliedKeys {
 	readonly rendered: ReadonlySet<string>

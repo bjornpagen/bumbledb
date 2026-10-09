@@ -1,10 +1,10 @@
-import type { BoolField, F64Field, I64Field, Infer, IntervalField, U64Field } from "#fields.ts"
-import type { SchemaClasses } from "#law.ts"
-import type { IntervalVarOk, NumericVarOk } from "#query/atom.ts"
-import type { AnyComputeExpr, ComputeExpr, ComputeValue } from "#query/compute.ts"
-import type { AnyVar, MintSlotOf } from "#query/scope.ts"
-import type { Segments } from "#query/segments.ts"
-import type { ScalarKind } from "#scalar.ts"
+import type { BoolField, F64Field, I64Field, Infer, IntervalField, U64Field } from "../fields.ts"
+import type { SchemaClasses } from "../law.ts"
+import type { ScalarKind } from "../scalar.ts"
+import type { IntervalVarOk, NumericVarOk } from "./atom.ts"
+import type { AnyComputeExpr, ComputeExpr, ComputeValue } from "./compute.ts"
+import type { AnyVar, MintSlotOf } from "./scope.ts"
+import type { Segments } from "./segments.ts"
 
 type FoldOpName = "sum" | "mean" | "min" | "max" | "pack"
 

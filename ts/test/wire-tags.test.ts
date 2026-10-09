@@ -22,7 +22,7 @@ import type {
 	TermIr,
 	Violation,
 	WriteTag
-} from "#native.ts"
+} from "../src/native.ts"
 import type {
 	CapacityBoundSpec,
 	CapacityWindowSpec,
@@ -32,7 +32,7 @@ import type {
 	ValueSpec,
 	ValueTypeSpec,
 	WeightSpec
-} from "#spec.ts"
+} from "../src/spec.ts"
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Expect<T extends true> = T extends true ? true : never

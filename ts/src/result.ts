@@ -1,12 +1,12 @@
 import { Effect, Option, Stream } from "effect"
-import { drainClose, releaseOwner } from "#close.ts"
-import type { CursorHandle, ResultHandle } from "#db-native.ts"
-import { dbNative } from "#db-native.ts"
-import type { FindColumn } from "#query/atom.ts"
-import { decodeAnswers } from "#query/run.ts"
-import type { CellValue } from "#rows.ts"
-import { nativeOperationWith } from "#runtime.ts"
-import type { CloseReport, DbError } from "#runtime-errors.ts"
+import { drainClose, releaseOwner } from "./close.ts"
+import type { CursorHandle, ResultHandle } from "./db-native.ts"
+import { dbNative } from "./db-native.ts"
+import type { FindColumn } from "./query/atom.ts"
+import { decodeAnswers } from "./query/run.ts"
+import type { CellValue } from "./rows.ts"
+import { nativeOperationWith } from "./runtime.ts"
+import type { CloseReport, DbError } from "./runtime-errors.ts"
 
 /**
  * One complete answer set, sealed after evaluation and independent of its

@@ -1,7 +1,7 @@
-import { AuthoringError } from "#errors.ts"
-import type { IntervalElementKind, IntervalField } from "#fields.ts"
-import { type AnyVar, isTerm, term } from "#query/scope.ts"
-import { recordValue } from "#values.ts"
+import { AuthoringError } from "../errors.ts"
+import type { IntervalElementKind, IntervalField } from "../fields.ts"
+import { recordValue } from "../values.ts"
+import { type AnyVar, isTerm, term } from "./scope.ts"
 
 type IntervalVar<E extends IntervalElementKind = IntervalElementKind> = AnyVar & { readonly field: IntervalField<E> }
 type SegmentOp = "intersection" | "difference"

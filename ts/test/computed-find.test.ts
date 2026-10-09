@@ -11,12 +11,12 @@
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import type { AnyComputeExpr, ComputeExpr } from "#query/compute.ts"
-import { Compute } from "#query/compute.ts"
-import type { QueryRow } from "#query/lower.ts"
-import { lowerQuery, query } from "#query/lower.ts"
-import { v } from "#query/scope.ts"
-import { Attempt, Learning, Student } from "#test/fixtures/learning.ts"
+import type { AnyComputeExpr, ComputeExpr } from "../src/query/compute.ts"
+import { Compute } from "../src/query/compute.ts"
+import type { QueryRow } from "../src/query/lower.ts"
+import { lowerQuery, query } from "../src/query/lower.ts"
+import { v } from "../src/query/scope.ts"
+import { Attempt, Learning, Student } from "./fixtures/learning.ts"
 
 /** Reads one lowered find term structurally (the wire arm is P06R2's). */
 function findTermAt(parsed: unknown, position: number): Record<string, unknown> {

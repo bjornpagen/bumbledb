@@ -15,8 +15,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { closed, closedId } from "#closed.ts"
-import { on } from "#face.ts"
+import { closed, closedId } from "../src/closed.ts"
+import { on } from "../src/face.ts"
 import {
 	type AnyClosedIdField,
 	bytes,
@@ -25,10 +25,10 @@ import {
 	type Infer,
 	type SignatureOf,
 	u64
-} from "#fields.ts"
-import type { Same, SameLen } from "#judgment.ts"
-import { type Fact, relation } from "#relation.ts"
-import { contained } from "#statements.ts"
+} from "../src/fields.ts"
+import type { Same, SameLen } from "../src/judgment.ts"
+import { type Fact, relation } from "../src/relation.ts"
+import { contained } from "../src/statements.ts"
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 

@@ -1,4 +1,4 @@
-import { AuthoringError } from "#errors.ts"
+import { AuthoringError } from "./errors.ts"
 /**
  * Descriptor lowering: SDK values down to the PRD-01 `SchemaSpec` plain
  * data (`#spec.ts`), which the napi bridge marshals verbatim. Lowering is
@@ -13,13 +13,13 @@ import { AuthoringError } from "#errors.ts"
  * so serialization is deterministic (byte-stable).
  */
 
-import type { AnyClosed } from "#closed.ts"
-import { isClosedMember } from "#closed.ts"
-import type { AnyFace } from "#face.ts"
-import { type AnyField, literalOf } from "#fields.ts"
-import type { RelationClasses } from "#law.ts"
-import { type AnyRelation, relationFields } from "#relation.ts"
-import type { AnySchema } from "#schema.ts"
+import type { AnyClosed } from "./closed.ts"
+import { isClosedMember } from "./closed.ts"
+import type { AnyFace } from "./face.ts"
+import { type AnyField, literalOf } from "./fields.ts"
+import type { RelationClasses } from "./law.ts"
+import { type AnyRelation, relationFields } from "./relation.ts"
+import type { AnySchema } from "./schema.ts"
 import type {
 	FieldSpec,
 	LiteralSetSpec,
@@ -28,8 +28,8 @@ import type {
 	SideSpec,
 	StatementSpec,
 	ValueTypeSpec
-} from "#spec.ts"
-import type { Statement } from "#statements.ts"
+} from "./spec.ts"
+import type { Statement } from "./statements.ts"
 
 function valueTypeOf(field: AnyField): ValueTypeSpec {
 	switch (field.kind) {

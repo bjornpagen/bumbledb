@@ -23,9 +23,9 @@
 
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import type { TermOps } from "#index.ts"
-import { ALLEN, bool, i64, interval, query, relation, schema, u64, v } from "#index.ts"
-import { allen, lt, pointIn } from "#query/atom.ts"
+import type { TermOps } from "../src/index.ts"
+import { ALLEN, bool, i64, interval, query, relation, schema, u64, v } from "../src/index.ts"
+import { allen, lt, pointIn } from "../src/query/atom.ts"
 
 const Reading = relation("Reading", {
 	id: u64,

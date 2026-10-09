@@ -1,5 +1,5 @@
 import { Result } from "effect"
-import { DbError } from "#runtime-errors.ts"
+import { DbError } from "./runtime-errors.ts"
 
 /** Structural UUID spelling, compatible with host generators and ordinary literals.
  * Exact hexadecimal width and canonical case are checked at runtime boundaries.

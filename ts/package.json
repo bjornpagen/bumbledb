@@ -13,26 +13,17 @@
 			"default": "./dist/internal/log.js"
 		}
 	},
-	"imports": {
-		"#test/*.ts": "./test/*.ts",
-		"#*.ts": {
-			"bumbledb-src": "./src/*.ts",
-			"types": "./dist/*.d.ts",
-			"default": "./dist/*.js"
-		}
-	},
 	"files": [
-		"pack-provenance.json",
 		"dist",
 		"src",
 		"COOKBOOK.md"
 	],
 	"scripts": {
-		"build": "node ../scripts/build-family.mjs",
+		"build": "node scripts/build.ts release",
+		"build:dev": "node scripts/build.ts dev",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
-		"test": "node --test 'test/**/*.test.ts'",
-		"prepublishOnly": "pnpm run build"
+		"test": "node --test 'test/**/*.test.ts'"
 	},
 	"keywords": [
 		"database",

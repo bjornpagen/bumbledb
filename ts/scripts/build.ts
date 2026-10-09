@@ -1,458 +1,78 @@
-import { spawnSync } from "node:child_process"
+/**
+ * `node scripts/build.ts dev`: debug addon at `bumbledb.<platform>-<arch>.node`, which the
+ * loader prefers over platform packages.
+ * `node scripts/build.ts release`: optimized addon into `npm/<platform>-<arch>/` plus `dist/`.
+ * `node scripts/build.ts stage <out>`: packs the main package (platform packages pinned as
+ * optional dependencies) and every platform package that holds an addon into `<out>`.
+ */
+import { execFileSync } from "node:child_process"
 import * as fs from "node:fs"
-import { createRequire } from "node:module"
-import * as os from "node:os"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
-import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
-import { Effect, Result } from "effect"
-import { assertDeclarationsAreIsolated, assertPackedImports, rewriteDeclarationImports } from "./declarations.ts"
-import { ScriptError } from "./errors.ts"
-import { installNativeArtifact } from "./native-artifact.ts"
-import { assertEffectPin } from "./pin.ts"
-import {
-	deriveDevTwinManifest,
-	isPublishPlatform,
-	localPlatformTarget,
-	nativeArtifactName,
-	PUBLISH_PLATFORMS
-} from "./platform.ts"
-import { stageMainPackage, stagePlatformPackage, tarballFile, tarballFiles } from "./stage.ts"
+import { SHIPPED_PLATFORMS } from "../src/native/load.ts"
 
-const LOCAL_PLATFORM = localPlatformTarget(process.platform, process.arch)
+const root = fileURLToPath(new URL("..", import.meta.url))
+const repo = path.join(root, "..")
+const target = `${process.platform}-${process.arch}`
 
-function build(): void {
-	const packageRoot = fileURLToPath(new URL("..", import.meta.url))
-	const admitted = spawnSync("node", ["scripts/build-family.mjs", "--check-source"], {
-		cwd: path.join(packageRoot, ".."),
-		stdio: "inherit"
-	})
-	if (admitted.status !== 0)
-		throw new ScriptError({ message: "use pnpm run build to select an isolated package-family source" })
-	const distDir = path.join(packageRoot, "dist")
-	const crateManifest = path.join(packageRoot, "..", "crates", "bumbledb-node", "Cargo.toml")
-	const shapePackageDir = path.join(packageRoot, "npm", PUBLISH_PLATFORMS[0])
-	const localPackageDir = path.join(packageRoot, "npm", LOCAL_PLATFORM)
-
-	const version = assertVersionLockstep(packageRoot)
-	console.log(
-		`bumbledb build: version ${version} (main == platform == napi crate == engine; the platform pin lives in the staged manifest)`
-	)
-
-	if (fs.existsSync(distDir))
-		throw new ScriptError({ message: "build output already exists; start a fresh family attempt" })
-
-	const tsc = spawnSync("tsc", ["-p", "tsconfig.build.json"], {
-		stdio: "inherit",
-		cwd: packageRoot
-	})
-	if (tsc.error) {
-		throw new ScriptError({ message: "spawn tsc", cause: tsc.error })
-	}
-	if (tsc.status !== 0) {
-		throw new ScriptError({ message: `tsc exited with status ${tsc.status}` })
-	}
-
-	rewriteDeclarationImports(distDir)
-	assertDeclarationsAreIsolated(distDir)
-
-	const cargo = spawnSync("cargo", ["build", "--release", "--manifest-path", crateManifest], {
-		stdio: "inherit"
-	})
-	if (cargo.error) {
-		throw new ScriptError({ message: "spawn cargo", cause: cargo.error })
-	}
-	if (cargo.status !== 0) {
-		throw new ScriptError({ message: `cargo build exited with status ${cargo.status}` })
-	}
-
-	ensureLocalPlatformPackage(shapePackageDir, localPackageDir)
-	const targetDir = process.env.CARGO_TARGET_DIR ?? path.join(packageRoot, "..", "target")
-	const artifact = path.join(targetDir, "release", nativeArtifactName(process.platform))
-	const nodeBinary = path.join(localPackageDir, "bumbledb.node")
-	installNativeArtifact(artifact, nodeBinary)
-
-	linkPlatformPackage(packageRoot, localPackageDir)
-	smokeLoad(packageRoot, version)
-
-	const repoRoot = path.join(packageRoot, "..")
-	const stamp = spawnSync("node", ["scripts/release-results.mjs", "--write-native-provenance"], {
-		cwd: repoRoot,
-		encoding: "utf8"
-	})
-	if (stamp.error) {
-		throw new ScriptError({ message: "stamp native provenance", cause: stamp.error })
-	}
-	if (stamp.status !== 0) {
-		throw new ScriptError({
-			message: `native provenance stamp failed: ${stamp.stderr ?? stamp.stdout}`
-		})
-	}
-	verifyPack(packageRoot, version)
+function run(command: string, args: readonly string[], cwd = root): void {
+	execFileSync(command, args, { cwd, stdio: "inherit" })
 }
 
-const VERSION_ROSTER = "scripts/version-roster.txt"
-
-function workspacePackageVersion(repoRoot: string): string {
-	const manifestPath = path.join(repoRoot, "Cargo.toml")
-	const crate = Result.try(() => fs.readFileSync(manifestPath, "utf8"))
-	if (Result.isFailure(crate)) {
-		throw new ScriptError({ message: `read ${manifestPath}`, cause: crate.failure })
-	}
-	const block = /\[workspace\.package\]\s*([\s\S]*?)(?:\n\[|$)/.exec(crate.success)
-	if (block === null || typeof block[1] !== "string") {
-		throw new ScriptError({ message: `${manifestPath} is missing [workspace.package]` })
-	}
-	const version = /^version = "([^"]+)"$/m.exec(block[1])?.[1]
-	if (typeof version !== "string" || version === "") {
-		throw new ScriptError({ message: `${manifestPath} [workspace.package] is missing a version` })
-	}
-	return version
+function addon(profile: "debug" | "release"): string {
+	run("cargo", ["build", "-p", "bumbledb-node", ...(profile === "release" ? ["--release"] : [])], repo)
+	const library = process.platform === "darwin" ? "libbumbledb_node.dylib" : "libbumbledb_node.so"
+	return path.join(process.env.CARGO_TARGET_DIR ?? path.join(repo, "target"), profile, library)
 }
 
-function cargoPackageVersion(manifestPath: string): string {
-	const crate = Result.try(() => fs.readFileSync(manifestPath, "utf8"))
-	if (Result.isFailure(crate)) {
-		throw new ScriptError({ message: `read ${manifestPath}`, cause: crate.failure })
-	}
-	const crateVersion = /^version = "([^"]+)"$/m.exec(crate.success)?.[1]
-	if (typeof crateVersion !== "string" || crateVersion === "") {
-		throw new ScriptError({ message: `${manifestPath} is missing a package version` })
-	}
-	return crateVersion
+function install(from: string, to: string): void {
+	fs.rmSync(to, { force: true })
+	fs.copyFileSync(from, to)
 }
 
-function npmPackageVersion(manifestPath: string): string {
-	const manifest = readJson(manifestPath)
-	const version = manifest.version
-	if (typeof version !== "string" || version === "") {
-		throw new ScriptError({ message: `${manifestPath} is missing a string version` })
-	}
-	return version
+function dist(): void {
+	fs.rmSync(path.join(root, "dist"), { recursive: true, force: true })
+	run(path.join(root, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.build.json"])
+	const binding = path.join(root, "src", "native", "binding.d.ts")
+	if (fs.existsSync(binding)) fs.copyFileSync(binding, path.join(root, "dist", "native", "binding.d.ts"))
 }
 
-function manifestVersion(repoRoot: string, relPath: string): string {
-	const abs = path.join(repoRoot, relPath)
-	if (relPath.endsWith("Cargo.toml")) {
-		return cargoPackageVersion(abs)
-	}
-	if (relPath.endsWith("package.json")) {
-		return npmPackageVersion(abs)
-	}
-	throw new ScriptError({ message: `${relPath} is not a versioned manifest` })
-}
-
-function readVersionRoster(repoRoot: string): string[] {
-	const rosterPath = path.join(repoRoot, VERSION_ROSTER)
-	const text = Result.try(() => fs.readFileSync(rosterPath, "utf8"))
-	if (Result.isFailure(text)) {
-		throw new ScriptError({ message: `read ${rosterPath}`, cause: text.failure })
-	}
-	const paths = text.success.split("\n").flatMap((line) => {
-		const trimmed = line.trim()
-		return trimmed === "" || trimmed.startsWith("#") ? [] : [trimmed]
-	})
-	if (paths.length === 0) {
-		throw new ScriptError({ message: `${VERSION_ROSTER} is empty` })
-	}
-	const seen = new Set<string>()
-	for (const rel of paths) {
-		if (seen.has(rel)) {
-			throw new ScriptError({ message: `${VERSION_ROSTER} lists ${rel} twice` })
-		}
-		seen.add(rel)
-	}
-	return paths
-}
-
-function isVersionBearing(repoRoot: string, relPath: string): boolean {
-	const abs = path.join(repoRoot, relPath)
-	const base = path.basename(relPath)
-	if (base === "Cargo.toml") {
-		const text = Result.try(() => fs.readFileSync(abs, "utf8"))
-		if (Result.isFailure(text)) {
-			throw new ScriptError({ message: `read ${abs}`, cause: text.failure })
-		}
-		return /\[package\]/.test(text.success) && /^version = "/m.test(text.success)
-	}
-	if (base === "package.json") {
-		const manifest = readJson(abs)
-		return typeof manifest.version === "string" && manifest.version !== ""
-	}
-	return false
-}
-
-function trackedManifests(repoRoot: string): string[] {
-	// `-c safe.directory` is process-scoped so `git ls-files` works when
-	// the checkout owner differs from the process (Actions containers,
-	// docker, odd mounts) without writing the user's global gitconfig.
-	const listed = spawnSync("git", ["-c", `safe.directory=${repoRoot}`, "-C", repoRoot, "ls-files", "-z"])
-	if (listed.error) {
-		throw new ScriptError({ message: "spawn git ls-files", cause: listed.error })
-	}
-	if (listed.status !== 0) {
-		throw new ScriptError({ message: `git ls-files exited with status ${listed.status}: ${listed.stderr.toString()}` })
-	}
-	return listed.stdout
-		.toString("utf8")
-		.split("\0")
-		.flatMap((file) => {
-			const base = path.posix.basename(file)
-			return base === "Cargo.toml" || base === "package.json" ? [file] : []
-		})
-}
-
-function versionBearingManifests(repoRoot: string): string[] {
-	return trackedManifests(repoRoot).filter((rel) => isVersionBearing(repoRoot, rel))
-}
-
-function assertRosterComplete(repoRoot: string, roster: readonly string[]): void {
-	const found = versionBearingManifests(repoRoot)
-	const rosterSet = new Set(roster)
-	const extra = found.filter((rel) => !rosterSet.has(rel))
-	if (extra.length > 0) {
-		throw new ScriptError({
-			message: `version lockstep broken: version-bearing manifest off-roster: ${extra.join(", ")}`
-		})
-	}
-	const missing = roster.filter((rel) => !found.includes(rel))
-	if (missing.length > 0) {
-		throw new ScriptError({
-			message: `version lockstep broken: roster names a manifest the tree sweep did not find: ${missing.join(", ")}`
-		})
-	}
-}
-
-function assertTsLogPeer(repoRoot: string, version: string): void {
-	const manifest = readJson(path.join(repoRoot, "ts-log", "package.json"))
-	const peers =
-		typeof manifest.peerDependencies === "object" && manifest.peerDependencies !== null
-			? (manifest.peerDependencies as Record<string, unknown>)
-			: undefined
-	if (peers === undefined) {
-		throw new ScriptError({ message: "ts-log/package.json is missing peerDependencies" })
-	}
-	const peer = peers["@bjornpagen/bumbledb"]
-	const expected = version
-	if (peer !== expected) {
-		throw new ScriptError({
-			message: `version lockstep broken: ts-log peerDependencies["@bjornpagen/bumbledb"] is ${String(peer)}, expected ${expected}`
-		})
-	}
-}
-
-/**
- * The version-lockstep gate: `[workspace.package] version` is the one
- * writer. Every path on `scripts/version-roster.txt` carries that
- * version exactly; a sweep of tracked `Cargo.toml` and `package.json`
- * files proves the roster lists every version-bearing manifest; `ts-log`'s
- * peer on `@bjornpagen/bumbledb` is exactly `<workspace version>`: a log
- * package cannot silently select a different native command/runtime contract.
- * The FFI ABI is not semver-stable — a main package may only ever resolve
- * its own-version binary; `engineVersion` bakes
- * `CARGO_PKG_VERSION` into the shipped binary. The platform PIN is not a
- * repo field: the repo manifest carries no `optionalDependencies`;
- * `scripts/stage.ts` derives the STAGED manifest with the exact-version
- * pins (one source) inside an isolated staging tree, and `verifyPack`
- * proves the pins on a real staged tarball while the committed manifest
- * stays byte-identical. A divergence fails the build before anything is
- * produced. Pure manifest reads, so the gate holds on every build host.
- */
-function assertVersionLockstep(packageRoot: string): string {
-	const repoRoot = path.join(packageRoot, "..")
-	const version = workspacePackageVersion(repoRoot)
-	const main = readJson(path.join(packageRoot, "package.json"))
-	if ("optionalDependencies" in main) {
-		throw new ScriptError({
-			message:
-				"the repo package.json carries optionalDependencies — the platform pin lives only in the STAGED manifest (scripts/stage.ts derives it; a committed pin recreates the sdk lane's frozen-lockfile bootstrap window)"
-		})
-	}
-	assertEffectPin(main, "ts/package.json")
-	const roster = readVersionRoster(repoRoot)
-	for (const rel of roster) {
-		const got = manifestVersion(repoRoot, rel)
-		if (got !== version) {
-			throw new ScriptError({ message: `version lockstep broken: workspace is ${version} but ${rel} is ${got}` })
-		}
-	}
-	assertRosterComplete(repoRoot, roster)
-	assertTsLogPeer(repoRoot, version)
-	for (const platform of PUBLISH_PLATFORMS) {
-		const platformName = `@bjornpagen/bumbledb-${platform}`
-		const manifest = readJson(path.join(packageRoot, "npm", platform, "package.json"))
-		if (manifest.name !== platformName) {
-			throw new ScriptError({
-				message: `platform package.json name is ${String(manifest.name)}, expected ${platformName}`
-			})
-		}
-	}
-	return version
-}
-
-/** Reads and parses a JSON file, wrapping either failure. */
-function readJson(file: string): Record<string, unknown> {
-	const text = Result.try(() => fs.readFileSync(file, "utf8"))
-	if (Result.isFailure(text)) {
-		throw new ScriptError({ message: `read ${file}`, cause: text.failure })
-	}
-	const parsed = Result.try(() => JSON.parse(text.success) as Record<string, unknown>)
-	if (Result.isFailure(parsed)) {
-		throw new ScriptError({ message: `parse ${file}`, cause: parsed.failure })
-	}
-	return parsed.success
-}
-
-/**
- * Guarantees the LOCAL platform package dir exists with a loadable manifest.
- * On a shipped platform this is the committed `npm/<target>` tree and
- * nothing is written. On any other build host (a compile-allowlisted
- * checkout outside the publish set) the dir is SYNTHESIZED — a
- * dev-tree-only, gitignored manifest DERIVED from a committed publish
- * manifest: only `name`, `description`, `os`, and `cpu` are rewritten for
- * the host; every other field (`version`, `main`, `files`, `engines`,
- * `repository`, `publishConfig`, …) is inherited BY CONSTRUCTION, so the
- * twin can never drift from the publish shape field by field. The LICENSE
- * rides along, so the by-name link, the smoke-load, and the tarball proof
- * all exercise the exact shape a published platform package would have.
- * Publishing is untouched: the publish runbook names each shipped
- * `./npm/<target>` explicitly and a synthesized twin never enters the
- * registry.
- */
-function ensureLocalPlatformPackage(shapePackageDir: string, localPackageDir: string): void {
-	fs.mkdirSync(localPackageDir, { recursive: true })
-	if (isPublishPlatform(LOCAL_PLATFORM)) {
-		return
-	}
-	const manifest = deriveDevTwinManifest(
-		readJson(path.join(shapePackageDir, "package.json")),
-		LOCAL_PLATFORM,
-		process.platform,
-		process.arch
-	)
-	fs.writeFileSync(path.join(localPackageDir, "package.json"), `${JSON.stringify(manifest, null, "\t")}\n`)
-	fs.copyFileSync(path.join(shapePackageDir, "LICENSE"), path.join(localPackageDir, "LICENSE"))
-}
-
-/**
- * Links the freshly built platform package into this package's
- * `node_modules` so `@bjornpagen/bumbledb-<platform>-<arch>` resolves BY
- * NAME — exactly as npm/pnpm would place the published optional dependency
- * on a matching host. Without this the dev tree cannot resolve the platform
- * package, and both the smoke-load and `node --test` (which drive the real
- * loader) would take the unsupported-platform path on the build host itself.
- * Purely a dev-tree convenience; `node_modules` is gitignored and rebuilt
- * each run.
- */
-function linkPlatformPackage(packageRoot: string, localPackageDir: string): void {
-	const scopeDir = path.join(packageRoot, "node_modules", "@bjornpagen")
-	const link = path.join(scopeDir, `bumbledb-${LOCAL_PLATFORM}`)
-	fs.mkdirSync(scopeDir, { recursive: true })
-	fs.rmSync(link, { recursive: true, force: true })
-	const target = path.relative(scopeDir, localPackageDir)
-	fs.symlinkSync(target, link, "dir")
-}
-
-function smokeLoad(packageRoot: string, release: string): void {
-	const requireNative = createRequire(path.join(packageRoot, "scripts", "build.ts"))
-	const platformPackage = `@bjornpagen/bumbledb-${LOCAL_PLATFORM}`
-	const loaded = Result.try(() => requireNative(platformPackage))
-	if (Result.isFailure(loaded)) {
-		throw new ScriptError({
-			message: `smoke-load ${platformPackage} through the by-name loader path`,
-			cause: loaded.failure
-		})
-	}
-	const binding: { engineVersion(): string } = loaded.success
-	const version = Result.try(() => binding.engineVersion())
-	if (Result.isFailure(version)) {
-		throw new ScriptError({ message: "smoke call engineVersion()", cause: version.failure })
-	}
-	if (typeof version.success !== "string" || !version.success.includes(release)) {
-		throw new ScriptError({
-			message: `smoke assertion failed: engineVersion() must carry the release version ${release}, got ${String(version.success)}`
-		})
-	}
-}
-
-/**
- * The tarball proof, over IMMUTABLE STAGING: stage and pack the main
- * package and the locally built platform package for real in a scratch
- * dir, then assert the shipped shape on the actual tarballs — the main
- * tarball carries dist plus the source-isolation map and NO native
- * binary; its staged manifest carries every exact platform pin and no
- * repo-tooling fields; the platform tarball is exactly
- * [LICENSE, bumbledb.node, package.json]; and the committed ts manifest
- * is byte-identical before and after (no prepack/postpack mutation
- * exists anywhere in the pack path).
- */
-function verifyPack(packageRoot: string, version: string): void {
-	const repoManifestPath = path.join(packageRoot, "package.json")
-	const before = fs.readFileSync(repoManifestPath, "utf8")
-	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-pack-"))
+function stage(out: string): void {
+	fs.mkdirSync(out, { recursive: true })
+	const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
+	const scratch = fs.mkdtempSync(path.join(out, ".stage-"))
 	try {
-		const staging = path.join(scratch, "staging")
-		fs.mkdirSync(staging, { recursive: true })
-		const mainTarball = stageMainPackage(packageRoot, staging, scratch)
-
-		const mainFiles = tarballFiles(mainTarball)
-		const binary = mainFiles.find((file) => file.endsWith(".node"))
-		if (binary !== undefined) {
-			throw new ScriptError({ message: `main package tarball must carry no native binary, found ${binary}` })
+		for (const entry of [...manifest.files, "README.md", "LICENSE"]) {
+			fs.cpSync(path.join(root, entry), path.join(scratch, entry), { recursive: true })
 		}
-		if (!mainFiles.includes("package.json")) {
-			throw new ScriptError({ message: "main package tarball is missing package.json" })
-		}
-		if (!mainFiles.some((file) => file.startsWith("dist/"))) {
-			throw new ScriptError({ message: "main package tarball carries no dist/ output" })
-		}
-
-		const packed = Result.try(() => JSON.parse(tarballFile(mainTarball, "package.json")) as Record<string, unknown>)
-		if (Result.isFailure(packed)) {
-			throw new ScriptError({ message: "parse the packed package.json", cause: packed.failure })
-		}
-		const optional =
-			typeof packed.success.optionalDependencies === "object" && packed.success.optionalDependencies !== null
-				? (packed.success.optionalDependencies as Record<string, unknown>)
-				: {}
-		for (const platform of PUBLISH_PLATFORMS) {
-			const platformName = `@bjornpagen/bumbledb-${platform}`
-			const pin = optional[platformName]
-			if (pin !== version) {
-				throw new ScriptError({
-					message: `the packed manifest's optionalDependencies["${platformName}"] is ${String(pin)}, expected the exact release version ${version} (scripts/stage.ts derives the staged manifest)`
-				})
-			}
-		}
-		if ("scripts" in packed.success || "devDependencies" in packed.success) {
-			throw new ScriptError({
-				message: "the packed manifest must not carry scripts or devDependencies (repo tooling never ships)"
-			})
-		}
-		assertEffectPin(packed.success, "the packed manifest")
-		assertPackedImports(packed.success)
-
-		// The platform tarball allowlist is asserted inside stagePlatformPackage.
-		stagePlatformPackage(packageRoot, LOCAL_PLATFORM, staging, scratch, false)
+		const optionalDependencies = Object.fromEntries(
+			SHIPPED_PLATFORMS.map((platform) => [`@bjornpagen/bumbledb-${platform}`, manifest.version])
+		)
+		const { devDependencies: _, scripts: __, ...published } = manifest
+		fs.writeFileSync(
+			path.join(scratch, "package.json"),
+			`${JSON.stringify({ ...published, optionalDependencies }, null, "\t")}\n`
+		)
+		run("pnpm", ["pack", "--pack-destination", path.resolve(out)], scratch)
 	} finally {
 		fs.rmSync(scratch, { recursive: true, force: true })
 	}
-
-	const after = fs.readFileSync(repoManifestPath, "utf8")
-	if (after !== before) {
-		throw new ScriptError({
-			message: "packing mutated the committed ts/package.json — immutable staging is broken"
-		})
+	for (const platform of SHIPPED_PLATFORMS) {
+		const dir = path.join(root, "npm", platform)
+		if (fs.existsSync(path.join(dir, "bumbledb.node")))
+			run("pnpm", ["pack", "--pack-destination", path.resolve(out)], dir)
 	}
-	const repo = readJson(repoManifestPath)
-	if ("optionalDependencies" in repo) {
-		throw new ScriptError({
-			message: "the committed package.json carries optionalDependencies — pins live only in the staged manifest"
-		})
-	}
-	console.log(
-		"bumbledb build: staged tarballs verified (main has no binary; platform has only the binary; pins exact; checkout untouched)"
-	)
 }
 
-NodeRuntime.runMain(Effect.sync(build))
+const [mode, out] = process.argv.slice(2)
+if (mode === "dev") {
+	install(addon("debug"), path.join(root, `bumbledb.${target}.node`))
+} else if (mode === "release") {
+	install(addon("release"), path.join(root, "npm", target, "bumbledb.node"))
+	dist()
+} else if (mode === "stage" && out !== undefined) {
+	stage(out)
+} else {
+	console.error("usage: node scripts/build.ts dev | release | stage <out>")
+	process.exitCode = 2
+}

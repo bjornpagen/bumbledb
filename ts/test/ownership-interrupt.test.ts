@@ -7,13 +7,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Effect, Exit, Fiber, ManagedRuntime } from "effect"
-import { ChangeSet } from "#changes.ts"
-import { Db } from "#db.ts"
-import { dbNative } from "#db-native.ts"
-import { query } from "#query/lower.ts"
-import { v } from "#query/scope.ts"
-import { NativeRuntime } from "#runtime.ts"
-import { Attempt, Learning, runtimeOptions, Student, storeDir } from "#test/fixtures/learning.ts"
+import { ChangeSet } from "../src/changes.ts"
+import { Db } from "../src/db.ts"
+import { dbNative } from "../src/db-native.ts"
+import { query } from "../src/query/lower.ts"
+import { v } from "../src/query/scope.ts"
+import { NativeRuntime } from "../src/runtime.ts"
+import { Attempt, Learning, runtimeOptions, Student, storeDir } from "./fixtures/learning.ts"
 
 const allAttempts = query(Learning).rule((r) => {
 	const { id, student, score, units, active } = v(Attempt)
@@ -27,7 +27,7 @@ function runtime() {
 test("interrupt after directory acquire and before db output adoption drains both owners (D18)", async function directoryThenDb() {
 	const rt = runtime()
 	try {
-		const original = (await import("#runtime-native.ts")).runtimeNative
+		const original = (await import("../src/runtime-native.ts")).runtimeNative
 		const open = original.runtimeDirectoryDbOpen
 		const completed = Promise.withResolvers<() => void>()
 		original.runtimeDirectoryDbOpen = ((directory, child, spec, create, callback) =>

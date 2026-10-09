@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import type { SnapshotHandle } from "#db-native.ts"
-import { dbNative } from "#db-native.ts"
-import type { QueryIr } from "#native.ts"
-import { parseQueryIr } from "#query/parse-ir.ts"
+import type { SnapshotHandle } from "../src/db-native.ts"
+import { dbNative } from "../src/db-native.ts"
+import type { QueryIr } from "../src/native.ts"
+import { parseQueryIr } from "../src/query/parse-ir.ts"
 
 function plainIr(): QueryIr {
 	return {

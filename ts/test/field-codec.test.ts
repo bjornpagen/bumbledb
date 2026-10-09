@@ -20,7 +20,7 @@ import {
 	str,
 	u64,
 	uuid
-} from "#index.ts"
+} from "../src/index.ts"
 
 function inputField<F extends AnyField>(field: F): EffectSchema.Codec<Infer<F>, unknown> {
 	return fieldSchema(field)

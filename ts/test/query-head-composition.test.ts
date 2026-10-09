@@ -21,8 +21,8 @@ import {
 	schema,
 	u64,
 	v
-} from "#index.ts"
-import { runtimeOptions, storeDir } from "#test/fixtures/learning.ts"
+} from "../src/index.ts"
+import { runtimeOptions, storeDir } from "./fixtures/learning.ts"
 
 const Entry = relation("Entry", { id: u64, amount: i64, previous: i64, original: bool })
 const Window = relation("Window", { span: interval(u64, 10n), excluded: interval(u64) })

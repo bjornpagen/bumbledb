@@ -8,17 +8,17 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Effect, type Stream } from "effect"
-import { ChangeSet } from "#changes.ts"
-import { Schema as BumbleSchema } from "#compile.ts"
-import { Db } from "#db.ts"
-import { f64, str, u64, uuid } from "#fields.ts"
-import { query } from "#query/lower.ts"
-import { v } from "#query/scope.ts"
-import { relation } from "#relation.ts"
-import { NativeRuntime } from "#runtime.ts"
-import { schema } from "#schema.ts"
-import { key } from "#statements.ts"
-import { type Attempt, Learning, type Student } from "#test/fixtures/learning.ts"
+import { ChangeSet } from "../src/changes.ts"
+import { Schema as BumbleSchema } from "../src/compile.ts"
+import { Db } from "../src/db.ts"
+import { f64, str, u64, uuid } from "../src/fields.ts"
+import { query } from "../src/query/lower.ts"
+import { v } from "../src/query/scope.ts"
+import { relation } from "../src/relation.ts"
+import { NativeRuntime } from "../src/runtime.ts"
+import { schema } from "../src/schema.ts"
+import { key } from "../src/statements.ts"
+import { type Attempt, Learning, type Student } from "./fixtures/learning.ts"
 
 function assertNoTwin(name: string, value: object): void {
 	assert.equal("then" in value, false, `${name} is not thenable`)
@@ -79,7 +79,7 @@ test("pure schema/query metadata construction touches no native work and no I/O"
 test("a CompleteResult's pages is a Stream value, and no cursor/AsyncIterable twin exists on the type", function pagesIsStream() {
 	// Type-level pin: the ONLY streaming surface is `pages`; the historical
 	// cursor verbs are absent from the CompleteResult type.
-	type Result = import("#result.ts").CompleteResult<unknown>
+	type Result = import("../src/result.ts").CompleteResult<unknown>
 	type HasCursor = "intoCursor" extends keyof Result ? true : false
 	type HasNext = "next" extends keyof Result ? true : false
 	type HasAsyncIterator = typeof Symbol.asyncIterator extends keyof Result ? true : false
@@ -94,7 +94,7 @@ test("a CompleteResult's pages is a Stream value, and no cursor/AsyncIterable tw
 })
 
 test("get/execute/prepare/close on typed handles are declared Effect-returning (compile-time pins)", function methodPins() {
-	type SnapshotValue = import("#db.ts").Snapshot<typeof Learning>
+	type SnapshotValue = import("../src/db.ts").Snapshot<typeof Learning>
 	type GetResult = ReturnType<SnapshotValue["get"]>
 	const getIsEffect: GetResult extends Effect.Effect<unknown, unknown, unknown> ? true : false = true
 	assert.ok(getIsEffect)
@@ -110,11 +110,11 @@ test("get/execute/prepare/close on typed handles are declared Effect-returning (
 })
 
 test("internal/log ships Capability and QueryReader types; no writer ABI remains", function internalSeam() {
-	type Cap = import("#runtime-native.ts").Capability
-	type Reader = import("#db.ts").QueryReader<typeof Learning>
+	type Cap = import("../src/runtime-native.ts").Capability
+	type Reader = import("../src/db.ts").QueryReader<typeof Learning>
 	const cap: Cap = { runtime: 1n, worker: 0, kind: "snapshot", id: 1n, generation: 1n }
 	assert.equal(cap.kind, "snapshot")
-	type NativeApi = typeof import("#runtime-native.ts").runtimeNative
+	type NativeApi = typeof import("../src/runtime-native.ts").runtimeNative
 	type HasWriter = "runtimeDbWriter" extends keyof NativeApi ? true : false
 	const noWriter: HasWriter = false
 	assert.ok(!noWriter)

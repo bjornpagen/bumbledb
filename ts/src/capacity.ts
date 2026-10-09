@@ -1,11 +1,11 @@
-import { AuthoringError } from "#errors.ts"
+import { AuthoringError } from "./errors.ts"
 /** Structural capacity measures and windows. Constructors and generated
  * descriptions share the same checked representation. Bounds are u64;
  * dependent bounds read the target row, measures read the source row. */
 
-import type { AnyFace, FaceFields, FaceSource, ProjectedShape } from "#face.ts"
-import type { CapacityBoundSpec, CapacityWindowSpec, WeightSpec } from "#spec.ts"
-import { integerValue, recordValue } from "#values.ts"
+import type { AnyFace, FaceFields, FaceSource, ProjectedShape } from "./face.ts"
+import type { CapacityBoundSpec, CapacityWindowSpec, WeightSpec } from "./spec.ts"
+import { integerValue, recordValue } from "./values.ts"
 
 type CapacityWindow<S extends CapacityWindowSpec = CapacityWindowSpec> = S
 

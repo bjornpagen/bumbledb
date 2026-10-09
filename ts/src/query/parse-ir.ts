@@ -1,4 +1,4 @@
-import { AuthoringError } from "#errors.ts"
+import { AuthoringError } from "../errors.ts"
 import type {
 	AtomIr,
 	CmpOpIr,
@@ -10,9 +10,9 @@ import type {
 	RuleIr,
 	ScalarExprIr,
 	TermIr
-} from "#native.ts"
-import { roundingMode } from "#scalar.ts"
-import { arrayValue as array, recordValue, valueDescriptor } from "#values.ts"
+} from "../native.ts"
+import { roundingMode } from "../scalar.ts"
+import { arrayValue as array, recordValue, valueDescriptor } from "../values.ts"
 
 function fail(context: string, expected: string): never {
 	throw new AuthoringError({

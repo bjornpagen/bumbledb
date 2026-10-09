@@ -7,13 +7,13 @@
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { ref, weigh, within } from "#capacity.ts"
-import { on } from "#face.ts"
-import { f64, i64, interval, str, u64, uuid } from "#fields.ts"
-import { relation } from "#relation.ts"
-import type { NativeRuntimeOptions } from "#runtime.ts"
-import { schema } from "#schema.ts"
-import { capacity, contained, key } from "#statements.ts"
+import { ref, weigh, within } from "../../src/capacity.ts"
+import { on } from "../../src/face.ts"
+import { f64, i64, interval, str, u64, uuid } from "../../src/fields.ts"
+import { relation } from "../../src/relation.ts"
+import type { NativeRuntimeOptions } from "../../src/runtime.ts"
+import { schema } from "../../src/schema.ts"
+import { capacity, contained, key } from "../../src/statements.ts"
 
 export const Student = relation("Student", { id: uuid, name: str, budget: u64 })
 export const Attempt = relation("Attempt", {

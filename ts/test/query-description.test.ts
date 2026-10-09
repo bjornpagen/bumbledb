@@ -19,9 +19,9 @@ import {
 	schema,
 	u64,
 	v
-} from "#index.ts"
-import { lowerQuery } from "#query/lower.ts"
-import { runtimeOptions, storeDir } from "#test/fixtures/learning.ts"
+} from "../src/index.ts"
+import { lowerQuery } from "../src/query/lower.ts"
+import { runtimeOptions, storeDir } from "./fixtures/learning.ts"
 
 const Edge = relation("Edge", { from: u64, to: u64 })
 const Graph = schema("Graph", { Edge }, [])

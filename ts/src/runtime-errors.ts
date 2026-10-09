@@ -1,8 +1,8 @@
 import { Schema } from "effect"
-import { AuthoringDiagnostic, AuthoringError } from "#errors.ts"
-import { runtimeErrorCodes } from "#runtime-codes.ts"
+import { AuthoringDiagnostic, AuthoringError } from "./errors.ts"
+import { runtimeErrorCodes } from "./runtime-codes.ts"
 
-export { runtimeErrorCodes } from "#runtime-codes.ts"
+export { runtimeErrorCodes } from "./runtime-codes.ts"
 
 const ResourceLimit = Schema.Struct({
 	_tag: Schema.Literal("ResourceLimit"),

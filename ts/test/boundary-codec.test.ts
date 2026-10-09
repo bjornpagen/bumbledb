@@ -11,9 +11,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Result } from "effect"
-import { decodeBoundaryRows, encodeBoundaryRows } from "#codec.ts"
-import { Attempt, Student } from "#test/fixtures/learning.ts"
-import { Uuid } from "#uuid.ts"
+import { decodeBoundaryRows, encodeBoundaryRows } from "../src/codec.ts"
+import { Uuid } from "../src/uuid.ts"
+import { Attempt, Student } from "./fixtures/learning.ts"
 
 function mustId(hex: string): Uuid {
 	const parsed = Uuid.parse(hex)

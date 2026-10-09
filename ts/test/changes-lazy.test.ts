@@ -19,23 +19,15 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Cause, Effect, ManagedRuntime, Option, Result, Stream } from "effect"
-import { ChangeSet, internalChanges } from "#changes.ts"
-import { Db } from "#db.ts"
-import { bytes, str } from "#fields.ts"
-import type { Fact } from "#relation.ts"
-import { cellOf, hostCellCharge } from "#rows.ts"
-import { NativeRuntime } from "#runtime.ts"
-import { DbError } from "#runtime-errors.ts"
-import {
-	Attempt,
-	AttemptById,
-	Learning,
-	runtimeOptions,
-	Student,
-	StudentById,
-	storeDir
-} from "#test/fixtures/learning.ts"
-import type { Uuid } from "#uuid.ts"
+import { ChangeSet, internalChanges } from "../src/changes.ts"
+import { Db } from "../src/db.ts"
+import { bytes, str } from "../src/fields.ts"
+import type { Fact } from "../src/relation.ts"
+import { cellOf, hostCellCharge } from "../src/rows.ts"
+import { NativeRuntime } from "../src/runtime.ts"
+import { DbError } from "../src/runtime-errors.ts"
+import type { Uuid } from "../src/uuid.ts"
+import { Attempt, AttemptById, Learning, runtimeOptions, Student, StudentById, storeDir } from "./fixtures/learning.ts"
 
 function runtime() {
 	return ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))

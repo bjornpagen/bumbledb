@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import { Compute, type ComputeExpr, MAX_COMPUTE_DEPTH } from "#query/compute.ts"
-import { lowerQuery, query } from "#query/lower.ts"
-import { v } from "#query/scope.ts"
-import { scalarAuthoringWork } from "#scalar.ts"
-import { Attempt, Learning } from "#test/fixtures/learning.ts"
+import { Compute, type ComputeExpr, MAX_COMPUTE_DEPTH } from "../src/query/compute.ts"
+import { lowerQuery, query } from "../src/query/lower.ts"
+import { v } from "../src/query/scope.ts"
+import { scalarAuthoringWork } from "../src/scalar.ts"
+import { Attempt, Learning } from "./fixtures/learning.ts"
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 

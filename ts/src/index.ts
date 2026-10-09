@@ -6,7 +6,7 @@
  * or disposal twin. The raw native bridge is not exported from this barrel.
  */
 
-export { alternatives } from "#alternatives.ts"
+export { alternatives } from "./alternatives.ts"
 export type {
 	BoundsOnTarget,
 	CapacityWeight,
@@ -15,19 +15,19 @@ export type {
 	FieldRef,
 	UnitDimensionBan,
 	WeightOnSource
-} from "#capacity.ts"
-export { duration, ref, weigh, within } from "#capacity.ts"
-export type { ChangeCounts, ChangeDraft, ChangeRecord } from "#changes.ts"
-export { ChangeSet } from "#changes.ts"
+} from "./capacity.ts"
+export { duration, ref, weigh, within } from "./capacity.ts"
+export type { ChangeCounts, ChangeDraft, ChangeRecord } from "./changes.ts"
+export { ChangeSet } from "./changes.ts"
 export type {
 	AnyClosed,
 	AxiomRow,
 	Axioms,
 	Closed,
 	PayloadField
-} from "#closed.ts"
-export { closed, closedId } from "#closed.ts"
-export type { RowShape } from "#codec.ts"
+} from "./closed.ts"
+export { closed, closedId } from "./closed.ts"
+export type { RowShape } from "./codec.ts"
 export {
 	decodeBoundaryField,
 	decodeBoundaryRows,
@@ -38,9 +38,9 @@ export {
 	fieldSchema,
 	rowSchema,
 	rowShape
-} from "#codec.ts"
-export type { CompiledSchema, SchemaId } from "#compile.ts"
-export { Schema } from "#compile.ts"
+} from "./codec.ts"
+export type { CompiledSchema, SchemaId } from "./compile.ts"
+export { Schema } from "./compile.ts"
 export type {
 	ApplyOutcome,
 	CoreWitness,
@@ -52,8 +52,8 @@ export type {
 	StorageInspection,
 	WriteExpected,
 	WriteOptions
-} from "#db.ts"
-export { Db } from "#db.ts"
+} from "./db.ts"
+export { Db } from "./db.ts"
 export {
 	AuthoringDiagnostic,
 	AuthoringError,
@@ -61,7 +61,7 @@ export {
 	NativeOperationError,
 	NativeReportedError,
 	SdkInvariantError
-} from "#errors.ts"
+} from "./errors.ts"
 export type {
 	AnyFace,
 	Arity,
@@ -76,8 +76,8 @@ export type {
 	ProjectedShape,
 	SameArity,
 	SameShapes
-} from "#face.ts"
-export { on } from "#face.ts"
+} from "./face.ts"
+export { on } from "./face.ts"
 export type {
 	AnyClosedIdField,
 	AnyClosedRoster,
@@ -98,10 +98,10 @@ export type {
 	StrField,
 	U64Field,
 	UuidField
-} from "#fields.ts"
-export { bool, bytes, f64, i64, interval, str, u64, uuid } from "#fields.ts"
-export type { Same, SameLen } from "#judgment.ts"
-export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
+} from "./fields.ts"
+export { bool, bytes, f64, i64, interval, str, u64, uuid } from "./fields.ts"
+export type { Same, SameLen } from "./judgment.ts"
+export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "./law.ts"
 export type {
 	AtomIr,
 	AtomSourceIr,
@@ -118,20 +118,20 @@ export type {
 	TermIr,
 	Violation,
 	ViolationFact
-} from "#native.ts"
-export type { FindColumn } from "#query/atom.ts"
-export { ALLEN } from "#query/atom.ts"
-export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode } from "#query/compute.ts"
-export { Compute } from "#query/compute.ts"
+} from "./native.ts"
+export type { FindColumn } from "./query/atom.ts"
+export { ALLEN } from "./query/atom.ts"
+export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode } from "./query/compute.ts"
+export { Compute } from "./query/compute.ts"
 export type {
 	DescriptionHead,
 	DescriptionParameter,
 	DescriptionRow,
 	DescriptionTable,
 	QueryDescription
-} from "#query/description.ts"
-export { describeQuery, queryFromDescription } from "#query/description.ts"
-export type { Agg, HeadRecordOf, RowOfFind } from "#query/find.ts"
+} from "./query/description.ts"
+export { describeQuery, queryFromDescription } from "./query/description.ts"
+export type { Agg, HeadRecordOf, RowOfFind } from "./query/find.ts"
 export type {
 	AnyQuery,
 	AnyRuleValue,
@@ -148,8 +148,8 @@ export type {
 	RecRuleScope,
 	RuleValue,
 	TermOps
-} from "#query/lower.ts"
-export { lowerQuery, query } from "#query/lower.ts"
+} from "./query/lower.ts"
+export { lowerQuery, query } from "./query/lower.ts"
 export type {
 	ClassedField,
 	Flatten,
@@ -162,9 +162,9 @@ export type {
 	SetParam,
 	Var,
 	VarsOf
-} from "#query/scope.ts"
-export { v } from "#query/scope.ts"
-export type { IntervalVar, SegmentOp, Segments } from "#query/segments.ts"
+} from "./query/scope.ts"
+export { v } from "./query/scope.ts"
+export type { IntervalVar, SegmentOp, Segments } from "./query/segments.ts"
 export type {
 	AnyRelation,
 	Fact,
@@ -172,15 +172,15 @@ export type {
 	Relation,
 	RelationField,
 	RelationFields
-} from "#relation.ts"
-export { relation } from "#relation.ts"
-export type { CompleteResult } from "#result.ts"
-export type { CellValue } from "#rows.ts"
-export { cellOf, factOfCells, flatRowsOf, keyCellsOf } from "#rows.ts"
-export type { NativeRuntimeOptions } from "#runtime.ts"
-export { NativeRuntime } from "#runtime.ts"
-export type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
-export { CloseFailure, DbError, dbError, runtimeErrorCodes } from "#runtime-errors.ts"
+} from "./relation.ts"
+export { relation } from "./relation.ts"
+export type { CompleteResult } from "./result.ts"
+export type { CellValue } from "./rows.ts"
+export { cellOf, factOfCells, flatRowsOf, keyCellsOf } from "./rows.ts"
+export type { NativeRuntimeOptions } from "./runtime.ts"
+export { NativeRuntime } from "./runtime.ts"
+export type { CloseReport, OutstandingWork } from "./runtime-errors.ts"
+export { CloseFailure, DbError, dbError, runtimeErrorCodes } from "./runtime-errors.ts"
 export type {
 	IntervalKind,
 	NumericCast,
@@ -191,12 +191,12 @@ export type {
 	ScalarNode,
 	ScalarResultKind,
 	ScalarValue
-} from "#scalar.ts"
-export type { AnySchema, Schema as SchemaDeclaration, SchemaRelation, SchemaRelations } from "#schema.ts"
-export { schema } from "#schema.ts"
-export type { AnySelected, FieldsOf, Selected, SelectionBinding, SelectionInput } from "#selection.ts"
-export { select } from "#selection.ts"
-export type { Key, QueryTemplate, Rel } from "#shape.ts"
+} from "./scalar.ts"
+export type { AnySchema, Schema as SchemaDeclaration, SchemaRelation, SchemaRelations } from "./schema.ts"
+export { schema } from "./schema.ts"
+export type { AnySelected, FieldsOf, Selected, SelectionBinding, SelectionInput } from "./selection.ts"
+export { select } from "./selection.ts"
+export type { Key, QueryTemplate, Rel } from "./shape.ts"
 export type {
 	CapacityBoundSpec,
 	CapacityWindowSpec,
@@ -210,13 +210,13 @@ export type {
 	StatementSpec,
 	ValueSpec,
 	ValueTypeSpec
-} from "#spec.ts"
+} from "./spec.ts"
 export type {
 	CapacityStatement,
 	ContainmentStatement,
 	KeyStatement,
 	MirrorsStatement,
 	Statement
-} from "#statements.ts"
-export { capacity, contained, key, mirrors, renderStatement } from "#statements.ts"
-export { Uuid } from "#uuid.ts"
+} from "./statements.ts"
+export { capacity, contained, key, mirrors, renderStatement } from "./statements.ts"
+export { Uuid } from "./uuid.ts"

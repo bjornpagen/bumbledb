@@ -1,8 +1,8 @@
 import { regex } from "arkregex"
-import { AuthoringError } from "#errors.ts"
-import type { LiteralSpec } from "#spec.ts"
-import type { Uuid } from "#uuid.ts"
-import { arrayValue, fieldValue, recordValue, taggedValueOf, U64_MAX } from "#values.ts"
+import { AuthoringError } from "./errors.ts"
+import type { LiteralSpec } from "./spec.ts"
+import type { Uuid } from "./uuid.ts"
+import { arrayValue, fieldValue, recordValue, taggedValueOf, U64_MAX } from "./values.ts"
 
 const INTEGER_INDEX_NAME = regex("^(?:0|[1-9][0-9]*)$")
 

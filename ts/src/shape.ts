@@ -1,5 +1,5 @@
-import type { Query } from "#query/lower.ts"
-import type { inferred, ParamsRecord } from "#query/scope.ts"
+import type { Query } from "./query/lower.ts"
+import type { inferred, ParamsRecord } from "./query/scope.ts"
 /**
  * Shared derived types: `S` is a
  * declared core schema value's type, `Rel<S>` its ordinary (writable)
@@ -8,9 +8,9 @@ import type { inferred, ParamsRecord } from "#query/scope.ts"
  * immutable schema-bound logical query template. All are derived from the
  * existing typed descriptors — no second hand-maintained roster.
  */
-import type { AnyRelation, Fact } from "#relation.ts"
-import type { AnySchema } from "#schema.ts"
-import type { KeyStatement } from "#statements.ts"
+import type { AnyRelation, Fact } from "./relation.ts"
+import type { AnySchema } from "./schema.ts"
+import type { KeyStatement } from "./statements.ts"
 
 /** The ordinary relations of a schema (closed vocabularies are ground axioms, never ingestion targets). */
 type Rel<S extends AnySchema> = Extract<S["relations"][keyof S["relations"]], AnyRelation>

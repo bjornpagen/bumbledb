@@ -1,7 +1,7 @@
-import { type AuthoringDiagnostic, AuthoringError } from "#errors.ts"
-import type { AnyField, Infer } from "#fields.ts"
-import type { ValueSpec } from "#spec.ts"
-import { Uuid } from "#uuid.ts"
+import { type AuthoringDiagnostic, AuthoringError } from "./errors.ts"
+import type { AnyField, Infer } from "./fields.ts"
+import type { ValueSpec } from "./spec.ts"
+import { Uuid } from "./uuid.ts"
 
 const U64_MAX = 0xffffffffffffffffn
 const I64_MIN = -0x8000000000000000n

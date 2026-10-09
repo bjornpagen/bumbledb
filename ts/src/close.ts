@@ -1,7 +1,7 @@
 import { Effect } from "effect"
-import { finalizeClose } from "#runtime.ts"
-import type { CloseReport } from "#runtime-errors.ts"
-import { DbError } from "#runtime-errors.ts"
+import { finalizeClose } from "./runtime.ts"
+import type { CloseReport } from "./runtime-errors.ts"
+import { DbError } from "./runtime-errors.ts"
 /**
  * Shared close/drain adapters for scoped core owners (drafts, changes,
  * snapshots, sessions, results, cursors, databases). Early `close()` joins
@@ -12,7 +12,7 @@ import { DbError } from "#runtime-errors.ts"
  * quiescence. Teardown uses the runtime's reserved cleanup envelope
  * natively; repeated close joins the same stored transition (idempotent).
  */
-import type { CloseWire } from "#runtime-native.ts"
+import type { CloseWire } from "./runtime-native.ts"
 
 function reportOf(operation: string, wire: CloseWire): CloseReport {
 	if (wire.kind === "failed") {

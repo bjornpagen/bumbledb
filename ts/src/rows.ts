@@ -1,4 +1,4 @@
-import { AuthoringError, SdkInvariantError } from "#errors.ts"
+import { AuthoringError, SdkInvariantError } from "./errors.ts"
 /**
  * The row codec: fact object ⇄ positional cell array by field
  * ordinal, schema-directed, in ONE place. The write side lowers named host
@@ -16,10 +16,10 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
  * views are refused before any copy. Host length is judged before string
  * scans and byte copies.
  */
-import type { AnyClosedRoster, AnyField } from "#fields.ts"
-import { literalShapeError, rosterOf } from "#fields.ts"
-import { type AnyRelation, type Fact, relationFields } from "#relation.ts"
-import { fieldValue, recordValue } from "#values.ts"
+import type { AnyClosedRoster, AnyField } from "./fields.ts"
+import { literalShapeError, rosterOf } from "./fields.ts"
+import { type AnyRelation, type Fact, relationFields } from "./relation.ts"
+import { fieldValue, recordValue } from "./values.ts"
 
 /**
  * One owned cell at the private bridge boundary. The declared sealed field

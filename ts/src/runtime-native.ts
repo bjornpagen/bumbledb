@@ -14,9 +14,9 @@ import type {
 	LogSchemaHandle,
 	LogStateStamp,
 	Violation
-} from "#native.ts"
-import { native } from "#native.ts"
-import type { SchemaSpec } from "#spec.ts"
+} from "./native.ts"
+import { native } from "./native.ts"
+import type { SchemaSpec } from "./spec.ts"
 
 export interface RuntimeHandle {
 	readonly __runtime: unique symbol
@@ -50,7 +50,7 @@ export type ManagedDbOutcome =
 			readonly tag: "refused"
 			readonly kind: "schemaError" | "newtypeMismatch" | "fingerprintMismatch" | "destinationExists"
 			readonly message: string
-			readonly diagnostic?: Extract<import("#runtime-errors.ts").DbError["reason"], { _tag: "Engine" }>["diagnostic"]
+			readonly diagnostic?: Extract<import("./runtime-errors.ts").DbError["reason"], { _tag: "Engine" }>["diagnostic"]
 	  }
 
 export type LogTakeWire =

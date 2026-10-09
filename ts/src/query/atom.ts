@@ -1,7 +1,10 @@
-import { AuthoringError } from "#errors.ts"
-import type { AnyClosedRoster, AnyField, FloatIntervalValue, Infer, IntervalValue } from "#fields.ts"
-import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
-import type { QueryNode } from "#query/compute.ts"
+import { AuthoringError } from "../errors.ts"
+import type { AnyClosedRoster, AnyField, FloatIntervalValue, Infer, IntervalValue } from "../fields.ts"
+import type { ClassLookup, ClassRecordOf, SchemaClasses } from "../law.ts"
+import type { FieldsShape } from "../relation.ts"
+import type { ScalarKind } from "../scalar.ts"
+import type { Uuid } from "../uuid.ts"
+import type { QueryNode } from "./compute.ts"
 import type {
 	AntiJoinOk,
 	AnyVar,
@@ -14,12 +17,9 @@ import type {
 	ParamValueAt,
 	SetParam,
 	ShapeOf
-} from "#query/scope.ts"
-import { isTerm, term } from "#query/scope.ts"
-import type { Segments } from "#query/segments.ts"
-import type { FieldsShape } from "#relation.ts"
-import type { ScalarKind } from "#scalar.ts"
-import type { Uuid } from "#uuid.ts"
+} from "./scope.ts"
+import { isTerm, term } from "./scope.ts"
+import type { Segments } from "./segments.ts"
 
 type BindingTermData =
 	| { readonly kind: "var"; readonly ref: AnyVar }

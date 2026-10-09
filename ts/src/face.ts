@@ -1,12 +1,12 @@
-import type { AnyClosed } from "#closed.ts"
-import { memberDescriptor, sealedFieldOf } from "#closed.ts"
-import { AuthoringError } from "#errors.ts"
-import { type AnyField, assertDeclarationRecord, type SignatureOf } from "#fields.ts"
-import type { Same } from "#judgment.ts"
-import type { AnyRelation, FieldsShape } from "#relation.ts"
-import { type AnySelected, type FieldsOf, type SelectionBinding, selectionBindings } from "#selection.ts"
-import { renderLiteralSet } from "#spec.ts"
-import { arrayValue, recordValue } from "#values.ts"
+import type { AnyClosed } from "./closed.ts"
+import { memberDescriptor, sealedFieldOf } from "./closed.ts"
+import { AuthoringError } from "./errors.ts"
+import { type AnyField, assertDeclarationRecord, type SignatureOf } from "./fields.ts"
+import type { Same } from "./judgment.ts"
+import type { AnyRelation, FieldsShape } from "./relation.ts"
+import { type AnySelected, type FieldsOf, type SelectionBinding, selectionBindings } from "./selection.ts"
+import { renderLiteralSet } from "./spec.ts"
+import { arrayValue, recordValue } from "./values.ts"
 
 const emptySelection: readonly SelectionBinding[] = Object.freeze([])
 

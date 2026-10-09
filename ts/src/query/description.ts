@@ -1,18 +1,11 @@
 import { isDeepStrictEqual } from "node:util"
-import { sealedFieldsOf } from "#closed.ts"
-import { AuthoringError } from "#errors.ts"
-import { type AnyField, fieldDescriptor, type Infer, rosterOf, signaturesAgree } from "#fields.ts"
-import type { SchemaClasses } from "#law.ts"
-import type { AtomIr, ConditionTreeIr, QueryIr, RuleIr, ScalarExprIr, TaggedValue, TermIr } from "#native.ts"
-import type { AnyTreeChild, DerivedTable, FindColumn, InteriorData, RecData, RuleData } from "#query/atom.ts"
-import type { QueryNode } from "#query/compute.ts"
-import type { AnyQuery, ChainContext, Query } from "#query/lower.ts"
-import { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, taggedCmpLiteral } from "#query/lower.ts"
-import { parseQueryIr } from "#query/parse-ir.ts"
-import { type AnyVar, type MatchOwner, makeParam, makeSetParam, type ParamsRecord, v } from "#query/scope.ts"
-import { difference, type IntervalVar, intersection } from "#query/segments.ts"
-import type { FieldsShape } from "#relation.ts"
-import { handleOf } from "#rows.ts"
+import { sealedFieldsOf } from "../closed.ts"
+import { AuthoringError } from "../errors.ts"
+import { type AnyField, fieldDescriptor, type Infer, rosterOf, signaturesAgree } from "../fields.ts"
+import type { SchemaClasses } from "../law.ts"
+import type { AtomIr, ConditionTreeIr, QueryIr, RuleIr, ScalarExprIr, TaggedValue, TermIr } from "../native.ts"
+import type { FieldsShape } from "../relation.ts"
+import { handleOf } from "../rows.ts"
 import {
 	queryVarLeaf,
 	scalarBinary,
@@ -22,10 +15,17 @@ import {
 	scalarMeasure,
 	scalarMulDiv,
 	scalarNegate
-} from "#scalar.ts"
-import type { Schema, SchemaRelations } from "#schema.ts"
-import { schemaDescriptor } from "#schema.ts"
-import { arrayValue, recordValue, valueDescriptor } from "#values.ts"
+} from "../scalar.ts"
+import type { Schema, SchemaRelations } from "../schema.ts"
+import { schemaDescriptor } from "../schema.ts"
+import { arrayValue, recordValue, valueDescriptor } from "../values.ts"
+import type { AnyTreeChild, DerivedTable, FindColumn, InteriorData, RecData, RuleData } from "./atom.ts"
+import type { QueryNode } from "./compute.ts"
+import type { AnyQuery, ChainContext, Query } from "./lower.ts"
+import { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, taggedCmpLiteral } from "./lower.ts"
+import { parseQueryIr } from "./parse-ir.ts"
+import { type AnyVar, type MatchOwner, makeParam, makeSetParam, type ParamsRecord, v } from "./scope.ts"
+import { difference, type IntervalVar, intersection } from "./segments.ts"
 
 /** Logical ordinals are scoped to this description and the schema's ordered declarations. */
 interface QueryDescription {

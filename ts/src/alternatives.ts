@@ -1,15 +1,15 @@
-import { type AnyClosed, closedDescriptor, closedId, sealedFieldOf } from "#closed.ts"
-import { AuthoringError } from "#errors.ts"
-import type { Face, SameArity, SameShapes } from "#face.ts"
-import { type ClosedIdField, signaturesAgree } from "#fields.ts"
-import type { RelationFields } from "#relation.ts"
+import { type AnyClosed, closedDescriptor, closedId, sealedFieldOf } from "./closed.ts"
+import { AuthoringError } from "./errors.ts"
+import type { Face, SameArity, SameShapes } from "./face.ts"
+import { type ClosedIdField, signaturesAgree } from "./fields.ts"
+import type { RelationFields } from "./relation.ts"
 import {
 	type ContainmentStatement,
 	type KeyStatement,
 	type MirrorsStatement,
 	statementDescriptor
-} from "#statements.ts"
-import { recordValue } from "#values.ts"
+} from "./statements.ts"
+import { recordValue } from "./values.ts"
 
 type KeyFace<K extends KeyStatement> = Face<K["owner"], K["projection"]>
 type ScalarKey<K extends KeyStatement> =

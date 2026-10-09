@@ -1,7 +1,6 @@
-import { createRequire } from "node:module"
-import { Result } from "effect"
-import { NativeLoadError, NativeOperationError, NativeReportedError } from "#errors.ts"
-import type { SchemaSpec, ValueSpec, ValueTypeSpec } from "#spec.ts"
+import { NativeOperationError, NativeReportedError } from "./errors.ts"
+import { loadAddon } from "./native/load.ts"
+import type { SchemaSpec, ValueSpec, ValueTypeSpec } from "./spec.ts"
 
 /**
  * The opaque managed database capability. The native runtime registry —
@@ -95,7 +94,7 @@ type ScalarExprIr =
 			readonly a: ScalarExprIr
 			readonly b: ScalarExprIr
 			readonly divisor: ScalarExprIr
-			readonly rounding: import("#scalar.ts").Rounding
+			readonly rounding: import("./scalar.ts").Rounding
 	  }
 	| { readonly kind: "var"; readonly var: number }
 	| { readonly kind: "literal"; readonly value: TaggedValue }
@@ -124,7 +123,7 @@ type FoldOpIr =
 type FindTermIr =
 	| {
 			readonly kind: "segments"
-			readonly op: import("#query/segments.ts").SegmentOp
+			readonly op: import("./query/segments.ts").SegmentOp
 			readonly left: number
 			readonly right: number
 	  }
@@ -528,24 +527,15 @@ interface Native {
 	logBlankDigests(): { readonly application: Uint8Array; readonly system: Uint8Array }
 }
 
-const SHIPPED_PLATFORMS = ["darwin-arm64", "linux-arm64", "linux-x64"] as const
+let binding: Native | undefined
 
-const requireNative = createRequire(import.meta.url)
-
-type NativeBinding = Native
-
-function ensureNativeBinding(): NativeBinding {
-	const loaded = bindingCache
-	if (loaded !== undefined) {
-		return loaded
-	}
-	const next = loadNativeBinding(process.platform, process.arch)
-	bindingCache = next
-	return next
+function ensureNativeBinding(): Native {
+	binding ??= loadAddon<Native>(process.platform, process.arch)
+	return binding
 }
 
 /** Lazy singleton: the addon loads on first native access, not module evaluation. */
-const native: NativeBinding = new Proxy({} as NativeBinding, {
+const native: Native = new Proxy({} as Native, {
 	get(_target, property, receiver) {
 		return Reflect.get(ensureNativeBinding(), property, receiver)
 	},
@@ -554,35 +544,8 @@ const native: NativeBinding = new Proxy({} as NativeBinding, {
 	}
 })
 
-let bindingCache: NativeBinding | undefined
-
 function nativeBindingIsLoaded(): boolean {
-	return bindingCache !== undefined
-}
-
-function loadNativeBinding(platform: string, arch: string): NativeBinding {
-	const platformPackage = `@bjornpagen/bumbledb-${platform}-${arch}`
-
-	const present = Result.try(() => requireNative.resolve(`${platformPackage}/package.json`))
-	if (Result.isFailure(present)) {
-		throw new NativeLoadError({
-			package: platformPackage,
-			operation: "resolve",
-			message: `no native binary for ${platform}-${arch}: @bjornpagen/bumbledb ships ${SHIPPED_PLATFORMS.join(", ")} only`,
-			cause: present.failure
-		})
-	}
-
-	const loaded = Result.try(() => requireNative(platformPackage))
-	if (Result.isFailure(loaded)) {
-		throw new NativeLoadError({
-			package: platformPackage,
-			operation: "load",
-			message: `load the ${platformPackage} native binary (package present but unloadable)`,
-			cause: loaded.failure
-		})
-	}
-	return loaded.success
+	return binding !== undefined
 }
 
 /**
@@ -729,8 +692,6 @@ export {
 	internalDescriptor,
 	internalLogIdentities,
 	internalLogSchema,
-	loadNativeBinding,
 	native,
-	nativeBindingIsLoaded,
-	SHIPPED_PLATFORMS
+	nativeBindingIsLoaded
 }

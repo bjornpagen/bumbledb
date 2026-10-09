@@ -1,8 +1,8 @@
 import { Context, Duration, Effect, Exit, Layer } from "effect"
-import type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
-import { CloseFailure, DbError, dbError } from "#runtime-errors.ts"
-import type { CloseWire, OperationHandle, OptionsWire, RuntimeHandle } from "#runtime-native.ts"
-import { runtimeNative } from "#runtime-native.ts"
+import type { CloseReport, OutstandingWork } from "./runtime-errors.ts"
+import { CloseFailure, DbError, dbError } from "./runtime-errors.ts"
+import type { CloseWire, OperationHandle, OptionsWire, RuntimeHandle } from "./runtime-native.ts"
+import { runtimeNative } from "./runtime-native.ts"
 
 export interface NativeRuntimeOptions {
 	readonly workers?: number

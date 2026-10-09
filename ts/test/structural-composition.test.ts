@@ -18,8 +18,8 @@ import {
 	schema,
 	u64,
 	v
-} from "#index.ts"
-import { runtimeOptions, storeDir } from "#test/fixtures/learning.ts"
+} from "../src/index.ts"
+import { runtimeOptions, storeDir } from "./fixtures/learning.ts"
 
 const Kind = closed("Kind", ["Measured", "Quoted"])
 const Parent = relation("Parent", { id: u64, kind: closedId(Kind) })

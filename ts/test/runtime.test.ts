@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime } from "effect"
-import { native } from "#native.ts"
-import type { NativeRuntimeOptions } from "#runtime.ts"
-import { finalizeClose, hashChunk, NativeRuntime, nativeOperation } from "#runtime.ts"
-import { CloseFailure, DbError, dbError, runtimeErrorCodes } from "#runtime-errors.ts"
-import type { CloseWire, OptionsWire, RuntimeHandle } from "#runtime-native.ts"
-import { runtimeNative } from "#runtime-native.ts"
+import { native } from "../src/native.ts"
+import type { NativeRuntimeOptions } from "../src/runtime.ts"
+import { finalizeClose, hashChunk, NativeRuntime, nativeOperation } from "../src/runtime.ts"
+import { CloseFailure, DbError, dbError, runtimeErrorCodes } from "../src/runtime-errors.ts"
+import type { CloseWire, OptionsWire, RuntimeHandle } from "../src/runtime-native.ts"
+import { runtimeNative } from "../src/runtime-native.ts"
 
 const configuration: NativeRuntimeOptions = {
 	workers: 2,

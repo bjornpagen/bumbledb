@@ -1,4 +1,4 @@
-// Generated from the exact native runtimeErrorCodes export; do not edit.
+/** The native runtime's error codes, in the order `runtimeErrorCodes()` reports them. */
 export const runtimeErrorCodes = [
 	"RuntimeAlreadyLive",
 	"ForeignRuntime",

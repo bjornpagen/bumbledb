@@ -25,14 +25,14 @@
 
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { closed } from "#closed.ts"
-import { interval, str, u64 } from "#fields.ts"
-import { ALLEN } from "#query/atom.ts"
-import type { QueryParams } from "#query/lower.ts"
-import { lowerQuery, query } from "#query/lower.ts"
-import { v } from "#query/scope.ts"
-import { relation } from "#relation.ts"
-import { schema } from "#schema.ts"
+import { closed } from "../src/closed.ts"
+import { interval, str, u64 } from "../src/fields.ts"
+import { ALLEN } from "../src/query/atom.ts"
+import type { QueryParams } from "../src/query/lower.ts"
+import { lowerQuery, query } from "../src/query/lower.ts"
+import { v } from "../src/query/scope.ts"
+import { relation } from "../src/relation.ts"
+import { schema } from "../src/schema.ts"
 
 const Holder = relation("Holder", { id: u64, name: str })
 const Session = relation("Session", {

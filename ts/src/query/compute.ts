@@ -1,11 +1,9 @@
 /** Query scalar expressions use the same nodes that native preparation reads.
  * Distinct i64 and u64 kinds survive TypeScript's shared bigint carrier. */
-import { AuthoringError } from "#errors.ts"
-import type { AnyField } from "#fields.ts"
-import { bool as boolField, f64 as f64Field, i64 as i64Field, rosterOf, u64 as u64Field } from "#fields.ts"
-import type { AnyVar } from "#query/scope.ts"
-import { isTerm, term } from "#query/scope.ts"
-import type { Rounding, ScalarKind, ScalarLiteral, ScalarNode } from "#scalar.ts"
+import { AuthoringError } from "../errors.ts"
+import type { AnyField } from "../fields.ts"
+import { bool as boolField, f64 as f64Field, i64 as i64Field, rosterOf, u64 as u64Field } from "../fields.ts"
+import type { Rounding, ScalarKind, ScalarLiteral, ScalarNode } from "../scalar.ts"
 import {
 	checkBool,
 	checkF64,
@@ -22,7 +20,9 @@ import {
 	scalarMeasure,
 	scalarMulDiv,
 	scalarNegate
-} from "#scalar.ts"
+} from "../scalar.ts"
+import type { AnyVar } from "./scope.ts"
+import { isTerm, term } from "./scope.ts"
 
 /** Query expression, including interval leaves consumed by measure. */
 type QueryNode = ScalarNode

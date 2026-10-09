@@ -1,17 +1,17 @@
 import { Effect } from "effect"
-import { isClosedMember, membersAgree } from "#closed.ts"
-import { dbNative } from "#db-native.ts"
-import { SdkInvariantError } from "#errors.ts"
-import { isImmutable, snapshotData } from "#immutable.ts"
-import type { SchemaClasses } from "#law.ts"
-import { lower } from "#lower.ts"
-import type { SealedDescriptor } from "#native.ts"
-import type { AnyRelation } from "#relation.ts"
-import { nativeOperationWith, runtimeHandle } from "#runtime.ts"
-import { argumentError } from "#runtime-errors.ts"
-import type { AnySchema, Schema as SchemaDeclaration, SchemaRelations } from "#schema.ts"
-import { schemaDescriptor } from "#schema.ts"
-import { type KeyStatement, type Statement, statementDescriptor } from "#statements.ts"
+import { isClosedMember, membersAgree } from "./closed.ts"
+import { dbNative } from "./db-native.ts"
+import { SdkInvariantError } from "./errors.ts"
+import { isImmutable, snapshotData } from "./immutable.ts"
+import type { SchemaClasses } from "./law.ts"
+import { lower } from "./lower.ts"
+import type { SealedDescriptor } from "./native.ts"
+import type { AnyRelation } from "./relation.ts"
+import { nativeOperationWith, runtimeHandle } from "./runtime.ts"
+import { argumentError } from "./runtime-errors.ts"
+import type { AnySchema, Schema as SchemaDeclaration, SchemaRelations } from "./schema.ts"
+import { schemaDescriptor } from "./schema.ts"
+import { type KeyStatement, type Statement, statementDescriptor } from "./statements.ts"
 
 /**
  * `SchemaId` — the engine's canonical schema fingerprint as lowercase hex.
@@ -151,7 +151,7 @@ const compile = Effect.fn("Schema.compile")(function* <S extends AnySchema>(sche
  * SINGLE export specifier below — a local `type` + `const` merge is the
  * plain TypeScript type/value merge, with no same-name pair of export
  * declarations for any checker to refuse (the earlier
- * `export type { Schema } from "#schema.ts"` beside `export { Schema }`
+ * `export type { Schema } from "./schema.ts"` beside `export { Schema }`
  * spelled the type meaning twice at the barrel; this spelling cannot).
  */
 type Schema<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> = SchemaDeclaration<

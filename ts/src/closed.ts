@@ -1,4 +1,4 @@
-import { AuthoringError } from "#errors.ts"
+import { AuthoringError } from "./errors.ts"
 import {
 	type AnyField,
 	assertDeclarationOrderKey,
@@ -8,8 +8,8 @@ import {
 	type Infer,
 	ownHandles,
 	signaturesAgree
-} from "#fields.ts"
-import { descriptorCache } from "#immutable.ts"
+} from "./fields.ts"
+import { descriptorCache } from "./immutable.ts"
 import {
 	type AnyRelation,
 	type FieldsShape,
@@ -17,8 +17,8 @@ import {
 	type RelationField,
 	relationDescriptor,
 	relationFields
-} from "#relation.ts"
-import { fieldValue, recordValue } from "#values.ts"
+} from "./relation.ts"
+import { fieldValue, recordValue } from "./values.ts"
 
 type PayloadField = AnyField
 type PayloadColumns = FieldsShape & { readonly id?: never }

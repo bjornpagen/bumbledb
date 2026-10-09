@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { type Axioms, closed, closedId } from "#closed.ts"
+import { type Axioms, closed, closedId } from "../src/closed.ts"
 import {
 	type BoolField,
 	bool,
@@ -15,9 +15,9 @@ import {
 	str,
 	u64,
 	uuid
-} from "#fields.ts"
-import { type AnyRelation, type Fact, relation } from "#relation.ts"
-import type { Uuid } from "#uuid.ts"
+} from "../src/fields.ts"
+import { type AnyRelation, type Fact, relation } from "../src/relation.ts"
+import type { Uuid } from "../src/uuid.ts"
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
@@ -239,7 +239,7 @@ function newtypeIsGone(): unknown[] {
 }
 
 // @ts-expect-error — the brand module is deleted with the nominal era: no brand type exists to reference
-type BrandIsGone = typeof import("#brand.ts")
+type BrandIsGone = typeof import("../src/brand.ts")
 
 /**
  * Order stays refused where the engine refuses it — REPRESENTATIONALLY: no

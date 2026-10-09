@@ -1,6 +1,6 @@
-import { membersAgree, sealedFieldsOf } from "#closed.ts"
-import { AuthoringError, SdkInvariantError } from "#errors.ts"
-import type { AnyClosedRoster, AnyField, IntervalField } from "#fields.ts"
+import { membersAgree, sealedFieldsOf } from "../closed.ts"
+import { AuthoringError, SdkInvariantError } from "../errors.ts"
+import type { AnyClosedRoster, AnyField, IntervalField } from "../fields.ts"
 import {
 	assertDeclarationOrderKey,
 	f64 as f64Field,
@@ -11,10 +11,10 @@ import {
 	rosterOf,
 	rostersAgree,
 	u64 as u64Field
-} from "#fields.ts"
-import { snapshotData } from "#immutable.ts"
-import type { Same } from "#judgment.ts"
-import type { ClassRecordOf, SchemaClasses } from "#law.ts"
+} from "../fields.ts"
+import { snapshotData } from "../immutable.ts"
+import type { Same } from "../judgment.ts"
+import type { ClassRecordOf, SchemaClasses } from "../law.ts"
 import type {
 	AtomIr,
 	ComparisonIr,
@@ -28,7 +28,11 @@ import type {
 	ScalarExprIr,
 	TaggedValue,
 	TermIr
-} from "#native.ts"
+} from "../native.ts"
+import { scalarWire } from "../scalar.ts"
+import type { AnySchema, Schema, SchemaRelations } from "../schema.ts"
+import { schemaDescriptor, schemasAgree } from "../schema.ts"
+import { arrayValue, recordValue, taggedValueOf } from "../values.ts"
 import type {
 	AggData,
 	AnyCond,
@@ -55,13 +59,13 @@ import type {
 	RecHead,
 	RuleData,
 	RuleItem
-} from "#query/atom.ts"
-import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
-import type { QueryNode } from "#query/compute.ts"
-import { computeFieldOf, computeVarsOf, isComputeExpr, MAX_COMPUTE_DEPTH } from "#query/compute.ts"
-import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
-import { count, max, mean, min, pack, sum } from "#query/find.ts"
-import { parseQueryIr } from "#query/parse-ir.ts"
+} from "./atom.ts"
+import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "./atom.ts"
+import type { QueryNode } from "./compute.ts"
+import { computeFieldOf, computeVarsOf, isComputeExpr, MAX_COMPUTE_DEPTH } from "./compute.ts"
+import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "./find.ts"
+import { count, max, mean, min, pack, sum } from "./find.ts"
+import { parseQueryIr } from "./parse-ir.ts"
 import type {
 	AnyVar,
 	ClassedField,
@@ -72,7 +76,7 @@ import type {
 	ParamsRecord,
 	ShapeOf,
 	VarsOf
-} from "#query/scope.ts"
+} from "./scope.ts"
 import {
 	fieldAntiJoins,
 	fieldJoins,
@@ -87,12 +91,8 @@ import {
 	makeSetParam,
 	renderFieldKind,
 	term
-} from "#query/scope.ts"
-import { difference, intersection, isSegments, segmentField } from "#query/segments.ts"
-import { scalarWire } from "#scalar.ts"
-import type { AnySchema, Schema, SchemaRelations } from "#schema.ts"
-import { schemaDescriptor, schemasAgree } from "#schema.ts"
-import { arrayValue, recordValue, taggedValueOf } from "#values.ts"
+} from "./scope.ts"
+import { difference, intersection, isSegments, segmentField } from "./segments.ts"
 
 type QueryRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], MatchOwner>
 

@@ -1,4 +1,4 @@
-import { AuthoringError } from "#errors.ts"
+import { AuthoringError } from "./errors.ts"
 /**
  * The law-typing engine (owner ruling 2026-07-18, "option 2, zero debate"):
  * THE LAWS TYPE THE COLUMNS. Domains are declared nowhere — `schema`
@@ -56,13 +56,13 @@ import { AuthoringError } from "#errors.ts"
  * silently widened.
  */
 
-import type { AnyClosed } from "#closed.ts"
-import { isClosedMember, sealedFieldsOf } from "#closed.ts"
-import type { AnyFace } from "#face.ts"
-import type { Same } from "#judgment.ts"
-import type { AnyRelation, RelationFields } from "#relation.ts"
-import type { SchemaRelation, SchemaRelations } from "#schema.ts"
-import { renderStatement, type Statement } from "#statements.ts"
+import type { AnyClosed } from "./closed.ts"
+import { isClosedMember, sealedFieldsOf } from "./closed.ts"
+import type { AnyFace } from "./face.ts"
+import type { Same } from "./judgment.ts"
+import type { AnyRelation, RelationFields } from "./relation.ts"
+import type { SchemaRelation, SchemaRelations } from "./schema.ts"
+import { renderStatement, type Statement } from "./statements.ts"
 
 type RelationClasses = { readonly [field: string]: string | undefined }
 

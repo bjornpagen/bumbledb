@@ -1,9 +1,9 @@
-import { type AnyClosed, memberDescriptor, sealedFieldOf, sealedFieldsOf } from "#closed.ts"
-import { AuthoringError } from "#errors.ts"
-import { type AnyField, assertDeclarationRecord, type ClosedIdField, type Infer, literalOf } from "#fields.ts"
-import type { AnyRelation, RelationFields } from "#relation.ts"
-import { type LiteralSetSpec, type LiteralSpec, renderLiteral } from "#spec.ts"
-import { arrayValue, recordValue } from "#values.ts"
+import { type AnyClosed, memberDescriptor, sealedFieldOf, sealedFieldsOf } from "./closed.ts"
+import { AuthoringError } from "./errors.ts"
+import { type AnyField, assertDeclarationRecord, type ClosedIdField, type Infer, literalOf } from "./fields.ts"
+import type { AnyRelation, RelationFields } from "./relation.ts"
+import { type LiteralSetSpec, type LiteralSpec, renderLiteral } from "./spec.ts"
+import { arrayValue, recordValue } from "./values.ts"
 
 type Selectable = AnyRelation | AnyClosed
 type FieldsOf<R extends Selectable> = R extends AnyRelation

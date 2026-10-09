@@ -7,15 +7,15 @@ import {
 	type UnitDimensionBan,
 	unitWeight,
 	type WeightOnSource
-} from "#capacity.ts"
-import { isClosedMember, memberDescriptor, sealedFieldOf } from "#closed.ts"
-import { AuthoringError } from "#errors.ts"
-import { type AnyFace, faceDescriptor, renderFace, type SameArity, type SameShapes } from "#face.ts"
-import { type AnyClosedRoster, assertDeclarationRecord, rosterOf, rostersAgree, signaturesAgree } from "#fields.ts"
-import { descriptorCache } from "#immutable.ts"
-import type { AnyRelation, RelationFields } from "#relation.ts"
-import { type CapacityWindowSpec, renderCapacityWindow, renderWeight, type WeightSpec } from "#spec.ts"
-import { arrayValue, recordValue } from "#values.ts"
+} from "./capacity.ts"
+import { isClosedMember, memberDescriptor, sealedFieldOf } from "./closed.ts"
+import { AuthoringError } from "./errors.ts"
+import { type AnyFace, faceDescriptor, renderFace, type SameArity, type SameShapes } from "./face.ts"
+import { type AnyClosedRoster, assertDeclarationRecord, rosterOf, rostersAgree, signaturesAgree } from "./fields.ts"
+import { descriptorCache } from "./immutable.ts"
+import type { AnyRelation, RelationFields } from "./relation.ts"
+import { type CapacityWindowSpec, renderCapacityWindow, renderWeight, type WeightSpec } from "./spec.ts"
+import { arrayValue, recordValue } from "./values.ts"
 
 interface KeyStatement<R extends AnyRelation = AnyRelation, Projection extends readonly string[] = readonly string[]> {
 	readonly kind: "key"

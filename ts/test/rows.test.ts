@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { bytes, str, u64 } from "#fields.ts"
-import { relation } from "#relation.ts"
-import { flatRowsOf } from "#rows.ts"
+import { bytes, str, u64 } from "../src/fields.ts"
+import { relation } from "../src/relation.ts"
+import { flatRowsOf } from "../src/rows.ts"
 
 test("flat projection keeps only row count and owned cells, without obsolete quota accounting", () => {
 	const Item = relation("Item", { id: u64, name: str, payload: bytes(2) })

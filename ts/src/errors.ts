@@ -32,9 +32,9 @@ export class SdkInvariantError extends Data.TaggedError("SdkInvariantError")<{
 	readonly message: string
 }> {}
 
+/** The native addon for this host could not be loaded. */
 export class NativeLoadError extends Data.TaggedError("NativeLoadError")<{
-	readonly package: string
-	readonly operation: "resolve" | "load"
+	readonly target: string
 	readonly message: string
 	readonly cause: unknown
 }> {}

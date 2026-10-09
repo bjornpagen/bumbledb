@@ -1,8 +1,8 @@
 /** Query scalar nodes, with cached kind and depth. Construction is constant
  * work; native preparation binds variables and evaluates the expressions. */
-import { AuthoringError } from "#errors.ts"
-import type { ScalarExprIr } from "#native.ts"
-import type { ValueSpec } from "#spec.ts"
+import { AuthoringError } from "./errors.ts"
+import type { ScalarExprIr } from "./native.ts"
+import type { ValueSpec } from "./spec.ts"
 
 /** The engine's scalar result vocabulary — distinct at the type level. */
 type ScalarKind = "u64" | "i64" | "f64" | "bool"

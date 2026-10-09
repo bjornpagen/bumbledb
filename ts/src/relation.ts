@@ -1,13 +1,13 @@
-import { AuthoringError } from "#errors.ts"
+import { AuthoringError } from "./errors.ts"
 import {
 	type AnyField,
 	assertDeclarationOrderKey,
 	assertDeclarationRecord,
 	fieldDescriptor,
 	type Infer
-} from "#fields.ts"
-import { descriptorCache } from "#immutable.ts"
-import { recordValue } from "#values.ts"
+} from "./fields.ts"
+import { descriptorCache } from "./immutable.ts"
+import { recordValue } from "./values.ts"
 
 /** Ordinary relations are structural declarations. Field order defines native ordinals. */
 interface Relation<Name extends string = string, Fields extends FieldsShape = FieldsShape> {

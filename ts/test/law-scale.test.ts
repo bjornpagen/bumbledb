@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { LawScale, pinBare, pinChain, pinClosed, pinNoGenerator, pinVocab } from "#test/fixtures/law-scale.ts"
+import { LawScale, pinBare, pinChain, pinClosed, pinNoGenerator, pinVocab } from "./fixtures/law-scale.ts"
 
 test("the large-schema fixture constructs and both tiers agree at scale", function scaleGate() {
 	assert.ok(pinChain && pinVocab && pinNoGenerator && pinClosed && pinBare)

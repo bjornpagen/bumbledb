@@ -1,11 +1,11 @@
-import { AuthoringError, SdkInvariantError } from "#errors.ts"
-import type { QueryParam, TaggedValue } from "#native.ts"
-import type { FindColumn } from "#query/atom.ts"
-import { taggedCmpLiteral } from "#query/lower.ts"
-import type { ParamEntry } from "#query/scope.ts"
-import type { CellValue } from "#rows.ts"
-import { decodeCell, handleOf, setOwnField } from "#rows.ts"
-import { arrayValue, recordValue } from "#values.ts"
+import { AuthoringError, SdkInvariantError } from "../errors.ts"
+import type { QueryParam, TaggedValue } from "../native.ts"
+import type { CellValue } from "../rows.ts"
+import { decodeCell, handleOf, setOwnField } from "../rows.ts"
+import { arrayValue, recordValue } from "../values.ts"
+import type { FindColumn } from "./atom.ts"
+import { taggedCmpLiteral } from "./lower.ts"
+import type { ParamEntry } from "./scope.ts"
 
 function wireValue(entry: ParamEntry, context: string, value: unknown): TaggedValue {
 	if (entry.anchor === undefined) {

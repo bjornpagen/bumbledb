@@ -7,12 +7,12 @@
  * `CloseWire`.
  */
 
-import type { ChangeCounts } from "#changes.ts"
-import type { DbHandle, ParsedQuery, QueryParam, SealedDescriptor, Violation } from "#native.ts"
-import { native } from "#native.ts"
-import type { CellValue } from "#rows.ts"
-import type { CloseWire, OperationHandle, RuntimeHandle } from "#runtime-native.ts"
-import type { SchemaSpec } from "#spec.ts"
+import type { ChangeCounts } from "./changes.ts"
+import type { DbHandle, ParsedQuery, QueryParam, SealedDescriptor, Violation } from "./native.ts"
+import { native } from "./native.ts"
+import type { CellValue } from "./rows.ts"
+import type { CloseWire, OperationHandle, RuntimeHandle } from "./runtime-native.ts"
+import type { SchemaSpec } from "./spec.ts"
 
 export interface SnapshotHandle {
 	readonly __snapshot: unique symbol
@@ -65,7 +65,7 @@ export type JudgeOutcomeWire =
 /** Bounded database diagnostics: measurements, never retained row payloads. */
 export interface DbInspectionWire {
 	readonly generation: bigint
-	readonly storage: import("#db.ts").StorageInspection
+	readonly storage: import("./db.ts").StorageInspection
 	readonly retainedOperations: bigint
 }
 
@@ -226,8 +226,6 @@ interface DbBridge {
 		bytes: Uint8Array,
 		callback: () => void
 	): OperationHandle
-	runtimeSchemaSnapshot(runtime: RuntimeHandle, spec: SchemaSpec, callback: () => void): OperationHandle
-	runtimeSchemaBindings(runtime: RuntimeHandle, snapshot: Uint8Array, callback: () => void): OperationHandle
 }
 
 // The fresh-addon roster test pins this private declaration exactly as it
