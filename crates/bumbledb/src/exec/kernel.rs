@@ -5,10 +5,6 @@
 //! hand-tuned NEON specialization. Every kernel has a scalar twin in
 //! [`reference`] that the tests hold it bit-identical to at every level.
 mod allen;
-#[allow(
-    dead_code,
-    reason = "reached only from tests until lib.rs re-exports it"
-)]
 pub mod bench;
 mod compact;
 mod filter;
@@ -16,10 +12,6 @@ mod fold;
 mod gather;
 pub mod numeric;
 mod prefetch;
-#[allow(
-    dead_code,
-    reason = "reached only from tests until lib.rs re-exports it"
-)]
 pub mod reference;
 
 #[cfg(target_arch = "aarch64")]

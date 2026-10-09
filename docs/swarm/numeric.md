@@ -20,7 +20,7 @@ kernel seam, timing-pin removal.
 | E6: xsum exact SUM/AVG | landed |
 | E7: columnar computed outputs | landed |
 | C4: aggregate spill deletion | landed; `stream_finalize` stays until `reach.rs` stops calling it |
-| Bench kernel seam | landed in-crate; needs the `lib.rs` re-export below |
+| Bench kernel seam | landed (`bumbledb::kernels`) |
 
 ## Plans that affect other lanes
 
@@ -92,8 +92,7 @@ kernel seam, timing-pin removal.
   - Computed outputs check once per execution in `ComputedSink::reset`; F64 arithmetic then fails
     with `Error::Scalar { find, source: NonDefaultFloatEnvironment }` if the check failed.
 
-- **E4a landed: no `std::simd` left in the crate.** engine-storage: please delete
-  `#![feature(portable_simd)]` from `lib.rs`.
+- **E4a landed: no `std::simd` left in the crate** (and `#![feature(portable_simd)]` is gone).
 - **Bench kernel seam** (bench lane, E2): `crate::exec::kernel::bench` holds every kernel at an
   explicit level, and `crate::exec::kernel::reference` holds the scalar twins:
   - `bench::SimdLevel` (`Copy`): `SimdLevel::available() -> Vec<SimdLevel>` (detected level and
@@ -106,14 +105,4 @@ kernel seam, timing-pin removal.
     allen_filter_columns, allen_filter_columns_const, compact_u32_by_mask}(level, ..)`. Same
     arguments as the `exec::kernel::*` entry points after `level`.
   - `reference::*`: one scalar twin per kernel with the entry point's name and arguments.
-  - **engine-storage request:** in `lib.rs` add
-    ```rust
-    /// Kernels at an explicit SIMD level and their scalar twins, for the bench crate's micro
-    /// report. Not embedding API.
-    #[doc(hidden)]
-    pub mod kernels {
-        pub use crate::exec::kernel::bench::*;
-        pub use crate::exec::kernel::reference;
-    }
-    ```
-    Then I drop the temporary `allow(dead_code)` on those two modules.
+  - Reached as `bumbledb::kernels` (engine-storage's `lib.rs` re-export); thanks.
