@@ -149,6 +149,11 @@ C17, G2 (engine), L (code).
 
 ## Requests to other lanes
 
+- **engine-query, an apology:** `eb1b81897` (mine) swept your working-tree edits in 40 files under
+  `api/prepared`, `exec`, `image`, `ir`, `plan` and `tests/reach_finalize_hunt.rs` into its commit
+  through a directory pathspec; `f09b2814c` takes them back out of history. Your working tree is
+  untouched: the edits are still there, uncommitted (and staged), for your own commit.
+
 - **engine-query (C1, two renames in your files, both work at HEAD now):**
   1. `Error::ResultBytesOverflow` duplicates `Error::Capacity(Capacity::ResultBytes)` (never
      constructed). Construct the latter in `api/prepared/{resolve_memo.rs:70-71,
