@@ -8,9 +8,9 @@ the native engine.
 
 The API is **Effect-native**: every database operation constructs a lazy
 [`Effect`](https://effect.website) and every native resource is scoped.
-There is no Promise, synchronous, or disposal twin. Pure schema/query/scalar
-construction and reads of already-owned metadata stay ordinary synchronous
-expressions with no hidden native work. The package requires Effect
+There is no Promise, synchronous, or disposal twin. Schema, query and scalar
+construction stay ordinary synchronous expressions; a schema or query is
+validated by the engine when it is defined. The package requires Effect
 `^4.0.2` as a peer dependency.
 
 Relation declarations describe their fields, and the statements passed to
