@@ -17,11 +17,7 @@ use super::{
 pub enum ManagedDbOutcome {
     Opened(ManagedDb),
     Rejected(Vec<crate::marshal::ViolationWire>),
-    Refused {
-        kind: &'static str,
-        message: String,
-        diagnostic: Option<Box<super::SchemaDiagnostic>>,
-    },
+    Refused { kind: &'static str, message: String },
 }
 
 pub(super) struct DatabaseEntry {
@@ -110,9 +106,9 @@ impl Deref for DbLease {
 }
 
 impl DbLease {
-    /// The sealed descriptor/roster datum, shareable to the owning thread.
-    pub(crate) fn sealed(&self) -> Arc<crate::Sealed> {
-        Arc::clone(&self.inner.sealed)
+    /// The compiled schema, shareable to the owning thread.
+    pub(crate) fn schema(&self) -> Arc<crate::schema::SchemaHandle> {
+        Arc::clone(&self.inner.schema)
     }
 
     /// The engine borrowed for the lease's own lifetime. The lease holds a

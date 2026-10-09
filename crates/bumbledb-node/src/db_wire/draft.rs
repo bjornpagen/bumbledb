@@ -85,7 +85,7 @@ pub(crate) fn finish_from_payload(
         landed.map_err(|error| change_error(&error))?;
     }
     let changes = builder.finish().map_err(|error| change_error(&error))?;
-    let fingerprint = crate::hex_fingerprint(&changes.schema().0);
+    let fingerprint = crate::schema::hex(&changes.schema().0);
     Ok(Output::Changes(super::ChangesOpened {
         changes,
         schema: std::sync::Arc::clone(&entry.schema),

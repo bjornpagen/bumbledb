@@ -6,26 +6,21 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use bumbledb::schema::{SpecIssue, StatementDescriptor};
-use bumbledb::{
-    BindValue, Db, ParamArg, SchemaDescriptor, Theory as _, Value, Violations, render_rejection,
-};
-use napi::bindgen_prelude::{Buffer, Env, Object};
+use bumbledb::{BindValue, Db, ParamArg, SchemaDescriptor, Value, Violations, render_rejection};
 use napi_derive::napi;
 
 mod bindings;
 pub mod db_wire;
-mod marshal;
+pub mod input;
+pub mod marshal;
+pub mod query;
 mod runtime;
 pub mod runtime_wire;
+pub mod schema;
 pub use runtime::publication::runtime_arm_publication_cancel;
 mod tags;
 
-use marshal::{DescriptorWire, OwnedParam, ViolationWire};
-
-/// Per-relation, sealed-order spec attribute rows (host newtype names) —
-/// the spec-only half of the field vocabulary the descriptor drops.
-type FieldAttrsTable = Vec<Vec<marshal::FieldAttrs>>;
+use marshal::{OwnedParam, ViolationWire};
 
 #[napi]
 #[must_use]
@@ -37,84 +32,7 @@ pub fn engine_version() -> String {
     )
 }
 
-/// The engine's own blake3 (`bumbledb::digest::Digest`), lent to the
-/// replication driver so the SDK ships exactly one hash implementation.
-/// Internal surface: not part of the SDK's documented API. Bounded bulk
-/// hashing belongs on the executor (`runtime_hash`); this synchronous verb
-/// is for small identity-sized inputs only.
-#[napi]
-#[doc(hidden)]
-#[must_use]
-pub fn blake3_hash(data: Buffer) -> Buffer {
-    let mut digest = bumbledb::digest::Digest::new();
-    digest.update(&data);
-    Buffer::from(digest.finalize().to_vec())
-}
-
-/// The engine's own sealed descriptor as data, lent to the
-/// replication driver so one authority seals the theory.
-/// Internal surface: not part of the SDK's documented API.
-#[napi]
-#[doc(hidden)]
-pub fn descriptor(env: Env, spec: Object) -> napi::Result<DescriptorWire> {
-    use bumbledb::schema::ValidateDescriptor as _;
-    let (descriptor, attrs) = match descriptor_of(&spec)? {
-        Ok(parsed) => parsed,
-        Err(OpenOutcome::SchemaError(message) | OpenOutcome::NewtypeMismatch(message)) => {
-            return Err(marshal::throw_kind_message(
-                env,
-                tags::error_family::SCHEMA,
-                message,
-            ));
-        }
-    };
-    let sealed = seal(descriptor, attrs);
-    let schema = sealed.descriptor.clone().validate().map_err(|error| {
-        marshal::throw_kind_message(env, tags::error_family::SCHEMA, error.to_string())
-    })?;
-    let fingerprint = bumbledb::schema::fingerprint::fingerprint(&schema);
-    Ok(DescriptorWire {
-        manifest: sealed.descriptor.manifest(),
-        statements: sealed.statements,
-        fingerprint: hex_fingerprint(&fingerprint.0),
-        attrs: sealed.attrs,
-    })
-}
-
-pub struct Sealed {
-    pub(crate) descriptor: SchemaDescriptor,
-    pub(crate) statements: Vec<StatementDescriptor>,
-    /// The resident sealed field rosters, index = `RelationId` ordinal —
-    /// computed once here, borrowed by every fact-lane call; the bridge
-    /// re-derives nothing.
-    pub(crate) rosters: Vec<marshal::SealedRoster>,
-    /// The spec-only field attributes in the same sealed order — carried
-    /// so the manifest wire speaks the spec's whole field vocabulary.
-    pub(crate) attrs: FieldAttrsTable,
-}
-
-pub(crate) fn seal(descriptor: SchemaDescriptor, attrs: FieldAttrsTable) -> Sealed {
-    let statements = descriptor.materialized_statements();
-    let rosters = marshal::sealed_rosters(&descriptor);
-    Sealed {
-        descriptor,
-        statements,
-        rosters,
-        attrs,
-    }
-}
-
 pub(crate) type Engine = Db<SchemaDescriptor>;
-
-pub(crate) fn hex_fingerprint(bytes: &[u8; 32]) -> String {
-    use std::fmt::Write as _;
-    bytes
-        .iter()
-        .fold(String::with_capacity(64), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
-}
 
 pub(crate) fn bind_value(value: &Value) -> BindValue<'_> {
     match value {
@@ -151,24 +69,18 @@ pub(crate) fn violations_wire(
         .collect()
 }
 
-pub(crate) fn assemble_inner(
-    db: Engine,
-    descriptor: SchemaDescriptor,
-    attrs: FieldAttrsTable,
-) -> DbInner {
+pub(crate) fn assemble_inner(db: Engine, schema: Arc<schema::SchemaHandle>) -> DbInner {
     DbInner {
         db: Arc::new(db),
-        sealed: Arc::new(seal(descriptor, attrs)),
+        schema,
         writing: AtomicBool::new(false),
     }
 }
 
 /// The one database owner: a registry-held [`runtime::owners::ManagedDb`].
-/// Every native DB lives in the one runtime registry behind a kernel-held
-/// directory lock, so a retained JS wrapper can never keep an engine,
-/// mapping, FD or directory lock alive after a completed close, and the
-/// directory lock always belongs to the same native owner as its
-/// environment and active operations.
+/// Every native database lives in the runtime registry behind a kernel-held
+/// directory lock, so a retained JS wrapper never keeps an engine, mapping,
+/// file descriptor or lock alive after a completed close.
 pub struct DbHandle {
     inner: runtime::owners::ManagedDb,
 }
@@ -185,39 +97,9 @@ impl DbHandle {
 
 pub(crate) struct DbInner {
     pub(crate) db: Arc<Engine>,
-    pub(crate) sealed: Arc<Sealed>,
-    /// The single-writer admission flag: a live write session owns the
-    /// engine writer; a second open refuses (`WriterBusy`) instead of
-    /// parking a session thread on the writer mutex.
+    pub(crate) schema: Arc<schema::SchemaHandle>,
+    /// The single-writer admission flag: a live write owns the engine
+    /// writer, and a second write refuses (`WriterBusy`) instead of parking
+    /// a worker on the writer mutex.
     pub(crate) writing: AtomicBool,
-}
-
-/// The two spec-resolution refusals `descriptor_of` can surface. This is
-/// an internal error carrier only: database creation/open is the managed
-/// runtime path (`runtime_directory_db_open` → `runtime_db_take`), which
-/// renders these as its own `refused` wire arms.
-pub enum OpenOutcome {
-    SchemaError(String),
-    NewtypeMismatch(String),
-}
-
-pub(crate) fn descriptor_of(
-    spec: &Object,
-) -> napi::Result<std::result::Result<(SchemaDescriptor, FieldAttrsTable), OpenOutcome>> {
-    let spec = marshal::schema_spec(spec)?;
-    let attrs = marshal::field_attrs(&spec);
-    match spec.descriptor() {
-        Ok(descriptor) => Ok(Ok((descriptor, attrs))),
-        Err(error) => {
-            let mismatched = error
-                .issues()
-                .iter()
-                .any(|issue| matches!(issue, SpecIssue::StatementNewtypeMismatch { .. }));
-            Ok(Err(if mismatched {
-                OpenOutcome::NewtypeMismatch(error.to_string())
-            } else {
-                OpenOutcome::SchemaError(error.to_string())
-            }))
-        }
-    }
 }

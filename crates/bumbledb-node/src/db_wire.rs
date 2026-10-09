@@ -15,15 +15,15 @@
 //! Budget refusal and cancel abort that ticket (no accepted page, no
 //! leftover `pending_advance`). Terminal backing stays sticky.
 
-use bumbledb::schema::ValidateDescriptor as _;
 use std::sync::Arc;
 
 use bumbledb::work::WorkContext;
-use bumbledb::{ChangeError, ChangeSet, CompleteResult, RelationId, ResultCursor, Theory};
+use bumbledb::{ChangeError, ChangeSet, CompleteResult, RelationId, ResultCursor};
 use napi::bindgen_prelude::{Array, BigInt, Env, External, Function, Object, Unknown};
 use napi_derive::napi;
 
 use crate::marshal;
+use crate::query::QueryHandle;
 use crate::runtime::registry::{
     Capability, NativeKind, Payload, RegistryAdmission, ResultState, registry_draft::DraftPayload,
 };
@@ -32,6 +32,7 @@ use crate::runtime_wire::{
     OperationHandle, PreparedHandle, RuntimeHandle, notification, operation_handle, owner,
     prepared, reporter, take_output, thrown, unshared_input,
 };
+use crate::schema::SchemaHandle;
 
 mod apply;
 pub mod changes;
@@ -78,19 +79,19 @@ fn identity() -> usize {
 pub struct SnapshotHandle {
     identity: usize,
     pub(crate) session: Arc<crate::runtime::session::SnapshotSession>,
-    pub(crate) sealed: Arc<crate::Sealed>,
+    pub(crate) schema: Arc<SchemaHandle>,
 }
 
 impl SnapshotHandle {
     /// The one published-snapshot constructor (core take and L14 log pin).
     pub(crate) fn assemble(
         session: Arc<crate::runtime::session::SnapshotSession>,
-        sealed: Arc<crate::Sealed>,
+        schema: Arc<SchemaHandle>,
     ) -> Self {
         Self {
             identity: identity(),
             session,
-            sealed,
+            schema,
         }
     }
 }
@@ -139,13 +140,7 @@ pub(crate) struct DraftShared {
     runtime: Arc<Runtime>,
     cap: Capability,
     _admission: RegistryAdmission,
-    sealed: Arc<crate::Sealed>,
-}
-
-/// The opened draft crossing back from the executor.
-pub struct DraftOpened {
-    schema: Arc<bumbledb::schema::Schema>,
-    sealed: Arc<crate::Sealed>,
+    schema: Arc<SchemaHandle>,
 }
 
 /// A sealed immutable `ChangeSet`.
@@ -208,7 +203,7 @@ pub enum JudgeOutcomeOwned {
 /// Bounded database diagnostics.
 pub struct DbInspectionOwned {
     pub generation: u64,
-    pub storage: bumbledb::store::MapReport,
+    pub disk_bytes: u64,
     pub retained_operations: u64,
 }
 
@@ -225,35 +220,6 @@ pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
     crate::runtime::session::engine_error(error)
 }
 
-pub(crate) fn schema_error(
-    error: &bumbledb::error::SchemaError,
-    descriptor: &bumbledb::SchemaDescriptor,
-) -> RuntimeError {
-    use crate::runtime::{SchemaDiagnostic, StatementDiagnostic};
-    use bumbledb::error::{SchemaError, StatementErrorKind};
-    let diagnostic = if let SchemaError::Statement { statement, kind } = error {
-        let render = |id: bumbledb::schema::StatementId| StatementDiagnostic {
-            id: id.0,
-            descriptor: bumbledb::schema::render::render_expanded(descriptor, id),
-        };
-        Some(Box::new(SchemaDiagnostic {
-            statement: render(*statement),
-            conflict: match kind {
-                StatementErrorKind::DuplicateStatement { earlier }
-                | StatementErrorKind::DuplicateFunctionality { earlier } => Some(render(*earlier)),
-                _ => None,
-            },
-        }))
-    } else {
-        None
-    };
-    RuntimeError::Engine {
-        kind: crate::tags::error_family::SCHEMA,
-        message: error.to_string(),
-        diagnostic,
-    }
-}
-
 pub(crate) fn change_error(error: &ChangeError) -> RuntimeError {
     if let ChangeError::Work(error) | ChangeError::Row(bumbledb::canonical::RowError::Work(error)) =
         error
@@ -261,75 +227,8 @@ pub(crate) fn change_error(error: &ChangeError) -> RuntimeError {
         return RuntimeError::Work(*error);
     }
     RuntimeError::Engine {
-        diagnostic: None,
         kind: crate::tags::error_family::VALIDATION,
         message: format!("bumbledb changes: {error:?}"),
-    }
-}
-
-#[napi]
-pub fn runtime_schema_compile(
-    env: Env,
-    handle: &External<RuntimeHandle>,
-    spec: Object,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let mut marshal_error = None;
-    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |_| {
-        let parsed = match crate::descriptor_of(&spec) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                marshal_error = Some(error);
-                return Err(RuntimeError::InvalidArgument);
-            }
-        };
-        Ok(Box::new(move |context| {
-            context.checkpoint()?;
-            let (descriptor, attrs) = match parsed {
-                Ok(parsed) => parsed,
-                Err(
-                    crate::OpenOutcome::SchemaError(message)
-                    | crate::OpenOutcome::NewtypeMismatch(message),
-                ) => {
-                    return Err(RuntimeError::Engine {
-                        diagnostic: None,
-                        kind: crate::tags::error_family::SCHEMA,
-                        message,
-                    });
-                }
-            };
-            context.checkpoint()?;
-            let sealed = crate::seal(descriptor, attrs);
-            let schema = sealed
-                .descriptor
-                .clone()
-                .validate()
-                .map_err(|error| schema_error(&error, &sealed.descriptor))?;
-            let fingerprint = bumbledb::schema::fingerprint::fingerprint(&schema);
-            Ok(Output::Descriptor(marshal::DescriptorWire {
-                manifest: sealed.descriptor.manifest(),
-                statements: sealed.statements,
-                fingerprint: crate::hex_fingerprint(&fingerprint.0),
-                attrs: sealed.attrs,
-            }))
-        }))
-    });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
-    let operation = operation.map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(runtime, operation))
-}
-
-#[napi]
-pub fn runtime_schema_take(
-    env: Env,
-    handle: &External<OperationHandle>,
-) -> napi::Result<marshal::DescriptorWire> {
-    match take_output(env, handle)? {
-        Output::Descriptor(wire) => Ok(wire),
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
     }
 }
 
@@ -363,7 +262,7 @@ pub fn runtime_snapshot_take(
                 "snapshot",
                 External::new(SnapshotHandle::assemble(
                     Arc::new(opened.session),
-                    opened.sealed,
+                    opened.schema,
                 )),
             )?;
             let mut witness = Object::new(&env)?;
@@ -391,15 +290,15 @@ pub fn runtime_snapshot_close(
 pub fn runtime_snapshot_prepare(
     env: Env,
     handle: &External<SnapshotHandle>,
-    query: Object,
+    query: &External<Arc<QueryHandle>>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let session = snapshot(handle).map_err(|error| thrown(env, error))?;
     let runtime = Arc::clone(session.runtime());
     let target = Arc::clone(&runtime);
+    let query = Arc::clone(query);
     let operation = session
         .submit(WorkContext::new(), notification(callback)?, move |_| {
-            let query = marshal::query_in(&query).map_err(|_| RuntimeError::InvalidArgument)?;
             Ok(prepare_work(target, query))
         })
         .map_err(|error| thrown(env, error))?;
@@ -417,17 +316,11 @@ pub fn runtime_snapshot_get(
 ) -> napi::Result<External<OperationHandle>> {
     let session = snapshot(handle).map_err(|error| thrown(env, error))?;
     let runtime = Arc::clone(session.runtime());
-    let sealed = Arc::clone(&handle.sealed);
+    let schema = Arc::clone(&handle.schema);
     let operation = session
         .submit(WorkContext::new(), notification(callback)?, move |_| {
-            let (rel, key, row) = marshal::key_row(
-                &sealed.rosters,
-                &sealed.statements,
-                relation,
-                key_statement,
-                &key_values,
-            )
-            .map_err(|_| RuntimeError::InvalidArgument)?;
+            let (rel, key, row) = marshal::key_row(&schema, relation, key_statement, &key_values)
+                .map_err(|_| RuntimeError::InvalidArgument)?;
             Ok(snapshot_get_work(rel, key, row))
         })
         .map_err(|error| thrown(env, error))?;
@@ -438,15 +331,15 @@ pub fn runtime_snapshot_get(
 pub fn runtime_snapshot_execute(
     env: Env,
     handle: &External<SnapshotHandle>,
-    query: Object,
+    query: &External<Arc<QueryHandle>>,
     params: Array,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let session = snapshot(handle).map_err(|error| thrown(env, error))?;
     let runtime = Arc::clone(session.runtime());
+    let query = Arc::clone(query);
     let operation = session
         .submit(WorkContext::new(), notification(callback)?, move |_| {
-            let query = marshal::query_in(&query).map_err(|_| RuntimeError::InvalidArgument)?;
             let params = marshal::params_in(&params).map_err(|_| RuntimeError::InvalidArgument)?;
             Ok(execute_complete_work(query, params))
         })
@@ -640,7 +533,7 @@ pub fn runtime_cursor_next(
     Ok(operation_handle(&runtime, operation))
 }
 
-#[napi]
+#[napi(ts_return_type = "Array<Array<CellValue>> | null")]
 pub fn runtime_page_take(
     env: Env,
     handle: &External<OperationHandle>,
@@ -678,89 +571,33 @@ pub fn runtime_cursor_close(
 // Drafts and sealed change sets.
 // ---------------------------------------------------------------------------
 
+/// Open a database-free change draft under a compiled schema.
 #[napi]
 pub fn runtime_draft_open(
     env: Env,
     handle: &External<RuntimeHandle>,
-    spec: Object,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let mut marshal_error = None;
-    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |_| {
-        let parsed = match crate::descriptor_of(&spec) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                marshal_error = Some(error);
-                return Err(RuntimeError::InvalidArgument);
-            }
-        };
-        Ok(Box::new(move |context| {
-            context.checkpoint()?;
-            let (descriptor, attrs) = match parsed {
-                Ok(parsed) => parsed,
-                Err(
-                    crate::OpenOutcome::SchemaError(message)
-                    | crate::OpenOutcome::NewtypeMismatch(message),
-                ) => {
-                    return Err(RuntimeError::Engine {
-                        diagnostic: None,
-                        kind: crate::tags::error_family::SCHEMA,
-                        message,
-                    });
-                }
-            };
-            let sealed = Arc::new(crate::seal(descriptor, attrs));
-            let schema = sealed
-                .descriptor
-                .clone()
-                .validate()
-                .map_err(|error| schema_error(&error, &sealed.descriptor))?;
-            Ok(Output::Draft(DraftOpened {
-                schema: Arc::new(schema),
-                sealed,
-            }))
-        }))
-    });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
-    let operation = operation.map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(runtime, operation))
-}
-
-#[napi]
-pub fn runtime_draft_take(
-    env: Env,
-    handle: &External<OperationHandle>,
+    schema: &External<Arc<SchemaHandle>>,
 ) -> napi::Result<External<DraftHandle>> {
-    let runtime = crate::runtime_wire::operation_runtime(handle);
-    match take_output(env, handle)? {
-        Output::Draft(opened) => {
-            let sealed = Arc::clone(&opened.sealed);
-            let admission = RegistryAdmission::admit(
-                Arc::clone(&runtime),
-                NativeKind::Draft,
-                Payload::Draft(DraftPayload {
-                    schema: opened.schema,
-                    pending: Vec::new(),
-                    terminal: false,
-                }),
-            )
-            .map_err(|error| thrown(env, error))?;
-            let cap = admission.cap();
-            Ok(External::new(DraftHandle {
-                identity: identity(),
-                shared: Arc::new(DraftShared {
-                    runtime,
-                    cap,
-                    _admission: admission,
-                    sealed,
-                }),
-            }))
-        }
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
-    }
+    let runtime = Arc::clone(owner(handle).map_err(|error| thrown(env, error))?);
+    let admission = RegistryAdmission::admit(
+        Arc::clone(&runtime),
+        NativeKind::Draft,
+        Payload::Draft(DraftPayload {
+            schema: Arc::clone(&schema.schema),
+            pending: Vec::new(),
+            terminal: false,
+        }),
+    )
+    .map_err(|error| thrown(env, error))?;
+    Ok(External::new(DraftHandle {
+        identity: identity(),
+        shared: Arc::new(DraftShared {
+            runtime,
+            cap: admission.cap(),
+            _admission: admission,
+            schema: Arc::clone(schema),
+        }),
+    }))
 }
 
 fn draft_shared(handle: &DraftHandle) -> Result<&Arc<DraftShared>, RuntimeError> {
@@ -782,14 +619,14 @@ fn draft_mutation(
     let shared = Arc::clone(draft_shared(handle).map_err(|error| thrown(env, error))?);
     let runtime = Arc::clone(&shared.runtime);
     let stated = marshal::u64_in(rows, "draft rows")?;
-    let sealed = Arc::clone(&shared.sealed);
+    let schema = Arc::clone(&shared.schema);
     let cap = shared.cap;
     let operation = runtime.submit_payload(
         cap,
         WorkContext::new(),
         notification(callback)?,
         move |context| {
-            let parsed = parse_input_rows(&sealed, relation, stated, &cells, context);
+            let parsed = parse_input_rows(&schema, relation, stated, &cells, context);
             match parsed {
                 Ok(rows) => Ok(Box::new(
                     move |context: &WorkContext, payload, _publication| {
@@ -1195,7 +1032,7 @@ pub fn runtime_db_inspect_take(
         Output::DbReport(report) => {
             let mut object = Object::new(&env)?;
             object.set("generation", BigInt::from(report.generation))?;
-            object.set("storage", marshal::storage_report(&env, &report.storage)?)?;
+            object.set("diskBytes", BigInt::from(report.disk_bytes))?;
             object.set(
                 "retainedOperations",
                 BigInt::from(report.retained_operations),
@@ -1214,7 +1051,7 @@ pub fn runtime_db_inspect_take(
 pub fn runtime_encode_rows(
     env: Env,
     handle: &External<RuntimeHandle>,
-    spec: Object,
+    schema: &External<Arc<SchemaHandle>>,
     relation: u32,
     rows: BigInt,
     cells: Array,
@@ -1222,56 +1059,22 @@ pub fn runtime_encode_rows(
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
     let stated = marshal::u64_in(&rows, "encode rows")?;
-    let mut marshal_error = None;
-    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |context| {
-        let prepared = (|| -> napi::Result<(bumbledb::schema::Schema, crate::Sealed)> {
-            let (descriptor, attrs) = match crate::descriptor_of(&spec)? {
-                Ok(parsed) => parsed,
-                Err(
-                    crate::OpenOutcome::SchemaError(message)
-                    | crate::OpenOutcome::NewtypeMismatch(message),
-                ) => {
-                    return Err(thrown(
-                        env,
-                        RuntimeError::Engine {
-                            diagnostic: None,
-                            kind: crate::tags::error_family::SCHEMA,
-                            message,
-                        },
-                    ));
-                }
-            };
-            let sealed = crate::seal(descriptor, attrs);
-            let schema = sealed
-                .descriptor
-                .clone()
-                .validate()
-                .map_err(|error| thrown(env, schema_error(&error, &sealed.descriptor)))?;
-            Ok((schema, sealed))
-        })();
-        match prepared {
-            Ok((schema, sealed)) => {
-                let rows = parse_input_rows(&sealed, relation, stated, &cells, context)?;
-                Ok(Box::new(move |context: &WorkContext| {
-                    context.checkpoint()?;
-                    let bytes = encode_rows_bytes(&schema, RelationId(relation), &rows, context)?;
-                    Ok(Output::Bytes(bytes))
-                }) as crate::runtime::Work)
-            }
-            Err(error) => {
-                marshal_error = Some(error);
-                Err(RuntimeError::InvalidArgument)
-            }
-        }
-    });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
-    let operation = operation.map_err(|error| thrown(env, error))?;
+    let schema = Arc::clone(schema);
+    let operation = runtime
+        .submit(WorkContext::new(), notification(callback)?, |context| {
+            let rows = parse_input_rows(&schema, relation, stated, &cells, context)?;
+            Ok(Box::new(move |context: &WorkContext| {
+                context.checkpoint()?;
+                let bytes =
+                    encode_rows_bytes(&schema.schema, RelationId(relation), &rows, context)?;
+                Ok(Output::Bytes(bytes))
+            }) as crate::runtime::Work)
+        })
+        .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
 
-#[napi]
+#[napi(ts_return_type = "Uint8Array")]
 pub fn runtime_bytes_take(
     env: Env,
     handle: &External<OperationHandle>,
@@ -1286,112 +1089,29 @@ pub fn runtime_bytes_take(
 pub fn runtime_decode_rows(
     env: Env,
     handle: &External<RuntimeHandle>,
-    spec: Object,
+    schema: &External<Arc<SchemaHandle>>,
     relation: u32,
     bytes: Unknown,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
     let bytes = unshared_input(env, bytes)?;
-    let mut marshal_error = None;
-    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |context| {
-        let staged = (|| -> napi::Result<bumbledb::schema::Schema> {
-            let (descriptor, _attrs) = match crate::descriptor_of(&spec)? {
-                Ok(parsed) => parsed,
-                Err(
-                    crate::OpenOutcome::SchemaError(message)
-                    | crate::OpenOutcome::NewtypeMismatch(message),
-                ) => {
-                    return Err(thrown(
-                        env,
-                        RuntimeError::Engine {
-                            diagnostic: None,
-                            kind: crate::tags::error_family::SCHEMA,
-                            message,
-                        },
-                    ));
-                }
-            };
-            descriptor
-                .clone()
-                .validate()
-                .map_err(|error| thrown(env, schema_error(&error, &descriptor)))
-        })();
-        match staged {
-            Ok(schema) => {
+    let schema = Arc::clone(&schema.schema);
+    let operation = runtime
+        .submit(WorkContext::new(), notification(callback)?, |context| {
+            context.checkpoint()?;
+            let owned = bytes.to_vec();
+            Ok(Box::new(move |context: &WorkContext| {
                 context.checkpoint()?;
-                let owned = bytes.to_vec();
-                Ok(Box::new(move |context: &WorkContext| {
-                    context.checkpoint()?;
-                    Ok(Output::Rows(decode_rows_values(
-                        &schema,
-                        RelationId(relation),
-                        &owned,
-                        context,
-                    )?))
-                }) as crate::runtime::Work)
-            }
-            Err(error) => {
-                marshal_error = Some(error);
-                Err(RuntimeError::InvalidArgument)
-            }
-        }
-    });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
-    let operation = operation.map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(runtime, operation))
-}
-
-#[napi]
-pub fn runtime_schema_bindings(
-    env: Env,
-    handle: &External<RuntimeHandle>,
-    spec: Object,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let mut marshal_error = None;
-    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |_| {
-        let parsed = match crate::descriptor_of(&spec) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                marshal_error = Some(error);
-                return Err(RuntimeError::InvalidArgument);
-            }
-        };
-        Ok(Box::new(move |context| {
-            context.checkpoint()?;
-            let (descriptor, _) = parsed.map_err(|error| match error {
-                crate::OpenOutcome::SchemaError(message)
-                | crate::OpenOutcome::NewtypeMismatch(message) => RuntimeError::Engine {
-                    kind: crate::tags::error_family::SCHEMA,
-                    message,
-                    diagnostic: None,
-                },
-            })?;
-            descriptor
-                .clone()
-                .validate()
-                .map_err(|error| schema_error(&error, &descriptor))?;
-            context.checkpoint()?;
-            let source =
-                crate::bindings::emit(&descriptor).map_err(|error| RuntimeError::Engine {
-                    kind: crate::tags::error_family::SCHEMA,
-                    message: error.to_string(),
-                    diagnostic: None,
-                })?;
-            Ok(Output::Bytes(QueuedBytes::admit(
-                context,
-                source.into_bytes(),
-            )?))
-        }))
-    });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
-    let operation = operation.map_err(|error| thrown(env, error))?;
+                Ok(Output::Rows(decode_rows_values(
+                    &schema,
+                    RelationId(relation),
+                    &owned,
+                    context,
+                )?))
+            }) as crate::runtime::Work)
+        })
+        .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
 

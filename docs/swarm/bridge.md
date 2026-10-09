@@ -8,9 +8,9 @@ Owns: `crates/bumbledb-node/**`, `ts/src/native/binding.d.ts`, `docs/swarm/bridg
 |---|---|
 | D: delete the old log wire (`log.rs`, `log_wire*`, `log-identities.json`, `Output::Log/Machine`, population payloads, ordered payload sequence, control lane) | done |
 | Brittle tests deleted: exact allocation transcriptions, the `alloc-counter` feature, the pinned fingerprint twin (`fingerprint_lock.rs`), the cross-lane `tags.json` golden, duplicate idle-shutdown test | done |
-| F8: serde JSON cold inputs (`SchemaSpec`, query IR, runtime options) with `{path, message}` diagnostics | in progress |
-| D17: sync `compileSchema` / `validateQuery` / `schemaBindings` returning branded handles | in progress |
-| F7: generated outputs (`#[napi(object)]`, `_tag` unions), committed `ts/src/native/binding.d.ts` | planned |
+| F8: serde JSON cold inputs (`SchemaSpecIn`, `QueryIn`, `RuntimeOptionsIn`) with `{path, message}` refusals | done |
+| D17: sync `compileSchema` / `validateQuery` / `schemaBindings` returning branded handles | done |
+| F7: `binding.d.ts` generated and committed (`crates/bumbledb-node/dts.sh`); typed take outputs and the thrown failure union | in progress (several takes still return `object`) |
 | A: error arms against engine-storage's one `Error` / `Error::kind()` | waits on engine-storage C8 |
 | Hosted verbs over log-core's sans-IO `Machine` | waits on log-core |
 
@@ -64,4 +64,36 @@ the compiled `SchemaHandle` (db open/create, drafts, row codec). Query verbs tak
 
 ## Landed
 
-- (nothing yet beyond the deletions above)
+All shapes below are in `ts/src/native/binding.d.ts`; that file is the contract.
+
+- `compileSchema(specJson: string): SchemaCompiled`:
+  `Compiled { schema: ExternalObject<SchemaHandle>, descriptor: SchemaDescriptorOut }` |
+  `Invalid { diagnostic: SchemaDiagnostic }` | `Malformed { path, message }`.
+  `SchemaDiagnostic = Spec { issues: SpecIssueOut[] } | Schema { code, message, statement?, conflict? }`
+  (`statement`/`conflict` are `{ id, spelling }` descriptor statement citations; `SpecIssueOut`
+  carries `code`, `message` and the spec's `statement` / `relation` / `row` indices).
+  `SchemaDescriptorOut { relations, statements, fingerprint }`: relations carry field ids, value
+  types (`ValueTypeOut`, `_tag` union), spec newtypes and closed rows; statements are the
+  materialized `StatementOut` union (`Functionality | Containment | Capacity`, each with `id` and
+  canonical `spelling`).
+- `validateQuery(schema, irJson: string): QueryValidated`:
+  `Valid { query: ExternalObject<QueryHandle> }` | `Invalid { diagnostic: QueryDiagnostic }` |
+  `Malformed { path, message }`. `QueryDiagnostic { code, message, rule?, atom?, find?, field?,
+  relation?, var?, param?, comparison?, interior? }` (`code` is the engine's `ValidationError`
+  variant name).
+- `schemaBindings(schema): SchemaBindings` = `Bindings { source }` | `Unrepresentable { coordinate, reason }`.
+- JSON input types: `SchemaSpecIn` (the schema file), `QueryIn`, `RuntimeOptionsIn`, `ValueIn`
+  (value encoding above). They mirror `bumbledb::SchemaSpec` / `bumbledb::Query` node for node;
+  recursive steps carry `selfBindings` explicitly. A refusal inside a `kind`-tagged node cites the
+  nearest enclosing untagged path (serde buffers tagged nodes).
+- Verbs that took a spec object now take `ExternalObject<SchemaHandle>`:
+  `runtimeDirectoryDbOpen(dir, childName, schema, create, cb)`, `runtimeEncodeRows(rt, schema, ...)`,
+  `runtimeDecodeRows(rt, schema, ...)`, `runtimeChangesParse(rt, schema, bytes, cb)`.
+  `runtimeDraftOpen(rt, schema): ExternalObject<DraftHandle>` is synchronous (no take).
+  Query verbs take `ExternalObject<QueryHandle>`: `runtimeSnapshotPrepare(snapshot, query, cb)`,
+  `runtimeSnapshotExecute(snapshot, query, params, cb)`.
+- `runtimeOpen(optionsJson: string)`; a malformed options document throws `{ _tag: "Malformed", path, message }`.
+- Deleted: `descriptor`, `blake3Hash`, `runtimeHash`, `runtimeSchemaCompile`/`Take`,
+  `runtimeSchemaSnapshot`, `runtimeDraftTake`; `runtimeTake` returns `undefined` (ready only).
+  `runtimeDbInspectTake` reports `diskBytes` (engine C17) instead of the map report.
+- Row cells are `CellValue = boolean | bigint | number | string | Uint8Array | CellInterval`.

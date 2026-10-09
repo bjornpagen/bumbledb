@@ -36,7 +36,7 @@ fn payload(rows: u64, text: &str) -> Payload {
     }
     let changes = draft.finish().unwrap();
     Payload::Changes {
-        fingerprint: crate::hex_fingerprint(&changes.schema().0),
+        fingerprint: crate::schema::hex(&changes.schema().0),
         changes,
         schema,
     }

@@ -1,17 +1,14 @@
 //! Exact-version Node ownership boundary for the shared native executor.
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use bumbledb::work::{WorkContext, WorkError};
 use napi::bindgen_prelude::{
-    BigInt, Buffer, Env, External, FromNapiValue, Function, JsValue, Object, Uint8Array, Unknown,
+    BigInt, Env, External, FromNapiValue, Function, JsValue, Object, Uint8Array, Unknown,
 };
 use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
 
-use crate::runtime::{
-    CloseReport, Inspection, Operation, Options, Output, Phase, Runtime, RuntimeError,
-};
+use crate::runtime::{CloseReport, Inspection, Operation, Output, Phase, Runtime, RuntimeError};
 
 static LIVE: Mutex<Option<Arc<Runtime>>> = Mutex::new(None);
 static ADDON_IDENTITY: u8 = 0;
@@ -65,28 +62,6 @@ pub(crate) fn owner(handle: &RuntimeHandle) -> Result<&Arc<Runtime>, RuntimeErro
     Ok(&handle.runtime)
 }
 
-#[napi(object)]
-pub struct RuntimeOptionsWire {
-    pub workers: Option<f64>,
-    pub queue_capacity: Option<f64>,
-    pub cleanup_capacity: Option<f64>,
-    pub owner_capacity: Option<f64>,
-    pub native_handle_capacity: Option<f64>,
-    pub cleanup_timeout_ms: Option<f64>,
-}
-
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "validated exact unsigned 32-bit integer before cast"
-)]
-fn unsigned(value: f64) -> Result<u32, RuntimeError> {
-    if !value.is_finite() || value < 0.0 || value > f64::from(u32::MAX) || value.fract() != 0.0 {
-        return Err(RuntimeError::InvalidArgument);
-    }
-    Ok(value as u32)
-}
-
 pub const ERROR_CODES: &[&str] = &[
     "RuntimeAlreadyLive",
     "ForeignRuntime",
@@ -102,6 +77,7 @@ pub const ERROR_CODES: &[&str] = &[
     "Io",
     "ResourceLimit",
     "Engine",
+    "Malformed",
     "Cancelled",
 ];
 
@@ -121,30 +97,9 @@ fn error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::Io { .. } | RuntimeError::Work(WorkError::Allocation) => "Io",
         RuntimeError::ResourceLimit { .. } => "ResourceLimit",
         RuntimeError::Engine { .. } => "Engine",
+        RuntimeError::Malformed(_) => "Malformed",
         RuntimeError::Work(WorkError::Cancelled) => "Cancelled",
     }
-}
-
-fn write_schema_diagnostic(
-    env: Env,
-    object: &mut Object<'_>,
-    diagnostic: Option<Box<crate::runtime::SchemaDiagnostic>>,
-) -> napi::Result<()> {
-    if let Some(diagnostic) = diagnostic {
-        let mut details = Object::new(&env)?;
-        let render = |statement: crate::runtime::StatementDiagnostic| -> napi::Result<Object<'_>> {
-            let mut value = Object::new(&env)?;
-            value.set("id", u32::from(statement.id))?;
-            value.set("descriptor", statement.descriptor)?;
-            Ok(value)
-        };
-        details.set("statement", render(diagnostic.statement)?)?;
-        if let Some(conflict) = diagnostic.conflict {
-            details.set("conflict", render(conflict)?)?;
-        }
-        object.set("diagnostic", details)?;
-    }
-    Ok(())
 }
 
 /// The typed reason object a core failure crosses as (`{_tag, ...}` — the
@@ -158,14 +113,13 @@ pub(crate) fn reason_object(env: &Env, error: RuntimeError) -> napi::Result<Obje
             object.set("kind", format!("{kind:?}"))?;
             object.set("osCode", code)?;
         }
-        RuntimeError::Engine {
-            kind,
-            message,
-            diagnostic,
-        } => {
+        RuntimeError::Engine { kind, message } => {
             object.set("kind", kind)?;
             object.set("message", message)?;
-            write_schema_diagnostic(*env, &mut object, diagnostic)?;
+        }
+        RuntimeError::Malformed(malformed) => {
+            object.set("path", malformed.path)?;
+            object.set("message", malformed.message)?;
         }
 
         RuntimeError::ResourceLimit {
@@ -202,49 +156,11 @@ pub fn runtime_error_codes() -> Vec<String> {
     ERROR_CODES.iter().map(ToString::to_string).collect()
 }
 
+/// Start the one live runtime. `optionsJson` is a `RuntimeOptionsIn`.
 #[napi]
-pub fn runtime_open(
-    env: Env,
-    options: RuntimeOptionsWire,
-) -> napi::Result<External<RuntimeHandle>> {
-    let parse = || -> Result<Options, RuntimeError> {
-        let defaults = Options::default();
-        Ok(Options {
-            workers: options
-                .workers
-                .map(unsigned)
-                .transpose()?
-                .map_or(defaults.workers, |value| value as usize),
-            queue_capacity: options
-                .queue_capacity
-                .map(unsigned)
-                .transpose()?
-                .map_or(defaults.queue_capacity, |value| value as usize),
-            cleanup_capacity: options
-                .cleanup_capacity
-                .map(unsigned)
-                .transpose()?
-                .map_or(defaults.cleanup_capacity, |value| value as usize),
-            owner_capacity: options
-                .owner_capacity
-                .map(unsigned)
-                .transpose()?
-                .map_or(defaults.owner_capacity, |value| value as usize),
-            native_handle_capacity: options
-                .native_handle_capacity
-                .map(unsigned)
-                .transpose()?
-                .map_or(defaults.native_handle_capacity, |value| value as usize),
-            cleanup_timeout: options
-                .cleanup_timeout_ms
-                .map(unsigned)
-                .transpose()?
-                .map_or(defaults.cleanup_timeout, |value| {
-                    Duration::from_millis(u64::from(value))
-                }),
-        })
-    };
-    let options = parse().map_err(|error| thrown(env, error))?;
+pub fn runtime_open(env: Env, options_json: String) -> napi::Result<External<RuntimeHandle>> {
+    let options: crate::input::options::RuntimeOptionsIn = crate::input::decode(&options_json)
+        .map_err(|malformed| thrown(env, RuntimeError::Malformed(malformed)))?;
     let mut live = LIVE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -254,7 +170,7 @@ pub fn runtime_open(
     {
         return Err(thrown(env, RuntimeError::RuntimeAlreadyLive));
     }
-    let runtime = Runtime::start(options).map_err(|error| thrown(env, error))?;
+    let runtime = Runtime::start(options.into()).map_err(|error| thrown(env, error))?;
     *live = Some(Arc::clone(&runtime));
     Ok(External::new(RuntimeHandle {
         identity: identity(),
@@ -448,53 +364,6 @@ pub(crate) fn unshared_input(env: Env, value: Unknown) -> napi::Result<Uint8Arra
     unsafe { Uint8Array::from_napi_value(env.raw(), value.raw()) }
 }
 
-#[napi]
-pub fn runtime_hash(
-    env: Env,
-    handle: &External<RuntimeHandle>,
-    bytes: Unknown,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let bytes = unshared_input(env, bytes)?;
-    let callback = callback
-        .build_threadsafe_function()
-        .callee_handled::<false>()
-        .max_queue_size::<1>()
-        .build()?;
-    let operation = runtime
-        .submit(
-            WorkContext::new(),
-            Box::new(move || {
-                let _ = callback.call((), ThreadsafeFunctionCallMode::NonBlocking);
-            }),
-            |context| {
-                context.checkpoint()?;
-                let mut owned = Vec::new();
-                owned
-                    .try_reserve_exact(bytes.len())
-                    .map_err(|_| WorkError::Allocation)?;
-                owned.extend_from_slice(&bytes);
-                Ok(Box::new(move |context| {
-                    let mut hash = bumbledb::digest::Digest::new();
-                    for chunk in owned.chunks(4096) {
-                        context.checkpoint()?;
-                        hash.update(chunk);
-                    }
-                    let digest = hash.finalize();
-                    drop(owned);
-                    Ok(Output::Hash(digest))
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(External::new(OperationHandle {
-        identity: identity(),
-        runtime: Arc::clone(runtime),
-        operation,
-    }))
-}
-
 /// Take one completed operation's payload. PINNED double-take contract
 /// (P12's F3 note, decided wave-E): the FIRST take spends the operation;
 /// every later take of the same handle THROWS the typed `SpentHandle`
@@ -503,7 +372,7 @@ pub fn runtime_hash(
 /// spent handle. The same contract holds for every `*Take` verb riding
 /// `Runtime::take` (db and log bridges included).
 #[napi]
-pub fn runtime_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<Option<Buffer>> {
+pub fn runtime_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<()> {
     if handle.identity != identity() {
         return Err(thrown(env, RuntimeError::ForeignRuntime));
     }
@@ -512,8 +381,7 @@ pub fn runtime_take(env: Env, handle: &External<OperationHandle>) -> napi::Resul
         .take(&handle.operation)
         .map_err(|error| thrown(env, error))?
     {
-        Output::Ready => Ok(None),
-        Output::Hash(value) => Ok(Some(Buffer::from(value.to_vec()))),
+        Output::Ready => Ok(()),
         _ => Err(thrown(env, RuntimeError::InvalidArgument)),
     }
 }
@@ -649,100 +517,54 @@ pub fn runtime_directory_close(
     Ok(())
 }
 
+/// Open (or create) one database in a child directory of an owned
+/// directory, under a compiled schema.
 #[napi]
 pub fn runtime_directory_db_open(
     env: Env,
     handle: &External<DirectoryHandle>,
     child_name: String,
-    spec: Object,
+    schema: &External<Arc<crate::schema::SchemaHandle>>,
     create: bool,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     use crate::runtime::owners::ManagedDbOutcome;
     let owner = directory(handle).map_err(|error| thrown(env, error))?;
     let reference = owner.reference();
-    // The legacy schema converter remains on the JS thread. The operation is
-    // registered before conversion; only owned Rust descriptors reach workers.
-    let mut marshal_error = None;
-    let operation = owner.runtime().submit_owned(
-        owner,
-        WorkContext::new(),
-        notification(callback)?,
-        |context| {
-            context.checkpoint()?;
-            let parsed = match crate::descriptor_of(&spec) {
-                Ok(parsed) => parsed,
-                Err(error) => {
-                    marshal_error = Some(error);
-                    return Err(RuntimeError::InvalidArgument);
-                }
-            };
+    let schema = Arc::clone(schema);
+    let operation = owner
+        .runtime()
+        .submit_owned(owner, WorkContext::new(), notification(callback)?, |_| {
             Ok(Box::new(move |context| {
-                let (descriptor, attrs) = match parsed {
-                    Ok(parsed) => parsed,
-                    Err(crate::OpenOutcome::SchemaError(message)) => {
-                        return Ok(Output::Db(ManagedDbOutcome::Refused {
-                            diagnostic: None,
-                            kind: crate::tags::open_kind::SCHEMA_ERROR,
-                            message,
-                        }));
-                    }
-                    Err(crate::OpenOutcome::NewtypeMismatch(message)) => {
-                        return Ok(Output::Db(ManagedDbOutcome::Refused {
-                            diagnostic: None,
-                            kind: crate::tags::open_kind::NEWTYPE_MISMATCH,
-                            message,
-                        }));
-                    }
-                };
                 let path = reference.child_path(&child_name)?;
                 context.checkpoint()?;
+                let descriptor = schema.descriptor.clone();
                 let opened = if create {
-                    match crate::Engine::create(&path, descriptor.clone(), context.clone()) {
+                    match crate::Engine::create(&path, descriptor, context.clone()) {
                         Ok(bumbledb::Admission::Accepted(db)) => Ok(db),
                         Ok(bumbledb::Admission::Rejected(violations)) => {
                             return Ok(Output::Db(ManagedDbOutcome::Rejected(
-                                crate::violations_wire(&descriptor, &violations),
+                                crate::violations_wire(&schema.descriptor, &violations),
                             )));
                         }
                         Err(error) => Err(error),
                     }
                 } else {
-                    crate::Engine::open(&path, descriptor.clone(), context.clone())
+                    crate::Engine::open(&path, descriptor, context.clone())
                 };
                 match opened {
                     Ok(db) => {
-                        let managed =
-                            reference.attach_db(crate::assemble_inner(db, descriptor, attrs))?;
+                        let managed = reference.attach_db(crate::assemble_inner(db, schema))?;
                         Ok(Output::Db(ManagedDbOutcome::Opened(managed)))
-                    }
-                    Err(bumbledb::Error::Schema(error)) => {
-                        let RuntimeError::Engine {
-                            message,
-                            diagnostic,
-                            ..
-                        } = crate::db_wire::schema_error(&error, &descriptor)
-                        else {
-                            unreachable!("schema errors use the engine reason")
-                        };
-                        Ok(Output::Db(ManagedDbOutcome::Refused {
-                            kind: crate::tags::open_kind::SCHEMA_ERROR,
-                            message,
-                            diagnostic,
-                        }))
                     }
                     Err(error @ bumbledb::Error::SchemaMismatch { .. }) => {
                         Ok(Output::Db(ManagedDbOutcome::Refused {
-                            diagnostic: None,
                             kind: crate::tags::open_kind::FINGERPRINT_MISMATCH,
                             message: crate::marshal::engine_message(&error),
                         }))
                     }
-                    // Db.create refuses existing authority as a DOMAIN refusal
-                    // (chapter 30), never a generic Io failure.
                     Err(error @ bumbledb::Error::DestinationExists { .. }) => {
                         Ok(Output::Db(ManagedDbOutcome::Refused {
-                            diagnostic: None,
                             kind: crate::tags::open_kind::DESTINATION_EXISTS,
                             message: crate::marshal::engine_message(&error),
                         }))
@@ -751,12 +573,8 @@ pub fn runtime_directory_db_open(
                     Err(error) => Err(crate::runtime::session::engine_error(&error)),
                 }
             }))
-        },
-    );
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
-    let operation = operation.map_err(|error| thrown(env, error))?;
+        })
+        .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(owner.runtime(), operation))
 }
 
@@ -773,15 +591,10 @@ pub fn runtime_db_take(env: Env, handle: &External<OperationHandle>) -> napi::Re
             object.set("tag", "rejected")?;
             object.set("violations", violations)?;
         }
-        Output::Db(ManagedDbOutcome::Refused {
-            kind,
-            message,
-            diagnostic,
-        }) => {
+        Output::Db(ManagedDbOutcome::Refused { kind, message }) => {
             object.set("tag", "refused")?;
             object.set("kind", kind)?;
             object.set("message", message)?;
-            write_schema_diagnostic(env, &mut object, diagnostic)?;
         }
         _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
     }
@@ -862,7 +675,7 @@ pub fn runtime_prepared_close(
     Ok(())
 }
 
-#[napi]
+#[napi(ts_return_type = "Array<Array<CellValue>>")]
 pub fn runtime_rows_take(
     env: Env,
     handle: &External<OperationHandle>,
@@ -873,7 +686,7 @@ pub fn runtime_rows_take(
     }
 }
 
-#[napi]
+#[napi(ts_return_type = "Array<CellValue> | null")]
 pub fn runtime_row_take(
     env: Env,
     handle: &External<OperationHandle>,

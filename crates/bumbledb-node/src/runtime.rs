@@ -61,12 +61,6 @@ impl QueuedBytes {
         work.checkpoint()?;
         Ok(Self { bytes })
     }
-
-    /// Retain an already-produced response without copying its backing.
-    pub(crate) fn admit(work: &WorkContext, bytes: Vec<u8>) -> Result<Self, RuntimeError> {
-        work.checkpoint()?;
-        Ok(Self { bytes })
-    }
 }
 
 impl napi::bindgen_prelude::ToNapiValue for QueuedBytes {
@@ -115,18 +109,6 @@ impl napi::bindgen_prelude::ToNapiValue for QueuedRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StatementDiagnostic {
-    pub id: u16,
-    pub descriptor: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SchemaDiagnostic {
-    pub statement: StatementDiagnostic,
-    pub conflict: Option<StatementDiagnostic>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
     RuntimeAlreadyLive,
     ForeignRuntime,
@@ -159,8 +141,9 @@ pub enum RuntimeError {
     Engine {
         kind: &'static str,
         message: String,
-        diagnostic: Option<Box<SchemaDiagnostic>>,
     },
+    /// A JSON input that does not match its wire type.
+    Malformed(crate::input::Malformed),
     Work(WorkError),
 }
 
@@ -220,7 +203,6 @@ pub enum CloseReport {
 
 pub enum Output {
     Ready,
-    Hash([u8; 32]),
     Directory(owners::DirectoryOwner),
     Db(owners::ManagedDbOutcome),
     /// A worker-table snapshot opened over a managed database.
@@ -237,8 +219,6 @@ pub enum Output {
         submitted: u64,
         changed: u64,
     },
-    /// A sealed detached schema descriptor.
-    Descriptor(crate::marshal::DescriptorWire),
     /// One compiled query with its own worker route and snapshot share.
     Prepared(session::SnapshotSession),
     /// One sealed completed query result, owned and independent.
@@ -247,8 +227,6 @@ pub enum Output {
     ResultCursor(bumbledb::ResultCursor),
     /// One owned page off a cursor; `None` is the terminal EOF.
     Page(Option<QueuedOutput>),
-    /// A database-free change draft (schema compiled on the executor).
-    Draft(crate::db_wire::DraftOpened),
     /// A sealed immutable `ChangeSet` consumed out of a draft.
     Changes(crate::db_wire::ChangesOpened),
     /// Independent position over shared immutable change bytes.

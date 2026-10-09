@@ -1,16 +1,13 @@
-//! Addon delivery, draft, codec and snapshot ownership tests.
-//!
-//! Sensitivity (D25): a post-register checkpoint that drops `QueuedOutput`
-//! loses the consumed page. Resource abort must retry the same row;
-//! adopt-and-abort must leave nothing a fresh ticket can commit;
-//! oversized first row refuses unchanged; terminal store failure is never
-//! lawful EOF.
+//! Delivery, draft, codec and snapshot ownership. A post-register checkpoint
+//! must never drop a consumed page: abort retries the same row, an adopted
+//! and aborted ticket leaves nothing to commit, and a terminal store failure
+//! is never a lawful end of results.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use bumbledb::work::{WorkContext, WorkError};
-use bumbledb::{DeliveryTicket, RelationId, Value};
+use bumbledb::{DeliveryTicket, RelationId, Theory as _, Value};
 
 use super::delivery::{PullOutcome, is_terminal_backing, publish_from_payload, pull_from_payload};
 use super::*;
@@ -24,103 +21,6 @@ bumbledb::schema! {
     pub Mini;
     relation Item { a: u64, b: u64 }
     Item(a) -> Item;
-}
-
-#[test]
-fn schema_diagnostics_use_rejected_input_without_requiring_admission() {
-    use bumbledb::schema::{SchemaDescriptor, ValidateDescriptor as _};
-    let mut descriptor = Mini.descriptor();
-    descriptor.statements.push(descriptor.statements[0].clone());
-    let error = descriptor.clone().validate().unwrap_err();
-    let RuntimeError::Engine {
-        diagnostic: Some(diagnostic),
-        ..
-    } = schema_error(&error, &descriptor)
-    else {
-        panic!("native duplicate retains coordinates")
-    };
-    assert_eq!(diagnostic.statement.id, 1);
-    assert_eq!(diagnostic.statement.descriptor, "Item(a) -> Item");
-    assert_eq!(diagnostic.conflict.unwrap().id, 0);
-
-    let duplicate_relation = SchemaDescriptor {
-        relations: vec![
-            descriptor.relations[0].clone(),
-            descriptor.relations[0].clone(),
-        ],
-        statements: vec![],
-    };
-    let error = duplicate_relation.clone().validate().unwrap_err();
-    assert!(matches!(
-        schema_error(&error, &duplicate_relation),
-        RuntimeError::Engine {
-            diagnostic: None,
-            ..
-        }
-    ));
-}
-
-#[test]
-fn schema_diagnostics_name_closed_identity_and_synthetic_key() {
-    use bumbledb::schema::{
-        FieldDescriptor, FieldId, RelationDescriptor, Row, Side, StatementDescriptor,
-        ValidateDescriptor as _, ValueType,
-    };
-    let mut descriptor = Mini.descriptor();
-    descriptor.relations.push(RelationDescriptor {
-        name: "Kind".into(),
-        fields: vec![FieldDescriptor {
-            name: "code".into(),
-            value_type: ValueType::U64,
-        }],
-        extension: Some(Box::new([Row {
-            handle: "First".into(),
-            values: Box::new([Value::U64(7)]),
-        }])),
-    });
-    descriptor
-        .statements
-        .push(StatementDescriptor::Functionality {
-            relation: RelationId(1),
-            projection: Box::new([FieldId(0)]),
-        });
-    let error = descriptor.clone().validate().unwrap_err();
-    let RuntimeError::Engine {
-        diagnostic: Some(diagnostic),
-        ..
-    } = schema_error(&error, &descriptor)
-    else {
-        panic!("synthetic key diagnostic")
-    };
-    assert_eq!(diagnostic.statement.id, 2);
-    assert_eq!(diagnostic.conflict.unwrap().id, 0);
-    assert_eq!(diagnostic.statement.descriptor, "Kind(id) -> Kind");
-
-    descriptor.statements[1] = StatementDescriptor::Containment {
-        source: Side {
-            relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
-            selection: Box::default(),
-        },
-        target: Side {
-            relation: RelationId(1),
-            projection: Box::new([FieldId(1)]),
-            selection: Box::default(),
-        },
-    };
-    let error = descriptor.clone().validate().unwrap_err();
-    let RuntimeError::Engine {
-        diagnostic: Some(diagnostic),
-        message,
-        ..
-    } = schema_error(&error, &descriptor)
-    else {
-        panic!("closed target diagnostic")
-    };
-    assert_eq!(diagnostic.statement.id, 2);
-    assert!(diagnostic.conflict.is_none());
-    assert_eq!(diagnostic.statement.descriptor, "Item(a) <= Kind(code)");
-    assert!(message.contains("synthetic"), "{message}");
 }
 
 fn options() -> Options {
@@ -175,7 +75,7 @@ fn attach(owner: &DirectoryOwner, descriptor: &bumbledb::SchemaDescriptor) -> Ma
         panic!("engine create accepts a fresh store")
     };
     owner
-        .attach_db(crate::assemble_inner(db, descriptor.clone(), Vec::new()))
+        .attach_db(crate::assemble_inner(db, crate::schema::sealed(descriptor)))
         .expect("attach db")
 }
 
@@ -603,12 +503,10 @@ fn adopt_and_abort_cannot_be_committed_by_a_fresh_ticket() {
 #[test]
 fn backing_failure_stays_terminal() {
     let store = RuntimeError::Engine {
-        diagnostic: None,
         kind: crate::tags::error_family::STORE,
         message: "scratch page unreadable".into(),
     };
     let corruption = RuntimeError::Engine {
-        diagnostic: None,
         kind: crate::tags::error_family::CORRUPTION,
         message: "page unreadable".into(),
     };
@@ -746,7 +644,12 @@ fn sealed_result(runtime: &Arc<Runtime>, db: &ManagedDb) -> (Payload, u64) {
             Box::new(move || {
                 tx.send(()).unwrap();
             }),
-            move |_| Ok(execute_complete_work(query, Vec::new())),
+            move |_| {
+                Ok(execute_complete_work(
+                    Arc::new(crate::query::QueryHandle { query }),
+                    Vec::new(),
+                ))
+            },
         )
         .expect("execute submits");
     rx.recv_timeout(Duration::from_secs(10))

@@ -23,7 +23,6 @@ pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
         return RuntimeError::Work(*work);
     }
     RuntimeError::Engine {
-        diagnostic: None,
         kind: crate::tags::error_family::tag(&error.family()),
         message: crate::marshal::engine_message(error),
     }
@@ -156,7 +155,7 @@ pub(super) struct SessionSlot {
 
 pub struct SessionOpened {
     pub session: SnapshotSession,
-    pub sealed: Arc<crate::Sealed>,
+    pub schema: Arc<crate::schema::SchemaHandle>,
     pub generation: u64,
     pub store: String,
 }
@@ -282,7 +281,7 @@ impl Runtime {
     ) -> Result<Output, RuntimeError> {
         context.checkpoint()?;
         let worker = WorkerContext::worker_id()?;
-        let sealed = lease.sealed();
+        let schema = lease.schema();
         let store_identity = lease.db().integration_store().identity().store.to_string();
         // L07 seam: Db::snapshot → OwnedRead. Each job takes frame(&work).
         let pinned_read = lease
@@ -316,7 +315,7 @@ impl Runtime {
                     cap,
                 },
             },
-            sealed,
+            schema,
             generation,
             store: store_identity,
         }))
@@ -824,7 +823,7 @@ mod tests {
             panic!("engine create must accept a fresh store")
         };
         owner
-            .attach_db(crate::assemble_inner(db, descriptor.clone(), Vec::new()))
+            .attach_db(crate::assemble_inner(db, crate::schema::sealed(descriptor)))
             .expect("attach db to the owner")
     }
 
@@ -899,11 +898,15 @@ mod tests {
         })
     }
 
+    fn handle(query: bumbledb::Query) -> Arc<crate::query::QueryHandle> {
+        Arc::new(crate::query::QueryHandle { query })
+    }
+
     fn prepare_items(runtime: &Arc<Runtime>, snapshot: &SnapshotSession) -> SnapshotSession {
         match run_read(runtime, snapshot, |_| {
             Ok(crate::db_wire::prepare_work(
                 Arc::clone(runtime),
-                item_query(),
+                handle(item_query()),
             ))
         })
         .expect("prepare completes")
@@ -988,7 +991,7 @@ mod tests {
         // Closing a plan leaves the source pin available.
         assert!(matches!(
             run_read(&runtime, &snapshot, |_| Ok(
-                crate::db_wire::execute_complete_work(item_query(), vec![])
+                crate::db_wire::execute_complete_work(handle(item_query()), vec![])
             ))
             .unwrap(),
             Output::CompleteResult(_)
@@ -1045,7 +1048,10 @@ mod tests {
         let mut invalid = item_query();
         invalid.rules[0].atoms[0].source = bumbledb::AtomSource::Edb(bumbledb::RelationId(99));
         let rejected = run_read(&runtime, &snapshot, |_| {
-            Ok(crate::db_wire::prepare_work(Arc::clone(&runtime), invalid))
+            Ok(crate::db_wire::prepare_work(
+                Arc::clone(&runtime),
+                handle(invalid),
+            ))
         });
         assert!(matches!(rejected, Err(RuntimeError::Engine { .. })));
         assert_eq!(runtime.inspect().natives, initial);
@@ -1144,9 +1150,10 @@ mod tests {
         for _ in 0..32 {
             let output = run_read(&runtime, &session, |_| {
                 Ok(Box::new(|context, access| {
-                    let output = crate::db_wire::execute_complete_work(item_query(), vec![])(
-                        context, access,
-                    )?;
+                    let output = crate::db_wire::execute_complete_work(
+                        handle(item_query()),
+                        vec![],
+                    )(context, access)?;
                     assert_eq!(
                         access.prepared_count(),
                         0,

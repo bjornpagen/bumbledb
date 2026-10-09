@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use bumbledb::changes::{ChangeCursor, ChangeKind};
 use bumbledb::{ChangeSet, WorkContext};
-use napi::bindgen_prelude::{Env, External, Function, Object, Unknown};
+use napi::bindgen_prelude::{Env, External, Function, Unknown};
 use napi_derive::napi;
 
 use crate::marshal::{self, ValueOut};
@@ -39,6 +39,7 @@ pub struct ChangesCursorHandle {
 pub struct ChangeRecordWire {
     pub relation: u32,
     pub kind: String,
+    #[napi(ts_type = "Array<CellValue>")]
     pub values: Vec<ValueOut>,
 }
 
@@ -205,53 +206,29 @@ pub fn runtime_changes_bytes(
 pub fn runtime_changes_parse(
     env: Env,
     handle: &External<RuntimeHandle>,
-    spec: Object,
+    schema: &External<Arc<crate::schema::SchemaHandle>>,
     bytes: Unknown,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
     let bytes = unshared_input(env, bytes)?;
-    let mut marshal_error = None;
-    let operation = runtime.submit(WorkContext::new(), notification(callback)?, |work| {
-        let parsed = match crate::descriptor_of(&spec) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                marshal_error = Some(error);
-                return Err(RuntimeError::InvalidArgument);
-            }
-        };
-        let owned = QueuedBytes::copy_from(work, &bytes)?.bytes;
-        Ok(Box::new(move |work| {
-            use bumbledb::schema::ValidateDescriptor as _;
-            work.checkpoint()?;
-            let (descriptor, _) = parsed.map_err(|error| RuntimeError::Engine {
-                diagnostic: None,
-                kind: crate::tags::error_family::SCHEMA,
-                message: match error {
-                    crate::OpenOutcome::SchemaError(message)
-                    | crate::OpenOutcome::NewtypeMismatch(message) => message,
-                },
-            })?;
-            let schema = Arc::new(
-                descriptor
-                    .clone()
-                    .validate()
-                    .map_err(|error| super::schema_error(&error, &descriptor))?,
-            );
-            let changes = ChangeSet::from_bytes(&schema, owned, work)
-                .map_err(|error| change_error(&error))?;
-            let fingerprint = crate::hex_fingerprint(&changes.schema().0);
-            Ok(Output::Changes(ChangesOpened {
-                changes,
-                schema,
-                fingerprint,
+    let schema = Arc::clone(&schema.schema);
+    let operation = runtime
+        .submit(WorkContext::new(), notification(callback)?, |work| {
+            let owned = QueuedBytes::copy_from(work, &bytes)?.bytes;
+            Ok(Box::new(move |work| {
+                work.checkpoint()?;
+                let changes = ChangeSet::from_bytes(&schema, owned, work)
+                    .map_err(|error| change_error(&error))?;
+                let fingerprint = crate::schema::hex(&changes.schema().0);
+                Ok(Output::Changes(ChangesOpened {
+                    changes,
+                    schema,
+                    fingerprint,
+                }))
             }))
-        }))
-    });
-    if let Some(error) = marshal_error {
-        return Err(error);
-    }
-    let operation = operation.map_err(|error| thrown(env, error))?;
+        })
+        .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
 

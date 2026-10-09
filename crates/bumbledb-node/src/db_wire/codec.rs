@@ -24,13 +24,13 @@ pub(super) fn reserve_input_rows(
 
 /// Copy JS input into owned values before dispatch to the worker.
 pub(crate) fn parse_input_rows(
-    sealed: &crate::Sealed,
+    schema: &crate::schema::SchemaHandle,
     relation: u32,
     stated: u64,
     cells: &napi::bindgen_prelude::Array,
     context: &WorkContext,
 ) -> Result<Vec<Vec<Value>>, RuntimeError> {
-    let roster = sealed
+    let roster = schema
         .rosters
         .get(relation as usize)
         .ok_or(RuntimeError::InvalidArgument)?;
@@ -104,7 +104,6 @@ pub(crate) fn decode_rows_values(
         context.checkpoint()?;
         if record.relation != relation || record.kind != bumbledb::changes::ChangeKind::Add {
             return Err(RuntimeError::Engine {
-                diagnostic: None,
                 kind: crate::tags::error_family::VALIDATION,
                 message: "decodeRows: the payload carries records outside the requested \
                           relation's adds"
@@ -115,7 +114,6 @@ pub(crate) fn decode_rows_values(
             |error| match error {
                 bumbledb::canonical::RowError::Work(error) => RuntimeError::Work(error),
                 error => RuntimeError::Engine {
-                    diagnostic: None,
                     kind: crate::tags::error_family::CORRUPTION,
                     message: format!("decodeRows: {error}"),
                 },

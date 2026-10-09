@@ -1,57 +1,10 @@
-//! The wire-tag tables: one declarative table per mirrored core enum.
-//! A new core variant breaks compile here; payload marshaling stays in
-//! `marshal.rs`.
-use bumbledb::schema::spec::{
-    BoundSpec, CapacityWindowSpec, LiteralSetSpec, LiteralSpec, StatementSpec, WeightSpec,
-};
-use bumbledb::schema::{IntervalElement, ValueType};
-use bumbledb::{
-    AtomSource, CmpOp, ConditionTree, Direction, ErrorFamily, FindTerm, HeadOp, HeadTerm, Query,
-    StatementKind, Term, Value,
-};
+//! Wire tags for the data plane and violations: one exhaustive table per
+//! mirrored engine enum, so a new engine variant fails to compile here.
+use bumbledb::{Direction, ErrorFamily, StatementKind, Value};
 
 use crate::marshal::OwnedParam;
 
 macro_rules! wire_tags {
-    ($(#[$doc:meta])* mod $mod_name:ident for unit $enum_ty:ty {
-        $($const_name:ident : $variant:path => $tag:literal),+ $(,)?
-    }) => {
-        $(#[$doc])*
-        pub(crate) mod $mod_name {
-            #[allow(unused_imports)]
-            use super::*;
-
-            $(pub(crate) const $const_name: &str = $tag;)+
-
-            /// The EXHAUSTIVE variant → wire-tag map. Deliberately no
-            /// wildcard: a new core variant fails compile HERE, forcing
-            /// the wire decision to land with the variant.
-            #[allow(dead_code)]
-            pub(crate) fn tag(value: &$enum_ty) -> &'static str {
-                match value {
-                    $($variant => $const_name,)+
-                }
-            }
-
-            /// The IN direction, generated from the same rows — a unit
-            /// variant's pattern IS its constructor, so the parsers stop
-            /// hand-mirroring this table (the old admitted drift gap:
-            /// a new variant satisfied `tag()` and still refused at
-            /// runtime as an "unknown … kind").
-            #[allow(dead_code)]
-            pub(crate) fn parse(tag: &str) -> Option<$enum_ty> {
-                match tag {
-                    $($tag => Some($variant),)+
-                    _ => None,
-                }
-            }
-
-            /// Every wire tag, core declaration order — the `tags.json`
-            /// golden reads this (test-only consumption, hence the allow).
-            #[allow(dead_code)]
-            pub(crate) const TAGS: &[&str] = &[$($const_name),+];
-        }
-    };
     ($(#[$doc:meta])* mod $mod_name:ident for $enum_ty:ty {
         $($const_name:ident : $pat:pat => $tag:literal),+ $(,)?
     }) => {
@@ -62,20 +15,12 @@ macro_rules! wire_tags {
 
             $(pub(crate) const $const_name: &str = $tag;)+
 
-            /// The EXHAUSTIVE variant → wire-tag map. Deliberately no
-            /// wildcard: a new core variant fails compile HERE, forcing
-            /// the wire decision to land with the variant.
             #[allow(dead_code)]
             pub(crate) fn tag(value: &$enum_ty) -> &'static str {
                 match value {
                     $($pat => $const_name,)+
                 }
             }
-
-            /// Every wire tag, core declaration order — the `tags.json`
-            /// golden reads this (test-only consumption, hence the allow).
-            #[allow(dead_code)]
-            pub(crate) const TAGS: &[&str] = &[$($const_name),+];
         }
     };
 }
@@ -97,92 +42,8 @@ wire_tags! {
 }
 
 wire_tags! {
-    /// `bumbledb::schema::ValueType` — one table for BOTH directions
-    /// (`value_type_in` parses it, `value_type_out` renders it): the old
-    /// in/out twin tables are one datum.
-    mod value_type for ValueType {
-        BOOL: ValueType::Bool => "bool",
-        U64: ValueType::U64 => "u64",
-        I64: ValueType::I64 => "i64",
-        F64: ValueType::F64 => "f64",
-        UUID: ValueType::Uuid => "uuid",
-        STRING: ValueType::String => "string",
-        FIXED_BYTES: ValueType::FixedBytes { .. } => "fixedBytes",
-        INTERVAL: ValueType::Interval { .. } | ValueType::FixedInterval { .. } => "interval",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::schema::IntervalElement` — the interval family's element
-    /// domain (nested in `value_type` both directions; `parse` is the IN
-    /// direction).
-    mod interval_element for unit IntervalElement {
-        U64: IntervalElement::U64 => "u64",
-        I64: IntervalElement::I64 => "i64",
-        F64: IntervalElement::F64 => "f64",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::schema::spec::LiteralSpec` (`literal_in`).
-    mod literal for LiteralSpec {
-        HANDLE: LiteralSpec::Handle(_) => "handle",
-        VALUE: LiteralSpec::Value(_) => "value",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::schema::spec::LiteralSetSpec` (`literal_set_in`).
-    mod literal_set for LiteralSetSpec {
-        ONE: LiteralSetSpec::One(_) => "one",
-        MANY: LiteralSetSpec::Many(_) => "many",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::schema::spec::CapacityWindowSpec` (`capacity_window_in`).
-    mod capacity_window for CapacityWindowSpec {
-        EXACT: CapacityWindowSpec::Exact(_) => "exact",
-        RANGE: CapacityWindowSpec::Range { .. } => "range",
-        FLOOR: CapacityWindowSpec::Floor(_) => "floor",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::schema::spec::BoundSpec` (`capacity_bound_in`) — the
-    /// capacity window's bound vocabulary: a literal, a TARGET-row field
-    /// by name (the dependent bound), or a TARGET interval's measure.
-    mod capacity_bound for BoundSpec {
-        LIT: BoundSpec::Lit(_) => "lit",
-        FIELD: BoundSpec::Field(_) => "field",
-        DURATION_FIELD: BoundSpec::Duration(_) => "durationField",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::schema::spec::WeightSpec` (`weight_in`) — the total
-    /// weight sum (C4: `unit` is a case, not an absence; the wire always
-    /// carries it).
-    mod weight for WeightSpec {
-        UNIT: WeightSpec::Unit => "unit",
-        FIELD: WeightSpec::Field(_) => "field",
-        DURATION_FIELD: WeightSpec::Duration(_) => "durationField",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::schema::spec::StatementSpec` (`statement_in`).
-    mod statement for StatementSpec {
-        FD: StatementSpec::Fd { .. } => "fd",
-        CONTAINMENT: StatementSpec::Containment { .. } => "containment",
-        CAPACITY: StatementSpec::Capacity { .. } => "capacity",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::StatementKind` — the manifest/violation form tag (OUT
-    /// today; `parse` generated so an IN lane never re-opens the gap).
-    mod statement_kind for unit StatementKind {
+    /// `bumbledb::StatementKind`: the violation form tag.
+    mod statement_kind for StatementKind {
         FUNCTIONALITY: StatementKind::Functionality => "functionality",
         CONTAINMENT: StatementKind::Containment => "containment",
         CAPACITY: StatementKind::Capacity => "capacity",
@@ -190,129 +51,8 @@ wire_tags! {
 }
 
 wire_tags! {
-    /// `bumbledb::Term` — the IR term lane (`term_in`).
-    mod term for Term {
-        VAR: Term::Var(_) => "var",
-        PARAM: Term::Param(_) => "param",
-        PARAM_SET: Term::ParamSet(_) => "paramSet",
-        LITERAL: Term::Literal(_) => "literal",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::HeadOp` — the var-free aggregate-op vocabulary. ONE
-    /// table serves both op parsers: `fold_op_in` lifts `parse`'s `HeadOp`
-    /// into `FoldOp`, `head_term_in` takes `parse` bare. `FoldOp::head_op` is
-    /// the engine's exhaustive `FoldOp` ↔ `HeadOp` twin for Sum/Min/Max;
-    /// Count and Pack are find-term kinds, not fold ops.
-    mod head_op for unit HeadOp {
-        SUM: HeadOp::Sum => "sum",
-        MEAN: HeadOp::Mean => "mean",
-        MIN: HeadOp::Min => "min",
-        MAX: HeadOp::Max => "max",
-        COUNT: HeadOp::Count => "count",
-        PACK: HeadOp::Pack => "pack",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::HeadTerm` (`head_term_in`).
-    mod head_term for HeadTerm {
-        VAR: HeadTerm::Var => "var",
-        COMPUTE: HeadTerm::Compute => "compute",
-        AGGREGATE: HeadTerm::Aggregate(_) => "aggregate",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::FindTerm` (`find_term_in`). The `compute` arm carries the
-    /// core `ScalarExpr` payload (`scalar_expr_in` in marshal.rs) — the P03R
-    /// C05 roster (`FindTerm::Compute(ScalarExpr)`) is exhaustive here.
-    mod find_term for FindTerm {
-        VAR: FindTerm::Var(_) => "var",
-        SEGMENTS: FindTerm::Segments { .. } => "segments",
-        COMPUTE: FindTerm::Compute(_) => "compute",
-        COUNT: FindTerm::Count => "count",
-        AGGREGATE: FindTerm::Aggregate { .. } => "aggregate",
-        PACK: FindTerm::Pack { .. } => "pack",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::ScalarExpr` — the computed-find expression lane
-    /// (`scalar_expr_in`), spelled exactly as the plan JSON grammar spells
-    /// the same roster (C01/C11: one spelling, no second evaluator).
-    mod scalar_expr for bumbledb::ScalarExpr {
-        MUL_DIV: bumbledb::ScalarExpr::MulDiv { .. } => "mulDiv",
-        MEASURE: bumbledb::ScalarExpr::Measure(_) => "measure",
-        VAR: bumbledb::ScalarExpr::Var(_) => "var",
-        LITERAL: bumbledb::ScalarExpr::Literal(_) => "literal",
-        NEGATE: bumbledb::ScalarExpr::Negate(_) => "negate",
-        ADD: bumbledb::ScalarExpr::Add(_, _) => "add",
-        SUBTRACT: bumbledb::ScalarExpr::Subtract(_, _) => "subtract",
-        MULTIPLY: bumbledb::ScalarExpr::Multiply(_, _) => "multiply",
-        DIVIDE: bumbledb::ScalarExpr::Divide(_, _) => "divide",
-        CAST: bumbledb::ScalarExpr::Cast { .. } => "cast",
-        IS_NAN: bumbledb::ScalarExpr::IsNaN(_) => "isNaN",
-        IS_FINITE: bumbledb::ScalarExpr::IsFinite(_) => "isFinite",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::NumericCast` — the explicit-cast vocabulary nested in the
-    /// scalar-expression lane.
-    mod numeric_cast for unit bumbledb::NumericCast {
-        TO_F64: bumbledb::NumericCast::ToF64 => "toF64",
-        TO_F64_EXACT: bumbledb::NumericCast::ToF64Exact => "toF64Exact",
-        TO_I64_EXACT: bumbledb::NumericCast::ToI64Exact => "toI64Exact",
-        TO_U64_EXACT: bumbledb::NumericCast::ToU64Exact => "toU64Exact",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::AtomSource` (`atom_in`).
-    mod atom_source for AtomSource {
-        EDB: AtomSource::Edb(_) => "edb",
-        INTERIOR: AtomSource::Interior(_) => "interior",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::CmpOp` (`comparison_in`).
-    mod cmp_op for CmpOp {
-        EQ: CmpOp::Eq => "eq",
-        NE: CmpOp::Ne => "ne",
-        LT: CmpOp::Lt => "lt",
-        LE: CmpOp::Le => "le",
-        GT: CmpOp::Gt => "gt",
-        GE: CmpOp::Ge => "ge",
-        ALLEN: CmpOp::Allen { .. } => "allen",
-        POINT_IN: CmpOp::PointIn => "pointIn",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::ConditionTree` (`condition_in`).
-    mod condition for ConditionTree {
-        LEAF: ConditionTree::Leaf(_) => "leaf",
-        AND: ConditionTree::And(_) => "and",
-        OR: ConditionTree::Or(_) => "or",
-    }
-}
-
-wire_tags! {
-    /// Query IR kind (`query_in`): CQ carries no rec; Reach carries rec
-    /// by value. Exhaustive over engine `Query`.
-    mod query for Query {
-        CQ: Query { rec: None, .. } => "cq",
-        REACH: Query { .. } => "reach",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::Direction` — the containment violation's direction (OUT
-    /// today; `parse` generated so an IN lane never re-opens the gap).
-    mod direction for unit Direction {
+    /// `bumbledb::Direction`: the containment violation direction.
+    mod direction for Direction {
         SOURCE_UNSATISFIED: Direction::SourceUnsatisfied => "sourceUnsatisfied",
         TARGET_REQUIRED: Direction::TargetRequired => "targetRequired",
     }
@@ -331,7 +71,7 @@ wire_tags! {
 wire_tags! {
     /// `bumbledb::ErrorFamily` — the forced napi kind table. Engine errors
     /// cross as `{ kind, message }`; a new family arm breaks this crate.
-    mod error_family for unit ErrorFamily {
+    mod error_family for ErrorFamily {
         FORMAT_MISMATCH: ErrorFamily::FormatMismatch => "formatMismatch",
         SCHEMA_MISMATCH: ErrorFamily::SchemaMismatch => "schemaMismatch",
         ALREADY_INITIALIZED: ErrorFamily::AlreadyInitialized => "alreadyInitialized",
@@ -355,46 +95,13 @@ wire_tags! {
         SCALAR: ErrorFamily::Scalar => "scalar",
         RESULT_BYTES_OVERFLOW: ErrorFamily::ResultBytesOverflow => "resultBytesOverflow",
         CAPACITY: ErrorFamily::Capacity => "capacity",
+        FULL: ErrorFamily::Full => "full",
         CORRUPTION: ErrorFamily::Corruption => "corruption",
         STORE: ErrorFamily::Store => "store",
     }
 }
 
-pub(crate) mod admission_tag {
-    pub(crate) const ACCEPTED: &str = "accepted";
-    pub(crate) const REJECTED: &str = "rejected";
-    #[allow(dead_code)]
-    pub(crate) const TAGS: &[&str] = &[ACCEPTED, REJECTED];
-}
-
-pub(crate) mod write_tag {
-    pub(crate) const ACCEPTED: &str = "accepted";
-    pub(crate) const REJECTED: &str = "rejected";
-    pub(crate) const ABANDONED: &str = "abandoned";
-    pub(crate) const MOVED: &str = "moved";
-    #[allow(dead_code)]
-    pub(crate) const TAGS: &[&str] = &[ACCEPTED, REJECTED, ABANDONED, MOVED];
-}
-
 pub(crate) mod open_kind {
-    pub(crate) const SCHEMA_ERROR: &str = "schemaError";
-    pub(crate) const NEWTYPE_MISMATCH: &str = "newtypeMismatch";
     pub(crate) const FINGERPRINT_MISMATCH: &str = "fingerprintMismatch";
-    /// The managed create/publish refusal for an already-populated child
-    /// path — adopted into the one table (P06R seam resolution: `OpenKind`
-    /// in ts/src/native.ts carries it; the bridge speaks the same roster).
     pub(crate) const DESTINATION_EXISTS: &str = "destinationExists";
-    #[allow(dead_code)]
-    pub(crate) const TAGS: &[&str] = &[
-        SCHEMA_ERROR,
-        NEWTYPE_MISMATCH,
-        FINGERPRINT_MISMATCH,
-        DESTINATION_EXISTS,
-    ];
-}
-
-pub(crate) mod prepare_kind {
-    pub(crate) const IR_ERROR: &str = "irError";
-    #[allow(dead_code)]
-    pub(crate) const TAGS: &[&str] = &[IR_ERROR];
 }

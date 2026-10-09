@@ -13,8 +13,12 @@
 //! Published snapshots are [`super::SnapshotHandle`] only — mint with
 //! `assemble`, close with `runtime_snapshot_close`. No writable `Db`.
 
+use std::sync::Arc;
+
 use bumbledb::work::WorkContext;
 use bumbledb::{Query, RelationId, StatementId, Value};
+
+use crate::query::QueryHandle;
 
 use crate::runtime::session::{SnapshotAccess, SnapshotWork};
 use crate::runtime::{Output, RuntimeError};
@@ -44,12 +48,12 @@ pub(crate) fn snapshot_get_work(
 /// Prepare, execute and drop the one-shot plan before returning its
 /// independent completed result. Nothing is installed for later operations.
 pub(crate) fn execute_complete_work(
-    query: Query,
+    query: Arc<QueryHandle>,
     params: Vec<crate::marshal::OwnedParam>,
 ) -> SnapshotWork {
     Box::new(move |context, access| {
         context.checkpoint()?;
-        let result = owned_execute_complete(access, context, &query, &params)?;
+        let result = owned_execute_complete(access, context, &query.query, &params)?;
         Ok(Output::CompleteResult(result))
     })
 }
@@ -70,13 +74,13 @@ fn owned_execute_complete(
 }
 
 pub(crate) fn prepare_work(
-    runtime: std::sync::Arc<crate::runtime::Runtime>,
-    query: Query,
+    runtime: Arc<crate::runtime::Runtime>,
+    query: Arc<QueryHandle>,
 ) -> SnapshotWork {
     Box::new(move |context, access| {
         context.checkpoint()?;
         access
-            .prepare(&runtime, &query, context)
+            .prepare(&runtime, &query.query, context)
             .map(Output::Prepared)
     })
 }
