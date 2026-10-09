@@ -4,6 +4,8 @@
 //! [`schema::spec::SchemaSpec`]). Plain data and pure judgment; the
 //! `bumbledb` engine re-exports it.
 
+#![deny(unreachable_pub)]
+
 #[cfg(target_pointer_width = "32")]
 compile_error!("bumbledb targets 64-bit platforms only");
 

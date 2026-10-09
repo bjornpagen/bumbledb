@@ -40,6 +40,8 @@
 //! })
 //! .unwrap();
 //! ```
+#![deny(unreachable_pub)]
+
 #[cfg(target_pointer_width = "32")]
 compile_error!("bumbledb targets 64-bit platforms only");
 
@@ -93,7 +95,7 @@ pub use error::{
 pub use exec::kernel::numeric::{F64Math, FloatCardinalityOverflow, NonDefaultFloatEnvironment};
 pub use interval::{Discrete, Element, FloatMeasureError, Interval};
 /// The grounding off switch, for dependent crates' differential tests.
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 pub use plan::ground::with_grounding_disabled;
 pub use scalar::{NumericCast, Rounding, ScalarError, ScalarEvaluator, ScalarExpr};
 pub use storage::GenerationId;
@@ -203,7 +205,7 @@ pub(crate) mod testutil {
     use crate::error::{Result, Violations};
 
     #[track_caller]
-    pub fn expect_rejected<T: std::fmt::Debug>(result: Result<WriteOutcome<T>>) -> Violations {
+    pub(crate) fn expect_rejected<T: std::fmt::Debug>(result: Result<WriteOutcome<T>>) -> Violations {
         match result {
             Ok(WriteOutcome::Rejected(violations)) => violations,
             Ok(other) => panic!("expected a rejection, the write said {other:?}"),
@@ -211,13 +213,13 @@ pub(crate) mod testutil {
         }
     }
 
-    pub struct TempDir {
+    pub(crate) struct TempDir {
         root: PathBuf,
         path: PathBuf,
     }
 
     impl TempDir {
-        pub fn new(tag: &str) -> Self {
+        pub(crate) fn new(tag: &str) -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
             // Tests may share both a tag and a process. Exclusively claim
             // the parent; the store path itself must not exist at create.
@@ -238,7 +240,7 @@ pub(crate) mod testutil {
             }
         }
 
-        pub fn path(&self) -> &Path {
+        pub(crate) fn path(&self) -> &Path {
             &self.path
         }
     }

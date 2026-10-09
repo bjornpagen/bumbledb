@@ -2,6 +2,8 @@
 //! query against one, `params!` binds a template's named params. Each parses
 //! the raw token stream (the grammars are not Rust syntax) and reports every
 //! error as a `compile_error!` at the offending token.
+#![deny(unreachable_pub)]
+
 mod lex;
 mod query;
 mod schema;
