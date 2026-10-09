@@ -1,40 +1,13 @@
-//! Bridge from the production judge's complete verdict
-//! (`schema::judge::JudgedViolation`, C03) to the public rejection type
-//! ([`crate::error::Violations`]).
-//!
-//! The conversion is faithful in the direction that matters: every violated
-//! statement appears exactly once with its stable materialized-order
-//! [`StatementId`] identity, capacity verdicts carry the exact widened
-//! measure, and every bounded judge example survives as a decoded
-//! [`CitedFact`] — including both competing rows of a key conflict, so the
-//! historical shared-key counterexamples keep their full evidence. The
-//! convicting fact bytes are the first cited example re-encoded through the
-//! canonical codec (the same bytes a store row carries). The judge's
-//! per-statement example-truncation label crosses too (parallel flags on
-//! [`Violations`]), so decide-time evidence encoding never under-reports a
-//! judge-level example drop.
+//! Judge output as the public rejection: every violated statement once with
+//! its id, the exact capacity measure, every bounded example as a
+//! [`CitedFact`] and the judge's truncation labels. The convicting fact
+//! bytes are the first example's canonical row.
 
 use crate::canonical::CanonicalRow;
-use crate::error::{CitedFact, Conflict, Direction, Error, Result, Violation, Violations};
+use crate::error::{CitedFact, Conflict, Direction, Result, Violation, Violations};
 use crate::schema::judge::{JudgedDirection, JudgedViolation};
 use crate::schema::{Schema, StatementView};
 use crate::work::WorkContext;
-
-/// Preserve the candidate's failure channel and the judge's typed refusal;
-/// neither is a domain rejection.
-pub(super) fn judge_refusal<E: Into<Error>>(error: crate::schema::judge::JudgeError<E>) -> Error {
-    match error {
-        crate::schema::judge::JudgeError::Work(work) => Error::from(work),
-        crate::schema::judge::JudgeError::State(error) => error.into(),
-        crate::schema::judge::JudgeError::Compile(error) => Error::Compile(error),
-        crate::schema::judge::JudgeError::UndefinedDuration { statement } => {
-            Error::CapacityRayMeasure { statement }
-        }
-        crate::schema::judge::JudgeError::MeasureOverflow { statement } => {
-            Error::MeasureOverflow { statement }
-        }
-    }
-}
 
 pub(crate) fn violations_from_judged(
     schema: &Schema,

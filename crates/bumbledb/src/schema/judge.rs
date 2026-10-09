@@ -1,232 +1,129 @@
-//! Complete and incremental judgment are different proofs (C4).
+//! Judgment of a proposed final state against the sealed statements.
 //!
-//! [`judge_complete`] evaluates one **proposed final state** against every
-//! sealed statement. Staging, restore, migrate and the offline verifier use
-//! this entry. An empty delta is not a shortcut: the populated final state
-//! is judged in full.
-//!
-//! [`judge_incremental`] assumes the committed parent is lawful: every
-//! commit was judged. Incremental judgment enumerates affected
-//! groups from the net delta and compiled adjacency, then visits those
-//! groups through interned descriptors (`visit_compiled_group`) when the
-//! state exposes them; it never treats an empty change set as complete
-//! validation. Group identity is [`CompiledTheory::group_key`] (statement
-//! order). [`CompiledTheory::index_key`] is used only at
-//! `visit_compiled_group`.
-//!
-//! [`crate::schema::judge::judge_final_state`] is the independent streaming reference. It shares
-//! denotation with the production entries and does not share their
-//! optimized access planning. Exact value equality decides identity — a
-//! forced fingerprint collision cannot change a verdict here.
-//!
-//! Grouped state lives in exact transient maps. Citations are
-//! selected by canonical fact bytes **before** the labeled top-k budget
-//! truncates (C4 / CORE-021). A completed rejection names every violated
-//! statement; resource failure is not a rejection.
-use crate::schema::compiled::{CompiledProjection, CompiledTheory, ProjectionBinding};
-use crate::schema::{
-    CapacityStatement, CompileError, ContainmentStatement, Enforcement, KeyStatement, MemberSet,
-    RelationId, Schema, SealedBound, SealedWeight, Side, StatementId, StatementKind, StatementView,
-};
-use crate::{Value, WorkContext, WorkError};
-
-mod citation;
-mod grouped;
+//! [`judge_complete`] judges every statement over the whole state.
+//! [`judge_incremental`] assumes the committed parent is lawful and judges
+//! only the groups the delta can affect, through the state's group indexes
+//! when it has them. Both name every violated statement, with citations
+//! chosen by canonical fact bytes before the example budget truncates.
+use std::ops::ControlFlow::{self, Break, Continue};
 
 use crate::canonical::append_value;
+use crate::changes::DeltaShape;
+use crate::error::Result;
+use crate::schema::compiled::{CompiledProjection, CompiledTheory, ProjectionBinding};
+use crate::schema::{RelationId, Schema, Side, StatementId, StatementKind, StatementView};
+use crate::{Value, WorkContext};
+
+mod capacity;
+mod citation;
+mod containment;
+mod grouped;
+mod key;
+
 use citation::CitationTopK;
-use grouped::{FLAG_OVERFLOW, FLAG_RAY, GroupedMap, ScalarKeyScratch};
+use grouped::{GroupedMap, ScalarKeyScratch};
 
-/// Borrowed row visitation; false stops the walk without becoming an error.
-pub type RowVisitor<'a, E> = &'a mut (dyn FnMut(&[Value]) -> Result<bool, E> + 'a);
+/// Borrowed row visitation; `Break` stops the walk.
+pub(crate) type RowVisitor<'a> = &'a mut (dyn FnMut(&[Value]) -> Result<ControlFlow<()>> + 'a);
 
-/// Borrowed row with its stable position in the state's logical row order.
-/// Ranks are unique within a relation, may be sparse, and must agree between
-/// full and indexed visits. Encounter order need not equal rank order.
-pub type RankedRowVisitor<'a, E> = &'a mut (dyn FnMut(u64, &[Value]) -> Result<bool, E> + 'a);
+/// A borrowed row with its rank: its position in the state's logical row
+/// order. Ranks are unique within a relation, may be sparse, and agree
+/// between full and indexed visits; encounter order need not be rank order.
+pub(crate) type RankedRowVisitor<'a> =
+    &'a mut (dyn FnMut(u64, &[Value]) -> Result<ControlFlow<()>> + 'a);
 
-/// One proposed final-state view: for every ORDINARY relation, the judge
-/// can visit each distinct proposed row (committed minus removed plus
-/// added), decoded to sealed-field-order values. Closed relations are not
-/// consulted — their ground axioms are sealed in the schema. The state
-/// must present set semantics (no duplicate full rows); the change-set
-/// normalization already guarantees that for the delta side.
-///
-/// `visit_rows` may be called several times per relation within one
-/// judgment. Every call must yield the same rows in the same deterministic
-/// order. Charged decoded rows are borrowed for the visit; the implementor
-/// does not extract an owning `Box<[Value]>`.
-pub trait CandidateFacts {
-    /// The state's own iteration/decoding failure (I/O, corruption…),
-    /// distinct from every semantic outcome.
-    type Error;
+/// A proposed final state: every distinct row of each ordinary relation,
+/// decoded in sealed field order. Closed relations are read from the schema.
+/// Each visit of a relation yields the same rows in the same order.
+pub(crate) trait Facts {
+    fn visit_rows(&self, relation: RelationId, visit: RowVisitor<'_>) -> Result<()>;
 
-    /// Visit `relation`'s proposed final rows. Return `false` from `visit`
-    /// to stop early.
-    ///
-    /// # Errors
-    /// The state's own failure channel.
-    fn visit_rows(
-        &self,
-        relation: RelationId,
-        visit: RowVisitor<'_, Self::Error>,
-    ) -> Result<(), Self::Error>;
-
-    /// Visit rows with their logical-order ranks, preserving the same rank
-    /// for each row throughout this final-state view. A provider may reorder
-    /// physical traversal, but rank comparisons must preserve its established
-    /// logical row order. Ranks need not be dense or start at zero.
-    ///
-    /// The default ranks the existing deterministic stream. Providers with
-    /// indexed ranked visits must use these same relation-wide ranks, never
-    /// enumerate an individual bucket. At most `u64::MAX` rows are supported
-    /// by this rank representation; this is not a configurable execution cap.
-    /// # Errors
-    /// The state's own failure channel. Returning false stops the visit.
-    /// # Panics
-    /// If a provider violates the supported row-count bound while its
-    /// visitor continues.
-    fn visit_ranked_rows(
-        &self,
-        relation: RelationId,
-        visit: RankedRowVisitor<'_, Self::Error>,
-    ) -> Result<(), Self::Error> {
+    /// Rows with their ranks; the default ranks the [`Facts::visit_rows`]
+    /// stream.
+    fn visit_ranked_rows(&self, relation: RelationId, visit: RankedRowVisitor<'_>) -> Result<()> {
         let mut rank = 0u64;
         self.visit_rows(relation, &mut |row| {
-            let keep = visit(rank, row)?;
-            if keep {
-                rank = rank
-                    .checked_add(1)
-                    .expect("a ranked row stream has at most u64::MAX rows");
-            }
-            Ok(keep)
+            let flow = visit(rank, row)?;
+            rank += 1;
+            Ok(flow)
         })
     }
 }
 
-/// The candidate delta's net shape over one relation — the affected-relation
-/// information incremental judgment's relevance filters read.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DeltaShape {
-    /// The delta adds at least one row to the relation.
-    pub adds: bool,
-    /// The delta removes at least one row from the relation.
-    pub removes: bool,
+/// An indexed group visit: the state keeps no index for the group, or it
+/// walked the group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Indexed {
+    Unindexed,
+    Walked,
 }
 
-impl DeltaShape {
-    /// The delta touches the relation at all.
-    #[must_use]
-    pub const fn touched(self) -> bool {
-        self.adds || self.removes
-    }
-}
-
-/// A [`CandidateFacts`] state that additionally knows its own delta against
-/// the committed parent and can enumerate one sealed key statement's
-/// determinant group from an index instead of a relation stream.
-pub trait DeltaFacts: CandidateFacts {
-    /// Whether this candidate's mutations preserve a scalar key already
-    /// satisfied by the lawful parent. This is not a claim about an
-    /// arbitrary base or an interval key. False merely requests judgment.
-    /// A true answer must cover every mutation in this candidate; complete
-    /// judgment never consults it. Providers without such evidence use false.
+/// A [`Facts`] state that knows its delta against a lawful parent and can
+/// visit determinant groups through indexes.
+pub(crate) trait DeltaFacts: Facts {
+    /// The candidate preserves a scalar key the parent satisfies, for every
+    /// mutation in it. `false` only asks for judgment.
     fn scalar_key_preserved(&self, _statement: StatementId) -> bool {
         false
     }
 
-    /// The delta's net shape over `relation` (`DeltaShape::default()` for an
-    /// untouched relation). Over-reporting a touch is sound (more judged);
-    /// under-reporting is NOT — a touched relation reported untouched breaks
-    /// the delta-locality argument.
+    /// The delta's shape over `relation`. Over-reporting a touch is sound;
+    /// under-reporting one is not.
     fn delta_shape(&self, relation: RelationId) -> DeltaShape;
 
-    /// Visit the delta's ADDED rows of one relation. Rows already present
-    /// in the parent may appear; that only widens the judged group set.
-    ///
-    /// # Errors
-    /// The state's own failure channel.
-    fn visit_added_rows(
-        &self,
-        relation: RelationId,
-        visit: RowVisitor<'_, Self::Error>,
-    ) -> Result<(), Self::Error>;
+    /// The delta's added rows of `relation` (parent rows may repeat).
+    fn visit_added_rows(&self, relation: RelationId, visit: RowVisitor<'_>) -> Result<()>;
 
-    /// Visit the delta's REMOVED rows of one relation (parent rows the
-    /// delta deletes). Used to enumerate groups a removal can affect.
-    ///
-    /// # Errors
-    /// The state's own failure channel.
-    fn visit_removed_rows(
-        &self,
-        relation: RelationId,
-        visit: RowVisitor<'_, Self::Error>,
-    ) -> Result<(), Self::Error>;
+    /// The parent rows the delta removes from `relation`.
+    fn visit_removed_rows(&self, relation: RelationId, visit: RowVisitor<'_>) -> Result<()>;
 
-    /// Bounded visitor over every row of one sealed key statement's
-    /// determinant group in the proposed final state. `determinant` is the
-    /// statement's scalar values in projection order. Return `false` from
-    /// the visitor to stop early. `None` means the state maintains no group
-    /// index for `statement`; the judge then falls back to the complete
-    /// streaming path for that key.
-    ///
-    /// # Errors
-    /// The state's own failure channel.
+    /// Every final row of one key statement's determinant group;
+    /// `determinant` is the key's scalar values in projection order.
     fn visit_key_competitors(
         &self,
         statement: StatementId,
         determinant: &[Value],
-        visit: RowVisitor<'_, Self::Error>,
-    ) -> Result<Option<()>, Self::Error>;
+        visit: RowVisitor<'_>,
+    ) -> Result<Indexed>;
 
-    /// Visit members of one compiled projection group. `determinant` is
-    /// intern-order scalars from [`CompiledTheory::index_key`]. `None`
-    /// means the state has no index.
-    ///
-    /// # Errors
-    /// The state's own failure channel.
+    /// Members of one compiled projection group; `determinant` is in
+    /// [`CompiledTheory::index_key`] order.
     fn visit_compiled_group(
         &self,
         _projection: &CompiledProjection,
         _determinant: &[Value],
-        _visit: RowVisitor<'_, Self::Error>,
-    ) -> Result<Option<()>, Self::Error> {
-        Ok(None)
+        _visit: RowVisitor<'_>,
+    ) -> Result<Indexed> {
+        Ok(Indexed::Unindexed)
     }
 
-    /// Indexed group visitation carrying the exact ranks supplied by
-    /// [`CandidateFacts::visit_ranked_rows`]. Bucket-local numbering is not
-    /// a rank: different groups must remain comparable in the state's
-    /// logical row order. False stops; `None` means this ranked access path
-    /// is unavailable, so the judge discards provisional indexed evidence
-    /// and falls back to a full ranked visit.
-    /// # Errors
-    /// The state's own failure channel.
+    /// [`DeltaFacts::visit_compiled_group`] with the relation-wide ranks of
+    /// [`Facts::visit_ranked_rows`].
     fn visit_ranked_compiled_group(
         &self,
         _projection: &CompiledProjection,
         _determinant: &[Value],
-        _visit: RankedRowVisitor<'_, Self::Error>,
-    ) -> Result<Option<()>, Self::Error> {
-        Ok(None)
+        _visit: RankedRowVisitor<'_>,
+    ) -> Result<Indexed> {
+        Ok(Indexed::Unindexed)
     }
 }
 
-/// A tiny owned map state — the reference implementation of
-/// [`CandidateFacts`] used by oracles, models and the judge's own tests.
+/// An owned map state: the reference [`Facts`] for tests and models.
 #[derive(Debug, Default)]
-pub struct MapState {
+pub(crate) struct MapState {
     relations: std::collections::BTreeMap<RelationId, Vec<Box<[Value]>>>,
 }
 
 impl MapState {
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    /// Inserts one proposed final row; exact duplicates collapse (a set).
-    pub fn insert(&mut self, relation: RelationId, values: Vec<Value>) {
+    /// Inserts one proposed final row; exact duplicates collapse.
+    #[cfg(test)]
+    pub(crate) fn insert(&mut self, relation: RelationId, values: Vec<Value>) {
         let rows = self.relations.entry(relation).or_default();
         if !rows.iter().any(|row| row.as_ref() == values.as_slice()) {
             rows.push(values.into_boxed_slice());
@@ -234,19 +131,11 @@ impl MapState {
     }
 }
 
-impl CandidateFacts for MapState {
-    type Error = std::convert::Infallible;
-
-    fn visit_rows(
-        &self,
-        relation: RelationId,
-        visit: RowVisitor<'_, Self::Error>,
-    ) -> Result<(), Self::Error> {
-        if let Some(rows) = self.relations.get(&relation) {
-            for row in rows {
-                if !visit(row.as_ref())? {
-                    break;
-                }
+impl Facts for MapState {
+    fn visit_rows(&self, relation: RelationId, visit: RowVisitor<'_>) -> Result<()> {
+        for row in self.relations.get(&relation).into_iter().flatten() {
+            if visit(row)?.is_break() {
+                break;
             }
         }
         Ok(())
@@ -255,80 +144,43 @@ impl CandidateFacts for MapState {
 
 /// One cited example fact: a relation and its decoded sealed-order values.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CandidateFact {
-    pub relation: RelationId,
-    pub values: Box<[Value]>,
+pub(crate) struct CandidateFact {
+    pub(crate) relation: RelationId,
+    pub(crate) values: Box<[Value]>,
 }
 
-/// Which side of a containment failed. Mirrors the engine's diagnostic
-/// direction: the reference judge evaluates each one-way statement, so the
-/// source side is always the unsatisfied one.
+/// The side of a containment that failed: the judge evaluates each one-way
+/// statement, so it is always the source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JudgedDirection {
+pub(crate) enum JudgedDirection {
     SourceUnsatisfied,
 }
 
-/// One violated statement with bounded, explicitly labeled examples.
-/// `statement` is the stable materialized-order identity every surface
-/// cites; `examples_truncated` says whether more offending facts exist
-/// beyond the budget — the judge never silently narrows a diagnosis.
-/// Examples are the bounded canonical top-k by portable fact bytes.
+/// One violated statement with its bounded examples; `examples_truncated`
+/// says more offending facts exist beyond the budget.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JudgedViolation {
-    pub statement: StatementId,
-    pub kind: StatementKind,
-    pub direction: Option<JudgedDirection>,
-    /// The witnessed grouped measure for a capacity violation: the exact
-    /// widened total, never narrowed or wrapped. One violation row exists
-    /// per statement; when several groups violate the same statement, the
-    /// recorded witness is the LAST violating group in the deterministic
-    /// logical target order (a labeled example witness, not a claim of
-    /// uniqueness) — a confirmed P00 decision, load-bearing for byte-exact
-    /// evidence replay.
-    pub measure: Option<u128>,
-    pub examples: Box<[CandidateFact]>,
-    pub examples_truncated: bool,
+pub(crate) struct JudgedViolation {
+    pub(crate) statement: StatementId,
+    pub(crate) kind: StatementKind,
+    pub(crate) direction: Option<JudgedDirection>,
+    /// A capacity violation's exact widened measure: that of the last
+    /// violating group in logical target order.
+    pub(crate) measure: Option<u128>,
+    pub(crate) examples: Box<[CandidateFact]>,
+    pub(crate) examples_truncated: bool,
 }
 
-/// The complete judgment sum: admitted, or the complete ordered set of
-/// violated statements. Resource exhaustion and state failure are the
-/// `Err` channel of [`judge_final_state`], never a third verdict.
+/// Admitted, or every violated statement in statement order.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Judgment {
+pub(crate) enum Judgment {
     Admitted,
-    /// Nonempty, ordered by statement id — canonical diagnostic order.
     Rejected(Box<[JudgedViolation]>),
 }
 
-/// Judgment failure, never a semantic verdict. `State` is the candidate
-/// view's own failure; `UndefinedDuration` refuses a ray in a
-/// duration-measured position; `MeasureOverflow` reports a group total past
-/// the widened accumulator instead of wrapping a witness.
-#[derive(Debug, PartialEq, Eq)]
-pub enum JudgeError<E> {
-    Work(WorkError),
-    State(E),
-    UndefinedDuration {
-        statement: StatementId,
-    },
-    MeasureOverflow {
-        statement: StatementId,
-    },
-    /// Compiled projection ids were exhausted. Not a semantic verdict.
-    Compile(CompileError),
-}
-
-impl<E> From<WorkError> for JudgeError<E> {
-    fn from(error: WorkError) -> Self {
-        Self::Work(error)
-    }
-}
-
-/// Diagnostic bounds. `examples_per_statement` is the explicitly labeled
-/// example budget; zero keeps verdicts complete with no cited facts.
+/// The number of examples cited per violated statement.
 #[derive(Debug, Clone, Copy)]
-pub struct JudgeBudget {
-    pub examples_per_statement: usize,
+pub(crate) struct JudgeBudget {
+    pub(crate) examples_per_statement: usize,
 }
 
 impl Default for JudgeBudget {
@@ -339,61 +191,22 @@ impl Default for JudgeBudget {
     }
 }
 
-/// Complete final-state judgment (C4). Staging, restore, migrate and the
-/// offline verifier use this entry — never an empty-delta incremental skip.
+/// Judges the whole proposed final state against every statement.
 ///
 /// # Errors
-/// As [`judge_final_state`].
-pub fn judge_complete<S: CandidateFacts>(
+/// Cancellation, the state's own failure, a ray in a duration-measured
+/// position, or a measure past the widened accumulator. No partial
+/// rejection is returned.
+pub(crate) fn judge_complete<S: Facts>(
     schema: &Schema,
     state: &S,
     work: &WorkContext,
     budget: JudgeBudget,
-) -> Result<Judgment, JudgeError<S::Error>> {
-    judge_final_state(schema, state, work, budget)
-}
-
-/// Incremental judgment (C4). Requires a lawful-parent capability; an
-/// unready populated store cannot supply that premise. An empty delta is
-/// not complete validation: under the premise it admits without re-judging
-/// standing facts.
-///
-/// # Errors
-/// As [`judge_final_state`].
-pub fn judge_incremental<S: DeltaFacts>(
-    schema: &Schema,
-    state: &S,
-    work: &WorkContext,
-    budget: JudgeBudget,
-) -> Result<Judgment, JudgeError<S::Error>> {
-    judge_final_state_delta_local(schema, state, work, budget)
-}
-
-/// Judges the complete proposed final state against every sealed
-/// statement; a completed run names every violated statement.
-///
-/// # Errors
-/// [`JudgeError`] on cancellation, a failing candidate view, a ray in a
-/// duration-measured position, or an unwitnessable measure. No partial
-/// rejection is returned on any error path.
-pub fn judge_final_state<S: CandidateFacts>(
-    schema: &Schema,
-    state: &S,
-    work: &WorkContext,
-    budget: JudgeBudget,
-) -> Result<Judgment, JudgeError<S::Error>> {
-    let mut judge = Judge {
-        schema,
-        work,
-        budget,
-        violations: Vec::new(),
-        error: std::marker::PhantomData,
-    };
+) -> Result<Judgment> {
+    let mut judge = Judge::new(schema, work, budget);
     for view in schema.statements() {
         work.checkpoint()?;
         if schema.closed_constant(view) {
-            // Sealed at validation over frozen ground axioms; nothing in a
-            // candidate state can change it.
             continue;
         }
         match view {
@@ -402,207 +215,178 @@ pub fn judge_final_state<S: CandidateFacts>(
             StatementView::Capacity(_, statement) => judge.capacity(state, statement)?,
         }
     }
-    let mut violations = judge.violations;
-    violations.sort_by_key(|violation| violation.statement);
-    if violations.is_empty() {
-        Ok(Judgment::Admitted)
-    } else {
-        Ok(Judgment::Rejected(violations.into_boxed_slice()))
-    }
+    Ok(judge.judgment())
 }
 
-/// Incremental judgment under a lawful parent; an empty delta is not
-/// complete validation.
-///
-/// Equivalence with [`judge_final_state`] holds exactly when the committed
-/// parent satisfies every sealed statement. A parent made unlawful outside
-/// the admission path can hide a standing violation whenever the delta
-/// does not touch it — that is why the verifier re-runs complete judgment.
+/// Judges the statements the delta can affect, under a lawful parent. It
+/// equals [`judge_complete`] exactly when the parent satisfies every
+/// statement; an empty delta admits without re-judging standing facts.
 ///
 /// # Errors
-/// As [`judge_final_state`].
-/// # Panics
-/// If a sealed schema exceeds the u32 relation-ID representation.
-pub fn judge_final_state_delta_local<S: DeltaFacts>(
+/// As [`judge_complete`], and schema compilation.
+pub(crate) fn judge_incremental<S: DeltaFacts>(
     schema: &Schema,
     state: &S,
     work: &WorkContext,
     budget: JudgeBudget,
-) -> Result<Judgment, JudgeError<S::Error>> {
-    let theory = schema.compiled_theory().map_err(JudgeError::Compile)?;
-    let mut judge = Judge {
-        schema,
-        work,
-        budget,
-        violations: Vec::new(),
-        error: std::marker::PhantomData,
-    };
-    let mut delta = Vec::new();
-    for (idx, _relation) in schema.relations().iter().enumerate() {
-        let relation = RelationId(u32::try_from(idx).expect("relation count fits u32"));
-        let shape = state.delta_shape(relation);
-        if shape.touched() {
-            delta.push((relation, shape));
+) -> Result<Judgment> {
+    let theory = schema.compiled_theory()?;
+    let mut judge = Judge::new(schema, work, budget);
+    for view in schema.complete_obligations() {
+        if !delta_can_violate(view, |relation| state.delta_shape(relation)) {
+            continue;
         }
-    }
-    delta.sort_by_key(|&(id, _)| id);
-    for view in theory.delta_local_statements(schema, &delta) {
         work.checkpoint()?;
         match view {
             StatementView::Key(_, statement) => {
-                if !judge.key_delta_local(state, statement)? {
+                if judge.key_delta_local(state, statement)? == Indexed::Unindexed {
                     judge.key(state, statement)?;
                 }
             }
             StatementView::Containment(_, statement) => {
-                judge.containment_delta_local(state, statement)?;
+                judge.containment_delta_local(state, theory, statement)?;
             }
             StatementView::Capacity(_, statement) => {
-                judge.capacity_delta_local(state, statement)?;
+                judge.capacity_delta_local(state, theory, statement)?;
             }
         }
     }
-    let mut violations = judge.violations;
-    violations.sort_by_key(|violation| violation.statement);
-    if violations.is_empty() {
-        Ok(Judgment::Admitted)
-    } else {
-        Ok(Judgment::Rejected(violations.into_boxed_slice()))
+    Ok(judge.judgment())
+}
+
+/// Whether a delta of this shape can violate a statement its lawful parent
+/// satisfies: a key only through additions, a containment through source
+/// additions or target removals, a capacity through any source change or a
+/// target addition.
+fn delta_can_violate(view: StatementView<'_>, shape: impl Fn(RelationId) -> DeltaShape) -> bool {
+    match view {
+        StatementView::Key(_, statement) => shape(statement.relation).adds,
+        StatementView::Containment(_, statement) => {
+            shape(statement.source.relation).adds || shape(statement.target.relation).removes
+        }
+        StatementView::Capacity(_, statement) => {
+            shape(statement.source.relation).touched() || shape(statement.target.relation).adds
+        }
     }
 }
 
-struct Judge<'s, 'w, E> {
+struct Judge<'s, 'w> {
     schema: &'s Schema,
     work: &'w WorkContext,
     budget: JudgeBudget,
     violations: Vec<JudgedViolation>,
-    error: std::marker::PhantomData<fn() -> E>,
 }
 
-impl<E> Judge<'_, '_, E> {
+impl<'s, 'w> Judge<'s, 'w> {
+    const fn new(schema: &'s Schema, work: &'w WorkContext, budget: JudgeBudget) -> Self {
+        Self {
+            schema,
+            work,
+            budget,
+            violations: Vec::new(),
+        }
+    }
+
+    fn judgment(self) -> Judgment {
+        let mut violations = self.violations;
+        violations.sort_by_key(|violation| violation.statement);
+        if violations.is_empty() {
+            Judgment::Admitted
+        } else {
+            Judgment::Rejected(violations.into_boxed_slice())
+        }
+    }
+
     fn pending(&self, statement: StatementId, kind: StatementKind) -> PendingViolation {
         PendingViolation::new(statement, kind, self.budget.examples_per_statement)
     }
 
-    /// Stream proposed rows with their stable logical-order rank — from
-    /// the sealed extension for closed relations, from the state otherwise.
-    /// Physical encounter order may differ. Charge one work step per row;
-    /// false stops the walk and decoded rows stay borrowed.
-    fn for_each_row<S: CandidateFacts<Error = E>>(
+    /// Ranked proposed rows: a closed relation's sealed rows, an ordinary
+    /// relation's state rows. One cancellation poll per row.
+    fn for_each_row<S: Facts>(
         &mut self,
         state: &S,
         relation: RelationId,
-        mut visit: impl FnMut(&mut Self, u64, &[Value]) -> Result<bool, JudgeError<E>>,
-    ) -> Result<(), JudgeError<E>> {
-        let sealed = self.schema.relation(relation);
-        if let Some(extension) = sealed.body().closed_rows() {
-            for (seq, row) in extension.iter().enumerate() {
+        mut visit: impl FnMut(&mut Self, u64, &[Value]) -> Result<ControlFlow<()>>,
+    ) -> Result<()> {
+        if let Some(rows) = self.schema.closed_rows(relation) {
+            for (rank, row) in (0u64..).zip(rows) {
                 self.work.checkpoint()?;
-                if !visit(self, seq as u64, &row.values)? {
-                    return Ok(());
+                if visit(self, rank, &row.values)?.is_break() {
+                    break;
                 }
             }
             return Ok(());
         }
-        let mut smuggled = None;
-        let walked = state.visit_ranked_rows(relation, &mut |rank, row| {
-            if let Err(error) = self.work.checkpoint() {
-                smuggled = Some(JudgeError::Work(error));
-                return Ok(false);
-            }
-            match visit(self, rank, row) {
-                Ok(keep) => Ok(keep),
-                Err(error) => {
-                    smuggled = Some(error);
-                    Ok(false)
-                }
-            }
-        });
-        if let Some(error) = smuggled {
-            return Err(error);
-        }
-        walked.map_err(JudgeError::State)
+        state.visit_ranked_rows(relation, &mut |rank, row| {
+            self.work.checkpoint()?;
+            visit(self, rank, row)
+        })
     }
 
-    /// Walk one compiled projection group. `None` means the state exposes
-    /// no index for `compiled`.
-    fn for_each_compiled_group<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        compiled: &CompiledProjection,
-        determinant: &[Value],
-        mut visit: impl FnMut(&mut Self, &[Value]) -> Result<bool, JudgeError<E>>,
-    ) -> Result<Option<()>, JudgeError<E>> {
-        let mut smuggled = None;
-        let indexed = state.visit_compiled_group(compiled, determinant, &mut |row| {
-            if let Err(error) = self.work.checkpoint() {
-                smuggled = Some(JudgeError::Work(error));
-                return Ok(false);
-            }
-            match visit(self, row) {
-                Ok(keep) => Ok(keep),
-                Err(error) => {
-                    smuggled = Some(error);
-                    Ok(false)
-                }
-            }
-        });
-        if let Some(error) = smuggled {
-            return Err(error);
-        }
-        match indexed {
-            Ok(some) => Ok(some),
-            Err(error) => Err(JudgeError::State(error)),
-        }
-    }
-
-    /// Index-boundary walk: [`CompiledTheory::index_key`] then
-    /// [`DeltaFacts::visit_compiled_group`].
-    fn visit_indexed_group<S: DeltaFacts<Error = E>>(
+    /// One compiled projection group, addressed through
+    /// [`CompiledTheory::index_key`].
+    fn visit_indexed_group<S: DeltaFacts>(
         &mut self,
         state: &S,
         compiled: &CompiledProjection,
         binding: &ProjectionBinding,
         logical: &[Value],
-        visit: impl FnMut(&mut Self, &[Value]) -> Result<bool, JudgeError<E>>,
-    ) -> Result<Option<()>, JudgeError<E>> {
+        mut visit: impl FnMut(&mut Self, &[Value]) -> Result<ControlFlow<()>>,
+    ) -> Result<Indexed> {
         let Some(physical) = CompiledTheory::index_key(binding, logical) else {
-            return Ok(None);
+            return Ok(Indexed::Unindexed);
         };
-        self.for_each_compiled_group(state, compiled, &physical, visit)
+        state.visit_compiled_group(compiled, &physical, &mut |row| {
+            self.work.checkpoint()?;
+            visit(self, row)
+        })
     }
 
-    /// Capacity target visits need relation-wide ranks, not bucket encounter
-    /// order, to preserve the last logical target's witnessed measure.
-    fn visit_ranked_indexed_group<S: DeltaFacts<Error = E>>(
+    /// [`Judge::visit_indexed_group`] with relation-wide ranks.
+    fn visit_ranked_indexed_group<S: DeltaFacts>(
         &mut self,
         state: &S,
         compiled: &CompiledProjection,
         binding: &ProjectionBinding,
         logical: &[Value],
-        mut visit: impl FnMut(&mut Self, u64, &[Value]) -> Result<bool, JudgeError<E>>,
-    ) -> Result<Option<()>, JudgeError<E>> {
+        mut visit: impl FnMut(&mut Self, u64, &[Value]) -> Result<ControlFlow<()>>,
+    ) -> Result<Indexed> {
         let Some(physical) = CompiledTheory::index_key(binding, logical) else {
-            return Ok(None);
+            return Ok(Indexed::Unindexed);
         };
-        let mut smuggled = None;
-        let indexed = state.visit_ranked_compiled_group(compiled, &physical, &mut |rank, row| {
-            if let Err(error) = self.work.checkpoint() {
-                smuggled = Some(JudgeError::Work(error));
-                return Ok(false);
+        state.visit_ranked_compiled_group(compiled, &physical, &mut |rank, row| {
+            self.work.checkpoint()?;
+            visit(self, rank, row)
+        })
+    }
+
+    /// Whether the state indexes both sides of a statement, probed with one
+    /// sample determinant.
+    fn compiled_indexes_live<S: DeltaFacts>(
+        state: &S,
+        theory: &CompiledTheory,
+        source_binding: &ProjectionBinding,
+        target_binding: &ProjectionBinding,
+        sample: &[Value],
+    ) -> Result<Indexed> {
+        for binding in [source_binding, target_binding] {
+            let Some(id) = binding.projection else {
+                continue;
+            };
+            let Some(compiled) = theory.projection(id) else {
+                return Ok(Indexed::Unindexed);
+            };
+            let Some(physical) = CompiledTheory::index_key(binding, sample) else {
+                return Ok(Indexed::Unindexed);
+            };
+            if state.visit_compiled_group(compiled, &physical, &mut |_| Ok(Break(())))?
+                == Indexed::Unindexed
+            {
+                return Ok(Indexed::Unindexed);
             }
-            match visit(self, rank, row) {
-                Ok(keep) => Ok(keep),
-                Err(error) => {
-                    smuggled = Some(error);
-                    Ok(false)
-                }
-            }
-        });
-        if let Some(error) = smuggled {
-            return Err(error);
         }
-        indexed.map_err(JudgeError::State)
+        Ok(Indexed::Walked)
     }
 
     fn offer(
@@ -610,1544 +394,10 @@ impl<E> Judge<'_, '_, E> {
         pending: &mut PendingViolation,
         relation: RelationId,
         values: &[Value],
-    ) -> Result<(), JudgeError<E>> {
+    ) -> Result<()> {
         pending
             .citations
             .offer(self.schema, self.work, relation, values)
-    }
-
-    /// Delta-local key judgment over the state's group index. Scalar keys
-    /// need at most two final competitors to establish a violation; only
-    /// bad groups are retained and fully enumerated for citations. Interval
-    /// keys still deduplicate all touched groups before their span sweep.
-    /// Returns `false` when the state
-    /// exposes no group index; the caller then runs the complete streaming
-    /// pass. Competitors stay in ordered scratch; citations are selected
-    /// by canonical bytes before the budget truncates.
-    fn key_delta_local<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &KeyStatement,
-    ) -> Result<bool, JudgeError<E>> {
-        let relation = statement.relation;
-        let fields = self.schema.relation(relation).fields();
-        let mut scalar_fields = Vec::new();
-        let mut interval_field = None;
-        for field in &statement.projection {
-            let idx = usize::from(field.0);
-            if fields[idx].value_type.is_interval() {
-                interval_field = Some(idx);
-            } else {
-                scalar_fields.push(idx);
-            }
-        }
-        let Some(tail) = interval_field else {
-            return self.key_scalar_delta_local(state, statement, &scalar_fields);
-        };
-        let mut seen = GroupedMap::default();
-        let mut groups: Vec<Vec<Value>> = Vec::new();
-        let mut det = Vec::new();
-        let mut walk_error = None;
-        state
-            .visit_added_rows(relation, &mut |row| {
-                if let Err(error) = self.work.checkpoint() {
-                    walk_error = Some(JudgeError::Work(error));
-                    return Ok(false);
-                }
-                det.clear();
-                for &idx in &scalar_fields {
-                    append_value(&mut det, &row[idx]);
-                }
-                if seen.insert_if_absent(&det) {
-                    groups.push(scalar_fields.iter().map(|&idx| row[idx].clone()).collect());
-                }
-                Ok(true)
-            })
-            .map_err(JudgeError::State)?;
-        if let Some(error) = walk_error {
-            return Err(error);
-        }
-        let mut pending = self.pending(statement.id, StatementKind::Functionality);
-        for determinant in &groups {
-            let indexed = self.key_group_pointwise(
-                state,
-                statement,
-                relation,
-                determinant,
-                tail,
-                &mut pending,
-            )?;
-            if !indexed {
-                return Ok(false);
-            }
-        }
-        self.finish(pending);
-        Ok(true)
-    }
-
-    fn key_scalar_delta_local<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &KeyStatement,
-        scalar_fields: &[usize],
-    ) -> Result<bool, JudgeError<E>> {
-        if state.scalar_key_preserved(statement.id) {
-            return Ok(true);
-        }
-        let mut determinant = ScalarKeyScratch::new(scalar_fields.len());
-        let mut offending = GroupedMap::default();
-        let mut pending = self.pending(statement.id, StatementKind::Functionality);
-        let mut indexed = true;
-        let mut walk_error = None;
-        state
-            .visit_added_rows(statement.relation, &mut |row| {
-                let inspected = (|| {
-                    self.work.checkpoint()?;
-                    determinant.project(row, scalar_fields);
-                    // A lawful scalar group has at most one row. Reprobing
-                    // good groups is bounded; remembering them is unnecessary.
-                    // Check known BAD groups before probing: many additions to
-                    // one violation must not repeat its entire citation scan.
-                    let have_bad_groups = offending.len() != 0;
-                    if have_bad_groups && offending.contains(determinant.encode()) {
-                        return Ok(true);
-                    }
-                    let Some(violated) =
-                        self.scalar_key_conflict(state, statement.id, determinant.values())?
-                    else {
-                        return Ok(false);
-                    };
-                    if !violated {
-                        return Ok(true);
-                    }
-                    if !have_bad_groups {
-                        determinant.encode();
-                    }
-                    offending.insert_if_absent(determinant.key());
-                    pending.violated = true;
-                    self.offer_key_group(
-                        state,
-                        statement.id,
-                        statement.relation,
-                        determinant.values(),
-                        &mut pending,
-                        None,
-                    )
-                })();
-                match inspected {
-                    Ok(available) => {
-                        indexed = available;
-                        Ok(available)
-                    }
-                    Err(error) => {
-                        walk_error = Some(error);
-                        Ok(false)
-                    }
-                }
-            })
-            .map_err(JudgeError::State)?;
-        if let Some(error) = walk_error {
-            return Err(error);
-        }
-        if indexed {
-            self.finish(pending);
-        }
-        // A late unavailable index discards provisional citations and all
-        // local scratch before the caller performs complete judgment.
-        Ok(indexed)
-    }
-
-    fn scalar_key_conflict<S: DeltaFacts<Error = E>>(
-        &self,
-        state: &S,
-        statement: StatementId,
-        determinant: &[Value],
-    ) -> Result<Option<bool>, JudgeError<E>> {
-        let mut count = 0u8;
-        let mut work_error = None;
-        match state.visit_key_competitors(statement, determinant, &mut |_| {
-            if let Err(error) = self.work.checkpoint() {
-                work_error = Some(error);
-                return Ok(false);
-            }
-            count += 1;
-            Ok(count < 2)
-        }) {
-            Ok(Some(())) => {}
-            Ok(None) => return Ok(None),
-            Err(error) => return Err(JudgeError::State(error)),
-        }
-        if let Some(error) = work_error {
-            return Err(JudgeError::Work(error));
-        }
-        Ok(Some(count == 2))
-    }
-
-    fn key_group_pointwise<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &KeyStatement,
-        relation: RelationId,
-        determinant: &[Value],
-        tail: usize,
-        pending: &mut PendingViolation,
-    ) -> Result<bool, JudgeError<E>> {
-        let mut spans = GroupedMap::default();
-        let mut seq = 0u64;
-        let mut walk_error = None;
-        match state.visit_key_competitors(statement.id, determinant, &mut |values| {
-            let (start, end) = interval_order_words(&values[tail])
-                .expect("a projected interval position holds an interval value");
-            let key = span_key(0, start, end, seq);
-            seq += 1;
-            if let Err(error) = self.work.checkpoint() {
-                walk_error = Some(JudgeError::Work(error));
-                return Ok(false);
-            }
-            spans.put(&key, &[]);
-            Ok(true)
-        }) {
-            Ok(Some(())) => {}
-            Ok(None) => return Ok(false),
-            Err(error) => return Err(JudgeError::State(error)),
-        }
-        if let Some(error) = walk_error {
-            return Err(error);
-        }
-        let mut offending = GroupedMap::default();
-        let mut violated = false;
-        let mut reach: Option<Reach> = None;
-        spans.for_each(|key, _| {
-            self.work.checkpoint()?;
-            let (_, start, end, at) = parse_span_key(key);
-            if let Some(owner) = Reach::sweep(&mut reach, 0, start, end, at) {
-                violated = true;
-                offending.put(&owner.to_be_bytes(), &[]);
-                offending.put(&at.to_be_bytes(), &[]);
-            }
-            Ok(true)
-        })?;
-        if !violated {
-            return Ok(true);
-        }
-        pending.violated = true;
-        self.offer_key_group(
-            state,
-            statement.id,
-            relation,
-            determinant,
-            pending,
-            Some(&offending),
-        )
-    }
-
-    fn offer_key_group<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: StatementId,
-        relation: RelationId,
-        determinant: &[Value],
-        pending: &mut PendingViolation,
-        only: Option<&GroupedMap>,
-    ) -> Result<bool, JudgeError<E>> {
-        let mut seq = 0u64;
-        let mut walk_error = None;
-        match state.visit_key_competitors(statement, determinant, &mut |values| {
-            let at = seq;
-            seq += 1;
-            let take = only
-                .as_ref()
-                .is_none_or(|flagged| flagged.contains(&at.to_be_bytes()));
-            if take && let Err(error) = self.offer(pending, relation, values) {
-                walk_error = Some(error);
-                return Ok(false);
-            }
-            Ok(true)
-        }) {
-            Ok(Some(())) => {}
-            Ok(None) => return Ok(false),
-            Err(error) => return Err(JudgeError::State(error)),
-        }
-        if let Some(error) = walk_error {
-            return Err(error);
-        }
-        Ok(true)
-    }
-
-    fn key<S: CandidateFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &KeyStatement,
-    ) -> Result<(), JudgeError<E>> {
-        let relation = statement.relation;
-        // Split the projection into the scalar determinant and an optional
-        // trailing interval position (the pointwise form).
-        let fields = self.schema.relation(relation).fields();
-        let mut scalar_fields = Vec::new();
-        let mut interval_field = None;
-        for field in &statement.projection {
-            let idx = usize::from(field.0);
-            if fields[idx].value_type.is_interval() {
-                interval_field = Some(idx);
-            } else {
-                scalar_fields.push(idx);
-            }
-        }
-        let mut pending = self.pending(statement.id, StatementKind::Functionality);
-        match interval_field {
-            None => self.key_scalar(state, relation, &scalar_fields, &mut pending)?,
-            Some(tail) => {
-                self.key_pointwise(state, relation, &scalar_fields, tail, &mut pending)?;
-            }
-        }
-        self.finish(pending);
-        Ok(())
-    }
-
-    /// Scalar key: a determinant seen twice is a violation. Membership is
-    /// exact encoded determinant bytes in the transient map — every competing
-    /// row lands in its group before any uniqueness is enforced.
-    fn key_scalar<S: CandidateFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        relation: RelationId,
-        scalar_fields: &[usize],
-        pending: &mut PendingViolation,
-    ) -> Result<(), JudgeError<E>> {
-        let mut seen = GroupedMap::default();
-        let mut offending = GroupedMap::default();
-        let mut det = Vec::new();
-        self.for_each_row(state, relation, |_judge, _seq, row| {
-            det.clear();
-            for &idx in scalar_fields {
-                append_value(&mut det, &row[idx]);
-            }
-            if !seen.insert_if_absent(&det) {
-                offending.put(&det, &[]);
-            }
-            Ok(true)
-        })?;
-        if offending.len() == 0 {
-            return Ok(());
-        }
-        pending.violated = true;
-        self.for_each_row(state, relation, |judge, _seq, row| {
-            det.clear();
-            for &idx in scalar_fields {
-                append_value(&mut det, &row[idx]);
-            }
-            if offending.contains(&det) {
-                judge.offer(pending, relation, row)?;
-            }
-            Ok(true)
-        })
-    }
-
-    /// Pointwise key: two rows with one determinant may coexist only with
-    /// disjoint interval tails. Spans are staged in the transient map under
-    /// fixed-width `(group token, start, end, seq)` keys, whose byte order is
-    /// the sweep order (see [`Reach`]).
-    fn key_pointwise<S: CandidateFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        relation: RelationId,
-        scalar_fields: &[usize],
-        tail: usize,
-        pending: &mut PendingViolation,
-    ) -> Result<(), JudgeError<E>> {
-        let mut tokens = GroupedMap::default();
-        let mut spans = GroupedMap::default();
-        let mut det = Vec::new();
-        self.for_each_row(state, relation, |_judge, seq, row| {
-            det.clear();
-            for &idx in scalar_fields {
-                append_value(&mut det, &row[idx]);
-            }
-            let token = tokens.token_of(&det);
-            let (start, end) = interval_order_words(&row[tail])
-                .expect("a projected interval position holds an interval value");
-            let key = span_key(token, start, end, seq);
-            spans.put(&key, &[]);
-            Ok(true)
-        })?;
-        let mut offending = GroupedMap::default();
-        let mut violated = false;
-        let mut reach: Option<Reach> = None;
-        spans.for_each(|key, _| {
-            self.work.checkpoint()?;
-            let (token, start, end, seq) = parse_span_key(key);
-            if let Some(owner) = Reach::sweep(&mut reach, token, start, end, seq) {
-                violated = true;
-                offending.put(&owner.to_be_bytes(), &[]);
-                offending.put(&seq.to_be_bytes(), &[]);
-            }
-            Ok(true)
-        })?;
-        if !violated {
-            return Ok(());
-        }
-        pending.violated = true;
-        self.for_each_row(state, relation, |judge, seq, row| {
-            if offending.contains(&seq.to_be_bytes()) {
-                judge.offer(pending, relation, row)?;
-            }
-            Ok(true)
-        })
-    }
-
-    fn containment<S: CandidateFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &ContainmentStatement,
-    ) -> Result<(), JudgeError<E>> {
-        let mut pending = self
-            .pending(statement.id, StatementKind::Containment)
-            .with_direction(JudgedDirection::SourceUnsatisfied);
-        if let Enforcement::Closed { members } = &statement.enforcement {
-            self.for_each_row(state, statement.source.relation, |judge, _rank, row| {
-                judge.containment_closed_row(statement, members, row, &mut pending)?;
-                Ok(true)
-            })?;
-        } else {
-            let target_fields = self.schema.relation(statement.target.relation).fields();
-            // At most one trailing interval position (validation's rule);
-            // its presence selects coverage instead of tuple existence.
-            let coverage_position = statement
-                .target
-                .projection
-                .iter()
-                .position(|field| target_fields[usize::from(field.0)].value_type.is_interval());
-            match coverage_position {
-                None => self.containment_scalar(state, statement, &mut pending)?,
-                Some(position) => {
-                    self.containment_pointwise(state, statement, position, &mut pending)?;
-                }
-            }
-        }
-        self.finish(pending);
-        Ok(())
-    }
-
-    /// The sealed bitset already includes the target's selection. Closed
-    /// targets accept only their synthetic U64 handle projection, so neither
-    /// target row decoding nor a temporary witness set is necessary.
-    fn containment_closed_row(
-        &mut self,
-        statement: &ContainmentStatement,
-        members: &MemberSet,
-        row: &[Value],
-        pending: &mut PendingViolation,
-    ) -> Result<(), JudgeError<E>> {
-        if !satisfies(&statement.source, row) {
-            return Ok(());
-        }
-        let handle = &row[usize::from(statement.source.projection[0].0)];
-        let witnessed = matches!(handle, Value::U64(word)
-            if u8::try_from(*word).is_ok_and(|index| members.contains(index)));
-        if !witnessed {
-            pending.violated = true;
-            self.offer(pending, statement.source.relation, row)?;
-        }
-        Ok(())
-    }
-
-    /// A lawful parent already satisfies the immutable closed target.
-    /// Removing source rows cannot create a violation; all new offenders
-    /// must be selected additions. Check each one, including every citation.
-    fn containment_closed_delta<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &ContainmentStatement,
-        members: &MemberSet,
-    ) -> Result<(), JudgeError<E>> {
-        let mut pending = self
-            .pending(statement.id, StatementKind::Containment)
-            .with_direction(JudgedDirection::SourceUnsatisfied);
-        let mut walk_error = None;
-        let walked = state.visit_added_rows(statement.source.relation, &mut |row| {
-            if walk_error.is_some() {
-                return Ok(false);
-            }
-            let checked = self
-                .work
-                .checkpoint()
-                .map_err(JudgeError::Work)
-                .and_then(|()| self.containment_closed_row(statement, members, row, &mut pending));
-            match checked {
-                Ok(()) => Ok(true),
-                Err(error) => {
-                    walk_error = Some(error);
-                    Ok(false)
-                }
-            }
-        });
-        if let Some(error) = walk_error {
-            return Err(error);
-        }
-        walked.map_err(JudgeError::State)?;
-        self.finish(pending);
-        Ok(())
-    }
-
-    /// Tuple existence: stage every satisfying target projection in the
-    /// exact set, then stream source rows and probe by exact bytes.
-    fn containment_scalar<S: CandidateFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &ContainmentStatement,
-        pending: &mut PendingViolation,
-    ) -> Result<(), JudgeError<E>> {
-        let mut witnesses = GroupedMap::default();
-        let mut key = Vec::new();
-        self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
-            if satisfies(&statement.target, row) {
-                key.clear();
-                encode_projection(&statement.target, row, None, &mut key);
-                witnesses.put(&key, &[]);
-            }
-            Ok(true)
-        })?;
-        self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-            if !satisfies(&statement.source, row) {
-                return Ok(true);
-            }
-            key.clear();
-            encode_projection(&statement.source, row, None, &mut key);
-            if !witnesses.contains(&key) {
-                pending.violated = true;
-                judge.offer(pending, statement.source.relation, row)?;
-            }
-            Ok(true)
-        })
-    }
-
-    /// Pointwise coverage: scalar prefix equality plus coverage of the
-    /// source span by the union of matching target spans. Target spans are
-    /// merged into maximal coverage runs (adjacent spans connect, exactly
-    /// like the reference frontier walk); each source span then needs one
-    /// predecessor probe.
-    fn containment_pointwise<S: CandidateFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &ContainmentStatement,
-        position: usize,
-        pending: &mut PendingViolation,
-    ) -> Result<(), JudgeError<E>> {
-        let mut tokens = GroupedMap::default();
-        let mut spans = GroupedMap::default();
-        let mut prefix = Vec::new();
-        self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
-            if !satisfies(&statement.target, row) {
-                return Ok(true);
-            }
-            prefix.clear();
-            encode_projection(&statement.target, row, Some(position), &mut prefix);
-            let token = tokens.token_of(&prefix);
-            let span_value = &row[usize::from(statement.target.projection[position].0)];
-            let (start, end) = interval_order_words(span_value)
-                .expect("positional typing pairs interval positions");
-            // Coverage is a set: identical spans collapse.
-            spans.put(&span_key(token, start, end, 0), &[]);
-            Ok(true)
-        })?;
-        // Merge into maximal runs per token: `start ≤ current end` connects
-        // (adjacency merges — the frontier walk's exact reachability).
-        let mut runs = GroupedMap::default();
-        let mut current: Option<(u64, u64, u64)> = None; // token, run start, run end
-        spans.for_each(|key, _| {
-            self.work.checkpoint()?;
-            let (token, start, end, _) = parse_span_key(key);
-            match current {
-                Some((run_token, run_start, run_end)) if run_token == token && start <= run_end => {
-                    current = Some((run_token, run_start, run_end.max(end)));
-                }
-                _ => {
-                    if let Some((run_token, run_start, run_end)) = current {
-                        runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes());
-                    }
-                    current = Some((token, start, end));
-                }
-            }
-            Ok(true)
-        })?;
-        if let Some((run_token, run_start, run_end)) = current {
-            runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes());
-        }
-        self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-            if !satisfies(&statement.source, row) {
-                return Ok(true);
-            }
-            prefix.clear();
-            encode_projection(&statement.source, row, Some(position), &mut prefix);
-            let span_value = &row[usize::from(statement.source.projection[position].0)];
-            let witnessed = tokens
-                .lookup_token(&prefix)
-                .is_some_and(|token| run_covers(token, span_value, &runs));
-            if !witnessed {
-                pending.violated = true;
-                judge.offer(pending, statement.source.relation, row)?;
-            }
-            Ok(true)
-        })
-    }
-
-    fn capacity<S: CandidateFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &CapacityStatement,
-    ) -> Result<(), JudgeError<E>> {
-        let mut pending = self.pending(statement.id, StatementKind::Capacity);
-        let mut totals = GroupedMap::default();
-        let mut group = Vec::new();
-        let mut source_rows: u64 = 0;
-        // Pass 1 — the exact nonnegative measure over DISTINCT matching
-        // source facts per group, accumulated widened. A group's first
-        // failure (ray duration, then overflow, in source order) is sticky
-        // and only surfaces if a target row references the group — exactly
-        // the reference semantics, where unreferenced groups are never
-        // measured.
-        // Every finite weight is at most u64::MAX. Keep the accumulator
-        // widened and checked, independent of traversal order or any work
-        // policy; an undefined duration or overflow remains a typed error.
-        self.for_each_row(state, statement.source.relation, |_judge, _seq, row| {
-            source_rows = source_rows
-                .checked_add(1)
-                .ok_or(JudgeError::MeasureOverflow {
-                    statement: statement.id,
-                })?;
-            if !satisfies(&statement.source, row) {
-                return Ok(true);
-            }
-            group.clear();
-            encode_projection(&statement.source, row, None, &mut group);
-            let (mut total, mut flag) = totals.group_total(&group);
-            if flag != 0 {
-                return Ok(true);
-            }
-            let weight = match statement.weight {
-                SealedWeight::Unit => Some(1u128),
-                SealedWeight::Field(field) => match &row[usize::from(field.0)] {
-                    Value::U64(weight) => Some(u128::from(*weight)),
-                    _ => unreachable!("validation types a [field] weight as u64"),
-                },
-                SealedWeight::Duration { field, .. } => {
-                    duration_words(&row[usize::from(field.0)]).map(u128::from)
-                }
-            };
-            match weight {
-                None => flag = FLAG_RAY,
-                Some(weight) => match total.checked_add(weight) {
-                    Some(next) => total = next,
-                    None => flag = FLAG_OVERFLOW,
-                },
-            }
-            totals.put_group_total(&group, total, flag);
-            Ok(true)
-        })?;
-        // Pass 2 — every satisfying target row opens its group's window.
-        // Violating group keys go into ordered scratch; citations are
-        // selected by canonical bytes after both sides are offered.
-        let mut violating = GroupedMap::default();
-        self.for_each_row(state, statement.target.relation, |judge, rank, row| {
-            if !satisfies(&statement.target, row) {
-                return Ok(true);
-            }
-            group.clear();
-            encode_projection(&statement.target, row, None, &mut group);
-            let (total, flag) = totals.group_total(&group);
-            if flag == FLAG_RAY {
-                return Err(JudgeError::UndefinedDuration {
-                    statement: statement.id,
-                });
-            }
-            if flag == FLAG_OVERFLOW {
-                return Err(JudgeError::MeasureOverflow {
-                    statement: statement.id,
-                });
-            }
-            let ceiling: Option<u128> = match statement.hi {
-                SealedBound::Unbounded => None,
-                SealedBound::Lit(hi) => Some(u128::from(hi)),
-                SealedBound::TargetField(field) => match &row[usize::from(field.0)] {
-                    Value::U64(hi) => Some(u128::from(*hi)),
-                    _ => unreachable!("validation types a dependent bound as u64"),
-                },
-                SealedBound::Duration { field, .. } => Some(u128::from(duration_of(
-                    &row[usize::from(field.0)],
-                    statement.id,
-                )?)),
-            };
-            let below = total < u128::from(statement.lo);
-            let above = ceiling.is_some_and(|hi| total > hi);
-            if below || above {
-                pending.violated = true;
-                // One violation per statement; the witnessed measure is the
-                // last violating group's exact total in this deterministic
-                // logical target order (P00-confirmed witness rule).
-                pending.record_measure_at(rank, total);
-                violating.put(&group, &[u8::from(above)]);
-                judge.offer(&mut pending, statement.target.relation, row)?;
-            }
-            Ok(true)
-        })?;
-        if pending.violated {
-            self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-                if !satisfies(&statement.source, row) {
-                    return Ok(true);
-                }
-                group.clear();
-                encode_projection(&statement.source, row, None, &mut group);
-                if violating.contains(&group) {
-                    judge.offer(&mut pending, statement.source.relation, row)?;
-                }
-                Ok(true)
-            })?;
-        }
-        let _ = source_rows;
-        self.finish(pending);
-        Ok(())
-    }
-
-    /// Incremental containment: judge only groups the delta can affect
-    /// (added sources, removed targets) through compiled group visits.
-    fn containment_delta_local<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &ContainmentStatement,
-    ) -> Result<(), JudgeError<E>> {
-        if let Enforcement::Closed { members } = &statement.enforcement {
-            return self.containment_closed_delta(state, statement, members);
-        }
-        self.containment_open_delta(state, statement)
-    }
-
-    fn containment_open_delta<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &ContainmentStatement,
-    ) -> Result<(), JudgeError<E>> {
-        let theory = self.schema.compiled_theory().map_err(JudgeError::Compile)?;
-        let target_fields = self.schema.relation(statement.target.relation).fields();
-        let coverage_position = statement
-            .target
-            .projection
-            .iter()
-            .position(|field| target_fields[usize::from(field.0)].value_type.is_interval());
-        let (Some(source_binding), Some(target_binding)) = (
-            theory.source_binding(statement.id),
-            theory.target_binding(statement.id),
-        ) else {
-            self.containment(state, statement)?;
-            return Ok(());
-        };
-        let source_compiled = theory.source_projection(statement.id);
-        let target_compiled = theory.target_projection(statement.id);
-        let mut affected = GroupedMap::default();
-        mark_delta_groups(
-            state,
-            statement.source.relation,
-            &statement.source,
-            source_binding,
-            true,
-            false,
-            &mut affected,
-        )?;
-        mark_delta_groups(
-            state,
-            statement.target.relation,
-            &statement.target,
-            target_binding,
-            false,
-            true,
-            &mut affected,
-        )?;
-        if affected.len() == 0 {
-            return Ok(());
-        }
-        let mut pending = self
-            .pending(statement.id, StatementKind::Containment)
-            .with_direction(JudgedDirection::SourceUnsatisfied);
-        let compiled = match coverage_position {
-            None => self.containment_scalar_compiled(
-                state,
-                theory,
-                statement,
-                source_compiled,
-                target_compiled,
-                source_binding,
-                target_binding,
-                &mut affected,
-                &mut pending,
-            )?,
-            Some(position) => self.containment_pointwise_compiled(
-                state,
-                theory,
-                statement,
-                position,
-                source_compiled,
-                target_compiled,
-                source_binding,
-                target_binding,
-                &mut affected,
-                &mut pending,
-            )?,
-        };
-        if !compiled {
-            // Indexed availability is independent of the verdict. A later
-            // declined group invalidates all provisional evidence and its
-            // reservations before the complete affected-group scan starts.
-            pending = self
-                .pending(statement.id, StatementKind::Containment)
-                .with_direction(JudgedDirection::SourceUnsatisfied);
-            match coverage_position {
-                None => {
-                    self.containment_scalar_affected(
-                        state,
-                        statement,
-                        source_binding,
-                        target_binding,
-                        &mut affected,
-                        &mut pending,
-                    )?;
-                }
-                Some(position) => {
-                    self.containment_pointwise_affected(
-                        state,
-                        statement,
-                        position,
-                        source_binding,
-                        target_binding,
-                        &mut affected,
-                        &mut pending,
-                    )?;
-                }
-            }
-        }
-        self.finish(pending);
-        Ok(())
-    }
-
-    fn containment_scalar_compiled<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        theory: &CompiledTheory,
-        statement: &ContainmentStatement,
-        source_compiled: Option<&CompiledProjection>,
-        target_compiled: Option<&CompiledProjection>,
-        source_binding: &ProjectionBinding,
-        target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap,
-        pending: &mut PendingViolation,
-    ) -> Result<bool, JudgeError<E>> {
-        let fields = self.schema.relation(statement.source.relation).fields();
-        let mut first = true;
-        let mut available = true;
-        // Keep evidence provisional until every indexed group completes.
-        affected.for_each_determinant(
-            fields,
-            &source_binding.logical_scalars,
-            self.work,
-            |_group, det| {
-                if first {
-                    first = false;
-                    if !Self::compiled_indexes_live(
-                        state,
-                        theory,
-                        source_binding,
-                        target_binding,
-                        det,
-                    )? {
-                        available = false;
-                        return Ok(false);
-                    }
-                }
-                let mut witnessed = false;
-                if let Some(compiled) = target_compiled {
-                    if self
-                        .visit_indexed_group(
-                            state,
-                            compiled,
-                            target_binding,
-                            det,
-                            |_judge, row| {
-                                if satisfies(&statement.target, row) {
-                                    witnessed = true;
-                                    return Ok(false);
-                                }
-                                Ok(true)
-                            },
-                        )?
-                        .is_none()
-                    {
-                        available = false;
-                        return Ok(false);
-                    }
-                } else {
-                    witnessed = self.unindexed_matches(
-                        state,
-                        statement.target.relation,
-                        &statement.target,
-                        target_binding,
-                        det,
-                    )?;
-                }
-                // Scalar containment is existential. One selected final target
-                // witnesses every source in this group; enumerating those sources
-                // would make an admitted insertion scale with existing fan-out.
-                if witnessed {
-                    return Ok(true);
-                }
-                if let Some(compiled) = source_compiled {
-                    if self
-                        .visit_indexed_group(state, compiled, source_binding, det, |judge, row| {
-                            if satisfies(&statement.source, row) {
-                                pending.violated = true;
-                                judge.offer(pending, statement.source.relation, row)?;
-                            }
-                            Ok(true)
-                        })?
-                        .is_none()
-                    {
-                        available = false;
-                        return Ok(false);
-                    }
-                } else {
-                    self.offer_unindexed_unsatisfied(
-                        state,
-                        statement.source.relation,
-                        &statement.source,
-                        source_binding,
-                        det,
-                        pending,
-                    )?;
-                }
-                Ok(true)
-            },
-        )?;
-        Ok(available)
-    }
-
-    fn containment_pointwise_compiled<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        theory: &CompiledTheory,
-        statement: &ContainmentStatement,
-        position: usize,
-        source_compiled: Option<&CompiledProjection>,
-        target_compiled: Option<&CompiledProjection>,
-        source_binding: &ProjectionBinding,
-        target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap,
-        pending: &mut PendingViolation,
-    ) -> Result<bool, JudgeError<E>> {
-        let fields = self.schema.relation(statement.source.relation).fields();
-        let mut first = true;
-        let mut available = true;
-        affected.for_each_determinant(
-            fields,
-            &source_binding.logical_scalars,
-            self.work,
-            |_group, det| {
-                if first {
-                    first = false;
-                    if !Self::compiled_indexes_live(
-                        state,
-                        theory,
-                        source_binding,
-                        target_binding,
-                        det,
-                    )? {
-                        available = false;
-                        return Ok(false);
-                    }
-                }
-                let Some(runs) = self.target_coverage(
-                    state,
-                    statement,
-                    position,
-                    target_compiled,
-                    target_binding,
-                    det,
-                )?
-                else {
-                    available = false;
-                    return Ok(false);
-                };
-                if let Some(compiled) = source_compiled {
-                    if self
-                        .visit_indexed_group(state, compiled, source_binding, det, |judge, row| {
-                            if !satisfies(&statement.source, row) {
-                                return Ok(true);
-                            }
-                            if !run_covers(
-                                0,
-                                &row[usize::from(statement.source.projection[position].0)],
-                                &runs,
-                            ) {
-                                pending.violated = true;
-                                judge.offer(pending, statement.source.relation, row)?;
-                            }
-                            Ok(true)
-                        })?
-                        .is_none()
-                    {
-                        available = false;
-                        return Ok(false);
-                    }
-                } else {
-                    self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-                        if !satisfies(&statement.source, row)
-                            || CompiledTheory::group_key(source_binding, row).as_slice() != det
-                        {
-                            return Ok(true);
-                        }
-                        if !run_covers(
-                            0,
-                            &row[usize::from(statement.source.projection[position].0)],
-                            &runs,
-                        ) {
-                            pending.violated = true;
-                            judge.offer(pending, statement.source.relation, row)?;
-                        }
-                        Ok(true)
-                    })?;
-                }
-                Ok(true)
-            },
-        )?;
-        Ok(available)
-    }
-
-    /// Build coverage for one target determinant. An unavailable physical
-    /// index declines the whole provisional indexed pass, not this group alone.
-    fn target_coverage<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &ContainmentStatement,
-        position: usize,
-        compiled: Option<&CompiledProjection>,
-        binding: &ProjectionBinding,
-        determinant: &[Value],
-    ) -> Result<Option<GroupedMap>, JudgeError<E>> {
-        let mut spans = GroupedMap::default();
-        let mut add_span = |row: &[Value]| {
-            if satisfies(&statement.target, row) {
-                let span = &row[usize::from(statement.target.projection[position].0)];
-                let (start, end) =
-                    interval_order_words(span).expect("positional typing pairs interval positions");
-                spans.put(&span_key(0, start, end, 0), &[]);
-            }
-            Ok(true)
-        };
-        if let Some(compiled) = compiled {
-            if self
-                .visit_indexed_group(state, compiled, binding, determinant, |_judge, row| {
-                    add_span(row)
-                })?
-                .is_none()
-            {
-                return Ok(None);
-            }
-        } else {
-            self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
-                if satisfies(&statement.target, row)
-                    && CompiledTheory::group_key(binding, row).as_slice() == determinant
-                {
-                    add_span(row)?;
-                }
-                Ok(true)
-            })?;
-        }
-        let mut runs = GroupedMap::default();
-        merge_coverage_runs(&mut spans, &mut runs, self.work)?;
-        Ok(Some(runs))
-    }
-
-    fn containment_scalar_affected<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &ContainmentStatement,
-        source_binding: &ProjectionBinding,
-        target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap,
-        pending: &mut PendingViolation,
-    ) -> Result<(), JudgeError<E>> {
-        let mut witnesses = GroupedMap::default();
-        let mut key = Vec::new();
-        self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
-            if satisfies(&statement.target, row) {
-                key.clear();
-                encode_values(&CompiledTheory::group_key(target_binding, row), &mut key);
-                if affected.contains(&key) {
-                    witnesses.put(&key, &[]);
-                }
-            }
-            Ok(true)
-        })?;
-        self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-            if !satisfies(&statement.source, row) {
-                return Ok(true);
-            }
-            key.clear();
-            encode_values(&CompiledTheory::group_key(source_binding, row), &mut key);
-            if affected.contains(&key) && !witnesses.contains(&key) {
-                pending.violated = true;
-                judge.offer(pending, statement.source.relation, row)?;
-            }
-            Ok(true)
-        })
-    }
-
-    fn containment_pointwise_affected<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &ContainmentStatement,
-        position: usize,
-        source_binding: &ProjectionBinding,
-        target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap,
-        pending: &mut PendingViolation,
-    ) -> Result<(), JudgeError<E>> {
-        let mut tokens = GroupedMap::default();
-        let mut spans = GroupedMap::default();
-        let mut prefix = Vec::new();
-        self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
-            if !satisfies(&statement.target, row) {
-                return Ok(true);
-            }
-            prefix.clear();
-            encode_values(&CompiledTheory::group_key(target_binding, row), &mut prefix);
-            if !affected.contains(&prefix) {
-                return Ok(true);
-            }
-            let token = tokens.token_of(&prefix);
-            let span_value = &row[usize::from(statement.target.projection[position].0)];
-            let (start, end) = interval_order_words(span_value)
-                .expect("positional typing pairs interval positions");
-            spans.put(&span_key(token, start, end, 0), &[]);
-            Ok(true)
-        })?;
-        let mut runs = GroupedMap::default();
-        merge_coverage_runs(&mut spans, &mut runs, self.work)?;
-        self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-            if !satisfies(&statement.source, row) {
-                return Ok(true);
-            }
-            prefix.clear();
-            encode_values(&CompiledTheory::group_key(source_binding, row), &mut prefix);
-            if !affected.contains(&prefix) {
-                return Ok(true);
-            }
-            let span_value = &row[usize::from(statement.source.projection[position].0)];
-            let witnessed = tokens
-                .lookup_token(&prefix)
-                .is_some_and(|token| run_covers(token, span_value, &runs));
-            if !witnessed {
-                pending.violated = true;
-                judge.offer(pending, statement.source.relation, row)?;
-            }
-            Ok(true)
-        })
-    }
-
-    /// Incremental capacity: recompute only groups the delta can change
-    /// (touched source groups and added targets). Floor violations from
-    /// removal and selected target replacement match the complete model.
-    fn capacity_delta_local<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &CapacityStatement,
-    ) -> Result<(), JudgeError<E>> {
-        let theory = self.schema.compiled_theory().map_err(JudgeError::Compile)?;
-        let (Some(source_binding), Some(target_binding)) = (
-            theory.source_binding(statement.id),
-            theory.target_binding(statement.id),
-        ) else {
-            self.capacity(state, statement)?;
-            return Ok(());
-        };
-        let source_compiled = theory.source_projection(statement.id);
-        let target_compiled = theory.target_projection(statement.id);
-        let mut affected = GroupedMap::default();
-        mark_delta_groups(
-            state,
-            statement.source.relation,
-            &statement.source,
-            source_binding,
-            true,
-            true,
-            &mut affected,
-        )?;
-        mark_delta_groups(
-            state,
-            statement.target.relation,
-            &statement.target,
-            target_binding,
-            true,
-            false,
-            &mut affected,
-        )?;
-        if affected.len() == 0 {
-            return Ok(());
-        }
-        let mut pending = self.pending(statement.id, StatementKind::Capacity);
-        if !self.capacity_compiled(
-            state,
-            theory,
-            statement,
-            source_compiled,
-            target_compiled,
-            source_binding,
-            target_binding,
-            &mut affected,
-            &mut pending,
-        )? {
-            // Unavailable indexed/ranked access invalidates the provisional
-            // pass. Drop its evidence and reservations before the full walk.
-            pending = self.pending(statement.id, StatementKind::Capacity);
-            self.capacity_affected(
-                state,
-                statement,
-                source_binding,
-                target_binding,
-                &mut affected,
-                &mut pending,
-            )?;
-        }
-        self.finish(pending);
-        Ok(())
-    }
-
-    fn capacity_compiled<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        theory: &CompiledTheory,
-        statement: &CapacityStatement,
-        source_compiled: Option<&CompiledProjection>,
-        target_compiled: Option<&CompiledProjection>,
-        source_binding: &ProjectionBinding,
-        target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap,
-        pending: &mut PendingViolation,
-    ) -> Result<bool, JudgeError<E>> {
-        let fields = self.schema.relation(statement.source.relation).fields();
-        let mut first = true;
-        let mut available = true;
-        let mut totals = GroupedMap::default();
-        affected.for_each_determinant(
-            fields,
-            &source_binding.logical_scalars,
-            self.work,
-            |group, det| {
-                if first {
-                    first = false;
-                    if !Self::compiled_indexes_live(
-                        state,
-                        theory,
-                        source_binding,
-                        target_binding,
-                        det,
-                    )? {
-                        available = false;
-                        return Ok(false);
-                    }
-                }
-                if let Some(compiled) = source_compiled {
-                    if self
-                        .visit_indexed_group(
-                            state,
-                            compiled,
-                            source_binding,
-                            det,
-                            |_judge, row| {
-                                if satisfies(&statement.source, row) {
-                                    accumulate_capacity(&mut totals, statement, row, group);
-                                }
-                                Ok(true)
-                            },
-                        )?
-                        .is_none()
-                    {
-                        available = false;
-                        return Ok(false);
-                    }
-                } else {
-                    self.for_each_row(state, statement.source.relation, |_judge, _seq, row| {
-                        if satisfies(&statement.source, row)
-                            && CompiledTheory::group_key(source_binding, row).as_slice() == det
-                        {
-                            accumulate_capacity(&mut totals, statement, row, group);
-                        }
-                        Ok(true)
-                    })?;
-                }
-                Ok(true)
-            },
-        )?;
-        if !available {
-            return Ok(false);
-        }
-        let mut violating = GroupedMap::default();
-        affected.for_each_determinant(
-            fields,
-            &source_binding.logical_scalars,
-            self.work,
-            |group, det| {
-                if let Some(compiled) = target_compiled {
-                    if self
-                        .visit_ranked_indexed_group(
-                            state,
-                            compiled,
-                            target_binding,
-                            det,
-                            |judge, rank, row| {
-                                if satisfies(&statement.target, row) {
-                                    judge.note_capacity_target(
-                                        statement,
-                                        (rank, row),
-                                        group,
-                                        &mut totals,
-                                        &mut violating,
-                                        pending,
-                                    )?;
-                                }
-                                Ok(true)
-                            },
-                        )?
-                        .is_none()
-                    {
-                        available = false;
-                        return Ok(false);
-                    }
-                } else {
-                    self.for_each_row(state, statement.target.relation, |judge, rank, row| {
-                        if satisfies(&statement.target, row)
-                            && CompiledTheory::group_key(target_binding, row).as_slice() == det
-                        {
-                            judge.note_capacity_target(
-                                statement,
-                                (rank, row),
-                                group,
-                                &mut totals,
-                                &mut violating,
-                                pending,
-                            )?;
-                        }
-                        Ok(true)
-                    })?;
-                }
-                Ok(true)
-            },
-        )?;
-        if !available {
-            return Ok(false);
-        }
-        if pending.violated {
-            // This exact-key subset is already the complete set of groups
-            // requiring source citations. No need to decode or probe the rest.
-            violating.for_each_determinant(
-                fields,
-                &source_binding.logical_scalars,
-                self.work,
-                |_group, det| {
-                    if let Some(compiled) = source_compiled {
-                        if self
-                            .visit_indexed_group(
-                                state,
-                                compiled,
-                                source_binding,
-                                det,
-                                |judge, row| {
-                                    if satisfies(&statement.source, row) {
-                                        judge.offer(pending, statement.source.relation, row)?;
-                                    }
-                                    Ok(true)
-                                },
-                            )?
-                            .is_none()
-                        {
-                            available = false;
-                            return Ok(false);
-                        }
-                    } else {
-                        self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-                            if satisfies(&statement.source, row)
-                                && CompiledTheory::group_key(source_binding, row).as_slice() == det
-                            {
-                                judge.offer(pending, statement.source.relation, row)?;
-                            }
-                            Ok(true)
-                        })?;
-                    }
-                    Ok(true)
-                },
-            )?;
-        }
-        Ok(available)
-    }
-
-    fn capacity_affected<S: DeltaFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        statement: &CapacityStatement,
-        source_binding: &ProjectionBinding,
-        target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap,
-        pending: &mut PendingViolation,
-    ) -> Result<(), JudgeError<E>> {
-        let mut totals = GroupedMap::default();
-        let mut group = Vec::new();
-        self.for_each_row(state, statement.source.relation, |_judge, _seq, row| {
-            if !satisfies(&statement.source, row) {
-                return Ok(true);
-            }
-            group.clear();
-            encode_values(&CompiledTheory::group_key(source_binding, row), &mut group);
-            if !affected.contains(&group) {
-                return Ok(true);
-            }
-            accumulate_capacity(&mut totals, statement, row, &group);
-            Ok(true)
-        })?;
-        let mut violating = GroupedMap::default();
-        self.for_each_row(state, statement.target.relation, |judge, rank, row| {
-            if !satisfies(&statement.target, row) {
-                return Ok(true);
-            }
-            group.clear();
-            encode_values(&CompiledTheory::group_key(target_binding, row), &mut group);
-            if !affected.contains(&group) {
-                return Ok(true);
-            }
-            judge.note_capacity_target(
-                statement,
-                (rank, row),
-                &group,
-                &mut totals,
-                &mut violating,
-                pending,
-            )?;
-            Ok(true)
-        })?;
-        if pending.violated {
-            self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-                if !satisfies(&statement.source, row) {
-                    return Ok(true);
-                }
-                group.clear();
-                encode_values(&CompiledTheory::group_key(source_binding, row), &mut group);
-                if violating.contains(&group) {
-                    judge.offer(pending, statement.source.relation, row)?;
-                }
-                Ok(true)
-            })?;
-        }
-        Ok(())
-    }
-
-    fn note_capacity_target(
-        &mut self,
-        statement: &CapacityStatement,
-        (rank, row): (u64, &[Value]),
-        group: &[u8],
-        totals: &mut GroupedMap,
-        violating: &mut GroupedMap,
-        pending: &mut PendingViolation,
-    ) -> Result<(), JudgeError<E>> {
-        let (total, flag) = totals.group_total(group);
-        if flag == FLAG_RAY {
-            return Err(JudgeError::UndefinedDuration {
-                statement: statement.id,
-            });
-        }
-        if flag == FLAG_OVERFLOW {
-            return Err(JudgeError::MeasureOverflow {
-                statement: statement.id,
-            });
-        }
-        let ceiling: Option<u128> = match statement.hi {
-            SealedBound::Unbounded => None,
-            SealedBound::Lit(hi) => Some(u128::from(hi)),
-            SealedBound::TargetField(field) => match &row[usize::from(field.0)] {
-                Value::U64(hi) => Some(u128::from(*hi)),
-                _ => unreachable!("validation types a dependent bound as u64"),
-            },
-            SealedBound::Duration { field, .. } => Some(u128::from(duration_of(
-                &row[usize::from(field.0)],
-                statement.id,
-            )?)),
-        };
-        let below = total < u128::from(statement.lo);
-        let above = ceiling.is_some_and(|hi| total > hi);
-        if below || above {
-            pending.violated = true;
-            pending.record_measure_at(rank, total);
-            violating.put(group, &[]);
-            self.offer(pending, statement.target.relation, row)?;
-        }
-        Ok(())
-    }
-
-    fn compiled_indexes_live<S: DeltaFacts<Error = E>>(
-        state: &S,
-        theory: &CompiledTheory,
-        source_binding: &ProjectionBinding,
-        target_binding: &ProjectionBinding,
-        sample: &[Value],
-    ) -> Result<bool, JudgeError<E>> {
-        for binding in [source_binding, target_binding] {
-            let Some(id) = binding.projection else {
-                continue;
-            };
-            let Some(compiled) = theory.projection(id) else {
-                return Ok(false);
-            };
-            let Some(physical) = CompiledTheory::index_key(binding, sample) else {
-                return Ok(false);
-            };
-            match state.visit_compiled_group(compiled, &physical, &mut |_| Ok(false)) {
-                Ok(Some(())) => {}
-                Ok(None) => return Ok(false),
-                Err(error) => return Err(JudgeError::State(error)),
-            }
-        }
-        Ok(true)
-    }
-
-    fn unindexed_matches<S: CandidateFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        relation: RelationId,
-        side: &Side,
-        binding: &ProjectionBinding,
-        det: &[Value],
-    ) -> Result<bool, JudgeError<E>> {
-        let mut found = false;
-        self.for_each_row(state, relation, |_judge, _seq, row| {
-            if satisfies(side, row) && CompiledTheory::group_key(binding, row).as_slice() == det {
-                found = true;
-            }
-            Ok(!found)
-        })?;
-        Ok(found)
-    }
-
-    fn offer_unindexed_unsatisfied<S: CandidateFacts<Error = E>>(
-        &mut self,
-        state: &S,
-        relation: RelationId,
-        side: &Side,
-        binding: &ProjectionBinding,
-        det: &[Value],
-        pending: &mut PendingViolation,
-    ) -> Result<(), JudgeError<E>> {
-        self.for_each_row(state, relation, |judge, _seq, row| {
-            if satisfies(side, row) && CompiledTheory::group_key(binding, row).as_slice() == det {
-                pending.violated = true;
-                judge.offer(pending, relation, row)?;
-            }
-            Ok(true)
-        })
     }
 
     fn finish(&mut self, pending: PendingViolation) {
@@ -2201,8 +451,8 @@ impl PendingViolation {
     }
 }
 
-/// Does the row satisfy the side's selection (each bound field's value is
-/// a member of its literal set)? Exact canonical value equality, only.
+/// Whether the row satisfies the side's selection: each selected field's
+/// value is one of its literals.
 fn satisfies(side: &Side, row: &[Value]) -> bool {
     side.selection.iter().all(|(field, literals)| {
         let actual = &row[usize::from(field.0)];
@@ -2210,14 +460,13 @@ fn satisfies(side: &Side, row: &[Value]) -> bool {
     })
 }
 
-/// Append the side's projected values as exact injective bytes, optionally
-/// skipping one projection position (the pointwise interval slot).
+/// Appends the side's projected values as exact injective bytes, optionally
+/// skipping one projection position (the pointwise interval).
 fn encode_projection(side: &Side, row: &[Value], skip: Option<usize>, out: &mut Vec<u8>) {
     for (index, field) in side.projection.iter().enumerate() {
-        if Some(index) == skip {
-            continue;
+        if Some(index) != skip {
+            append_value(out, &row[usize::from(field.0)]);
         }
-        append_value(out, &row[usize::from(field.0)]);
     }
 }
 
@@ -2227,133 +476,33 @@ fn encode_values(values: &[Value], out: &mut Vec<u8>) {
     }
 }
 
-/// Mark every determinant group the delta's added or removed rows of one
-/// side can affect.
+/// Marks every determinant group that the delta's rows of one side, of the
+/// selected kinds, can affect.
 fn mark_delta_groups<S: DeltaFacts>(
     state: &S,
-    relation: RelationId,
     side: &Side,
     binding: &ProjectionBinding,
-    adds: bool,
-    removes: bool,
+    kinds: DeltaShape,
     affected: &mut GroupedMap,
-) -> Result<(), JudgeError<S::Error>> {
+) -> Result<()> {
     let mut key = ScalarKeyScratch::new(0);
-    let mut mark = |row: &[Value]| -> Result<bool, S::Error> {
+    let mut mark = |row: &[Value]| {
         if satisfies(side, row) {
             affected.insert_if_absent(key.encode_projection(row, &binding.logical_scalars));
         }
-        Ok(true)
+        Ok(Continue(()))
     };
-    if adds {
-        state
-            .visit_added_rows(relation, &mut mark)
-            .map_err(JudgeError::State)?;
+    if kinds.adds {
+        state.visit_added_rows(side.relation, &mut mark)?;
     }
-    if removes {
-        state
-            .visit_removed_rows(relation, &mut mark)
-            .map_err(JudgeError::State)?;
+    if kinds.removes {
+        state.visit_removed_rows(side.relation, &mut mark)?;
     }
     Ok(())
 }
 
-fn merge_coverage_runs<E>(
-    spans: &mut GroupedMap,
-    runs: &mut GroupedMap,
-    work: &WorkContext,
-) -> Result<(), JudgeError<E>> {
-    let mut current: Option<(u64, u64, u64)> = None;
-    spans.for_each(|key, _| {
-        work.checkpoint()?;
-        let (token, start, end, _) = parse_span_key(key);
-        match current {
-            Some((run_token, run_start, run_end)) if run_token == token && start <= run_end => {
-                current = Some((run_token, run_start, run_end.max(end)));
-            }
-            _ => {
-                if let Some((run_token, run_start, run_end)) = current {
-                    runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes());
-                }
-                current = Some((token, start, end));
-            }
-        }
-        Ok(true)
-    })?;
-    if let Some((run_token, run_start, run_end)) = current {
-        runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes());
-    }
-    Ok(())
-}
-
-/// The maximal coverage run of `token` starting at or before the span's
-/// start reaches the span's end.
-fn run_covers(token: u64, span: &Value, runs: &GroupedMap) -> bool {
-    let (span_start, span_end) =
-        interval_order_words(span).expect("positional typing pairs interval positions");
-    runs.last_at_or_before(&run_key(token, span_start))
-        .is_some_and(|(key, end)| {
-            key[..8] == token.to_be_bytes()
-                && u64::from_be_bytes(end.try_into().expect("8-byte run end")) >= span_end
-        })
-}
-
-fn accumulate_capacity(
-    totals: &mut GroupedMap,
-    statement: &CapacityStatement,
-    row: &[Value],
-    group: &[u8],
-) {
-    let (mut total, mut flag) = totals.group_total(group);
-    if flag != 0 {
-        return;
-    }
-    let weight = match statement.weight {
-        SealedWeight::Unit => Some(1u128),
-        SealedWeight::Field(field) => match &row[usize::from(field.0)] {
-            Value::U64(weight) => Some(u128::from(*weight)),
-            _ => unreachable!("validation types a [field] weight as u64"),
-        },
-        SealedWeight::Duration { field, .. } => {
-            duration_words(&row[usize::from(field.0)]).map(u128::from)
-        }
-    };
-    match weight {
-        None => flag = FLAG_RAY,
-        Some(weight) => match total.checked_add(weight) {
-            Some(next) => total = next,
-            None => flag = FLAG_OVERFLOW,
-        },
-    }
-    totals.put_group_total(group, total, flag);
-}
-
-/// The furthest end a pointwise sweep has seen in one group, and the row
-/// that reaches it. Rows arrive sorted by start, so a row overlaps an earlier
-/// row of its group exactly when it starts before the reach, and then it
-/// overlaps the reach's owner; flagging both cites every row that overlaps
-/// any other.
-#[derive(Clone, Copy)]
-struct Reach {
-    token: u64,
-    end: u64,
-    seq: u64,
-}
-
-impl Reach {
-    /// Advances the sweep by one span; returns the reach owner it overlaps.
-    fn sweep(reach: &mut Option<Self>, token: u64, start: u64, end: u64, seq: u64) -> Option<u64> {
-        let Some(current) = reach.filter(|current| current.token == token) else {
-            *reach = Some(Self { token, end, seq });
-            return None;
-        };
-        if end > current.end {
-            *reach = Some(Self { token, end, seq });
-        }
-        (start < current.end).then_some(current.seq)
-    }
-}
-
+/// A span map key: `(group token, start, end, seq)` as big-endian words,
+/// so byte order is sweep order.
 fn span_key(token: u64, start: u64, end: u64, seq: u64) -> [u8; 32] {
     let mut key = [0u8; 32];
     key[..8].copy_from_slice(&token.to_be_bytes());
@@ -2368,35 +517,7 @@ fn parse_span_key(key: &[u8]) -> (u64, u64, u64, u64) {
     (word(0), word(8), word(16), word(24))
 }
 
-fn run_key(token: u64, start: u64) -> [u8; 16] {
-    let mut key = [0u8; 16];
-    key[..8].copy_from_slice(&token.to_be_bytes());
-    key[8..].copy_from_slice(&start.to_be_bytes());
-    key
-}
-
-/// The exact integer duration of a discrete interval value; a ray refuses
-/// (undefined measure), and a float interval is unreachable — validation
-/// refuses float-duration weights and bounds.
-fn duration_of<E>(value: &Value, statement: StatementId) -> Result<u64, JudgeError<E>> {
-    duration_words(value).ok_or(JudgeError::UndefinedDuration { statement })
-}
-
-/// As [`duration_of`], with the ray refusal as `None` (the sticky per-group
-/// flag's channel).
-fn duration_words(value: &Value) -> Option<u64> {
-    match value {
-        Value::IntervalU64(interval) => interval.duration(),
-        Value::IntervalI64(interval) => interval.duration(),
-        Value::IntervalF64(_) => {
-            unreachable!("validation refuses float intervals in duration positions")
-        }
-        _ => unreachable!("validation types duration positions as intervals"),
-    }
-}
-
-/// Interval total-order words for one decoded interval value — shared by
-/// the reference judge and compiled index consumers.
+/// An interval's endpoints as order-preserving words; `None` for a scalar.
 pub(crate) fn interval_order_words(value: &Value) -> Option<(u64, u64)> {
     match value {
         Value::IntervalU64(interval) => Some((interval.start(), interval.end())),

@@ -45,6 +45,7 @@ use crate::error::{CitedFact, Conflict, Direction, Violation, Violations};
 use crate::work::WorkError;
 use crate::{Value, WorkContext};
 
+#[cfg(test)]
 use super::judge::{CandidateFact, JudgedDirection, JudgedViolation};
 use super::{RelationId, Schema, StatementId, StatementKind, StatementRef, StatementView};
 
@@ -248,14 +249,14 @@ impl ViolationEvidence {
         &self.violations
     }
 
-    /// Reconstructs judge output ([`JudgedViolation`]s) from evidence.
-    /// Composed with [`encode_judged`] this is the exact round-trip of the
-    /// C03 judgment (when no examples were dropped for the byte budget).
+    /// Reconstructs judge output from evidence: the exact inverse of
+    /// [`encode_judged`] when the byte budget dropped no example.
     ///
     /// # Errors
     /// Refuses evidence foreign to `schema`, a target-required direction
     /// (never judge output), malformed example rows, or stopped work.
-    pub fn to_judged(
+    #[cfg(test)]
+    pub(crate) fn to_judged(
         &self,
         schema: &Schema,
         work: &WorkContext,
@@ -510,15 +511,14 @@ pub fn encode_violations(
     encode_parts(&parts, max_bytes, work)
 }
 
-/// Encodes judge output directly — the exact round-trip surface for C03
-/// (`decode(bytes)?.to_judged(schema, work)` reproduces the input,
-/// including the judge's own truncation labels, whenever the byte budget
-/// dropped nothing).
+/// Encodes judge output; `decode(bytes)?.to_judged(schema, work)` reproduces
+/// it, truncation labels included, when the byte budget dropped nothing.
 ///
 /// # Errors
 /// As [`encode_violations`], minus the pointwise arm (judge output has no
 /// conflict detail).
-pub fn encode_judged(
+#[cfg(test)]
+pub(crate) fn encode_judged(
     schema: &Schema,
     judged: &[JudgedViolation],
     max_bytes: usize,

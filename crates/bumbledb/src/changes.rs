@@ -1,5 +1,6 @@
 //! One immutable schema-bound final-state change, shared by core and history.
 use std::cmp::Ordering;
+use std::ops::Range;
 use std::sync::Arc;
 
 use crate::canonical::{CanonicalRow, RowError};
@@ -50,11 +51,59 @@ impl std::fmt::Display for ChangeError {
 }
 impl std::error::Error for ChangeError {}
 
+/// Whether a change adds rows to, and removes rows from, one relation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeltaShape {
+    pub adds: bool,
+    pub removes: bool,
+}
+
+impl DeltaShape {
+    /// The change touches the relation at all.
+    #[must_use]
+    pub const fn touched(self) -> bool {
+        self.adds || self.removes
+    }
+}
+
+/// One relation's records: their byte range in the sealed stream.
+#[derive(Debug)]
+struct RelationRecords {
+    relation: RelationId,
+    shape: DeltaShape,
+    bytes: Range<usize>,
+}
+
+/// Indexes the relations of a sealed record stream in one pass.
+#[derive(Default)]
+struct RelationIndex(Vec<RelationRecords>);
+
+impl RelationIndex {
+    /// Notes one record that starts at `start` and ends at `end`.
+    fn note(&mut self, relation: RelationId, kind: ChangeKind, start: usize, end: usize) {
+        if self.0.last().is_none_or(|last| last.relation != relation) {
+            self.0.push(RelationRecords {
+                relation,
+                shape: DeltaShape::default(),
+                bytes: start..start,
+            });
+        }
+        let last = self.0.last_mut().expect("pushed above");
+        last.bytes.end = end;
+        match kind {
+            ChangeKind::Add => last.shape.adds = true,
+            ChangeKind::Remove => last.shape.removes = true,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Payload {
     bytes: Vec<u8>,
     schema: SchemaFingerprint,
     added: u64,
+    /// Ascending by relation; built once when the bytes are sealed or parsed.
+    relations: Box<[RelationRecords]>,
 }
 
 /// Distinct requested actions, not net changes against a database state.
@@ -176,7 +225,7 @@ impl ChangeSet {
     /// Rejects malformed, foreign-schema or noncanonical data, cancellation,
     /// or an unallocatable capacity.
     pub fn parse(schema: &Schema, bytes: &[u8], work: &WorkContext) -> Result<Self, ChangeError> {
-        let (identity, added) = validate_bytes(schema, bytes, work)?;
+        let (identity, added, relations) = validate_bytes(schema, bytes, work)?;
         let mut owned = Vec::new();
         owned
             .try_reserve_exact(bytes.len())
@@ -186,6 +235,7 @@ impl ChangeSet {
             bytes: owned,
             schema: identity,
             added,
+            relations,
         })))
     }
 
@@ -198,11 +248,12 @@ impl ChangeSet {
         bytes: Vec<u8>,
         work: &WorkContext,
     ) -> Result<Self, ChangeError> {
-        let (identity, added) = validate_bytes(schema, &bytes, work)?;
+        let (identity, added, relations) = validate_bytes(schema, &bytes, work)?;
         Ok(Self(Arc::new(Payload {
             bytes,
             schema: identity,
             added,
+            relations,
         })))
     }
 }
@@ -211,7 +262,7 @@ fn validate_bytes(
     schema: &Schema,
     bytes: &[u8],
     work: &WorkContext,
-) -> Result<(SchemaFingerprint, u64), ChangeError> {
+) -> Result<(SchemaFingerprint, u64, Box<[RelationRecords]>), ChangeError> {
     work.checkpoint()?;
     if bytes.len() < HEADER {
         return Err(ChangeError::Truncated);
@@ -233,8 +284,10 @@ fn validate_bytes(
     }
     let mut previous: Option<(RelationId, &[u8])> = None;
     let mut added = 0;
+    let mut index = RelationIndex::default();
     for _ in 0..count {
         work.checkpoint()?;
+        let start = bytes.len() - rest.len();
         let record = take(&mut rest, RECORD)?;
         if record[0] > 1 {
             return Err(ChangeError::InvalidKind);
@@ -249,12 +302,18 @@ fn validate_bytes(
             return Err(ChangeError::NonCanonicalOrder);
         }
         previous = Some((relation, row));
+        let kind = if record[0] == 1 {
+            ChangeKind::Add
+        } else {
+            ChangeKind::Remove
+        };
+        index.note(relation, kind, start, bytes.len() - rest.len());
     }
     if !rest.is_empty() {
         return Err(ChangeError::TrailingBytes);
     }
     work.checkpoint()?;
-    Ok((identity, added))
+    Ok((identity, added, index.0.into_boxed_slice()))
 }
 
 /// Bridge-facing view of one accepted change record. Not embedding API.
@@ -273,6 +332,30 @@ impl ChangeSet {
     pub fn records(&self) -> impl Iterator<Item = ChangeRef<'_>> + Clone {
         let mut rest = &self.0.bytes[HEADER..];
         std::iter::from_fn(move || next_record(&mut rest))
+    }
+
+    /// The change's shape over one relation; the default for one it leaves
+    /// untouched.
+    #[must_use]
+    pub fn shape(&self, relation: RelationId) -> DeltaShape {
+        self.relation_records(relation)
+            .map_or_else(DeltaShape::default, |records| records.shape)
+    }
+
+    /// One relation's records in canonical order.
+    pub(crate) fn records_of(&self, relation: RelationId) -> impl Iterator<Item = ChangeRef<'_>> {
+        let mut rest = self
+            .relation_records(relation)
+            .map_or(&[][..], |records| &self.0.bytes[records.bytes.clone()]);
+        std::iter::from_fn(move || next_record(&mut rest))
+    }
+
+    fn relation_records(&self, relation: RelationId) -> Option<&RelationRecords> {
+        let relations = &self.0.relations;
+        relations
+            .binary_search_by_key(&relation, |records| records.relation)
+            .ok()
+            .map(|at| &relations[at])
     }
 
     /// Bridge-facing owned traversal. Cloning retains the same bytes at an
@@ -487,20 +570,24 @@ fn seal_records<'a>(
     bytes.extend_from_slice(&identity.0);
     bytes.extend_from_slice(&count.to_be_bytes());
     let mut added = 0;
+    let mut index = RelationIndex::default();
     for record in records {
         work.checkpoint()?;
         let record = record?;
+        let start = bytes.len();
         added += u64::from(record.kind == ChangeKind::Add);
         bytes.push(u8::from(record.kind == ChangeKind::Add));
         bytes.extend_from_slice(&record.relation.0.to_be_bytes());
         bytes.extend_from_slice(&(record.row.len() as u64).to_be_bytes());
         bytes.extend_from_slice(record.row);
+        index.note(record.relation, record.kind, start, bytes.len());
     }
     debug_assert_eq!(bytes.len(), size);
     Ok(ChangeSet(Arc::new(Payload {
         bytes,
         schema: identity,
         added,
+        relations: index.0.into_boxed_slice(),
     })))
 }
 

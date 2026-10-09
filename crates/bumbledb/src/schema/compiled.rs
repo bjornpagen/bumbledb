@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
-use super::judge::DeltaShape;
 use super::{
     CapacityEnforcement, Enforcement, FieldDescriptor, KeyForm, KeyId, KeyStatement, Schema,
     StatementView,
@@ -280,54 +279,6 @@ struct StatementAccess {
     target_witness: Option<DistinctnessWitness>,
 }
 
-/// Law adjacency compiled once from the sealed schema.
-#[derive(Debug, Clone, Default)]
-pub struct LawAdjacency {
-    /// Per relation: key statement ids declared over it.
-    pub keys: BTreeMap<RelationId, Vec<StatementId>>,
-    /// Per relation: outgoing containment statements whose source is the relation.
-    pub outgoing_containment: BTreeMap<RelationId, Vec<StatementId>>,
-    /// Per relation: capacity statements whose source is the relation.
-    pub outgoing_capacity: BTreeMap<RelationId, Vec<StatementId>>,
-    /// Per relation: containment statements whose target is the relation.
-    pub incoming_containment: BTreeMap<RelationId, Vec<StatementId>>,
-    /// Per relation: capacity statements whose target is the relation.
-    pub incoming_capacity: BTreeMap<RelationId, Vec<StatementId>>,
-}
-
-impl LawAdjacency {
-    /// Net delta shape over one relation, or default when untouched.
-    #[must_use]
-    pub fn shape_of(delta: &[(RelationId, DeltaShape)], relation: RelationId) -> DeltaShape {
-        delta
-            .binary_search_by_key(&relation, |&(id, _)| id)
-            .map_or_else(|_| DeltaShape::default(), |at| delta[at].1)
-    }
-
-    /// Whether delta-local judgment may skip this statement under the
-    /// lawful-parent premise.
-    #[must_use]
-    pub fn delta_local_skippable(
-        &self,
-        view: StatementView<'_>,
-        delta: &[(RelationId, DeltaShape)],
-    ) -> bool {
-        match view {
-            StatementView::Key(_, statement) => !Self::shape_of(delta, statement.relation).adds,
-            StatementView::Containment(_, statement) => {
-                let source = Self::shape_of(delta, statement.source.relation);
-                let target = Self::shape_of(delta, statement.target.relation);
-                !source.adds && !target.removes
-            }
-            StatementView::Capacity(_, statement) => {
-                let source = Self::shape_of(delta, statement.source.relation);
-                let target = Self::shape_of(delta, statement.target.relation);
-                !source.touched() && !target.adds
-            }
-        }
-    }
-}
-
 /// The sealed schema's compiled machine. Owned by the store
 /// and query layers; compiled once at open / seal.
 #[derive(Debug)]
@@ -340,7 +291,6 @@ pub struct CompiledTheory {
     witnesses: Box<[DistinctnessWitness]>,
     /// Full-row field descriptors per relation id.
     fields: Box<[Box<[FieldDescriptor]>]>,
-    pub adjacency: LawAdjacency,
     /// Maximum complete physical determinant key width (prefix + routing +
     /// row ordinal), for schema validation.
     pub max_determinant_key_width: usize,
@@ -379,36 +329,17 @@ impl CompiledTheory {
             max_key: 0,
         };
         let mut by_statement = BTreeMap::new();
-        let mut adjacency = LawAdjacency::default();
 
         for view in schema.statements() {
             match view {
                 StatementView::Key(_, statement) => {
-                    compile_key(
-                        schema,
-                        statement,
-                        &mut intern,
-                        &mut by_statement,
-                        &mut adjacency,
-                    )?;
+                    compile_key(schema, statement, &mut intern, &mut by_statement)?;
                 }
                 StatementView::Containment(_, statement) => {
-                    compile_containment(
-                        schema,
-                        statement,
-                        &mut intern,
-                        &mut by_statement,
-                        &mut adjacency,
-                    )?;
+                    compile_containment(schema, statement, &mut intern, &mut by_statement)?;
                 }
                 StatementView::Capacity(_, statement) => {
-                    compile_capacity(
-                        schema,
-                        statement,
-                        &mut intern,
-                        &mut by_statement,
-                        &mut adjacency,
-                    )?;
+                    compile_capacity(schema, statement, &mut intern, &mut by_statement)?;
                 }
             }
         }
@@ -428,7 +359,6 @@ impl CompiledTheory {
             key_by_relation,
             witnesses: witnesses.into_boxed_slice(),
             fields: fields.into_boxed_slice(),
-            adjacency,
             max_determinant_key_width: max_key,
         })
     }
@@ -601,19 +531,6 @@ impl CompiledTheory {
         Ok(VisitOutcome::Exhausted { visited })
     }
 
-    /// Statement ids whose law family the delta can affect.
-    #[must_use]
-    pub fn delta_local_statements<'a>(
-        &self,
-        schema: &'a Schema,
-        delta: &[(RelationId, DeltaShape)],
-    ) -> Vec<StatementView<'a>> {
-        schema
-            .complete_obligations()
-            .filter(|view| !self.adjacency.delta_local_skippable(*view, delta))
-            .collect()
-    }
-
     /// Kind of one statement for downstream witnesses (planner distinctness).
     #[must_use]
     pub fn statement_kind(view: StatementView<'_>) -> StatementKind {
@@ -691,13 +608,7 @@ fn compile_key(
     statement: &KeyStatement,
     intern: &mut Interning<'_>,
     by_statement: &mut BTreeMap<StatementId, StatementAccess>,
-    adjacency: &mut LawAdjacency,
 ) -> Result<(), CompileError> {
-    adjacency
-        .keys
-        .entry(statement.relation)
-        .or_default()
-        .push(statement.id);
     if schema
         .relation(statement.relation)
         .body()
@@ -728,19 +639,7 @@ fn compile_containment(
     statement: &super::ContainmentStatement,
     intern: &mut Interning<'_>,
     by_statement: &mut BTreeMap<StatementId, StatementAccess>,
-    adjacency: &mut LawAdjacency,
 ) -> Result<(), CompileError> {
-    adjacency
-        .outgoing_containment
-        .entry(statement.source.relation)
-        .or_default()
-        .push(statement.id);
-    adjacency
-        .incoming_containment
-        .entry(statement.target.relation)
-        .or_default()
-        .push(statement.id);
-
     let access = by_statement
         .entry(statement.id)
         .or_insert_with(empty_access);
@@ -787,19 +686,7 @@ fn compile_capacity(
     statement: &super::CapacityStatement,
     intern: &mut Interning<'_>,
     by_statement: &mut BTreeMap<StatementId, StatementAccess>,
-    adjacency: &mut LawAdjacency,
 ) -> Result<(), CompileError> {
-    adjacency
-        .outgoing_capacity
-        .entry(statement.source.relation)
-        .or_default()
-        .push(statement.id);
-    adjacency
-        .incoming_capacity
-        .entry(statement.target.relation)
-        .or_default()
-        .push(statement.id);
-
     let access = by_statement
         .entry(statement.id)
         .or_insert_with(empty_access);

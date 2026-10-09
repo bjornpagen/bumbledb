@@ -1,12 +1,12 @@
 //! Grouped judgment over wide and mixed fixtures.
 
-use super::{JudgeBudget, JudgeError, Judgment, MapState, judge_final_state};
+use super::{JudgeBudget, Judgment, MapState, judge_complete};
 use crate::schema::tests::{capacity_weighted, containment, fd, field, id_field, side};
 use crate::schema::{
     Bound, FieldId, IntervalElement, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
     StatementId, ValidateDescriptor as _, ValueType, Weight,
 };
-use crate::work::{WorkContext, WorkError};
+use crate::work::WorkContext;
 use crate::{Interval, Value};
 
 /// `Note { id: u64, text: str }`, keyed on the text.
@@ -58,8 +58,8 @@ fn cancelled_grouped_judgment_does_not_publish_a_verdict() {
     let work = WorkContext::new();
     work.cancel();
     assert!(matches!(
-        judge_final_state(&schema, &state, &work, JudgeBudget::default()),
-        Err(JudgeError::Work(WorkError::Cancelled))
+        judge_complete(&schema, &state, &work, JudgeBudget::default()),
+        Err(crate::Error::Cancelled)
     ));
 }
 
@@ -69,8 +69,7 @@ fn wide_rejection_diagnostics_are_complete() {
     let schema = text_keyed_schema();
     let state = wide_state(4000, true);
     let work = WorkContext::new();
-    let verdict =
-        judge_final_state(&schema, &state, &work, JudgeBudget::default()).expect("judged");
+    let verdict = judge_complete(&schema, &state, &work, JudgeBudget::default()).expect("judged");
     let Judgment::Rejected(violations) = verdict else {
         panic!("the duplicate text must reject");
     };
@@ -166,7 +165,7 @@ fn mixed_fixture_names_every_violated_statement_in_order() {
     );
 
     let work = WorkContext::new();
-    let verdict = judge_final_state(&schema, &map, &work, JudgeBudget::default()).expect("judged");
+    let verdict = judge_complete(&schema, &map, &work, JudgeBudget::default()).expect("judged");
     let Judgment::Rejected(violations) = verdict else {
         panic!("fixture violates by construction");
     };
@@ -234,7 +233,7 @@ fn unreferenced_group_failures_stay_latent_referenced_ones_refuse() {
     latent.insert(RelationId(1), ray_booking(1, 99));
     let work = WorkContext::new();
     assert_eq!(
-        judge_final_state(&schema, &latent, &work, JudgeBudget::default()).expect("judged"),
+        judge_complete(&schema, &latent, &work, JudgeBudget::default()).expect("judged"),
         Judgment::Admitted
     );
 
@@ -244,8 +243,8 @@ fn unreferenced_group_failures_stay_latent_referenced_ones_refuse() {
     referenced.insert(RelationId(1), ray_booking(1, 7));
     let work = WorkContext::new();
     assert!(matches!(
-        judge_final_state(&schema, &referenced, &work, JudgeBudget::default()),
-        Err(JudgeError::UndefinedDuration {
+        judge_complete(&schema, &referenced, &work, JudgeBudget::default()),
+        Err(crate::Error::CapacityRayMeasure {
             statement: StatementId(1)
         })
     ));
@@ -304,7 +303,7 @@ fn adjacent_target_spans_cover_through_the_run_table() {
         covered.insert(RelationId(0), vec![Value::U64(1), span(1, 3)]);
         let work = WorkContext::new();
         assert_eq!(
-            judge_final_state(&schema, &covered, &work, JudgeBudget::default()).expect("judged"),
+            judge_complete(&schema, &covered, &work, JudgeBudget::default()).expect("judged"),
             Judgment::Admitted,
             "adjacent spans connect"
         );
@@ -315,7 +314,7 @@ fn adjacent_target_spans_cover_through_the_run_table() {
         gapped.insert(RelationId(0), vec![Value::U64(1), span(1, 4)]);
         let work = WorkContext::new();
         let Judgment::Rejected(violations) =
-            judge_final_state(&schema, &gapped, &work, JudgeBudget::default()).expect("judged")
+            judge_complete(&schema, &gapped, &work, JudgeBudget::default()).expect("judged")
         else {
             panic!("a real gap refuses coverage");
         };
@@ -331,7 +330,7 @@ fn judgments_are_deterministic() {
     let judge_once = || {
         let state = wide_state(600, true);
         let work = WorkContext::new();
-        judge_final_state(&schema, &state, &work, JudgeBudget::default()).expect("judged")
+        judge_complete(&schema, &state, &work, JudgeBudget::default()).expect("judged")
     };
     assert_eq!(judge_once(), judge_once());
 }

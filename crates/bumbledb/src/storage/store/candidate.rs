@@ -9,12 +9,11 @@ use heed::{RoTxn, RwTxn};
 
 use super::format::{K_GENERATION, RowId};
 use super::host::HostChanges;
-use super::judge_bridge::Verdict;
 use super::rows::{self, RowWriter};
 use super::store_env::{GatedRwTxn, Store, StoreInner, WriterGuard, read_generation};
 use crate::changes::{ChangeKind, ChangeSet};
 use crate::error::{Error, Result};
-use crate::schema::judge::JudgedViolation;
+use crate::schema::judge::{JudgedViolation, Judgment};
 use crate::schema::{CompiledProjection, Schema};
 use crate::storage::GenerationId;
 use crate::work::WorkContext;
@@ -32,12 +31,12 @@ impl Applied {
     }
 }
 
-/// One change set of a batch decision: its own net changes and the
-/// judge's rejection, if any.
+/// One change set of a batch decision: its own net changes and its
+/// judgment.
 #[derive(Debug)]
 pub(crate) struct Decided {
     pub(crate) applied: Applied,
-    pub(crate) rejection: Verdict,
+    pub(crate) judgment: Judgment,
 }
 
 /// A judged candidate: admitted with its open transaction, or rejected with
@@ -130,10 +129,9 @@ impl<'store> WriteOwner<'store> {
             changes,
             home_keys_preserved: rows.home_keys_preserved,
         };
-        let verdict = super::judge_bridge::judge_incremental(schema, &state, &self.work)?;
-        match verdict {
-            Some(rejection) => Ok(Candidate::Rejected(rejection)),
-            None => Ok(Candidate::Admitted(PreparedWrite {
+        match super::judge_bridge::judge_candidate(schema, &state, &self.work)? {
+            Judgment::Rejected(rejection) => Ok(Candidate::Rejected(rejection)),
+            Judgment::Admitted => Ok(Candidate::Admitted(PreparedWrite {
                 owner: self,
                 txn,
                 parent,
@@ -213,13 +211,13 @@ impl<'store> WriteOwner<'store> {
                 changes,
                 home_keys_preserved: rows.home_keys_preserved,
             };
-            let rejection = super::judge_bridge::judge_incremental(schema, &state, &self.work)?;
-            if rejection.is_none() {
+            let judgment = super::judge_bridge::judge_candidate(schema, &state, &self.work)?;
+            if judgment == Judgment::Admitted {
                 nested.commit().map_err(|error| inner.txn_error(error))?;
             }
             decided.push(Decided {
                 applied: rows.applied,
-                rejection,
+                judgment,
             });
         }
         Ok(decided)
@@ -388,7 +386,7 @@ impl WriteOwner<'_> {
         &mut self,
         schema: &Schema,
         changes: &ChangeSet,
-    ) -> Result<(Verdict, Verdict)> {
+    ) -> Result<(Judgment, Judgment)> {
         let inner = &self.store.inner;
         let mut txn = self.store.gated_write_txn(&self.work)?;
         let rows = apply_rows(inner, &mut txn.txn, changes, &self.work)?;
@@ -399,8 +397,8 @@ impl WriteOwner<'_> {
             home_keys_preserved: rows.home_keys_preserved,
         };
         Ok((
-            super::judge_bridge::judge_incremental(schema, &state, &self.work)?,
-            super::judge_bridge::judge_complete_candidate(schema, &state, &self.work)?,
+            super::judge_bridge::judge_candidate(schema, &state, &self.work)?,
+            super::judge_bridge::judge_candidate_complete(schema, &state, &self.work)?,
         ))
     }
 }

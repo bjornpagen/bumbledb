@@ -5,13 +5,13 @@
 
 use std::collections::BTreeMap;
 use std::ops::Bound;
+use std::ops::ControlFlow;
 
-use crate::canonical::{DecodeScratch, RowError, append_value};
+use crate::canonical::{DecodeScratch, append_value};
+use crate::error::Result;
 use crate::ir::Value;
 use crate::schema::{FieldDescriptor, FieldId};
 use crate::work::WorkContext;
-
-use super::JudgeError;
 
 pub(super) const FLAG_OK: u8 = 0;
 pub(super) const FLAG_RAY: u8 = 1;
@@ -124,43 +124,36 @@ impl GroupedMap {
         self.put(key, &value);
     }
 
-    /// Ordered walk over every (key, value); `false` stops early.
-    pub(super) fn for_each<E>(
+    /// Ordered walk over every (key, value).
+    pub(super) fn for_each(
         &self,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<bool, JudgeError<E>>,
-    ) -> Result<(), JudgeError<E>> {
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<ControlFlow<()>>,
+    ) -> Result<()> {
         for (key, value) in &self.entries {
-            if !visit(key, value)? {
+            if visit(key, value)?.is_break() {
                 break;
             }
         }
         Ok(())
     }
 
-    /// Walk determinant keys decoded back to logical values with one reusable
-    /// decode workspace. `false` stops early.
-    pub(super) fn for_each_determinant<E>(
+    /// Walks determinant keys decoded back to logical values with one
+    /// reusable decode workspace.
+    pub(super) fn for_each_determinant(
         &self,
         fields: &[FieldDescriptor],
         projection: &[FieldId],
         work: &WorkContext,
-        mut visit: impl FnMut(&[u8], &[Value]) -> Result<bool, JudgeError<E>>,
-    ) -> Result<(), JudgeError<E>> {
+        mut visit: impl FnMut(&[u8], &[Value]) -> Result<ControlFlow<()>>,
+    ) -> Result<()> {
         let mut decoded = DecodeScratch::new(work);
         for key in self.entries.keys() {
-            let keep = decoded
-                .with_decoded_payload(
-                    projection.iter().map(|field| &fields[usize::from(field.0)]),
-                    key,
-                    |values| Ok::<_, RowError>(visit(key, values)),
-                )
-                .map_err(|error| match error {
-                    RowError::Work(work) => JudgeError::Work(work),
-                    other => {
-                        unreachable!("judge keys follow the canonical payload encoder: {other:?}")
-                    }
-                })??;
-            if !keep {
+            let flow = decoded.with_decoded_payload(
+                projection.iter().map(|field| &fields[usize::from(field.0)]),
+                key,
+                |values| visit(key, values),
+            )?;
+            if flow.is_break() {
                 break;
             }
         }

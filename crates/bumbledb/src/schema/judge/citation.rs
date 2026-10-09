@@ -1,15 +1,13 @@
-//! Canonical bounded citation selection (C4 / CORE-021).
-//!
-//! Offending facts are ranked by portable [`crate::canonical::fact_sort_key`]
-//! bytes **before** the example budget truncates. Local row ids, insertion
-//! order and physical reminting cannot change the kept set. Resource
-//! exhaustion refuses; it never becomes a shorter verdict.
+//! Bounded citation selection: offending facts are ranked by canonical
+//! [`crate::canonical::fact_sort_key`] bytes before the example budget
+//! truncates, so row ids and insertion order cannot change the kept set.
 
-use crate::canonical::{self, CanonicalRow, RowError};
+use crate::canonical::{self, CanonicalRow};
+use crate::error::Result;
 use crate::schema::{RelationId, Schema};
 use crate::{Value, WorkContext};
 
-use super::{CandidateFact, JudgeError};
+use super::CandidateFact;
 
 /// Bounded top-k over canonical fact bytes. Capacity is the labeled
 /// example budget; zero keeps the verdict and cites nothing.
@@ -33,18 +31,15 @@ impl CitationTopK {
 
     /// Offer one decoded fact. Selection is by logical bytes, then
     /// truncation. Duplicates of the same sort key collapse.
-    pub(super) fn offer<E>(
+    pub(super) fn offer(
         &mut self,
         schema: &Schema,
         work: &WorkContext,
         relation: RelationId,
         values: &[Value],
-    ) -> Result<(), JudgeError<E>> {
+    ) -> Result<()> {
         let fields = schema.relation(relation).fields();
-        let key = canonical::fact_sort_key(fields, values, work).map_err(|error| match error {
-            RowError::Work(work) => JudgeError::Work(work),
-            _ => unreachable!("citation keys follow already-decoded rows"),
-        })?;
+        let key = canonical::fact_sort_key(fields, values, work)?;
         let at = self.chosen.binary_search_by(|(existing, fact)| {
             (fact.relation, existing.as_bytes()).cmp(&(relation, key.as_bytes()))
         });

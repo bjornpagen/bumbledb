@@ -6,7 +6,7 @@
 //! complete judgment convicts it.
 
 use super::*;
-use crate::schema::judge::JudgedViolation;
+use crate::schema::judge::{JudgedViolation, Judgment};
 use crate::schema::{FieldId, Side, StatementDescriptor, StatementKind, Weight};
 use crate::storage::store::fingerprint::FP_LEN;
 use crate::storage::store::verify::{self, VerifyFinding};
@@ -133,13 +133,13 @@ fn build_changes(
 
 /// Judge one delta both ways, require equal verdicts and evidence bytes,
 /// and commit it when admitted. Returns the incremental verdict.
-fn compare(store: &Store, schema: &Schema, changes: &ChangeSet) -> Option<Box<[JudgedViolation]>> {
+fn compare(store: &Store, schema: &Schema, changes: &ChangeSet) -> Judgment {
     let context = work();
     let mut owner = store.writer(&context).expect("writer");
     let (incremental, complete) = owner.judge_both(schema, changes).expect("judge both");
     match (&incremental, &complete) {
-        (None, None) => {}
-        (Some(mine), Some(reference)) => {
+        (Judgment::Admitted, Judgment::Admitted) => {}
+        (Judgment::Rejected(mine), Judgment::Rejected(reference)) => {
             assert_eq!(mine, reference, "violation sets must be equal");
             assert_eq!(
                 evidence_bytes(schema, mine),
@@ -152,7 +152,7 @@ fn compare(store: &Store, schema: &Schema, changes: &ChangeSet) -> Option<Box<[J
         }
     }
     drop(owner);
-    if incremental.is_none() {
+    if incremental == Judgment::Admitted {
         judged_commit(store, schema, changes).expect("the admitted delta commits");
     }
     incremental
@@ -164,7 +164,14 @@ fn compare_and_commit(
     adds: &[(RelationId, Vec<Value>)],
     removes: &[(RelationId, Vec<Value>)],
 ) -> bool {
-    compare(store, schema, &build_changes(schema, adds, removes)).is_none()
+    compare(store, schema, &build_changes(schema, adds, removes)) == Judgment::Admitted
+}
+
+fn rejected(judgment: Judgment) -> Box<[JudgedViolation]> {
+    match judgment {
+        Judgment::Rejected(violations) => violations,
+        Judgment::Admitted => panic!("expected a rejection"),
+    }
 }
 
 fn forced(path: &std::path::Path, schema: &Schema, fp: [u8; FP_LEN]) -> Store {
@@ -484,7 +491,7 @@ fn capacity_measure_follows_target_row_order_not_delta_group_order() {
             ],
             &[],
         );
-        let violations = compare(&store, &schema, &changes).expect("both capacities exceeded");
+        let violations = rejected(compare(&store, &schema, &changes));
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].kind, StatementKind::Capacity);
         assert_eq!(violations[0].measure, Some(3));
@@ -518,7 +525,7 @@ fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
         ],
         &[],
     );
-    let violations = compare(&store, &schema, &changes).expect("four statements violated");
+    let violations = rejected(compare(&store, &schema, &changes));
     let statements: Vec<StatementId> = violations
         .iter()
         .map(|violation| violation.statement)
@@ -562,12 +569,15 @@ fn an_unlawful_parent_hides_from_incremental_judgment_and_the_sweeper_convicts()
     let context = work();
     let mut owner = store.writer(&context).expect("writer");
     let (incremental, complete) = owner.judge_both(&schema, &benign).expect("judge both");
-    assert!(
-        incremental.is_none(),
+    assert_eq!(
+        incremental,
+        Judgment::Admitted,
         "incremental judgment misses untouched standing violations"
     );
+    let Judgment::Rejected(complete) = complete else {
+        panic!("complete judgment convicts the unlawful parent");
+    };
     let convicted: Vec<StatementId> = complete
-        .expect("complete judgment convicts the unlawful parent")
         .iter()
         .map(|violation| violation.statement)
         .collect();

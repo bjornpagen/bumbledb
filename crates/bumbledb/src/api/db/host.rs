@@ -12,6 +12,7 @@ use bumbledb_theory::schema::RelationId;
 
 use super::{Db, ReadFrame};
 use crate::error::{Admission, Error, FactShapeError, Mismatch, Result, Violations};
+use crate::schema::judge::Judgment;
 use crate::schema::{Schema, Theory, ValidateDescriptor as _};
 use crate::storage::GenerationId;
 use crate::storage::store::candidate::{PreparedWrite, SealedWrite, WriteOwner};
@@ -130,11 +131,11 @@ impl<'db, S> WriterSession<'db, S> {
         self.owner
             .decide_all(schema, changes)?
             .into_iter()
-            .map(|decided| match decided.rejection {
-                None => Ok(Judged::Accepted(decided.applied)),
-                Some(judged) => Ok(Judged::Rejected(super::violations::violations_from_judged(
-                    schema, judged, &self.work,
-                )?)),
+            .map(|decided| match decided.judgment {
+                Judgment::Admitted => Ok(Judged::Accepted(decided.applied)),
+                Judgment::Rejected(judged) => Ok(Judged::Rejected(
+                    super::violations::violations_from_judged(schema, judged, &self.work)?,
+                )),
             })
             .collect()
     }
@@ -367,9 +368,9 @@ impl<S> Population<S> {
             ..
         } = self;
         let snapshot = store.snapshot(&work)?;
-        let verdict = store::judge_bridge::judge_snapshot(&schema, &snapshot, &work)?;
+        let judgment = store::judge_bridge::judge_snapshot(&schema, &snapshot, &work)?;
         drop(snapshot);
-        if let Some(judged) = verdict {
+        if let Judgment::Rejected(judged) = judgment {
             return Ok(Admission::Rejected(
                 super::violations::violations_from_judged(&schema, judged, &work)?,
             ));

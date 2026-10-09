@@ -24,7 +24,7 @@ use super::rows;
 use super::snapshot::OwnedSnapshot;
 use crate::canonical::RowError;
 use crate::error::{Error, Result};
-use crate::schema::judge::JudgedViolation;
+use crate::schema::judge::{JudgedViolation, Judgment};
 use crate::schema::{ProjectionId, Schema};
 use crate::work::WorkContext;
 
@@ -261,7 +261,8 @@ pub(crate) fn sweep(
     }
 
     if judgment_safe
-        && let Some(violations) = super::judge_bridge::judge_snapshot(schema, snapshot, work)?
+        && let Judgment::Rejected(violations) =
+            super::judge_bridge::judge_snapshot(schema, snapshot, work)?
     {
         findings.extend(
             violations

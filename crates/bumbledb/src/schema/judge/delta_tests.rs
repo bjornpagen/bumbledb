@@ -1,21 +1,11 @@
-//! Delta-local judgment behavioral tests (chapter 10 §4 equivalence
-//! evidence, judge half): [`judge_final_state_delta_local`] against the
-//! complete reference [`judge_final_state`] over one shared state — verdicts
-//! and violation sets must be EQUAL on every lawful parent, across all
-//! statement families, citation orders, and truncation labels. The
-//! lawful-parent premise is pinned honestly: an unlawful parent seeded
-//! directly into the state CAN hide from the delta-local judge (asserted,
-//! not hidden); the complete judge — the sweeper's path — still convicts.
-//!
-//! Structural no-scan evidence: the state double refuses to stream ANY
-//! relation, so a completing delta-local judgment proves keys and
-//! affected containment/capacity groups were judged from compiled indexes
-//! and untouched statements were skipped.
+//! [`judge_incremental`] against [`judge_complete`] over one state: equal
+//! verdicts, citations and truncation labels on every lawful parent. An
+//! unlawful parent can hide from incremental judgment; complete judgment
+//! convicts it. A state double that refuses to stream proves that keys and
+//! affected groups were judged through indexes.
 
-use super::{
-    CandidateFacts, DeltaFacts, DeltaShape, JudgeBudget, Judgment, judge_final_state,
-    judge_incremental,
-};
+use super::{DeltaFacts, Facts, Indexed, JudgeBudget, Judgment, judge_complete, judge_incremental};
+use crate::changes::DeltaShape;
 use crate::schema::tests::{capacity, closed, containment, fd, field, row, side, side_where};
 use crate::schema::{
     FieldId, IntervalElement, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
@@ -255,10 +245,10 @@ impl DeltaState {
         &self,
         projection: &crate::schema::compiled::CompiledProjection,
         determinant: &[Value],
-        visit: super::RankedRowVisitor<'_, std::convert::Infallible>,
-    ) -> Result<Option<()>, std::convert::Infallible> {
+        visit: super::RankedRowVisitor<'_>,
+    ) -> crate::Result<Indexed> {
         if self.keys.is_empty() {
-            return Ok(None);
+            return Ok(Indexed::Unindexed);
         }
         if self
             .unindexed_group
@@ -270,7 +260,7 @@ impl DeltaState {
             let remaining = self.indexed_matches_before_decline.get();
             if remaining == 0 {
                 self.declined_groups.set(self.declined_groups.get() + 1);
-                return Ok(None);
+                return Ok(Indexed::Unindexed);
             }
             self.indexed_matches_before_decline.set(remaining - 1);
         }
@@ -282,31 +272,25 @@ impl DeltaState {
             if projection.scalar_values(values).as_slice() == determinant {
                 self.compiled_row_visits
                     .set(self.compiled_row_visits.get() + 1);
-                if !visit(rank, values)? {
+                if visit(rank, values)?.is_break() {
                     break;
                 }
             }
         }
-        Ok(Some(()))
+        Ok(Indexed::Walked)
     }
 }
 
-impl CandidateFacts for DeltaState {
-    type Error = std::convert::Infallible;
-
-    fn visit_rows(
-        &self,
-        relation: RelationId,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
-    ) -> Result<(), Self::Error> {
+impl Facts for DeltaState {
+    fn visit_rows(&self, relation: RelationId, visit: super::RowVisitor<'_>) -> crate::Result<()> {
         self.visit_ranked_rows(relation, &mut |_rank, values| visit(values))
     }
 
     fn visit_ranked_rows(
         &self,
         relation: RelationId,
-        visit: super::RankedRowVisitor<'_, Self::Error>,
-    ) -> Result<(), Self::Error> {
+        visit: super::RankedRowVisitor<'_>,
+    ) -> crate::Result<()> {
         assert!(
             !self.refuse_stream,
             "the delta-local judge streamed relation {relation:?} — a skip \
@@ -314,7 +298,7 @@ impl CandidateFacts for DeltaState {
         );
         for (rank, values) in self.ranked_rows(relation, false) {
             self.row_visits.set(self.row_visits.get() + 1);
-            if !visit(rank, values)? {
+            if visit(rank, values)?.is_break() {
                 break;
             }
         }
@@ -333,10 +317,10 @@ impl DeltaFacts for DeltaState {
     fn visit_added_rows(
         &self,
         relation: RelationId,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
-    ) -> Result<(), Self::Error> {
+        visit: super::RowVisitor<'_>,
+    ) -> crate::Result<()> {
         for (id, values) in &self.added {
-            if *id == relation && !visit(values)? {
+            if *id == relation && visit(values)?.is_break() {
                 break;
             }
         }
@@ -346,10 +330,10 @@ impl DeltaFacts for DeltaState {
     fn visit_removed_rows(
         &self,
         relation: RelationId,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
-    ) -> Result<(), Self::Error> {
+        visit: super::RowVisitor<'_>,
+    ) -> crate::Result<()> {
         for (id, values) in &self.removed {
-            if *id == relation && !visit(values)? {
+            if *id == relation && visit(values)?.is_break() {
                 break;
             }
         }
@@ -360,11 +344,11 @@ impl DeltaFacts for DeltaState {
         &self,
         statement: StatementId,
         determinant: &[Value],
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
-    ) -> Result<Option<()>, Self::Error> {
+        visit: super::RowVisitor<'_>,
+    ) -> crate::Result<Indexed> {
         let Some((_, relation, fields)) = self.keys.iter().find(|(id, _, _)| *id == statement)
         else {
-            return Ok(None);
+            return Ok(Indexed::Unindexed);
         };
         if self
             .unindexed_key_group
@@ -374,7 +358,7 @@ impl DeltaFacts for DeltaState {
             let remaining = self.indexed_matches_before_decline.get();
             if remaining == 0 {
                 self.declined_groups.set(self.declined_groups.get() + 1);
-                return Ok(None);
+                return Ok(Indexed::Unindexed);
             }
             self.indexed_matches_before_decline.set(remaining - 1);
         }
@@ -392,20 +376,20 @@ impl DeltaFacts for DeltaState {
                 {
                     context.cancel();
                 }
-                if !visit(values)? {
+                if visit(values)?.is_break() {
                     break;
                 }
             }
         }
-        Ok(Some(()))
+        Ok(Indexed::Walked)
     }
 
     fn visit_compiled_group(
         &self,
         projection: &crate::schema::compiled::CompiledProjection,
         determinant: &[Value],
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
-    ) -> Result<Option<()>, Self::Error> {
+        visit: super::RowVisitor<'_>,
+    ) -> crate::Result<Indexed> {
         self.visit_group(projection, determinant, &mut |_rank, values| visit(values))
     }
 
@@ -413,10 +397,10 @@ impl DeltaFacts for DeltaState {
         &self,
         projection: &crate::schema::compiled::CompiledProjection,
         determinant: &[Value],
-        visit: super::RankedRowVisitor<'_, Self::Error>,
-    ) -> Result<Option<()>, Self::Error> {
+        visit: super::RankedRowVisitor<'_>,
+    ) -> crate::Result<Indexed> {
         if !self.ranked_available {
-            return Ok(None);
+            return Ok(Indexed::Unindexed);
         }
         self.visit_group(projection, determinant, visit)
     }
@@ -426,7 +410,7 @@ impl DeltaFacts for DeltaState {
 /// statement sets, citation content and order, truncation labels.
 fn assert_equivalent(schema: &Schema, state: &DeltaState, budget: JudgeBudget) -> Judgment {
     let complete =
-        judge_final_state(schema, state, &work(), budget).expect("complete judgment completes");
+        judge_complete(schema, state, &work(), budget).expect("complete judgment completes");
     let delta = judge_incremental(schema, state, &work(), budget).expect("delta judgment");
     assert_eq!(
         delta, complete,
@@ -447,7 +431,7 @@ fn lawful_parent() -> Vec<(RelationId, Vec<Value>)> {
     ]
 }
 
-type Facts = Vec<(RelationId, Vec<Value>)>;
+type Rows = Vec<(RelationId, Vec<Value>)>;
 
 /// The open twin keeps identical field/statement ids but cannot use the
 /// closed-member shortcut: its complete judge exercises grouped containment.
@@ -455,7 +439,7 @@ fn closed_edge_pair(
     members: usize,
     selection: Vec<(FieldId, Value)>,
     equality: bool,
-) -> (Schema, Schema, Facts) {
+) -> (Schema, Schema, Rows) {
     let source = RelationDescriptor {
         extension: None,
         name: "Source".into(),
@@ -465,7 +449,7 @@ fn closed_edge_pair(
             field("active", ValueType::Bool),
         ],
     };
-    let target_rows: Facts = (0..members)
+    let target_rows: Rows = (0..members)
         .map(|index| {
             (
                 RelationId(1),
@@ -535,7 +519,7 @@ fn closed_source(member: u64, id: u64, active: bool) -> (RelationId, Vec<Value>)
 }
 
 fn assert_closed_open_twin(
-    pair: &(Schema, Schema, Facts),
+    pair: &(Schema, Schema, Rows),
     parent: &[(RelationId, Vec<Value>)],
     adds: &[(RelationId, Vec<Value>)],
     removes: &[(RelationId, Vec<Value>)],
@@ -546,9 +530,9 @@ fn assert_closed_open_twin(
     open_parent.extend_from_slice(ground);
     let open = DeltaState::new(&open_parent, adds, removes);
     let closed = DeltaState::new(parent, adds, removes);
-    let expected = judge_final_state(open_schema, &open, &work(), budget).unwrap();
+    let expected = judge_complete(open_schema, &open, &work(), budget).unwrap();
     assert_eq!(
-        judge_final_state(closed_schema, &closed, &work(), budget).unwrap(),
+        judge_complete(closed_schema, &closed, &work(), budget).unwrap(),
         expected
     );
     assert_eq!(
@@ -659,7 +643,7 @@ fn valid_closed_delta_uses_no_full_scans_scratch_or_parent_cardinality_work() {
         // Shared compiled schema outlives a judgment; measure only its temporary state.
         schema.compiled_theory().unwrap();
         for size in [0, 1000] {
-            let parent: Facts = (0..size).map(|id| closed_source(0, id, true)).collect();
+            let parent: Rows = (0..size).map(|id| closed_source(0, id, true)).collect();
             let state =
                 DeltaState::new(&parent, &[closed_source(0, size, true)], &[]).refusing_streams();
             let work = WorkContext::new();
@@ -676,7 +660,7 @@ fn valid_closed_delta_uses_no_full_scans_scratch_or_parent_cardinality_work() {
 #[test]
 fn closed_member_bitset_boundaries_match_the_open_reference_without_truncation() {
     let even = closed_edge_pair(256, vec![(FieldId(1), Value::Bool(true))], false);
-    let valid: Facts = [0, 62, 64, 126, 128, 190, 192, 254]
+    let valid: Rows = [0, 62, 64, 126, 128, 190, 192, 254]
         .into_iter()
         .map(|member| closed_source(member, member, true))
         .collect();
@@ -709,7 +693,7 @@ fn closed_member_bitset_boundaries_match_the_open_reference_without_truncation()
 #[test]
 fn invalid_closed_delta_cites_only_added_offenders_without_rescanning_parent() {
     let pair = closed_edge_pair(2, vec![(FieldId(1), Value::Bool(true))], false);
-    let parent: Facts = (0..1000).map(|id| closed_source(0, id, true)).collect();
+    let parent: Rows = (0..1000).map(|id| closed_source(0, id, true)).collect();
     let adds = [
         closed_source(256, 1, true),
         closed_source(1, 2, true),
@@ -729,17 +713,14 @@ fn invalid_closed_delta_cites_only_added_offenders_without_rescanning_parent() {
 }
 
 /// A provider failure after one offered row must not publish provisional
-/// citations or mask a work refusal, even if it fails after a stop request.
+/// citations or mask a work refusal.
 struct ClosedAddedFailure(Vec<Value>);
 
-impl CandidateFacts for ClosedAddedFailure {
-    type Error = &'static str;
+/// The state failure [`ClosedAddedFailure`] injects.
+const INJECTED: crate::Error = crate::Error::ReadersFull;
 
-    fn visit_rows(
-        &self,
-        _: RelationId,
-        _: super::RowVisitor<'_, Self::Error>,
-    ) -> Result<(), Self::Error> {
+impl Facts for ClosedAddedFailure {
+    fn visit_rows(&self, _: RelationId, _: super::RowVisitor<'_>) -> crate::Result<()> {
         panic!("closed containment must not ask the state for complete/closed rows")
     }
 }
@@ -755,18 +736,14 @@ impl DeltaFacts for ClosedAddedFailure {
     fn visit_added_rows(
         &self,
         relation: RelationId,
-        visit: super::RowVisitor<'_, Self::Error>,
-    ) -> Result<(), Self::Error> {
+        visit: super::RowVisitor<'_>,
+    ) -> crate::Result<()> {
         assert_eq!(relation, RelationId(0));
         let _ = visit(&self.0)?;
-        Err("injected added-row failure")
+        Err(INJECTED)
     }
 
-    fn visit_removed_rows(
-        &self,
-        _: RelationId,
-        _: super::RowVisitor<'_, Self::Error>,
-    ) -> Result<(), Self::Error> {
+    fn visit_removed_rows(&self, _: RelationId, _: super::RowVisitor<'_>) -> crate::Result<()> {
         panic!("immutable target cannot have removed rows")
     }
 
@@ -774,8 +751,8 @@ impl DeltaFacts for ClosedAddedFailure {
         &self,
         _: StatementId,
         _: &[Value],
-        _: super::RowVisitor<'_, Self::Error>,
-    ) -> Result<Option<()>, Self::Error> {
+        _: super::RowVisitor<'_>,
+    ) -> crate::Result<Indexed> {
         panic!("closed-member check requires no key competitors")
     }
 }
@@ -785,14 +762,14 @@ fn closed_delta_propagates_cancellation_and_provider_errors_without_partial_verd
     let (schema, _, _) = closed_edge_pair(2, vec![(FieldId(1), Value::Bool(true))], false);
     let state = ClosedAddedFailure(closed_source(256, 0, true).1);
     let context = work();
-    assert!(matches!(
+    assert_eq!(
         judge_incremental(&schema, &state, &context, JudgeBudget::default()),
-        Err(super::JudgeError::State("injected added-row failure"))
-    ));
+        Err(INJECTED)
+    );
     context.cancel();
     assert!(matches!(
         judge_incremental(&schema, &state, &context, JudgeBudget::default()),
-        Err(super::JudgeError::Work(crate::WorkError::Cancelled))
+        Err(crate::Error::Cancelled)
     ));
 }
 
@@ -994,7 +971,7 @@ fn sparse_ranked_pointwise_ties_keep_both_offenders_under_shuffled_traversal() {
             examples_per_statement,
         };
         let plain = DeltaState::new(&[], &added, &[]);
-        let expected = judge_final_state(&schema, &plain, &work(), budget).unwrap();
+        let expected = judge_complete(&schema, &plain, &work(), budget).unwrap();
         let mut shuffled = DeltaState::new(&[], &added, &[]);
         shuffled.ranked_order = Some(RankedOrder {
             ranks: vec![0, u64::MAX, 42],
@@ -1032,7 +1009,7 @@ fn an_unlawful_parent_can_hide_from_the_delta_local_judge_by_design() {
     ];
     let adds = vec![(USER, user(3, "fresh@example"))];
     let state = DeltaState::new(&unlawful_parent, &adds, &[]);
-    let complete = judge_final_state(&schema, &state, &work(), JudgeBudget::default())
+    let complete = judge_complete(&schema, &state, &work(), JudgeBudget::default())
         .expect("complete judgment");
     let delta = judge_incremental(&schema, &state, &work(), JudgeBudget::default())
         .expect("delta judgment");
@@ -1125,7 +1102,7 @@ fn scalar_key_valid_growth_retains_no_good_groups() {
         added.push(parent[0].clone());
         added.push((USER, user(1000, "replacement")));
         let mut state = DeltaState::new(&parent, &added, &parent[1..]);
-        let expected = judge_final_state(&schema, &state, &work(), JudgeBudget::default()).unwrap();
+        let expected = judge_complete(&schema, &state, &work(), JudgeBudget::default()).unwrap();
         assert_eq!(expected, Judgment::Admitted);
         state.refuse_stream = true;
         state.row_visits.set(0);
@@ -1275,7 +1252,7 @@ fn grouped_family_fixture(
         examples_per_statement: 0,
     };
     assert_eq!(
-        judge_final_state(
+        judge_complete(
             &schema,
             &DeltaState::new(&parent, &[], &[]),
             &work(),
@@ -1301,7 +1278,7 @@ fn indexed_grouped_verdicts_and_canonical_citations_match_complete() {
                 examples_per_statement,
             };
             state.refuse_stream = false;
-            let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
+            let expected = judge_complete(&schema, &state, &work(), budget).unwrap();
             let Judgment::Rejected(violations) = &expected else {
                 panic!("the fixture must violate its grouped statement");
             };
@@ -1328,7 +1305,7 @@ fn oversized_determinant_preserves_exact_judgment_without_a_hidden_allowance() {
     let budget = JudgeBudget {
         examples_per_statement: 0,
     };
-    let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
+    let expected = judge_complete(&schema, &state, &work(), budget).unwrap();
     let state = state.refusing_streams();
     state.row_visits.set(0);
     let context = work();
@@ -1352,7 +1329,7 @@ fn scalar_key_bad_groups_probe_two_then_cite_once_in_canonical_order() {
             examples_per_statement,
         };
         let state = DeltaState::new(&parent, &added, &[]);
-        let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
+        let expected = judge_complete(&schema, &state, &work(), budget).unwrap();
         let indexed = DeltaState::new(&parent, &added, &[]).refusing_streams();
         let actual = judge_incremental(&schema, &indexed, &work(), budget).unwrap();
         assert_eq!(actual, expected);
@@ -1415,7 +1392,7 @@ fn scalar_key_bad_group_state_releases_memory_on_success_and_mid_probe_cancellat
     let budget = JudgeBudget {
         examples_per_statement: 1,
     };
-    let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
+    let expected = judge_complete(&schema, &state, &work(), budget).unwrap();
     assert!(matches!(expected, Judgment::Rejected(_)));
     for cancelled in [false, true] {
         let context = work();
@@ -1424,10 +1401,7 @@ fn scalar_key_bad_group_state_releases_memory_on_success_and_mid_probe_cancellat
         }
         let actual = judge_incremental(&schema, &state, &context, budget);
         if cancelled {
-            assert!(matches!(
-                actual,
-                Err(super::JudgeError::Work(crate::WorkError::Cancelled))
-            ));
+            assert!(matches!(actual, Err(crate::Error::Cancelled)));
         } else {
             assert_eq!(actual.unwrap(), expected);
         }
@@ -1467,7 +1441,7 @@ fn scalar_key_reordered_large_text_projection_matches_complete() {
     let budget = JudgeBudget {
         examples_per_statement: 3,
     };
-    let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
+    let expected = judge_complete(&schema, &state, &work(), budget).unwrap();
     assert!(matches!(expected, Judgment::Rejected(_)));
     state.refuse_stream = true;
     assert_eq!(
@@ -1498,7 +1472,7 @@ fn scalar_key_second_competitor_cancellation_is_not_a_verdict() {
     state.cancel_on_key_row = Some((2, context.clone()));
     assert!(matches!(
         judge_incremental(&theory(), &state, &context, JudgeBudget::default()),
-        Err(super::JudgeError::Work(crate::WorkError::Cancelled))
+        Err(crate::Error::Cancelled)
     ));
     assert_eq!(state.key_row_visits.get(), 2);
     assert_eq!(
@@ -1672,7 +1646,7 @@ fn scalar_containment_late_unindexed_group_discards_provisional_citations() {
 }
 
 fn assert_late_index_fallback(schema: &Schema, state: &DeltaState, budget: JudgeBudget) {
-    let expected = judge_final_state(schema, state, &work(), budget).unwrap();
+    let expected = judge_complete(schema, state, &work(), budget).unwrap();
     state.row_visits.set(0);
     let context = work();
     let actual = judge_incremental(schema, state, &context, budget).unwrap();
@@ -1793,7 +1767,7 @@ fn capacity_measure_uses_global_rank_without_full_scans_for_equal_or_differing_t
                 examples_per_statement: examples,
             };
             let state = DeltaState::new(&parent, &added, &[]);
-            let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
+            let expected = judge_complete(&schema, &state, &work(), budget).unwrap();
             let Judgment::Rejected(violations) = &expected else {
                 panic!("capacity violated")
             };
@@ -1817,7 +1791,7 @@ fn capacity_measure_uses_global_rank_without_full_scans_for_equal_or_differing_t
                         group,
                     });
                     assert_eq!(
-                        judge_final_state(&schema, &indexed, &work(), budget).unwrap(),
+                        judge_complete(&schema, &indexed, &work(), budget).unwrap(),
                         expected
                     );
                 }
@@ -1939,52 +1913,38 @@ fn affected_determinants_decode_reordered_oversized_keys() {
     }
     let mut actual = Vec::new();
     affected
-        .for_each_determinant::<std::convert::Infallible>(
-            &fields,
-            &projection,
-            &context,
-            |_, determinant| {
-                actual.push(determinant.to_vec());
-                Ok(true)
-            },
-        )
+        .for_each_determinant(&fields, &projection, &context, |_, determinant| {
+            actual.push(determinant.to_vec());
+            Ok(std::ops::ControlFlow::Continue(()))
+        })
         .unwrap();
     assert_eq!(actual.len(), expected.len());
     assert!(expected.iter().all(|row| actual.contains(row)));
 
-    let error = super::JudgeError::<std::convert::Infallible>::UndefinedDuration {
+    let error = crate::Error::CapacityRayMeasure {
         statement: StatementId(91),
     };
     assert_eq!(
-        affected.for_each_determinant(&fields, &projection, &context, |_, _| {
-            Err(super::JudgeError::UndefinedDuration {
-                statement: StatementId(91),
-            })
-        }),
+        affected.for_each_determinant(&fields, &projection, &context, |_, _| Err(error.clone())),
         Err(error),
     );
     let mut visits = 0;
     affected
-        .for_each_determinant::<std::convert::Infallible>(&fields, &projection, &context, |_, _| {
+        .for_each_determinant(&fields, &projection, &context, |_, _| {
             visits += 1;
-            Ok(false)
+            Ok(std::ops::ControlFlow::Break(()))
         })
         .unwrap();
     assert_eq!(visits, 1);
 
     let mut visits = 0;
     assert_eq!(
-        affected.for_each_determinant::<std::convert::Infallible>(
-            &fields,
-            &projection,
-            &context,
-            |_, _| {
-                visits += 1;
-                context.cancel();
-                Ok(true)
-            }
-        ),
-        Err(super::JudgeError::Work(crate::WorkError::Cancelled)),
+        affected.for_each_determinant(&fields, &projection, &context, |_, _| {
+            visits += 1;
+            context.cancel();
+            Ok(std::ops::ControlFlow::Continue(()))
+        }),
+        Err(crate::Error::Cancelled),
     );
     assert_eq!(visits, 1);
 }
@@ -1997,11 +1957,11 @@ fn empty_scalar_projection_is_one_valid_determinant_not_an_empty_set() {
     assert!(empty.insert_if_absent(&[]));
     let mut visits = 0;
     empty
-        .for_each_determinant::<std::convert::Infallible>(&fields, &[], &context, |key, values| {
+        .for_each_determinant(&fields, &[], &context, |key, values| {
             visits += 1;
             assert!(key.is_empty());
             assert!(values.is_empty());
-            Ok(true)
+            Ok(std::ops::ControlFlow::Continue(()))
         })
         .unwrap();
     assert_eq!(visits, 1);

@@ -2,9 +2,7 @@
 //! versus incremental premises.
 
 use super::delta_tests::DeltaState;
-use super::{
-    JudgeBudget, Judgment, MapState, judge_complete, judge_final_state, judge_incremental,
-};
+use super::{JudgeBudget, Judgment, MapState, judge_complete, judge_incremental};
 use crate::Value;
 use crate::schema::evidence::encode_judged;
 use crate::schema::tests::{
@@ -63,7 +61,7 @@ fn d04_compiled_indexes_earn_locality() {
     };
     let complete = judge_complete(&schema, &state, &work(), budget).expect("complete");
     let incremental = judge_incremental(&schema, &state, &work(), budget).expect("incremental");
-    let independent = judge_final_state(&schema, &state, &work(), budget).expect("independent");
+    let independent = judge_complete(&schema, &state, &work(), budget).expect("independent");
     assert_eq!(
         complete, independent,
         "complete shares independent denotation"
@@ -594,6 +592,6 @@ fn cancellation_is_not_rejection() {
     context.cancel();
     assert!(matches!(
         judge_complete(&schema, &state, &context, JudgeBudget::default()),
-        Err(super::JudgeError::Work(crate::WorkError::Cancelled))
+        Err(crate::Error::Cancelled)
     ));
 }

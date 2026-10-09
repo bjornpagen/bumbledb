@@ -29,7 +29,7 @@ use std::sync::Arc;
 use crate::canonical::DecodedRow;
 use crate::error::{Admission, DynIdError, Error, Result};
 use crate::ir::Value;
-use crate::schema::judge::{CandidateFacts, JudgeBudget, Judgment, judge_complete};
+use crate::schema::judge::{Facts, JudgeBudget, Judgment, RowVisitor, judge_complete};
 use crate::schema::{Schema, Theory, ValidateDescriptor as _};
 use crate::work::WorkContext;
 use bumbledb_theory::schema::{RelationId, StatementId};
@@ -406,9 +406,7 @@ impl<S> InstanceBuilder<S> {
             &self,
             &self.work,
             JudgeBudget::default(),
-        )
-        .map_err(super::violations::judge_refusal)?
-        {
+        )? {
             Judgment::Rejected(violations) => Ok(Admission::Rejected(
                 super::violations::violations_from_judged(
                     self.schema.as_ref(),
@@ -427,21 +425,13 @@ impl<S> InstanceBuilder<S> {
     }
 }
 
-impl<S> CandidateFacts for InstanceBuilder<S> {
-    type Error = Error;
-
-    fn visit_rows(
-        &self,
-        relation: RelationId,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool>,
-    ) -> Result<()> {
+impl<S> Facts for InstanceBuilder<S> {
+    fn visit_rows(&self, relation: RelationId, visit: RowVisitor<'_>) -> Result<()> {
         let fields = self.schema.relation(relation).fields();
-        if let Some(rows) = self.staged.get(&relation) {
-            for bytes in rows {
-                let row = crate::canonical::decode(fields, bytes, &self.work).map_err(row_error)?;
-                if !visit(row.values())? {
-                    break;
-                }
+        for bytes in self.staged.get(&relation).into_iter().flatten() {
+            let row = crate::canonical::decode(fields, bytes, &self.work).map_err(row_error)?;
+            if visit(row.values())?.is_break() {
+                break;
             }
         }
         Ok(())

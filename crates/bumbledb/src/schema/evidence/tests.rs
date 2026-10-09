@@ -11,7 +11,7 @@ use super::{
 };
 use crate::Value;
 use crate::error::{CitedFact, Conflict, Direction, Violation, Violations};
-use crate::schema::judge::{JudgeBudget, JudgedViolation, Judgment, MapState, judge_final_state};
+use crate::schema::judge::{JudgeBudget, JudgedViolation, Judgment, MapState, judge_complete};
 use crate::schema::tests::{capacity_weighted, containment, fd, field, id_field, side};
 use crate::schema::{
     FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor, StatementId, StatementKind,
@@ -81,7 +81,7 @@ fn violating_state() -> MapState {
 }
 
 fn rejected(schema: &Schema, state: &MapState) -> Box<[JudgedViolation]> {
-    match judge_final_state(schema, state, &work(), JudgeBudget::default())
+    match judge_complete(schema, state, &work(), JudgeBudget::default())
         .expect("judgment completes")
     {
         Judgment::Rejected(violations) => violations,
@@ -278,7 +278,7 @@ fn judge_truncation_label_round_trips_through_the_public_boundary() {
     // A genuine judge-level drop: the key violation cites two competing
     // rows, so an example budget of one truncates it at the JUDGE, before
     // any byte budget exists.
-    let judged = match judge_final_state(
+    let judged = match judge_complete(
         &schema,
         &violating_state(),
         &work(),
@@ -670,11 +670,11 @@ fn d05_evidence_bytes_survive_opposite_insertion_and_remint() {
     let budget = JudgeBudget {
         examples_per_statement: 2,
     };
-    let left = match judge_final_state(&schema, &forward, &work(), budget).expect("forward") {
+    let left = match judge_complete(&schema, &forward, &work(), budget).expect("forward") {
         Judgment::Rejected(violations) => violations,
         Judgment::Admitted => panic!("must reject"),
     };
-    let right = match judge_final_state(&schema, &reverse, &work(), budget).expect("reverse") {
+    let right = match judge_complete(&schema, &reverse, &work(), budget).expect("reverse") {
         Judgment::Rejected(violations) => violations,
         Judgment::Admitted => panic!("must reject"),
     };

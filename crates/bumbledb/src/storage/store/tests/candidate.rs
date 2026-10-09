@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::error::HostKeyFault;
+use crate::schema::judge::Judgment;
 use crate::storage::store::Applied;
 use crate::storage::store::host::Head;
 
@@ -266,7 +267,7 @@ fn batch_decisions_see_earlier_admissions_and_roll_back_rejections_alone() {
     let decided = owner.decide_all(&schema(), &sets).expect("decide");
     let verdicts: Vec<_> = decided
         .iter()
-        .map(|decided| (decided.applied, decided.rejection.is_some()))
+        .map(|decided| (decided.applied, decided.judgment != Judgment::Admitted))
         .collect();
     assert_eq!(
         verdicts,

@@ -1,10 +1,7 @@
-//! E-ADMIT: the reference judge sees the whole proposed multimap before
-//! any unique index installs, reports the COMPLETE violated-statement set
-//! with bounded labeled examples, and returns a resource error rather than
-//! a falsely complete rejection. These are authored acceptance tests
-//! (executed in F3), mapped to ENG-005/ENG-007 and the E-* / F-* gates
-//! named per test.
-use super::{JudgeBudget, JudgeError, JudgedViolation, Judgment, MapState, judge_final_state};
+//! Complete judgment sees the whole proposed state before any index
+//! installs, names every violated statement with bounded labeled examples,
+//! and refuses on cancellation instead of returning a partial rejection.
+use super::{JudgeBudget, JudgedViolation, Judgment, MapState, judge_complete};
 use crate::schema::tests::{capacity_weighted, containment, fd, field, id_field, side};
 use crate::schema::{
     Bound, FieldId, IntervalElement, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
@@ -18,7 +15,7 @@ fn work() -> WorkContext {
 }
 
 fn judge(schema: &Schema, state: &MapState) -> Judgment {
-    judge_final_state(schema, state, &work(), JudgeBudget::default()).expect("judgment completes")
+    judge_complete(schema, state, &work(), JudgeBudget::default()).expect("judgment completes")
 }
 
 fn rejected(schema: &Schema, state: &MapState) -> Vec<JudgedViolation> {
@@ -150,7 +147,7 @@ fn example_truncation_is_labeled_never_silent() {
     assert!(violations[0].examples_truncated, "truncation is labeled");
 
     // A zero budget keeps the verdict complete with no cited facts.
-    let judgment = judge_final_state(
+    let judgment = judge_complete(
         &schema,
         &state,
         &work(),
@@ -177,8 +174,8 @@ fn cancelled_work_refuses_instead_of_returning_a_partial_verdict() {
     let context = WorkContext::new();
     context.cancel();
     assert!(matches!(
-        judge_final_state(&schema, &state, &context, JudgeBudget::default()),
-        Err(JudgeError::Work(crate::WorkError::Cancelled))
+        judge_complete(&schema, &state, &context, JudgeBudget::default()),
+        Err(crate::Error::Cancelled)
     ));
 }
 
@@ -385,8 +382,8 @@ fn dependent_bounds_and_ray_duration_refusal() {
         ],
     );
     assert!(matches!(
-        judge_final_state(&duration, &rayed, &work(), JudgeBudget::default()),
-        Err(JudgeError::UndefinedDuration {
+        judge_complete(&duration, &rayed, &work(), JudgeBudget::default()),
+        Err(crate::Error::CapacityRayMeasure {
             statement: StatementId(2)
         })
     ));

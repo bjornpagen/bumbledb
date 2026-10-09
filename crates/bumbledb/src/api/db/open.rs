@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::Db;
 use crate::error::{Admission, Error, Result};
 use crate::image::cache::ImageCache;
-use crate::schema::judge::{JudgeBudget, Judgment, MapState, judge_final_state};
+use crate::schema::judge::{JudgeBudget, Judgment, MapState, judge_complete};
 use crate::schema::{Schema, Theory, ValidateDescriptor as _};
 use crate::storage::store::{DatabaseId, Options, Store};
 use crate::work::WorkContext;
@@ -21,9 +21,7 @@ pub(super) fn create_validated<S>(
     options: Options,
     work: WorkContext,
 ) -> Result<Admission<Db<S>>> {
-    match judge_final_state(&schema, &MapState::new(), &work, JudgeBudget::default())
-        .map_err(super::violations::judge_refusal)?
-    {
+    match judge_complete(&schema, &MapState::new(), &work, JudgeBudget::default())? {
         Judgment::Admitted => {}
         Judgment::Rejected(violations) => {
             return Ok(Admission::Rejected(
