@@ -31,13 +31,15 @@ E5 (lowering/fold/residual, MIN/MAX), E8, E3 (consume numeric's check), C7 adapt
 | C4: `AggregateSink::spill` and the `GroupSpill` stub deleted | landed `30e964374` |
 | C12: `JoinCtx`, `SourceLayout`/`BatchBuffers`, shared batch passes, `SiblingProbe`, `ProbeCtx`/`ProbeBuffers` | landed `4685e0e9c` |
 | C13: kernel range filters for constant residuals; `ImageCache` byte cap with LRU eviction; per-rule key-probe buffers | landed `2ff3619fc`, `8fc9c97cb` (buffers in `4685e0e9c`) |
-| C10 adapt: `distinct_proof.rs` calls `judge_complete` | landed |
+| C10 adapt: `distinct_proof.rs` calls `judge_complete` | landed `f81956cfc` |
 | `unreachable_pub`: none left in my paths | landed `b602c4043` |
 | L: module docs ≤ 5 lines, no ticket ids/rulings/history, truncated fragments repaired | landed `9d08fff43`, `aa23fc2d1` |
 | C1 adapt: `Capacity::ResultBytes` replaces `ResultBytesOverflow`; `ReadFrame` replaces `ReadInstance` | landed `70a9cf2c9` |
 | ci: NEON Allen kernels carry no length checks (`check-asm.sh` green on the release bench) | landed `e7a88a082` |
 | ci: rustdoc `-D warnings` clean for `bumbledb` | landed `eb98f90b1` |
-| ci: Miri annotations for my lib tests | in progress |
+| ci: Miri annotations for my lib tests (my modules pass `cargo miri nextest run --lib`: 649 run, 0 failed) | landed `f2d435783`, `8bf93923b` |
+| C13: key-probe reference walk reuses its buffers | landed `9f95c42d1` |
+| G: seeded sweeps widen sixteenfold under `BUMBLEDB_DEEP=1` | landed `fa0e83390` |
 
 ## Requests to other lanes
 
@@ -76,10 +78,16 @@ E5 (lowering/fold/residual, MIN/MAX), E8, E3 (consume numeric's check), C7 adapt
 
 ### consolidator
 
-- If the bridge has not dropped those two arms by the end of the wave, delete
+- **ValidationError.** If the bridge has not dropped its two arms, delete
   `ValidationError::{AggregateInputType, ParamIdGap}` (and their `Display` arms in
-  `ir/validate/error.rs`) together with the two bridge arms.
-- `api/prepared/tests/float_aggregates.rs` (not in my paths) and my
+  `ir/validate/error.rs`) together with `E::AggregateInputType { find }` and the `E::ParamIdGap`
+  arm in `bumbledb-node/src/query.rs`. Nothing constructs either variant.
+- **`ir::AggOp`.** Unused: delete the enum (`ir.rs`) with its `lib.rs` re-export.
+- **`crate::store` alias.** Delete lib.rs's `#[cfg(test)] use storage::store;` together with
+  switching `image/cache/tests.rs` to `use crate::storage::store::RelationVersion;`.
+- **Miri.** `api/prepared/tests/float_aggregates.rs::real_query_sum_mean_match_all_independent_rational_fixture_bits`
+  (not my file) runs past two minutes under Miri; it wants `#[cfg_attr(miri, ignore)]`.
+- `api/prepared/tests/float_aggregates.rs::f64_min_and_max_propagate_nan_through_queries` and my
   `tests/aggregates.rs::f64_min_and_max_propagate_nan_on_leaf_outer_and_ungrouped_inputs` overlap;
   mine also covers the outer (joined) input path.
 
@@ -91,6 +99,9 @@ E5 (lowering/fold/residual, MIN/MAX), E8, E3 (consume numeric's check), C7 adapt
   `exec::dispatch::{ProbeCtx, ProbeBuffers}`; `execute_key_probe(plan, ProbeCtx, &mut
   ProbeBuffers, bindings, sink, counters)`, `key_probe_row(plan, ProbeCtx, &mut ProbeBuffers)`.
   `PreparedPipeline::PointProbe::rule` is boxed; the prepared runtime's `key_scratch` is gone.
+- **Miri.** Under `cfg(miri)` the kernels' `every_level()` is the fallback level alone (Miri
+  interprets no intrinsics); lib tests that reach the filesystem/LMDB or run long carry
+  `#[cfg_attr(miri, ignore)]`. `exec::sweep(n)` (test-only) is the `BUMBLEDB_DEEP` case count.
 - **C13.** `WordCmp::{converse, kept_range}`. `ImageCache::with_byte_cap(schema, cap)`,
   `image::cache::DEFAULT_IMAGE_CACHE_BYTES`; cached ordinary slabs stay under the cap (LRU);
   `RelationImage::byte_size` is crate-visible.
