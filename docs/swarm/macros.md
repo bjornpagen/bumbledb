@@ -12,8 +12,8 @@ Items: A (`query!` string literal), C14, C15 (macro side), G6, L (macros).
 |---|---|
 | A: `query!` string literals compile | landed |
 | C14: one proc-macro crate (proc-macro2 + quote), spanned errors, schema-emitted resolution | landed; `bumbledb-query-macros` deletion waits on engine-storage request 1 |
-| G6: one compile-fail runner | in progress |
-| L: retired grammar hints deleted | in progress |
+| G6: one compile-fail runner | landed |
+| L: retired grammar hints deleted | landed (macro side); `lib.rs` docs are engine-storage request 3 |
 | C15: `schema!` calls theory validation at expansion | waiting on engine-storage |
 
 ## API changes (announcements)
@@ -42,6 +42,12 @@ Items: A (`query!` string literal), C14, C15 (macro side), G6, L (macros).
 - Host enums of closed relations carry `#[allow(dead_code)]`; `schema!` no longer injects a
   `#[cfg(test)]` weld test into user crates.
 - `query!` tests are one binary: `crates/bumbledb/tests/query/`.
+- **One compile-fail runner**, `crates/bumbledb/tests/compile_fail.rs`, over
+  `tests/compile_fail/{schema,query}/*.rs`: `//@ error: <substring>` (repeatable) and
+  `//@ line: <n>`. It builds `bumbledb` once into `$CARGO_TARGET_TMPDIR/compile-fail` and takes
+  artifact paths from `cargo build --message-format=json`.
+- **Dependency change (for the `Cargo.lock` owner):** `bumbledb-macros` and, until it is deleted,
+  `bumbledb-query-macros` depend on `proc-macro2 = "1.0.107"` and `quote = "1.0.47"`.
 
 ## Requests to other lanes
 
