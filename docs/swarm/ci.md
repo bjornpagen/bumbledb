@@ -180,6 +180,10 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
   `BUMBLEDB_S3_PREFIX`; never delete under `log/`. The CI lane already runs the racing-create probe
   before the suite, so the suite need not repeat it. It may load the addon (the lane installs it as
   the dev addon).
+- `pnpm --dir ts test` against the HEAD addon at `a4c9964ca`: 75 failures (`Bumble.layer` →
+  `Internal`) and three files that never finish (`effect-core`, `ownership-interrupt`, `runtime`
+  tests); a hang only ends at the addon job's 60-minute timeout. A `--test-timeout` in the `test`
+  script would turn a hang into a failure of that file.
 - **`node ts/scripts/build.ts dist`**: please add a dist-only mode (today `release` also rebuilds
   the addon; the release job packs the three CI-built addons and must not rebuild one).
 - **D20 in the addon paths:** the dev addon `ts/bdb.<platform>-<arch>.node`, platform package
