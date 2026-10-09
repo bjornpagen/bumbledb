@@ -125,6 +125,9 @@ fn fairness_and_the_prepared_sample_contract() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A zero cap has passed at the first progress callback, so the outcome is
+/// decided by operation counts, not by the clock: a query that runs past one
+/// callback interval trips, and one that ends before it completes.
 #[test]
 fn cap_trips_on_a_slow_query_and_passes_a_fast_one() {
     let conn = Connection::open_in_memory().expect("open");
@@ -134,7 +137,7 @@ fn cap_trips_on_a_slow_query_and_passes_a_fast_one() {
              SELECT COUNT(*) FROM c",
         )
         .expect("prepare");
-    let outcome = with_cap(&conn, CapMs(50), || {
+    let outcome = with_cap(&conn, CapMs(0), || {
         slow.query_row([], |r| r.get::<_, i64>(0))
     })
     .expect("the interrupt is a CapOutcome, not an error");
@@ -142,9 +145,9 @@ fn cap_trips_on_a_slow_query_and_passes_a_fast_one() {
     drop(slow);
 
     let mut fast = conn.prepare("SELECT 1").expect("prepare");
-    let outcome = with_cap(&conn, CapMs(10_000), || {
+    let outcome = with_cap(&conn, CapMs(0), || {
         fast.query_row([], |r| r.get::<_, i64>(0))
     })
-    .expect("a fast query under a generous cap");
+    .expect("a query shorter than one callback interval");
     assert_eq!(outcome, CapOutcome::Done(1));
 }

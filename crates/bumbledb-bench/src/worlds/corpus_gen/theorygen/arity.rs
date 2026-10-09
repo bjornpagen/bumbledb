@@ -10,8 +10,8 @@ use crate::oracle::naive::Delta;
 
 use super::super::Rng;
 
-/// Coverage landmark retained from the old inline-key limit, not a schema
-/// restriction: wider determinants use exact-checked fingerprint buckets.
+/// The determinant width the arity sweep covers, not a schema restriction:
+/// wider determinants use exact-checked fingerprint buckets.
 pub const ARITY_COVERAGE_BYTES: usize = 496;
 
 pub const MAX_COVERED_ARITY: usize = max_mixed_arity();

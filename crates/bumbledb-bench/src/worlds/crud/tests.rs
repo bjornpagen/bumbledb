@@ -302,11 +302,9 @@ fn the_read_query_translates_and_the_stream_generators_are_pure() {
     assert_eq!(a, b, "the models fold identically");
 }
 
-/// THE night-run regression, pinned (tiny corpus, no timing): seed 1's
-/// update/hot streams touch keys the upsert stream also draws — asserted below,
-/// so the collision is genuinely exercised — and before the shared
-/// [`ops::CounterModel`] the upsert lane aborted with "the upsert drifted from
-/// its stream: the stored value is not the stream's prev".
+/// Seed 1's update/hot streams touch keys the upsert stream also draws
+/// (asserted below, so the collision is exercised); the shared
+/// [`ops::CounterModel`] keeps every stream's `prev` equal to the stored value.
 #[test]
 fn a_colliding_seed_is_absorbed_by_the_counter_model() {
     let sizes = CrudSizes::of(Scale::Tiny);
