@@ -62,6 +62,10 @@ export interface T {
   readonly [handle]: 'T'
 }
 
+export interface WitnessHandle {
+  readonly [handle]: 'WitnessHandle'
+}
+
 
 export declare class ExternalObject<T> {
   readonly '': {
@@ -71,14 +75,14 @@ export declare class ExternalObject<T> {
 }
 
 /**
- * One apply outcome. `NoChange` committed nothing new; `Moved` means the
- * expected state was not the current one.
+ * One apply outcome. `Committed.changed` is false when the change set
+ * matched the committed state (the generation did not move); `Moved` means
+ * the expected generation was not the current one.
  */
 export type ApplyOutcome =
-  | { _tag: 'Committed'; witness: WitnessOut }
-  | { _tag: 'NoChange'; witness: WitnessOut }
+  | { _tag: 'Committed'; generation: bigint; changed: boolean }
   | { _tag: 'Rejected'; violations: Array<ViolationOut> }
-  | { _tag: 'Moved'; witnessed: WitnessOut; current: WitnessOut }
+  | { _tag: 'Moved'; witnessed: bigint; current: bigint }
 
 export interface AtomIn {
   source: AtomSourceIn
@@ -412,11 +416,14 @@ export interface IoRequestOut {
   op: OpOut
 }
 
-/** One judgment of a private candidate; the database never changes. */
+/**
+ * One judgment of the change set against the current `generation`; the
+ * database never changes.
+ */
 export type JudgeOutcome =
-  | { _tag: 'Admitted'; base: WitnessOut; changes: ChangeCounts }
-  | { _tag: 'Rejected'; base: WitnessOut; changes: ChangeCounts; violations: Array<ViolationOut> }
-  | { _tag: 'Moved'; witnessed: WitnessOut; current: WitnessOut }
+  | { _tag: 'Admitted'; generation: bigint; changes: ChangeCounts }
+  | { _tag: 'Rejected'; generation: bigint; violations: Array<ViolationOut> }
+  | { _tag: 'Moved'; witnessed: bigint; current: bigint }
 
 /** One selection binding's right side; a literal set reads disjunctively. */
 export type LiteralSetSpecIn =
@@ -643,10 +650,10 @@ export declare function runtimeCursorNext(handle: ExternalObject<CursorHandle>, 
 export declare function runtimeCursorTake(handle: ExternalObject<OperationHandle>): ExternalObject<CursorHandle>
 
 /**
- * Apply a sealed change set as one judged commit. `expected` absent
- * applies to whatever state is current.
+ * Apply a sealed change set as one judged commit; with `expected`, only if
+ * the state that witness observed is still current.
  */
-export declare function runtimeDbApply(db: ExternalObject<DbHandle>, changes: ExternalObject<ChangesHandle>, expected: WitnessIn | undefined | null, callback: () => void): ExternalObject<OperationHandle>
+export declare function runtimeDbApply(db: ExternalObject<DbHandle>, changes: ExternalObject<ChangesHandle>, expected: ExternalObject<WitnessHandle> | undefined | null, callback: () => void): ExternalObject<OperationHandle>
 
 /** Drop the database's derived query caches. */
 export declare function runtimeDbClearCache(db: ExternalObject<DbHandle>, callback: () => void): ExternalObject<OperationHandle>
@@ -656,7 +663,7 @@ export declare function runtimeDbInspect(db: ExternalObject<DbHandle>, callback:
 export declare function runtimeDbInspectTake(handle: ExternalObject<OperationHandle>): DbInspection
 
 /** Judge a sealed change set against the current state without committing. */
-export declare function runtimeDbJudge(db: ExternalObject<DbHandle>, changes: ExternalObject<ChangesHandle>, expected: WitnessIn | undefined | null, callback: () => void): ExternalObject<OperationHandle>
+export declare function runtimeDbJudge(db: ExternalObject<DbHandle>, changes: ExternalObject<ChangesHandle>, expected: ExternalObject<WitnessHandle> | undefined | null, callback: () => void): ExternalObject<OperationHandle>
 
 export declare function runtimeDbSnapshot(db: ExternalObject<DbHandle>, callback: () => void): ExternalObject<OperationHandle>
 
@@ -883,9 +890,14 @@ export interface SideSpecIn {
   selection: Array<SelectionIn>
 }
 
+/**
+ * A pinned snapshot, the witness of the state it observed, and that
+ * state's generation.
+ */
 export interface SnapshotOpened {
   snapshot: ExternalObject<SnapshotHandle>
-  witness: WitnessOut
+  witness: ExternalObject<WitnessHandle>
+  generation: bigint
 }
 
 /**
@@ -984,15 +996,3 @@ export type WeightSpecIn =
   | { kind: 'Unit' }
   | { kind: 'Field'; field: string }
   | { kind: 'Duration'; field: string }
-
-/** The state a write expects to find. */
-export interface WitnessIn {
-  store: string
-  generation: bigint
-}
-
-/** A database state: the store identity and its committed generation. */
-export interface WitnessOut {
-  store: string
-  generation: bigint
-}

@@ -11,8 +11,6 @@ use crate::marshal;
 use crate::runtime::registry::{Payload, ResultState};
 use crate::runtime::{Output, PublicationSink, QueuedOutput, RuntimeError};
 
-use super::engine_error;
-
 /// A scheduling/delivery quantum, not a row or memory allowance.
 const PAGE_ROWS: usize = 256;
 
@@ -33,12 +31,12 @@ pub(crate) fn collect_from_payload(
     };
     work.checkpoint()?;
     let capacity = usize::try_from(result.len()).map_err(|_| RuntimeError::InvalidArgument)?;
-    let mut queued = marshal::result_rows(work, capacity).map_err(|error| engine_error(&error))?;
-    result
-        .visit_rows(work, |row| {
-            marshal::push_result_row(work, &mut queued, &row)
+    let mut queued = marshal::result_rows(work, capacity)?;
+    marshal::visit_with(|stop| {
+        result.visit_rows(work, |row| {
+            stop(marshal::push_result_row(work, &mut queued, &row))
         })
-        .map_err(|error| engine_error(&error))?;
+    })?;
     Ok(Output::Rows(queued))
 }
 
@@ -68,10 +66,13 @@ fn open_preview<'a>(
 ) -> Result<(DeliveryTicket<'a>, QueuedOutput, bool), RuntimeError> {
     work.checkpoint()?;
     let mut ticket = DeliveryTicket::open(cursor);
-    let mut queued = marshal::result_rows(work, 0).map_err(|error| engine_error(&error))?;
-    match ticket.visit_page(work, |row| {
-        marshal::push_result_row(work, &mut queued, &row)
-    }) {
+    let mut queued = marshal::result_rows(work, 0)?;
+    let visited = marshal::visit_with(|stop| {
+        ticket.visit_page(work, |row| {
+            stop(marshal::push_result_row(work, &mut queued, &row))
+        })
+    });
+    match visited {
         Ok(None) => {
             ticket.abort();
             Err(RuntimeError::ClosedHandle)
@@ -83,7 +84,7 @@ fn open_preview<'a>(
         }
         Err(error) => {
             ticket.abort();
-            Err(engine_error(&error))
+            Err(error)
         }
     }
 }
@@ -168,11 +169,10 @@ impl PullOutcome {
     }
 }
 
+/// A refusal of the result's backing that a retry cannot clear.
 pub(crate) fn is_terminal_backing(error: &RuntimeError) -> bool {
-    matches!(
-        error,
-        RuntimeError::Engine { kind, .. }
-            if kind == crate::tags::error_family::CORRUPTION
-                || kind == crate::tags::error_family::STORE
-    )
+    use bumbledb::ErrorKind;
+    [ErrorKind::Corruption, ErrorKind::Io, ErrorKind::Lmdb]
+        .into_iter()
+        .any(|kind| error.is_engine(kind))
 }

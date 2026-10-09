@@ -68,7 +68,15 @@ fn acquire(runtime: &Arc<Runtime>, path: &std::path::Path) -> DirectoryOwner {
 }
 
 fn attach(owner: &DirectoryOwner, descriptor: &bumbledb::SchemaDescriptor) -> ManagedDb {
-    let path = owner.child_path("db").expect("child path");
+    attach_named(owner, descriptor, "db")
+}
+
+fn attach_named(
+    owner: &DirectoryOwner,
+    descriptor: &bumbledb::SchemaDescriptor,
+    name: &str,
+) -> ManagedDb {
+    let path = owner.child_path(name).expect("child path");
     let Ok(bumbledb::Admission::Accepted(db)) =
         crate::Engine::create(&path, descriptor.clone(), work())
     else {
@@ -96,7 +104,7 @@ fn insert_rows(db: &ManagedDb, rows: &[[u64; 2]]) {
             tx.insert_accepted(&collection).map(|_| ())
         })
         .expect("write commits");
-    assert!(matches!(admitted, bumbledb::Admission::Accepted(_)));
+    assert!(matches!(admitted, bumbledb::WriteOutcome::Committed(_)));
 }
 
 fn drain_runtime(runtime: &Arc<Runtime>) -> CloseReport {
@@ -432,10 +440,16 @@ fn native_conversion_refusal_retries_same_first_row() {
         let cancelled = work();
         let mut queued = crate::marshal::result_rows(&cancelled, 0).unwrap();
         cancelled.cancel();
-        let refused = ticket.visit_page(&ctx, |row| {
-            crate::marshal::push_result_row(&cancelled, &mut queued, &row)
+        let refused = crate::marshal::visit_with(|stop| {
+            ticket.visit_page(&ctx, |row| {
+                stop(crate::marshal::push_result_row(
+                    &cancelled,
+                    &mut queued,
+                    &row,
+                ))
+            })
         });
-        assert!(matches!(refused, Err(bumbledb::Error::Store(_))));
+        assert!(matches!(refused, Err(RuntimeError::Cancelled)));
         assert!(queued.rows.is_empty());
         assert_eq!(ticket.previewed_rows(), 0);
         ticket.abort();
@@ -502,14 +516,8 @@ fn adopt_and_abort_cannot_be_committed_by_a_fresh_ticket() {
 
 #[test]
 fn backing_failure_stays_terminal() {
-    let store = RuntimeError::Engine {
-        kind: crate::tags::error_family::STORE.into(),
-        message: "scratch page unreadable".into(),
-    };
-    let corruption = RuntimeError::Engine {
-        kind: crate::tags::error_family::CORRUPTION.into(),
-        message: "page unreadable".into(),
-    };
+    let store = RuntimeError::engine(bumbledb::ErrorKind::Lmdb, "page unreadable");
+    let corruption = RuntimeError::engine(bumbledb::ErrorKind::Corruption, "page unreadable");
     assert!(is_terminal_backing(&store));
     assert!(is_terminal_backing(&corruption));
     assert!(
@@ -736,7 +744,7 @@ fn native_text_collection_owns_its_rows_after_every_engine_owner_is_gone() {
             .db()
             .write(work(), |tx| tx.insert_accepted(&rows).map(|_| ()))
             .unwrap();
-        assert!(matches!(admitted, bumbledb::Admission::Accepted(_)));
+        assert!(matches!(admitted, bumbledb::WriteOutcome::Committed(_)));
     }
     let (mut payload, actual_count) = sealed_result(&runtime, &db);
     assert_eq!(actual_count, count);
@@ -754,12 +762,16 @@ fn native_text_collection_owns_its_rows_after_every_engine_owner_is_gone() {
         panic!("expected rows");
     };
     drop(payload);
-    assert_eq!(queued.rows.len() as u64, count);
-    for (index, row) in queued.rows.iter().enumerate() {
-        assert!(
-            matches!(row.as_slice(), [ValueOut::U64(id), ValueOut::Text(value)] if *id == index as u64 && value == &text)
-        );
-    }
+    let mut ids: Vec<u64> = queued
+        .rows
+        .iter()
+        .map(|row| match row.as_slice() {
+            [ValueOut::U64(id), ValueOut::Text(value)] if value == &text => *id,
+            _ => panic!("each row owns its id and text"),
+        })
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, (0..count).collect::<Vec<_>>());
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -828,72 +840,13 @@ fn queued_output_close_drains_without_wrapper_authority() {
 
 // ---- apply / codec (unchanged public verbs) --------------------------------
 
-#[test]
-fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
-    let runtime = Runtime::start(options()).unwrap();
-    let base = unique_dir("apply");
-    std::fs::create_dir_all(&base).unwrap();
-    let owner = acquire(&runtime, &base.join("tenant"));
-    let descriptor = Mini.descriptor();
-    let db = attach(&owner, &descriptor);
-    let ctx = work();
-    let schema = {
-        use bumbledb::schema::ValidateDescriptor as _;
-        descriptor.clone().validate().expect("valid schema")
-    };
-
-    let mut builder = bumbledb::ChangeSet::builder(&schema, ctx.clone());
-    builder
-        .insert(RelationId(0), &[Value::U64(1), Value::U64(10)])
-        .expect("stages");
-    let changes = builder.finish().expect("seals");
-
-    let lease = db.access().expect("lease");
-    let store_hex = lease.db().integration_store().identity().store.to_string();
-
-    match apply(&lease, &changes, Some(&exact(&store_hex, 999)), &ctx)
-        .expect("moved is a domain outcome")
-    {
-        Output::Apply(ApplyOutcome::Moved { witnessed, .. }) => {
-            assert_eq!(witnessed.generation, 999);
-        }
-        _ => panic!("expected moved"),
+fn witness(lease: &crate::runtime::owners::DbLease) -> Expected {
+    let read = lease.db().snapshot(&work()).unwrap();
+    Expected {
+        witness: read.witness(),
+        database: lease.db().database_id(),
+        generation: read.generation().value(),
     }
-    assert!(matches!(
-        apply(&lease, &changes, Some(&exact(&"00".repeat(16), 0)), &ctx),
-        Err(RuntimeError::Engine { .. })
-    ));
-
-    let accepted_generation = match apply(&lease, &changes, None, &ctx).expect("applies") {
-        Output::Apply(ApplyOutcome::Committed { witness }) => {
-            assert_eq!(witness.store, store_hex);
-            witness.generation
-        }
-        _ => panic!("expected committed"),
-    };
-    match apply(&lease, &changes, None, &ctx).expect("re-applies") {
-        Output::Apply(ApplyOutcome::NoChange { witness }) => {
-            assert!(witness.generation >= accepted_generation);
-        }
-        _ => panic!("expected no-change"),
-    }
-
-    lease
-        .writing
-        .store(true, std::sync::atomic::Ordering::Release);
-    assert!(matches!(
-        apply(&lease, &changes, None, &ctx),
-        Err(RuntimeError::WriterBusy)
-    ));
-    lease
-        .writing
-        .store(false, std::sync::atomic::Ordering::Release);
-
-    drop(lease);
-    drop(db);
-    drop(owner);
-    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
-    let _ = std::fs::remove_dir_all(&base);
 }
 
 fn apply(
@@ -914,51 +867,88 @@ fn judge(
     decide_change_set(lease, changes, expected, ctx, WriteMode::Judge)
 }
 
-fn exact(store: &str, generation: u64) -> Expected {
-    Expected {
-        store: store.into(),
-        generation,
+fn mini_changes(
+    schema: &bumbledb::schema::Schema,
+    rows: &[(u64, u64)],
+    removed: &[(u64, u64)],
+) -> ChangeSet {
+    let mut builder = bumbledb::ChangeSet::builder(schema, work());
+    for (a, b) in rows {
+        builder
+            .insert(RelationId(0), &[Value::U64(*a), Value::U64(*b)])
+            .unwrap();
     }
+    for (a, b) in removed {
+        builder
+            .delete(RelationId(0), &[Value::U64(*a), Value::U64(*b)])
+            .unwrap();
+    }
+    builder.finish().unwrap()
 }
 
-fn assert_judge_refusals(
-    lease: &crate::runtime::owners::DbLease,
-    changes: &ChangeSet,
-    expected: &Expected,
-    ctx: &WorkContext,
-) {
-    let generation = lease.db().generation(work()).unwrap().value();
+#[test]
+fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("apply");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let descriptor = Mini.descriptor();
+    let db = attach(&owner, &descriptor);
+    let other = attach_named(&owner, &descriptor, "other");
+    let ctx = work();
+    let schema = {
+        use bumbledb::schema::ValidateDescriptor as _;
+        descriptor.clone().validate().expect("valid schema")
+    };
+    let changes = mini_changes(&schema, &[(1, 10)], &[]);
+    let lease = db.access().expect("lease");
+    let before = witness(&lease);
+
+    assert!(matches!(
+        apply(&lease, &changes, Some(&witness(&other.access().unwrap())), &ctx),
+        Err(RuntimeError::Engine { kind, .. }) if kind == "ForeignWitness"
+    ));
+    let Output::Apply(ApplyOutcome::Committed {
+        generation: committed,
+        changed: true,
+    }) = apply(&lease, &changes, Some(&before), &ctx).expect("applies")
+    else {
+        panic!("expected a changing commit")
+    };
+    match apply(&lease, &changes, Some(&before), &ctx).expect("moved is a domain outcome") {
+        Output::Apply(ApplyOutcome::Moved { witnessed, current }) => {
+            assert_eq!((witnessed, current), (before.generation, committed));
+        }
+        _ => panic!("expected moved"),
+    }
+    match apply(&lease, &changes, None, &ctx).expect("re-applies") {
+        Output::Apply(ApplyOutcome::Committed {
+            generation,
+            changed: false,
+        }) => assert_eq!(generation, committed),
+        _ => panic!("expected an unchanged commit"),
+    }
+
     lease
         .writing
         .store(true, std::sync::atomic::Ordering::Release);
     assert!(matches!(
-        judge(lease, changes, Some(expected), ctx),
+        apply(&lease, &changes, None, &ctx),
         Err(RuntimeError::WriterBusy)
     ));
     lease
         .writing
         .store(false, std::sync::atomic::Ordering::Release);
-    let stopped = work();
-    stopped.cancel();
-    assert!(matches!(
-        judge(lease, changes, Some(expected), &stopped),
-        Err(RuntimeError::Cancelled)
-    ));
-    assert!(!lease.writing.load(std::sync::atomic::Ordering::Acquire));
-    assert!(matches!(
-        judge(
-            lease,
-            changes,
-            Some(&exact(&"00".repeat(16), generation)),
-            ctx
-        ),
-        Err(RuntimeError::Engine { .. })
-    ));
-    assert!(!lease.writing.load(std::sync::atomic::Ordering::Acquire));
+
+    drop(lease);
+    drop((db, other));
+    drop(owner);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]
-fn judge_aborts_both_outcomes_and_releases_writer_on_every_exit() {
+fn judge_never_commits_and_releases_the_writer_on_every_exit() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("judge");
     std::fs::create_dir_all(&base).unwrap();
@@ -970,71 +960,63 @@ fn judge_aborts_both_outcomes_and_releases_writer_on_every_exit() {
         descriptor.validate().unwrap()
     };
     let ctx = work();
-    let mut builder = bumbledb::ChangeSet::builder(&schema, ctx.clone());
-    for (a, b) in [(1, 10), (2, 20)] {
-        builder
-            .insert(RelationId(0), &[Value::U64(a), Value::U64(b)])
-            .unwrap();
-    }
-    let changes = builder.finish().unwrap();
+    let changes = mini_changes(&schema, &[(1, 10), (2, 20)], &[]);
     let lease = db.access().unwrap();
-    let generation = lease.db().generation(work()).unwrap().value();
-    let store = lease.db().integration_store().identity().store.to_string();
-    let expected = exact(&store, generation);
+    let expected = witness(&lease);
     for _ in 0..3 {
         match judge(&lease, &changes, Some(&expected), &ctx).unwrap() {
-            Output::Judge(JudgeOutcome::Admitted { base, changes }) => {
-                assert_eq!(base.store, store);
-                assert_eq!(base.generation, generation);
+            Output::Judge(JudgeOutcome::Admitted {
+                generation,
+                changes,
+            }) => {
+                assert_eq!(generation, expected.generation);
                 assert_eq!((changes.added, changes.removed), (2, 0));
             }
             _ => panic!("must admit without committing"),
         }
-        assert_eq!(lease.db().generation(work()).unwrap().value(), generation);
+        assert_eq!(
+            lease.db().generation(work()).unwrap().value(),
+            expected.generation
+        );
         assert!(!lease.writing.load(std::sync::atomic::Ordering::Acquire));
     }
-    assert_judge_refusals(&lease, &changes, &expected, &ctx);
+    let stopped = work();
+    stopped.cancel();
+    assert!(matches!(
+        judge(&lease, &changes, Some(&expected), &stopped),
+        Err(RuntimeError::Cancelled)
+    ));
+    assert!(!lease.writing.load(std::sync::atomic::Ordering::Acquire));
 
     assert!(matches!(
         apply(&lease, &changes, Some(&expected), &ctx).unwrap(),
-        Output::Apply(ApplyOutcome::Committed { .. })
+        Output::Apply(ApplyOutcome::Committed { changed: true, .. })
     ));
     let landed = lease.db().generation(work()).unwrap().value();
-    assert!(
-        matches!(judge(&lease, &changes, Some(&expected), &ctx).unwrap(), Output::Judge(JudgeOutcome::Moved { current, witnessed }) if current.generation == landed && witnessed.generation == generation)
-    );
+    assert!(matches!(
+        judge(&lease, &changes, Some(&expected), &ctx).unwrap(),
+        Output::Judge(JudgeOutcome::Moved { witnessed, current })
+            if current == landed && witnessed == expected.generation
+    ));
     match judge(&lease, &changes, None, &ctx).unwrap() {
         Output::Judge(JudgeOutcome::Admitted { changes, .. }) => {
             assert_eq!((changes.added, changes.removed), (0, 0));
         }
         _ => panic!("existing additions are a no-op"),
     }
-    let mut builder = bumbledb::ChangeSet::builder(&schema, ctx.clone());
-    builder
-        .insert(RelationId(0), &[Value::U64(1), Value::U64(11)])
-        .unwrap();
-    builder
-        .delete(RelationId(0), &[Value::U64(2), Value::U64(20)])
-        .unwrap();
-    let conflicting = builder.finish().unwrap();
+    let conflicting = mini_changes(&schema, &[(1, 11)], &[(2, 20)]);
     match judge(&lease, &conflicting, None, &ctx).unwrap() {
         Output::Judge(JudgeOutcome::Rejected {
-            base,
-            changes,
+            generation,
             violations,
         }) => {
-            assert_eq!(base.generation, landed);
-            assert_eq!((changes.added, changes.removed), (1, 1));
+            assert_eq!(generation, landed);
             assert!(!violations.is_empty());
         }
         _ => panic!("key conflict must reject"),
     }
     assert_eq!(lease.db().generation(work()).unwrap().value(), landed);
     assert!(!lease.writing.load(std::sync::atomic::Ordering::Acquire));
-    assert!(matches!(
-        apply(&lease, &changes, None, &ctx).unwrap(),
-        Output::Apply(ApplyOutcome::NoChange { .. })
-    ));
 
     drop(lease);
     drop(db);

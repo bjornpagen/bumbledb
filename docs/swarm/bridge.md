@@ -11,7 +11,7 @@ Owns: `crates/bumbledb-node/**`, `ts/src/native/binding.d.ts`, `docs/swarm/bridg
 | F8: serde JSON cold inputs (`SchemaSpecIn`, `QueryIn`, `RuntimeOptionsIn`) with `{path, message}` refusals | done |
 | D17: sync `compileSchema` / `validateQuery` / `schemaBindings` returning branded handles | done |
 | F7: every export typed in the generated, committed `binding.d.ts` (`crates/bumbledb-node/dts.sh`, gate: `dts.sh --check` + standalone `tsc`) | done |
-| A: database open refusals match the errors the engine constructs (`Store(SchemaMismatch)`, `Store(DestinationExists)`); covered by a test | done; re-adapts when C8's one `Error` lands |
+| A + engine C7/C8/C9/C16 adaptation: open refusals match the flat `Error` (`SchemaMismatch`, `DestinationExists`, `Locked`), engine failures cross as `Engine { kind: <ErrorKind name> }`, apply/judge run on `Db::apply`/`apply_from` and `host::WriterSession::decide_all`, writes expect a snapshot's opaque witness | done |
 | Hosted verbs over log-core's sans-IO `Machine<Cache>` (open, step/feed, submit, migrate, snapshot, close) | done |
 
 The bridge depends on the new `bumbledb-log` core only for hosted databases. The directory fence
@@ -110,12 +110,18 @@ F7 (all outputs generated; no hand-built objects remain):
 - Close/cancel callbacks receive `CloseOut = Closed | Incomplete { outstanding: InspectionOut } | Failed`;
   `runtimeInspect` returns `InspectionOut` (`phase: 'Open' | 'Closing' | 'Closed'`, bigint counts).
 - `runtimeDbTake: DbOpened = Opened { db } | Rejected { violations } | FingerprintMismatch { message } | DestinationExists { message }`.
-- `runtimeSnapshotTake: { snapshot, witness: WitnessOut }`, `WitnessOut = { store, generation: bigint }`.
-- `runtimeDbApply` / `runtimeDbJudge(db, changes, expected: WitnessIn | null, cb)`;
-  `WitnessIn = { store, generation: bigint }`, absent means "whatever is current".
-  `runtimeApplyTake: ApplyOutcome = Committed { witness } | NoChange { witness } | Rejected { violations } | Moved { witnessed, current }`;
-  `runtimeJudgeTake: JudgeOutcome = Admitted { base, changes } | Rejected { base, changes, violations } | Moved { witnessed, current }`
-  (`changes: ChangeCounts = { added, removed }`).
+- `runtimeSnapshotTake: { snapshot, witness: ExternalObject<WitnessHandle>, generation: bigint }`.
+  The witness is opaque proof of the state that snapshot observed (engine C9).
+- `runtimeDbApply` / `runtimeDbJudge(db, changes, expected: ExternalObject<WitnessHandle> | null, cb)`;
+  absent means "whatever is current"; a witness of another database throws
+  `Engine { kind: "ForeignWitness" }`.
+  `runtimeApplyTake: ApplyOutcome = Committed { generation, changed } | Rejected { violations } | Moved { witnessed, current }`
+  (`changed: false` means the change set matched the committed state and the generation did not move);
+  `runtimeJudgeTake: JudgeOutcome = Admitted { generation, changes } | Rejected { generation, violations } | Moved { witnessed, current }`
+  (`changes: ChangeCounts = { added, removed }`; generations are bigints).
+- `RuntimeError.Engine.kind` is the engine's `ErrorKind` variant name (`"Corruption"`, `"Full"`,
+  `"Validation"`, `"Capacity"`, …); engine cancellation and allocation failure cross as
+  `Cancelled` / `OutOfMemory`.
 - `ViolationOut = Functionality { statement, spelling, facts } | Containment { …, direction: 'SourceUnsatisfied' | 'TargetRequired' } | Capacity { …, measure: bigint }`;
   `facts: FactOut[] = { relation, fields: { name, value: CellValue }[] }`.
 - `runtimeChangesTake: ChangesOut = { changes, fingerprint, counts, byteLength: bigint }`;

@@ -5,15 +5,13 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use bumbledb::ChangeSet;
+use bumbledb::host::Judged;
 use bumbledb::work::WorkContext;
+use bumbledb::{ChangeSet, ErrorKind, WriteOutcome};
 
 use crate::runtime::{Output, RuntimeError};
 
-use super::{
-    ApplyOutcome, ChangeCounts, DbInspection, Expected, JudgeOutcome, WitnessOut, change_error,
-    engine_error,
-};
+use super::{ApplyOutcome, ChangeCounts, DbInspection, Expected, JudgeOutcome, engine_error};
 
 #[derive(Clone, Copy)]
 pub(crate) enum WriteMode {
@@ -29,16 +27,9 @@ impl Drop for WriterFlag {
     }
 }
 
-fn counts(application: &bumbledb::integration::ApplicationChanges) -> ChangeCounts {
-    ChangeCounts {
-        added: application.added,
-        removed: application.removed,
-    }
-}
-
-/// Judge `changes` as a private candidate against the current state, then
-/// commit it (`Apply`) or abort it (`Judge`). A second concurrent writer
-/// refuses `WriterBusy`; an `expected` state that moved is a `Moved` outcome.
+/// Apply (`Apply`) or only judge (`Judge`) `changes` against the current
+/// state. A second concurrent writer refuses `WriterBusy`; an `expected`
+/// state that moved is a `Moved` outcome, never an error.
 pub(crate) fn decide_change_set(
     lease: &crate::runtime::owners::DbLease,
     changes: &ChangeSet,
@@ -47,92 +38,78 @@ pub(crate) fn decide_change_set(
     mode: WriteMode,
 ) -> Result<Output, RuntimeError> {
     context.checkpoint()?;
-    let store = lease.db().integration_store().identity().store.to_string();
-    let witness = |generation| WitnessOut {
-        store: store.clone(),
-        generation,
-    };
+    if let Some(expected) = expected
+        && expected.database != lease.db().database_id()
+    {
+        return Err(RuntimeError::engine(
+            ErrorKind::ForeignWitness,
+            "the expected state belongs to another database",
+        ));
+    }
     if lease.writing.swap(true, Ordering::AcqRel) {
         return Err(RuntimeError::WriterBusy);
     }
     let _flag = WriterFlag(lease.inner_arc());
-    let mut session = lease
-        .db()
-        .integration_writer(context)
-        .map_err(integration_error)?;
-    let base = session.generation().map_err(integration_error)?.value();
-    if let Some(expected) = expected {
-        if expected.store != store {
-            return Err(RuntimeError::Engine {
-                kind: crate::tags::error_family::FOREIGN_WITNESS.into(),
-                message: "expected-state witness names a different store".into(),
-            });
-        }
-        if base != expected.generation {
-            let (witnessed, current) = (witness(expected.generation), witness(base));
-            return Ok(match mode {
-                WriteMode::Apply => Output::Apply(ApplyOutcome::Moved { witnessed, current }),
-                WriteMode::Judge => Output::Judge(JudgeOutcome::Moved { witnessed, current }),
-            });
-        }
-    }
-    match session.prepare(changes).map_err(integration_error)? {
-        bumbledb::integration::Preparation::Rejected {
-            violations,
-            application,
-        } => {
-            let violations = crate::violations_out(&lease.schema.descriptor, &violations);
-            Ok(match mode {
-                WriteMode::Apply => Output::Apply(ApplyOutcome::Rejected { violations }),
-                WriteMode::Judge => Output::Judge(JudgeOutcome::Rejected {
-                    base: witness(base),
-                    changes: counts(&application),
-                    violations,
-                }),
-            })
-        }
-        bumbledb::integration::Preparation::Accepted(prepared) => {
-            if matches!(mode, WriteMode::Judge) {
-                let application = prepared.application_changes();
-                prepared.abort();
-                context.checkpoint()?;
-                return Ok(Output::Judge(JudgeOutcome::Admitted {
-                    base: witness(base),
-                    changes: counts(&application),
-                }));
+    let violations =
+        |found: &bumbledb::Violations| crate::violations_out(&lease.schema.descriptor, found);
+    match mode {
+        WriteMode::Apply => {
+            let outcome = match expected {
+                Some(expected) => lease.db().apply_from(changes, &expected.witness, context),
+                None => lease.db().apply(changes, context),
             }
-            let sealed = prepared
-                .seal(bumbledb::integration::HostChanges {
-                    records: &[],
-                    attachment: bumbledb::integration::AttachmentChange::Keep,
-                })
-                .map_err(integration_error)?;
-            let commit = sealed.commit().map_err(integration_error)?;
-            let witness = witness(commit.generation.value());
-            Ok(Output::Apply(if commit.changed {
-                ApplyOutcome::Committed { witness }
-            } else {
-                ApplyOutcome::NoChange { witness }
+            .map_err(|error| engine_error(&error))?;
+            Ok(Output::Apply(match outcome {
+                WriteOutcome::Committed(committed) => ApplyOutcome::Committed {
+                    generation: committed.generation.value(),
+                    changed: committed.changed,
+                },
+                WriteOutcome::Rejected(found) => ApplyOutcome::Rejected {
+                    violations: violations(&found),
+                },
+                WriteOutcome::Moved { witnessed, current } => ApplyOutcome::Moved {
+                    witnessed: witnessed.value(),
+                    current: current.value(),
+                },
             }))
         }
-    }
-}
-
-pub(crate) fn integration_error(error: bumbledb::integration::IntegrationError) -> RuntimeError {
-    use bumbledb::integration::IntegrationError;
-    match error {
-        IntegrationError::Core(error) => engine_error(&error),
-        IntegrationError::Changes(error) => change_error(&error),
-        IntegrationError::Host(error) => RuntimeError::Engine {
-            kind: "hostSeal".into(),
-            message: format!("{error:?}"),
-        },
-        IntegrationError::Work(error) => error.into(),
-        IntegrationError::ForeignSchema => RuntimeError::Engine {
-            kind: crate::tags::error_family::SCHEMA_MISMATCH.into(),
-            message: "the ChangeSet's schema is not this database's schema".into(),
-        },
-        IntegrationError::ReentrantWriter => RuntimeError::WriterBusy,
+        WriteMode::Judge => {
+            let mut session = lease
+                .db()
+                .host_writer(context)
+                .map_err(|error| engine_error(&error))?;
+            let generation = session
+                .generation()
+                .map_err(|error| engine_error(&error))?
+                .value();
+            if let Some(expected) = expected
+                && expected.generation != generation
+            {
+                return Ok(Output::Judge(JudgeOutcome::Moved {
+                    witnessed: expected.generation,
+                    current: generation,
+                }));
+            }
+            let judged = session
+                .decide_all(std::slice::from_ref(changes))
+                .map_err(|error| engine_error(&error))?
+                .into_iter()
+                .next()
+                .ok_or(RuntimeError::Internal)?;
+            Ok(Output::Judge(match judged {
+                Judged::Accepted(applied) => JudgeOutcome::Admitted {
+                    generation,
+                    changes: ChangeCounts {
+                        added: applied.added,
+                        removed: applied.removed,
+                    },
+                },
+                Judged::Rejected(found) => JudgeOutcome::Rejected {
+                    generation,
+                    violations: violations(&found),
+                },
+            }))
+        }
     }
 }
 

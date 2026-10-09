@@ -95,25 +95,17 @@ pub struct ChangesOpened {
     pub fingerprint: String,
 }
 
-/// A database state: the store identity and its committed generation.
-#[napi(object, object_from_js = false)]
+/// The state one snapshot observed: proof for a write that expects it.
 #[derive(Clone)]
-pub struct WitnessOut {
-    pub store: String,
-    pub generation: u64,
-}
-
-/// The state a write expects to find.
-#[napi(object, object_to_js = false)]
-pub struct WitnessIn {
-    pub store: String,
-    pub generation: BigInt,
-}
-
-pub(crate) struct Expected {
-    pub(crate) store: String,
+pub struct Expected {
+    pub(crate) witness: bumbledb::Witness<bumbledb::SchemaDescriptor>,
+    pub(crate) database: bumbledb::host::DatabaseId,
     pub(crate) generation: u64,
 }
+
+/// The state a snapshot observed, minted only by `runtimeSnapshotTake`; a
+/// write given it applies only if that state is still current.
+pub struct WitnessHandle(Expected);
 
 #[napi(object, object_from_js = false)]
 pub struct ChangeCounts {
@@ -121,40 +113,31 @@ pub struct ChangeCounts {
     pub removed: u64,
 }
 
-/// One apply outcome. `NoChange` committed nothing new; `Moved` means the
-/// expected state was not the current one.
+/// One apply outcome. `Committed.changed` is false when the change set
+/// matched the committed state (the generation did not move); `Moved` means
+/// the expected generation was not the current one.
 #[napi(discriminant = "_tag", object_from_js = false)]
 pub enum ApplyOutcome {
-    Committed {
-        witness: WitnessOut,
-    },
-    NoChange {
-        witness: WitnessOut,
-    },
-    Rejected {
-        violations: Vec<ViolationOut>,
-    },
-    Moved {
-        witnessed: WitnessOut,
-        current: WitnessOut,
-    },
+    Committed { generation: u64, changed: bool },
+    Rejected { violations: Vec<ViolationOut> },
+    Moved { witnessed: u64, current: u64 },
 }
 
-/// One judgment of a private candidate; the database never changes.
+/// One judgment of the change set against the current `generation`; the
+/// database never changes.
 #[napi(discriminant = "_tag", object_from_js = false)]
 pub enum JudgeOutcome {
     Admitted {
-        base: WitnessOut,
+        generation: u64,
         changes: ChangeCounts,
     },
     Rejected {
-        base: WitnessOut,
-        changes: ChangeCounts,
+        generation: u64,
         violations: Vec<ViolationOut>,
     },
     Moved {
-        witnessed: WitnessOut,
-        current: WitnessOut,
+        witnessed: u64,
+        current: u64,
     },
 }
 
@@ -176,10 +159,7 @@ pub(crate) fn change_error(error: &ChangeError) -> RuntimeError {
     {
         return (*error).into();
     }
-    RuntimeError::Engine {
-        kind: crate::tags::error_family::VALIDATION.into(),
-        message: format!("bumbledb changes: {error:?}"),
-    }
+    RuntimeError::engine(bumbledb::ErrorKind::Changes, error.to_string())
 }
 
 fn admit(
@@ -205,10 +185,13 @@ pub fn runtime_db_snapshot(
     Ok(operation_handle(&runtime, operation))
 }
 
+/// A pinned snapshot, the witness of the state it observed, and that
+/// state's generation.
 #[napi(object, object_from_js = false)]
 pub struct SnapshotOpened {
     pub snapshot: External<SnapshotHandle>,
-    pub witness: WitnessOut,
+    pub witness: External<WitnessHandle>,
+    pub generation: u64,
 }
 
 #[napi]
@@ -222,10 +205,8 @@ pub fn runtime_snapshot_take(
                 session: Arc::new(opened.session),
                 schema: opened.schema,
             }),
-            witness: WitnessOut {
-                store: opened.store,
-                generation: opened.generation,
-            },
+            generation: opened.witness.generation,
+            witness: External::new(WitnessHandle(opened.witness)),
         }),
         _ => Err(wrong_output(env)),
     }
@@ -672,14 +653,14 @@ pub fn runtime_changes_close(
     Ok(())
 }
 
-/// Apply a sealed change set as one judged commit. `expected` absent
-/// applies to whatever state is current.
+/// Apply a sealed change set as one judged commit; with `expected`, only if
+/// the state that witness observed is still current.
 #[napi]
 pub fn runtime_db_apply(
     env: Env,
     db: &External<crate::DbHandle>,
     changes: &External<ChangesHandle>,
-    expected: Option<WitnessIn>,
+    expected: Option<&External<WitnessHandle>>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     submit_change_set(env, db, changes, expected, callback, WriteMode::Apply)
@@ -691,7 +672,7 @@ pub fn runtime_db_judge(
     env: Env,
     db: &External<crate::DbHandle>,
     changes: &External<ChangesHandle>,
-    expected: Option<WitnessIn>,
+    expected: Option<&External<WitnessHandle>>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     submit_change_set(env, db, changes, expected, callback, WriteMode::Judge)
@@ -701,7 +682,7 @@ fn submit_change_set(
     env: Env,
     db: &crate::DbHandle,
     changes: &ChangesHandle,
-    expected: Option<WitnessIn>,
+    expected: Option<&External<WitnessHandle>>,
     callback: Function<(), ()>,
     mode: WriteMode,
 ) -> napi::Result<External<OperationHandle>> {
@@ -710,15 +691,7 @@ fn submit_change_set(
     if !Arc::ptr_eq(runtime, changes.0.runtime()) {
         return Err(thrown(env, RuntimeError::ForeignRuntime));
     }
-    let expected = expected
-        .map(|witness| {
-            Ok::<_, RuntimeError>(Expected {
-                store: witness.store,
-                generation: marshal::u64_in(&witness.generation, "expected generation")?,
-            })
-        })
-        .transpose()
-        .map_err(|error| thrown(env, error))?;
+    let expected = expected.map(|witness| witness.0.clone());
     let lease = owner.access().map_err(|error| thrown(env, error))?;
     let operation = runtime
         .submit_payload(

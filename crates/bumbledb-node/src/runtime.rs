@@ -136,7 +136,7 @@ pub enum RuntimeError {
         requested: u64,
         limit: u64,
     },
-    /// A typed engine refusal: the engine error kind and its message.
+    /// A typed engine refusal: the engine's `ErrorKind` name and message.
     Engine {
         kind: String,
         message: String,
@@ -177,6 +177,19 @@ impl From<crate::input::Malformed> for RuntimeError {
 }
 
 impl RuntimeError {
+    /// A typed engine refusal; `kind` is spelled as the engine's
+    /// `ErrorKind` variant name.
+    pub(crate) fn engine(kind: bumbledb::ErrorKind, message: impl Into<String>) -> Self {
+        Self::Engine {
+            kind: format!("{kind:?}"),
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn is_engine(&self, wanted: bumbledb::ErrorKind) -> bool {
+        matches!(self, Self::Engine { kind, .. } if *kind == format!("{wanted:?}"))
+    }
+
     pub(crate) fn resource_limit(dimension: &str, used: usize, limit: usize) -> Self {
         Self::ResourceLimit {
             dimension: dimension.into(),

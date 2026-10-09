@@ -374,7 +374,6 @@ pub(crate) fn open_db(
     create: bool,
     context: &WorkContext,
 ) -> Result<ManagedDbOutcome, RuntimeError> {
-    use bumbledb::store::StoreError;
     let path = reference.child_path(child_name)?;
     context.checkpoint()?;
     let descriptor = schema.descriptor.clone();
@@ -396,19 +395,15 @@ pub(crate) fn open_db(
         Ok(db) => Ok(ManagedDbOutcome::Opened(
             reference.attach_db(crate::assemble_inner(db, schema))?,
         )),
-        Err(bumbledb::Error::Store(store)) => match *store {
-            StoreError::SchemaMismatch => Ok(ManagedDbOutcome::FingerprintMismatch {
-                message: StoreError::SchemaMismatch.to_string(),
-            }),
-            error @ StoreError::DestinationExists { .. } => {
-                Ok(ManagedDbOutcome::DestinationExists {
-                    message: error.to_string(),
-                })
-            }
-            error => Err(crate::runtime::session::engine_error(
-                &bumbledb::Error::Store(Box::new(error)),
-            )),
-        },
+        Err(error @ bumbledb::Error::SchemaMismatch) => Ok(ManagedDbOutcome::FingerprintMismatch {
+            message: error.to_string(),
+        }),
+        Err(error @ bumbledb::Error::DestinationExists { .. }) => {
+            Ok(ManagedDbOutcome::DestinationExists {
+                message: error.to_string(),
+            })
+        }
+        Err(bumbledb::Error::Locked { .. }) => Err(RuntimeError::DirectoryBusy),
         Err(error) => Err(crate::runtime::session::engine_error(&error)),
     }
 }

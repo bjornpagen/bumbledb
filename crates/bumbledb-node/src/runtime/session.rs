@@ -17,14 +17,10 @@ use super::{Notify, Operation, Output, Runtime, RuntimeError, WaitTarget, lock};
 
 /// One typed engine refusal crossing the executor as owned data.
 pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
-    if let bumbledb::Error::Store(store) = error
-        && let bumbledb::store::StoreError::Work(work) = store.as_ref()
-    {
-        return (*work).into();
-    }
-    RuntimeError::Engine {
-        kind: crate::tags::error_family::tag(&error.family()).into(),
-        message: crate::marshal::engine_message(error),
+    match error.kind() {
+        bumbledb::ErrorKind::Cancelled => RuntimeError::Cancelled,
+        bumbledb::ErrorKind::Allocation => RuntimeError::OutOfMemory,
+        kind => RuntimeError::engine(kind, error.to_string()),
     }
 }
 
@@ -155,8 +151,7 @@ pub(super) struct SessionSlot {
 pub struct SessionOpened {
     pub session: SnapshotSession,
     pub schema: Arc<crate::schema::SchemaHandle>,
-    pub generation: u64,
-    pub store: String,
+    pub witness: crate::db_wire::Expected,
 }
 
 struct SessionCore {
@@ -283,12 +278,16 @@ impl Runtime {
         context.checkpoint()?;
         let worker = WorkerContext::worker_id()?;
         let schema = lease.schema();
-        let store_identity = lease.db().integration_store().identity().store.to_string();
         let pinned_read = lease
             .db()
             .snapshot(context)
             .map_err(|error| engine_error(&error))?;
-        let generation = pinned_read.snapshot().generation().value();
+        let generation = pinned_read.generation().value();
+        let witness = crate::db_wire::Expected {
+            witness: pinned_read.witness(),
+            database: lease.db().database_id(),
+            generation,
+        };
         let cap = self.reserve_snapshot_route(owner, database, worker, NativeKind::Snapshot)?;
         let resource = SnapshotResource {
             data: Rc::new(SnapshotData {
@@ -316,8 +315,7 @@ impl Runtime {
                 },
             },
             schema,
-            generation,
-            store: store_identity,
+            witness,
         }))
     }
 
@@ -961,7 +959,7 @@ mod tests {
                         tx.insert_accepted(&collection).map(|_| ())
                     })
                     .unwrap(),
-                bumbledb::Admission::Accepted(_)
+                bumbledb::WriteOutcome::Committed(_)
             ));
         }
         let snapshot = open_read(&runtime, &db);
@@ -1176,7 +1174,7 @@ mod tests {
             Ok(Box::new(|context, access| {
                 context.checkpoint()?;
                 let _ = access.frame(context);
-                Ok(Output::Count(access.owned.snapshot().generation().value()))
+                Ok(Output::Count(access.owned.generation().value()))
             }))
         })
         .expect("read job") else {
@@ -1199,9 +1197,7 @@ mod tests {
             Ok(Box::new(|context, access| {
                 context.checkpoint()?;
                 let _ = access.frame(context);
-                Ok(Output::Generation(
-                    access.owned.snapshot().generation().value(),
-                ))
+                Ok(Output::Generation(access.owned.generation().value()))
             }))
         })
         .expect("parent still readable after extra idle snapshots")

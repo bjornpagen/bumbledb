@@ -14,14 +14,9 @@ use napi_derive::napi;
 
 use crate::runtime::RuntimeError;
 use crate::schema::SchemaHandle;
-use crate::tags;
 
 pub(crate) fn err(message: String) -> RuntimeError {
     RuntimeError::InvalidValue { message }
-}
-
-pub(crate) fn engine_message(error: &bumbledb::Error) -> String {
-    error.to_string()
 }
 
 fn js_type_name(ty: JsType) -> &'static str {
@@ -351,35 +346,35 @@ pub(crate) fn key_row(
 pub(crate) fn tagged_value(obj: &Object) -> Result<Value, RuntimeError> {
     let kind: String = req_text(obj, "kind", "value")?;
     match kind.as_str() {
-        tags::value::BOOL => Ok(Value::Bool(req::<bool>(obj, "value", "bool value")?)),
-        tags::value::U64 => Ok(Value::U64(u64_in(
+        "Bool" => Ok(Value::Bool(req::<bool>(obj, "value", "bool value")?)),
+        "U64" => Ok(Value::U64(u64_in(
             &req::<BigInt>(obj, "value", "u64 value")?,
             "u64 value",
         )?)),
-        tags::value::I64 => Ok(Value::I64(i64_in(
+        "I64" => Ok(Value::I64(i64_in(
             &req::<BigInt>(obj, "value", "i64 value")?,
             "i64 value",
         )?)),
-        tags::value::F64 => Ok(Value::F64(F64::from(req::<f64>(
+        "F64" => Ok(Value::F64(F64::from(req::<f64>(
             obj,
             "value",
             "f64 value",
         )?))),
-        tags::value::STRING => Ok(Value::String(
+        "String" => Ok(Value::String(
             req_text(obj, "value", "string value")?.into(),
         )),
-        tags::value::UUID => Ok(Value::Uuid(uuid_in(
+        "Uuid" => Ok(Value::Uuid(uuid_in(
             &req_text(obj, "value", "uuid value")?,
             "uuid value",
         )?)),
-        tags::value::FIXED_BYTES => Ok(Value::FixedBytes(
+        "FixedBytes" => Ok(Value::FixedBytes(
             req::<Uint8Array>(obj, "value", "fixedBytes value")?
                 .to_vec()
                 .into_boxed_slice(),
         )),
-        tags::value::INTERVAL_U64 => interval_in(obj, IntervalElement::U64, "intervalU64 value"),
-        tags::value::INTERVAL_I64 => interval_in(obj, IntervalElement::I64, "intervalI64 value"),
-        tags::value::INTERVAL_F64 => interval_in(obj, IntervalElement::F64, "intervalF64 value"),
+        "IntervalU64" => interval_in(obj, IntervalElement::U64, "intervalU64 value"),
+        "IntervalI64" => interval_in(obj, IntervalElement::I64, "intervalI64 value"),
+        "IntervalF64" => interval_in(obj, IntervalElement::F64, "intervalF64 value"),
         other => Err(err(format!(
             "bumbledb marshal: unknown value kind `{other}`"
         ))),
@@ -396,7 +391,7 @@ pub(crate) fn params_in(arr: &Array) -> Result<Vec<OwnedParam>, RuntimeError> {
     for index in 0..arr.len() {
         let obj = req_at::<Object>(arr, index, "params")?;
         let kind: String = req_text(&obj, "kind", "param")?;
-        if kind == tags::param::SET {
+        if kind == "Set" {
             let values: Array = req(&obj, "values", "set param")?;
             let mut set = Vec::with_capacity(values.len() as usize);
             for value_index in 0..values.len() {
@@ -626,25 +621,16 @@ pub(crate) fn row_out(
     Ok(values)
 }
 
-fn result_work_error(error: bumbledb::work::WorkError) -> bumbledb::Error {
-    bumbledb::Error::Store(Box::new(bumbledb::store::StoreError::Work(error)))
-}
-
-fn result_allocation_error(_: std::collections::TryReserveError) -> bumbledb::Error {
-    result_work_error(bumbledb::work::WorkError::Allocation)
-}
-
 /// Collection reserves its known row count. Page delivery grows only its
 /// bounded batch; neither path materializes another Answers.
 pub(crate) fn result_rows(
     work: &bumbledb::work::WorkContext,
     capacity: usize,
-) -> Result<crate::runtime::QueuedOutput, bumbledb::Error> {
-    work.checkpoint().map_err(result_work_error)?;
-    let mut rows = Vec::new();
-    rows.try_reserve_exact(capacity)
-        .map_err(result_allocation_error)?;
-    Ok(crate::runtime::QueuedOutput { rows })
+) -> Result<crate::runtime::QueuedOutput, RuntimeError> {
+    work.checkpoint()?;
+    Ok(crate::runtime::QueuedOutput {
+        rows: output_vec(capacity)?,
+    })
 }
 
 /// One pass through borrowed values into final worker-to-JavaScript output.
@@ -653,23 +639,37 @@ pub(crate) fn push_result_row(
     work: &bumbledb::work::WorkContext,
     output: &mut crate::runtime::QueuedOutput,
     row: &bumbledb::ResultRow<'_>,
-) -> Result<(), bumbledb::Error> {
-    work.checkpoint().map_err(result_work_error)?;
-    output
-        .rows
-        .try_reserve(1)
-        .map_err(result_allocation_error)?;
-    let mut values = Vec::new();
-    values
-        .try_reserve_exact(row.arity())
-        .map_err(result_allocation_error)?;
+) -> Result<(), RuntimeError> {
+    work.checkpoint()?;
+    output.rows.try_reserve(1).map_err(allocation_error)?;
+    let mut values = output_vec(row.arity())?;
     for value in row.values() {
-        work.checkpoint().map_err(result_work_error)?;
+        work.checkpoint()?;
         values.push(value_out_from_answer(value));
     }
-    work.checkpoint().map_err(result_work_error)?;
+    work.checkpoint()?;
     output.rows.push(values);
     Ok(())
+}
+
+/// Run an engine row visit whose visitor can fail with a bridge error: the
+/// first such error stops the visit and is the result.
+pub(crate) fn visit_with<T>(
+    visit: impl FnOnce(
+        &mut dyn FnMut(Result<(), RuntimeError>) -> bumbledb::Result<()>,
+    ) -> bumbledb::Result<T>,
+) -> Result<T, RuntimeError> {
+    let mut failure = None;
+    let visited = visit(&mut |outcome| {
+        outcome.map_err(|error| {
+            failure = Some(error);
+            bumbledb::Error::Closed
+        })
+    });
+    match (failure, visited) {
+        (Some(error), _) => Err(error),
+        (None, visited) => visited.map_err(|error| crate::runtime::session::engine_error(&error)),
+    }
 }
 
 /// One named cell of a rendered fact or closed row.

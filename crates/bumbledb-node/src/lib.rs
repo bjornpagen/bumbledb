@@ -19,7 +19,6 @@ mod runtime;
 pub mod runtime_wire;
 pub mod schema;
 pub use runtime::publication::runtime_arm_publication_cancel;
-mod tags;
 
 use marshal::{OwnedParam, ViolationOut};
 
@@ -27,9 +26,9 @@ use marshal::{OwnedParam, ViolationOut};
 #[must_use]
 pub fn engine_version() -> String {
     format!(
-        "bumbledb-node {} (bumbledb storage format v{})",
+        "bumbledb-node {} (bumbledb layout v{})",
         env!("CARGO_PKG_VERSION"),
-        bumbledb::STORAGE_FORMAT_VERSION
+        bumbledb::host::LAYOUT
     )
 }
 
