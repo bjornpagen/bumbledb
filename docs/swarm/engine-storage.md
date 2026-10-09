@@ -144,6 +144,12 @@ C17, G2 (engine), L (code).
   `Ok(..?)` (storage returns `Error` directly). These are the only `-D warnings` findings in
   `-p bumbledb --all-targets` at that commit.
 
+- **engine-query (C10, one line, works at HEAD now):** `plan/fj/tests/distinct_proof.rs:492-534`
+  calls `judge_final_state`; call `judge_complete` (same arguments) instead. C10 keeps two judge
+  entry points, `judge_complete` and `judge_incremental`; `judge_final_state` goes once your test
+  stops naming it. Judgments then return `bumbledb::Result<Judgment>`, so `.expect(..)` still
+  compiles.
+
 - **consolidator (bridge, optional):** `bumbledb-node/src/schema.rs::schema_diagnostic` has the
   descriptor at hand; `error.named(descriptor).to_string()` gives the message with declared names
   instead of ids (the statement is cited separately already).
