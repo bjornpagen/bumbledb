@@ -18,7 +18,13 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 | E2 `micro --levels all|a,b` (every kernel at every level vs its scalar twin via `bumbledb::kernels`, outputs checked bit-identical before timing) and the `float_stats` world (8-field `Reading`, 1% NaN; global and grouped SUM/AVG/MIN/MAX at 10k groups and one group per row, `v > c`, `qty * price`, `(a - b) / c`), gated against the naive evaluator | landed |
 | Adapt: E5 (naive and SQLite order F64 like IEEE: NaN unordered; six seeded digests re-blessed), E8 (naive orders an integer against an F64 exactly), ValidationError fold, C17 `disk_size()`, C3/C4 | landed |
 | `BUMBLEDB_DEEP=1` widens the randomized differential sweeps sixteenfold (same seeds, extended) | landed |
-| Adapt: C7, C8, C9, E5 MIN/MAX | as they land |
+| Adapt: C7 (`bumbledb::host`, private `digest`/`store`: the bench hashes with `blake3` directly, `host::LAYOUT` in the corpus digest), C9 (`WriteOutcome` writes, `write_from`, `witness()` without `Result`; one `harness::committed` helper; the differential maps one write outcome for plain and witnessed writes), `verify_store(&WorkContext) -> StoreReport`, C15/C16 (re-pinned corpus digest and ledger fingerprint; the pre-closed-relation fingerprint test is gone) | landed `7f6096205` |
+| E5 MIN/MAX: the naive evaluator and the SQLite translation propagate NaN through F64 MIN and MAX (SQLite: `CASE WHEN MAX(x) = <NaN blob> THEN <NaN blob> ELSE MIN(x) END` unless the column is known non-F64); one naive fold function | landed `49636778b` |
+| D20: every bench store directory is `<name>.bdb` (`db.bdb`, `cal.bdb`, `load.bdb`, `target.bdb`, `naive.bdb`, `tenant-N.bdb`, ...) | landed `1edeb380f` |
+| L: comment pass (216 empty `# Errors`/`# Panics` sections, truncated fragments, module docs at most five lines, ticket references) | landed `18d2ab31f` |
+| `BUMBLEDB_DEEP=1` release run of the whole bench suite green | landed `b27f24add` |
+| E2 check at HEAD: `micro --levels all` (neon here), `micro --levels <name>` refusing an unavailable level by name, and `micro --compare a.json b.json` all run against `bumbledb::kernels` | verified |
+| C8 stage B (`Error::Store` deleted) | nothing to do: the bench names no `StoreError`/`Error::Store` |
 
 ## Layout (crate `bumbledb_bench`)
 
@@ -37,6 +43,8 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
   `docs/perf/runs/2.0.0/micro.json`); `micro.md` lands beside it. JSON:
   `{provenance, seed, elements, float_rows, samples, kernels: [{kernel, level, level_p50_ns,
   twin_p50_ns, speedup}], float_stats: [{family, about, answers, ours}]}`. Non-asserting.
+- `micro --levels all` runs every level `bumbledb::kernels::SimdLevel::available()` reports
+  (the detected level and the lower levels it implies).
 - New: `micro --compare OLD NEW` prints both reports side by side as Markdown (per kernel × level:
   old/new p50, change, old/new speedup; per float family: old/new p50, change). For ci's
   `bump-toolchain.sh`: `micro --levels all --out <file.json>` on each nightly, then
@@ -60,6 +68,15 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
   `aegis` removed; no features on `bumbledb` in `[dependencies]` or `[dev-dependencies]`.
 
 ## Requests to other lanes
+
+### engine-storage, engine-query
+
+- At `4460daaa8` (C5 query side) the `bumbledb` lib has dead code that `-D warnings` turns into
+  errors for every dependent crate's clippy gate: `encoding.rs` (`FactView`, `FactLayout::encoded`,
+  `layout`, unused `decode` re-exports), `encoding/decode.rs` (most decoders, the
+  `InvalidBool`/`NonCanonicalF64`/... variants), `canonical.rs::decode_sealed`,
+  `api/prepared/source.rs::work_error`. The bench itself is lint-clean (`cargo clippy -p
+  bumbledb-bench --all-targets` reports nothing in `crates/bumbledb-bench`).
 
 ### engine-storage
 
