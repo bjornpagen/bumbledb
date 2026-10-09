@@ -33,10 +33,14 @@ pub(crate) fn parse_input_rows(
     let roster = schema
         .rosters
         .get(relation as usize)
-        .ok_or(RuntimeError::InvalidArgument)?;
+        .ok_or_else(|| crate::marshal::err(format!("unknown relation id {relation}")))?;
     let arity = roster.fields.len();
     if u128::from(stated) * (arity as u128) != u128::from(cells.len()) {
-        return Err(RuntimeError::InvalidArgument);
+        return Err(crate::marshal::err(format!(
+            "relation `{}`: {stated} rows of {arity} cells, got {} cells",
+            roster.name,
+            cells.len()
+        )));
     }
     context.checkpoint()?;
     if arity == 0 {
@@ -53,15 +57,13 @@ pub(crate) fn parse_input_rows(
         let mut row = output_vec(arity)?;
         for (offset, field) in roster.fields.iter().enumerate() {
             let index = start + u32::try_from(offset).expect("field count fits u32");
-            let value = crate::marshal::req_at::<napi::Unknown>(cells, index, "row cells")
-                .map_err(|_| RuntimeError::InvalidArgument)?;
+            let value = crate::marshal::req_at::<napi::Unknown>(cells, index, "row cells")?;
             let value = crate::marshal::schema_value_in(
                 &field.value_type,
                 &value,
                 &roster.name,
                 &field.name,
-            )
-            .map_err(|_| RuntimeError::InvalidArgument)?;
+            )?;
             row.push(value);
         }
         context.checkpoint()?;
