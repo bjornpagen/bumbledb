@@ -1,15 +1,16 @@
-//! Checked-in semantic cases generated from production execution and
-//! independent evaluators. Replay reconstructs each case from its recorded
-//! provenance, compares native and oracle results, and checks exact JSON
-//! bytes against fixtures/conformance.
+//! Semantic cases on which the engine and the independent evaluators agree.
+//! Curated cases are checked in as JSON and replay byte-identical; seeded cases
+//! are regenerated from their seeds and checked against recorded BLAKE3
+//! digests. `BUMBLEDB_BLESS=1` rewrites both from the current generators.
 pub mod complete;
 pub mod judgment;
 pub mod reach;
+#[cfg(test)]
+mod structural;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use bumbledb::schema::ValueType;
 use bumbledb::{
@@ -19,7 +20,7 @@ use bumbledb::{
 };
 
 use crate::oracle::differential::{self, Answers};
-use crate::oracle::naive::{Delta, NaiveDb, ParamValue, Tuple};
+use crate::oracle::naive::{Delta, NaiveDb, ParamValue, StepBudget, Tuple};
 use crate::oracle::querygen::{self, ParamDraw, target};
 use crate::worlds::corpus_gen::{GenConfig, Rng, Scale};
 
@@ -29,7 +30,9 @@ pub const SEEDED_CASES: usize = 200;
 
 pub const CASE_SEED_BASE: u64 = 0x0013_0000;
 
-const NAIVE_BUDGET_MS: u128 = 25;
+/// Generated cases whose naive evaluation visits more facts than this are
+/// excluded, so the roster is a function of the seeds alone.
+const NAIVE_BUDGET: StepBudget = StepBudget(200_000);
 
 const MAX_ANSWER_ROWS: usize = 512;
 
@@ -43,7 +46,7 @@ pub struct Report {
 
     pub excluded_engine_error: u64,
 
-    pub excluded_slow: u64,
+    pub excluded_over_budget: u64,
 
     pub excluded_wide: u64,
 
@@ -61,13 +64,13 @@ impl Report {
     pub fn coverage_line(&self) -> String {
         format!(
             "conformance coverage: {}/{} expressible (excluded: {} unresolved-literal, \
-             {} engine-error, {} slow, {} wide, {} computed-head, \
+             {} engine-error, {} over-budget, {} wide, {} computed-head, \
              {} unrepresentable-value)",
             self.written,
             self.attempted,
             self.excluded_unresolved,
             self.excluded_engine_error,
-            self.excluded_slow,
+            self.excluded_over_budget,
             self.excluded_wide,
             self.excluded_compute,
             self.excluded_value,
@@ -1126,15 +1129,17 @@ fn one_case(
     report: &mut Report,
 ) -> Option<String> {
     report.attempted += 1;
-    let (answers, naive_ms) = execute_case(world, name, query, params);
-    let Some(answers) = answers else {
-        report.excluded_engine_error += 1;
-        return None;
+    let answers = match execute_case(world, name, query, params) {
+        Execution::Answered(answers) => answers,
+        Execution::Refused => {
+            report.excluded_engine_error += 1;
+            return None;
+        }
+        Execution::OverBudget => {
+            report.excluded_over_budget += 1;
+            return None;
+        }
     };
-    if naive_ms > NAIVE_BUDGET_MS {
-        report.excluded_slow += 1;
-        return None;
-    }
     if answers.len() > MAX_ANSWER_ROWS {
         report.excluded_wide += 1;
         return None;
@@ -1159,29 +1164,32 @@ fn one_case(
     }
 }
 
+enum Execution {
+    Answered(BTreeSet<Tuple>),
+    /// Both engines refuse at runtime (overflow or a scalar refusal).
+    Refused,
+    /// The naive evaluation exceeds [`NAIVE_BUDGET`].
+    OverBudget,
+}
+
 /// # Panics
-fn execute_case(
-    world: &World,
-    name: &str,
-    query: &Query,
-    params: &[ParamValue],
-) -> (Option<BTreeSet<Tuple>>, u128) {
-    let started = Instant::now();
-    let model = match world.naive.query(query, params) {
-        Ok(rows) => Answers::Ok(rows),
-        Err(crate::oracle::naive::query::QueryError::Overflow { .. }) => Answers::Overflow,
-        Err(crate::oracle::naive::query::QueryError::Scalar { .. }) => Answers::Scalar,
+/// When the engine and the naive evaluator disagree.
+fn execute_case(world: &World, name: &str, query: &Query, params: &[ParamValue]) -> Execution {
+    use crate::oracle::naive::query::QueryError;
+    let model = match world.naive.query_within(query, params, NAIVE_BUDGET) {
+        Err(crate::oracle::naive::Exhausted) => return Execution::OverBudget,
+        Ok(Ok(rows)) => Answers::Ok(rows),
+        Ok(Err(QueryError::Overflow { .. })) => Answers::Overflow,
+        Ok(Err(QueryError::Scalar { .. })) => Answers::Scalar,
     };
-    let naive_ms = started.elapsed().as_millis();
     let engine = differential::engine_query(&world.db, query, params);
     assert_eq!(
         engine, model,
-        "TROPHY (engine vs naive) on conformance case {name}: triage per the fuzzing \
-         charter\n{query:#?}\nparams: {params:#?}"
+        "engine and naive disagree on conformance case {name}\n{query:#?}\nparams: {params:#?}"
     );
     match engine {
-        Answers::Ok(answers) => (Some(answers), naive_ms),
-        Answers::Overflow | Answers::Scalar => (None, naive_ms),
+        Answers::Ok(answers) => Execution::Answered(answers),
+        Answers::Overflow | Answers::Scalar => Execution::Refused,
     }
 }
 
@@ -1425,35 +1433,51 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
     ]
 }
 
+/// One generated case: its fixture name, the seed it regenerates from, and its
+/// rendered document.
+pub struct SeededCase {
+    pub name: String,
+    pub case_seed: u64,
+    pub document: String,
+}
+
+/// The curated query cases, in fixture order.
+/// # Panics
+/// When a curated case falls outside the interchange format or the budget.
+#[must_use]
+pub fn hand_corpus() -> Vec<(String, String)> {
+    let world = build_world(WORLD_SEEDS[0]);
+    let mut report = Report::default();
+    hand_cases(world.cfg)
+        .into_iter()
+        .map(|case| {
+            let provenance = format!(
+                "{{\"hand\":\"{}\",\"world_seed\":{}}}",
+                case.name, WORLD_SEEDS[0]
+            );
+            let document = one_case(
+                &world,
+                case.name,
+                &provenance,
+                &case.query,
+                &case.params,
+                &mut report,
+            )
+            .unwrap_or_else(|| panic!("hand case {} must be expressible", case.name));
+            (format!("{}.json", case.name), document)
+        })
+        .collect()
+}
+
+/// The first [`SEEDED_CASES`] expressible random queries, alternating worlds.
 /// # Panics
 #[must_use]
-pub fn generate_corpus() -> (Report, Vec<(String, String)>) {
+pub fn seeded_corpus() -> (Report, Vec<SeededCase>) {
     let mut report = Report::default();
-    let mut cases: Vec<(String, String)> = Vec::new();
+    let mut cases = Vec::with_capacity(SEEDED_CASES);
     let worlds: Vec<World> = WORLD_SEEDS.iter().map(|seed| build_world(*seed)).collect();
-
-    for case in hand_cases(worlds[0].cfg) {
-        let provenance = format!(
-            "{{\"hand\":\"{}\",\"world_seed\":{}}}",
-            case.name, WORLD_SEEDS[0]
-        );
-        if let Some(document) = one_case(
-            &worlds[0],
-            case.name,
-            &provenance,
-            &case.query,
-            &case.params,
-            &mut report,
-        ) {
-            cases.push((format!("{}.json", case.name), document));
-        } else {
-            panic!("hand case {} must be expressible", case.name);
-        }
-    }
-
     let mut attempt = 0u64;
-    let mut written = 0usize;
-    while written < SEEDED_CASES {
+    while cases.len() < SEEDED_CASES {
         let world = &worlds[usize::try_from(attempt).expect("attempts fit usize") % worlds.len()];
         let case_seed = CASE_SEED_BASE + attempt;
         attempt += 1;
@@ -1462,79 +1486,72 @@ pub fn generate_corpus() -> (Report, Vec<(String, String)>) {
         let draws = querygen::params_for(&query, &mut rng, world.cfg);
         let draw = usize::try_from(case_seed).expect("seed fits usize") % draws.len();
         let params = positional(&draws[draw]);
-        let name = format!("seeded-{written:04}");
+        let name = format!("seeded-{:04}", cases.len());
         let provenance = format!(
             "{{\"world_seed\":{},\"case_seed\":{case_seed},\"draw\":{draw}}}",
             world.cfg.seed
         );
         if let Some(document) = one_case(world, &name, &provenance, &query, &params, &mut report) {
-            cases.push((format!("{name}.json"), document));
-            written += 1;
+            cases.push(SeededCase {
+                name,
+                case_seed,
+                document,
+            });
         }
     }
     (report, cases)
 }
 
 /// The checked-in corpus directory (`crates/bumbledb-bench/fixtures/conformance`).
-/// # Panics
 #[must_use]
 pub fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/conformance")
 }
 
-/// # Panics
-#[must_use = "the coverage report is the recorded number"]
-pub fn write_corpus(dir: &Path) -> Report {
-    let (report, cases) = generate_corpus();
-    let reach_world = build_world(WORLD_SEEDS[0]);
-    let (reach_report, reach_cases) = reach::generate_reach_corpus(&reach_world);
-    eprintln!("{}", reach_report.coverage_line());
-    std::fs::create_dir_all(dir).expect("create the corpus directory");
-    for entry in std::fs::read_dir(dir).expect("list the corpus directory") {
-        let path = entry.expect("corpus dir entry").path();
-        if path.extension().is_some_and(|ext| ext == "json")
-            && !path
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .is_some_and(manually_authored_case)
-        {
-            std::fs::remove_file(&path).expect("clear a stale corpus case");
-        }
-    }
-    for (name, document) in cases
-        .iter()
-        .chain(&judgment::generate_judgment_corpus())
-        .chain(&complete::generate_complete_corpus())
-        .chain(&reach_cases)
-    {
-        std::fs::write(dir.join(name), document).expect("write a corpus case");
-    }
-    report
+/// Every curated document, keyed by file name.
+#[must_use]
+pub fn curated_corpus() -> Vec<(String, String)> {
+    let mut cases = hand_corpus();
+    cases.extend(judgment::generate_judgment_corpus());
+    cases.extend(complete::generate_complete_corpus());
+    cases.extend(reach::hand_reach_corpus(&build_world(WORLD_SEEDS[0])));
+    cases
 }
 
-// The independent arithmetic/endpoint fixture is checked by bumbledb-log's
-// structural_conformance target. Query regeneration does not own that corpus.
-fn manually_authored_case(name: &str) -> bool {
-    name == "structural-algebra"
+/// Independently owned fixtures that no generator here produces.
+fn independently_owned(name: &str) -> bool {
+    name == "structural-algebra.json"
 }
 
-/// # Panics
-#[must_use = "the case count is the comparator's evidence line"]
-pub fn replay_checked_in_corpus() -> usize {
+fn checked_in_cases() -> Vec<PathBuf> {
     let dir = corpus_dir();
-    let mut worlds: BTreeMap<u64, World> = BTreeMap::new();
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .expect("list the corpus directory (regenerate the corpus first)")
+        .expect("list the corpus directory")
         .map(|entry| entry.expect("corpus dir entry").path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .filter(|path| {
+            path.extension().is_some_and(|ext| ext == "json")
+                && !path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(independently_owned)
+        })
         .collect();
     files.sort();
+    files
+}
+
+/// Replays every checked-in curated case and returns how many matched.
+/// # Panics
+/// When a fresh replay differs from the checked-in bytes.
+#[must_use = "the case count is the comparator's evidence line"]
+pub fn replay_checked_in_corpus() -> usize {
+    let files = checked_in_cases();
     assert!(
         !files.is_empty(),
         "no checked-in conformance cases under {}",
-        dir.display()
+        corpus_dir().display()
     );
-    let mut replayed = 0;
+    let mut worlds: BTreeMap<u64, World> = BTreeMap::new();
     for path in &files {
         let name = path
             .file_stem()
@@ -1542,12 +1559,6 @@ pub fn replay_checked_in_corpus() -> usize {
             .expect("corpus names are UTF-8")
             .to_owned();
         let text = std::fs::read_to_string(path).expect("read a corpus case");
-
-        // Independently owned fixtures have no random-query provenance.
-        if manually_authored_case(&name) {
-            continue;
-        }
-        replayed += 1;
         let document = if name.starts_with("judgment-") {
             judgment::replay_judgment_case(&name)
         } else if name.starts_with("complete-") {
@@ -1555,19 +1566,68 @@ pub fn replay_checked_in_corpus() -> usize {
         } else if name.starts_with("reach-") {
             reach::replay_reach_case(&mut worlds, &name, &text)
         } else {
-            replay_case(&mut worlds, &name, &text)
+            replay_hand_case(&mut worlds, &name, &text)
         };
         assert!(
             text == document,
-            "conformance case {name}: the checked-in file differs from the fresh \
-             engine+naive replay of its provenance — a trophy or a stale corpus; \
-             triage per the fuzzing charter, regenerate only if the generator changed"
+            "conformance case {name}: the checked-in file differs from a fresh replay"
         );
     }
-    replayed
+    files.len()
 }
 
-fn replay_case(worlds: &mut BTreeMap<u64, World>, name: &str, text: &str) -> String {
+/// Rewrites every curated case from the current generators.
+/// # Panics
+pub fn bless_curated_corpus() {
+    let dir = corpus_dir();
+    for path in checked_in_cases() {
+        std::fs::remove_file(&path).expect("clear a curated case");
+    }
+    for (name, document) in curated_corpus() {
+        std::fs::write(dir.join(name), document).expect("write a curated case");
+    }
+}
+
+/// `name case_seed blake3` per line, in roster order.
+#[must_use]
+pub fn digest_lines(cases: &[SeededCase]) -> String {
+    let mut out = String::new();
+    for case in cases {
+        let digest = blake3::hash(case.document.as_bytes());
+        let _ = writeln!(out, "{} {} {}", case.name, case.case_seed, digest.to_hex());
+    }
+    out
+}
+
+/// Checks freshly generated seeded cases against a checked-in digest list, or
+/// rewrites the list under `BUMBLEDB_BLESS=1`.
+/// # Panics
+/// When the roster or any document digest differs.
+pub fn check_digests(file: &str, cases: &[SeededCase]) {
+    let path = corpus_dir().join(file);
+    let fresh = digest_lines(cases);
+    if std::env::var_os("BUMBLEDB_BLESS").is_some() {
+        std::fs::write(&path, &fresh).expect("write the digest list");
+    }
+    let recorded =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    for (line, (recorded, fresh)) in recorded.lines().zip(fresh.lines()).enumerate() {
+        assert_eq!(
+            recorded,
+            fresh,
+            "{file} line {}: a seeded case changed; inspect it with \
+             conformance::seeded_corpus before blessing",
+            line + 1
+        );
+    }
+    assert_eq!(
+        recorded.lines().count(),
+        fresh.lines().count(),
+        "{file}: the seeded roster changed length"
+    );
+}
+
+fn replay_hand_case(worlds: &mut BTreeMap<u64, World>, name: &str, text: &str) -> String {
     let parsed = crate::json::parse(text).expect("a corpus case parses as JSON");
     let provenance = parsed
         .get("provenance")
@@ -1576,33 +1636,23 @@ fn replay_case(worlds: &mut BTreeMap<u64, World>, name: &str, text: &str) -> Str
     let world = worlds
         .entry(world_seed)
         .or_insert_with(|| build_world(world_seed));
-    let (query, params, provenance_line) =
-        if provenance.get("hand").and_then(crate::json::Value::as_str) == Some(name) {
-            let case = hand_cases(world.cfg)
-                .into_iter()
-                .find(|case| case.name == name)
-                .unwrap_or_else(|| panic!("unknown hand case {name}: stale corpus"));
-            let line = format!("{{\"hand\":\"{name}\",\"world_seed\":{world_seed}}}");
-            (case.query, case.params, line)
-        } else {
-            let case_seed = read_u64(provenance, "case_seed");
-            let draw = usize::try_from(read_u64(provenance, "draw")).expect("draw fits");
-            let mut rng = Rng::new(case_seed);
-            let query = querygen::random_cq_query(&mut rng, world.cfg);
-            let draws = querygen::params_for(&query, &mut rng, world.cfg);
-            let params = positional(&draws[draw]);
-            let line = format!(
-                "{{\"world_seed\":{world_seed},\"case_seed\":{case_seed},\"draw\":{draw}}}"
-            );
-            (query, params, line)
-        };
-    let (answers, _) = execute_case(world, name, &query, &params);
-    let answers = answers.unwrap_or_else(|| {
-        panic!("conformance case {name}: a runtime error on replay — stale corpus or trophy")
-    });
-    render_case(world, name, &provenance_line, &query, &params, &answers).unwrap_or_else(|why| {
-        panic!("conformance case {name}: inexpressible on replay ({why:?}) — stale corpus")
-    })
+    let case = hand_cases(world.cfg)
+        .into_iter()
+        .find(|case| case.name == name)
+        .unwrap_or_else(|| panic!("unknown hand case {name}"));
+    let provenance_line = format!("{{\"hand\":\"{name}\",\"world_seed\":{world_seed}}}");
+    let Execution::Answered(answers) = execute_case(world, name, &case.query, &case.params) else {
+        panic!("hand case {name} no longer answers within the budget");
+    };
+    render_case(
+        world,
+        name,
+        &provenance_line,
+        &case.query,
+        &case.params,
+        &answers,
+    )
+    .unwrap_or_else(|why| panic!("hand case {name}: inexpressible on replay ({why:?})"))
 }
 
 #[expect(
@@ -1703,42 +1753,31 @@ mod tests {
         );
     }
 
-    /// Regenerates `crates/bumbledb-bench/fixtures/conformance/` in place. Ignored: run it
     #[test]
-    #[ignore = "regenerates the checked-in corpus; run deliberately"]
-    fn regenerate_the_conformance_corpus() {
-        let report = write_corpus(&corpus_dir());
-        eprintln!("{}", report.coverage_line());
-    }
-
-    #[test]
-    #[ignore = "regenerates the checked-in reach cases; run deliberately"]
-    fn regenerate_the_recursive_conformance_corpus() {
-        let report = reach::write_reach_corpus(&corpus_dir());
-        eprintln!("{}", report.coverage_line());
-    }
-
-    #[test]
-    #[ignore = "regenerates the checked-in judgment cases; run deliberately"]
-    fn regenerate_the_judgment_conformance_corpus() {
-        let dir = corpus_dir();
-        for (name, document) in judgment::generate_judgment_corpus() {
-            std::fs::write(dir.join(&name), document).expect("write a judgment case");
+    fn the_curated_corpus_replays_byte_identical() {
+        if std::env::var_os("BUMBLEDB_BLESS").is_some() {
+            bless_curated_corpus();
         }
-    }
-
-    #[test]
-    #[ignore = "regenerates the checked-in complete-admission cases; run deliberately"]
-    fn regenerate_the_complete_admission_corpus() {
-        let dir = corpus_dir();
-        for (name, document) in complete::generate_complete_corpus() {
-            std::fs::write(dir.join(&name), document).expect("write a complete-admission case");
-        }
-    }
-
-    #[test]
-    fn the_corpus_replays_byte_identical_from_its_provenance() {
         let cases = replay_checked_in_corpus();
-        eprintln!("conformance: {cases} checked-in cases replayed byte-identical");
+        assert!(cases > 0);
+    }
+
+    #[test]
+    fn the_seeded_corpus_matches_its_digests() {
+        let (report, cases) = seeded_corpus();
+        assert_eq!(cases.len(), SEEDED_CASES, "{}", report.coverage_line());
+        check_digests("seeded.digests", &cases);
+    }
+
+    #[test]
+    fn the_seeded_reach_corpus_matches_its_digests() {
+        let (report, cases) = reach::seeded_reach_corpus(&build_world(WORLD_SEEDS[0]));
+        assert_eq!(
+            cases.len(),
+            reach::REACH_SEEDED_CASES,
+            "{}",
+            report.coverage_line()
+        );
+        check_digests("reach-seeded.digests", &cases);
     }
 }

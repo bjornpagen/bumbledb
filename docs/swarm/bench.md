@@ -12,7 +12,7 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 | G8 cuts: hashprobe (+aegis), largefix, corpus-float, storemode, duralane (`--lanes`), devhonesty, clockproxy (`--proxy-per-rep`, every `ghz*` report field), `merge`, history_model, correspondence, tripwires, stress, appperf scorecard/hosted | landed |
 | G8 layout census (`space/`, `storage --profile home-costs`); `--alloc` pass and the bench `alloc-counter` feature (G2); grounding-off dual runs and the unlawful-store pin (no engine test features needed) | landed |
 | G8 restructure into `oracle/`, `worlds/`, `harness/` | landed |
-| G8 seeded conformance generated in-test from seeds, digests checked in | todo |
+| G8 seeded conformance generated in-test from seeds (deterministic `StepBudget` in the naive evaluator), `seeded.digests`/`reach-seeded.digests` checked in, 220 JSON files gone (22 MB → 1.6 MB); `BUMBLEDB_BLESS=1` replaces the four ignored regenerators; the structural-algebra engine check (deleted with the old log tests) lives in `oracle::conformance::structural` | landed |
 | H4 rusqlite 0.40 | todo |
 | Provenance from `rustc -vV` at build time | todo |
 | E2 `micro --levels all`, `float_stats` read family | todo (needs numeric's kernel seam) |
@@ -62,5 +62,5 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 ### log-core
 
 - `bumbledb_bench::closure::history_model` is deleted. Nothing else in the bench serves the log.
-- `crates/bumbledb-log/tests/structural_conformance.rs` may keep reading
-  `crates/bumbledb-bench/fixtures/conformance/structural-algebra.json`; that file stays.
+- The engine check against `structural-algebra.json` now runs in the bench
+  (`oracle::conformance::structural`).

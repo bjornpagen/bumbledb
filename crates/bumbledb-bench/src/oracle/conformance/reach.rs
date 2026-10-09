@@ -1,7 +1,6 @@
 //! Recursive-query fixtures are emitted after native execution and the
 //! independent evaluators agree on the canonical answer set.
 use std::collections::BTreeSet;
-use std::time::Instant;
 
 use bumbledb::ir::FindTerm;
 use bumbledb::{AtomSource, InteriorId, Query, Rec, RelationId, Rule, Term, Value};
@@ -11,7 +10,9 @@ use crate::oracle::querygen::{self, target};
 use crate::oracle::sqlite::translate::{Inexpressible, LaneCase, sqlite_expressible, translate};
 use crate::worlds::corpus_gen::Rng;
 
-use super::{MAX_ANSWER_ROWS, NAIVE_BUDGET_MS, World, push_fact, strings_block, world_blocks};
+use super::{
+    MAX_ANSWER_ROWS, NAIVE_BUDGET, SeededCase, World, push_fact, strings_block, world_blocks,
+};
 
 pub const REACH_SEEDED_CASES: usize = 20;
 
@@ -27,7 +28,7 @@ pub struct ReachReport {
 
     pub excluded_fold: u64,
 
-    pub excluded_slow: u64,
+    pub excluded_over_budget: u64,
 
     pub excluded_wide: u64,
 }
@@ -37,12 +38,12 @@ impl ReachReport {
     pub fn coverage_line(&self) -> String {
         format!(
             "conformance reach arm: {}/{} written ({} sqlite-attested; excluded: \
-             {} fold, {} slow, {} wide)",
+             {} fold, {} over-budget, {} wide)",
             self.written,
             self.attempted,
             self.sqlite_attested,
             self.excluded_fold,
-            self.excluded_slow,
+            self.excluded_over_budget,
             self.excluded_wide,
         )
     }
@@ -124,18 +125,13 @@ fn one_reach_case(
         query_mentioned(query)
             .iter()
             .all(|relation| *relation == target::ids::ORG || *relation == target::ids::ORG_PARENT),
-        "reach case {name} leaves the org tree — the corpus fence"
+        "reach case {name} leaves the org tree"
     );
-    let started = Instant::now();
-    let answers = world
-        .naive
-        .query(query, &[])
-        .expect("org-tree queries raise no runtime error");
-    let naive_ms = started.elapsed().as_millis();
-    if naive_ms > NAIVE_BUDGET_MS {
-        report.excluded_slow += 1;
+    let Ok(answers) = world.naive.query_within(query, &[], NAIVE_BUDGET) else {
+        report.excluded_over_budget += 1;
         return None;
-    }
+    };
+    let answers = answers.expect("org-tree queries raise no runtime error");
     if answers.len() > MAX_ANSWER_ROWS {
         report.excluded_wide += 1;
         return None;
@@ -144,16 +140,14 @@ fn one_reach_case(
     assert_eq!(
         engine,
         crate::oracle::differential::Answers::Ok(answers.clone()),
-        "TROPHY (engine vs naive) on reach case {name}: triage per the fuzzing \
-         charter\n{query:#?}"
+        "engine and naive disagree on reach case {name}\n{query:#?}"
     );
     match sqlite_expressible(&LaneCase::Query(query)) {
         Ok(()) => {
             let sqlite = sqlite_answers(world, query);
             assert_eq!(
                 sqlite, answers,
-                "TROPHY (naive vs SQLite) on reach case {name}: triage per the fuzzing \
-                 charter\n{query:#?}"
+                "naive and SQLite disagree on reach case {name}\n{query:#?}"
             );
             report.sqlite_attested += 1;
         }
@@ -272,61 +266,52 @@ fn hand_queries() -> Vec<HandReach> {
     ]
 }
 
+/// The curated recursive cases, in fixture order.
+/// # Panics
+/// When a curated case falls outside the format or the budget.
+#[must_use]
+pub fn hand_reach_corpus(world: &World) -> Vec<(String, String)> {
+    let mut report = ReachReport::default();
+    hand_queries()
+        .into_iter()
+        .map(|hand| {
+            let provenance = format!(
+                "{{\"hand\":\"{}\",\"world_seed\":{}}}",
+                hand.name, world.cfg.seed
+            );
+            let document = one_reach_case(world, hand.name, &provenance, &hand.query, &mut report)
+                .unwrap_or_else(|| panic!("hand query {} must be expressible", hand.name));
+            (format!("{}.json", hand.name), document)
+        })
+        .collect()
+}
+
+/// The first [`REACH_SEEDED_CASES`] expressible random recursive queries.
 /// # Panics
 #[must_use]
-pub fn generate_reach_corpus(world: &World) -> (ReachReport, Vec<(String, String)>) {
+pub fn seeded_reach_corpus(world: &World) -> (ReachReport, Vec<SeededCase>) {
     let mut report = ReachReport::default();
-    let mut cases: Vec<(String, String)> = Vec::new();
-    for hand in hand_queries() {
-        let provenance = format!(
-            "{{\"hand\":\"{}\",\"world_seed\":{}}}",
-            hand.name, world.cfg.seed
-        );
-        let document = one_reach_case(world, hand.name, &provenance, &hand.query, &mut report)
-            .unwrap_or_else(|| panic!("hand query {} must be expressible", hand.name));
-        cases.push((format!("{}.json", hand.name), document));
-    }
+    let mut cases = Vec::with_capacity(REACH_SEEDED_CASES);
     let mut attempt = 0u64;
-    let mut written = 0usize;
-    while written < REACH_SEEDED_CASES {
+    while cases.len() < REACH_SEEDED_CASES {
         let case_seed = REACH_CASE_SEED_BASE + attempt;
         attempt += 1;
         let mut rng = Rng::new(case_seed);
         let (query, variant) = querygen::random_reach_query(&mut rng, world.cfg);
-        let name = format!("reach-seeded-{written:04}");
+        let name = format!("reach-seeded-{:04}", cases.len());
         let provenance = format!(
             "{{\"world_seed\":{},\"case_seed\":{case_seed},\"variant\":\"{variant:?}\"}}",
             world.cfg.seed
         );
         if let Some(document) = one_reach_case(world, &name, &provenance, &query, &mut report) {
-            cases.push((format!("{name}.json"), document));
-            written += 1;
+            cases.push(SeededCase {
+                name,
+                case_seed,
+                document,
+            });
         }
     }
     (report, cases)
-}
-
-/// # Panics
-#[must_use = "the coverage report is the recorded number"]
-pub fn write_reach_corpus(dir: &std::path::Path) -> ReachReport {
-    let world = super::build_world(super::WORLD_SEEDS[0]);
-    let (report, cases) = generate_reach_corpus(&world);
-    std::fs::create_dir_all(dir).expect("create the corpus directory");
-    for entry in std::fs::read_dir(dir).expect("list the corpus directory") {
-        let path = entry.expect("corpus dir entry").path();
-        let stale = path.extension().is_some_and(|ext| ext == "json")
-            && path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("reach-"));
-        if stale {
-            std::fs::remove_file(&path).expect("clear a stale reach case");
-        }
-    }
-    for (name, document) in &cases {
-        std::fs::write(dir.join(name), document).expect("write a reach case");
-    }
-    report
 }
 
 pub(super) fn replay_reach_case(
@@ -342,25 +327,12 @@ pub(super) fn replay_reach_case(
     let world = worlds
         .entry(world_seed)
         .or_insert_with(|| super::build_world(world_seed));
-    let (query, provenance_line) = if provenance.get("hand").and_then(crate::json::Value::as_str)
-        == Some(name)
-    {
-        let hand = hand_queries()
-            .into_iter()
-            .find(|hand| hand.name == name)
-            .unwrap_or_else(|| panic!("unknown hand reach {name}: stale corpus"));
-        let line = format!("{{\"hand\":\"{name}\",\"world_seed\":{world_seed}}}");
-        (hand.query, line)
-    } else {
-        let case_seed = super::read_u64(provenance, "case_seed");
-        let mut rng = Rng::new(case_seed);
-        let (query, variant) = querygen::random_reach_query(&mut rng, world.cfg);
-        let line = format!(
-            "{{\"world_seed\":{world_seed},\"case_seed\":{case_seed},\"variant\":\"{variant:?}\"}}"
-        );
-        (query, line)
-    };
+    let hand = hand_queries()
+        .into_iter()
+        .find(|hand| hand.name == name)
+        .unwrap_or_else(|| panic!("unknown hand reach case {name}"));
+    let provenance_line = format!("{{\"hand\":\"{name}\",\"world_seed\":{world_seed}}}");
     let mut report = ReachReport::default();
-    one_reach_case(world, name, &provenance_line, &query, &mut report)
-        .unwrap_or_else(|| panic!("reach case {name}: excluded on replay — stale corpus or trophy"))
+    one_reach_case(world, name, &provenance_line, &hand.query, &mut report)
+        .unwrap_or_else(|| panic!("reach case {name}: excluded on replay"))
 }

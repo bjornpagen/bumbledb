@@ -6,7 +6,7 @@ mod tuple;
 #[cfg(test)]
 mod tests;
 
-pub use query::ParamValue;
+pub use query::{Exhausted, ParamValue, StepBudget};
 pub use tuple::Tuple;
 
 use std::collections::BTreeSet;

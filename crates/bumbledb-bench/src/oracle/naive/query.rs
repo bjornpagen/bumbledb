@@ -14,6 +14,53 @@ pub enum ParamValue {
     Set(Vec<Value>),
 }
 
+/// A bound on the evaluator's work, counted in facts visited, so whether a
+/// query fits is a property of the query and the data, never of the machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StepBudget(pub u64);
+
+impl StepBudget {
+    pub const UNBOUNDED: Self = Self(u64::MAX);
+}
+
+/// The evaluation visited more facts than its [`StepBudget`] allows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Exhausted;
+
+/// The remaining budget of one evaluation. Once it runs dry every enumeration
+/// stops at once and the evaluation reports [`Exhausted`].
+struct Steps {
+    left: std::cell::Cell<u64>,
+    tripped: std::cell::Cell<bool>,
+}
+
+impl Steps {
+    fn new(budget: StepBudget) -> Self {
+        Self {
+            left: std::cell::Cell::new(budget.0),
+            tripped: std::cell::Cell::new(false),
+        }
+    }
+
+    /// Spends one step; false once the budget is gone.
+    fn take(&self) -> bool {
+        match self.left.get() {
+            0 => {
+                self.tripped.set(true);
+                false
+            }
+            left => {
+                self.left.set(left - 1);
+                true
+            }
+        }
+    }
+
+    fn tripped(&self) -> bool {
+        self.tripped.get()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryError {
     Overflow {
@@ -336,6 +383,8 @@ pub(super) struct DerivedWorld<'a> {
     sets: &'a [BTreeSet<Tuple>],
 
     interval: &'a [Vec<bool>],
+
+    steps: &'a Steps,
 }
 
 enum Src {
@@ -350,6 +399,8 @@ struct FlatAtom {
 
 struct Env<'a> {
     relations: &'a [BTreeSet<Tuple>],
+
+    steps: &'a Steps,
 
     interiors: &'a [BTreeSet<Tuple>],
     atoms: Vec<FlatAtom>,
@@ -372,11 +423,41 @@ impl Env<'_> {
 
 impl NaiveDb {
     /// # Errors
+    /// The query's runtime refusal.
     /// # Panics
     pub fn query(
         &self,
         query: &Query,
         params: &[ParamValue],
+    ) -> Result<BTreeSet<Tuple>, QueryError> {
+        self.query_within(query, params, StepBudget::UNBOUNDED)
+            .expect("an unbounded evaluation never runs dry")
+    }
+
+    /// Evaluates `query` visiting at most `budget` facts.
+    /// # Errors
+    /// [`Exhausted`] when the budget runs dry; otherwise the evaluation's own result.
+    /// # Panics
+    pub fn query_within(
+        &self,
+        query: &Query,
+        params: &[ParamValue],
+        budget: StepBudget,
+    ) -> Result<Result<BTreeSet<Tuple>, QueryError>, Exhausted> {
+        let steps = Steps::new(budget);
+        let result = self.evaluate(query, params, &steps);
+        if steps.tripped() {
+            Err(Exhausted)
+        } else {
+            Ok(result)
+        }
+    }
+
+    fn evaluate(
+        &self,
+        query: &Query,
+        params: &[ParamValue],
+        steps: &Steps,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         let mut sets: Vec<BTreeSet<Tuple>> = Vec::new();
         let mut interval: Vec<Vec<bool>> = Vec::new();
@@ -408,6 +489,7 @@ impl NaiveDb {
             let derived = DerivedWorld {
                 sets: &sets,
                 interval: &interval,
+                steps,
             };
             let head = interior.head();
             let rows = self.rows_for(&head, &interior.rules, params, &derived)?;
@@ -415,11 +497,12 @@ impl NaiveDb {
             sets.push(rows);
         }
         if let Some(rec) = rec {
-            self.rec_lfp(rec, params, &mut sets, &mut interval)?;
+            self.rec_lfp(rec, params, &mut sets, &mut interval, steps)?;
         }
         let derived = DerivedWorld {
             sets: &sets,
             interval: &interval,
+            steps,
         };
         self.rows_for(head, rules, params, &derived)
     }
@@ -431,6 +514,7 @@ impl NaiveDb {
         params: &[ParamValue],
         sets: &mut Vec<BTreeSet<Tuple>>,
         interval: &mut Vec<Vec<bool>>,
+        steps: &Steps,
     ) -> Result<(), QueryError> {
         let table_idx = sets.len();
         let iid = InteriorId(u32::try_from(table_idx).expect("interior id fits u32"));
@@ -444,10 +528,14 @@ impl NaiveDb {
         interval.push(self.seal_intervals(&head, &base, interval));
         sets.push(BTreeSet::new());
         loop {
-            let derived = DerivedWorld { sets, interval };
+            let derived = DerivedWorld {
+                sets,
+                interval,
+                steps,
+            };
             let mut next = self.rows_for(&head, &base, params, &derived)?;
             next.extend(self.rows_for(&head, &step, params, &derived)?);
-            if next == sets[table_idx] {
+            if next == sets[table_idx] || steps.tripped() {
                 break;
             }
             sets[table_idx] = next;
@@ -531,6 +619,7 @@ impl NaiveDb {
         }
         let env = Env {
             relations: &self.relations,
+            steps: derived.steps,
             interiors: derived.sets,
             atoms: rule
                 .atoms
@@ -801,6 +890,9 @@ fn enumerate(
     }
     let atom = &env.atoms[index];
     for fact in env.facts(&atom.src) {
+        if !env.steps.take() {
+            return;
+        }
         let pending_before = pending.len();
         let mut bound_here = Vec::new();
         let mut admitted = true;
@@ -891,7 +983,7 @@ fn leaf_verdict(
         let matched = env
             .facts(&atom.src)
             .iter()
-            .any(|fact| negated_matches(env, atom, fact, assignment));
+            .any(|fact| env.steps.take() && negated_matches(env, atom, fact, assignment));
         if matched {
             return Verdict3::Fails;
         }

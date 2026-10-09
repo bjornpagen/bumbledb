@@ -38,7 +38,7 @@ fn a_thousand_queries_validate_and_translate() {
                     }
                 }
                 Err(crate::oracle::sqlite::translate::Inexpressible::PackAggregate) => {
-                    naive_routed += 1
+                    naive_routed += 1;
                 }
                 Err(other) => panic!("query {i}: unroutable class {other:?}\n{query:#?}"),
             }
