@@ -32,13 +32,13 @@ const get = (key: string): IoRequest => ({
 	id: 1n,
 	bucket: "Log",
 	key,
-	op: { _tag: "Get", target: { _tag: "Memory" } }
+	op: { _tag: "GetMemory" }
 })
 const put = (key: string, text: string): IoRequest => ({
 	id: 2n,
 	bucket: "Log",
 	key,
-	op: { _tag: "PutIfAbsent", body: { _tag: "Bytes", bytes: bytes(text) } }
+	op: { _tag: "PutBytes", bytes: bytes(text) }
 })
 
 test("a failed read is retried until the store answers", async () => {
@@ -68,7 +68,7 @@ test("a create is never retried: its first failure is reported, whether or not i
 
 test("listing or deleting the log bucket is refused without touching the store", async () => {
 	const store = MemStore.make()
-	for (const op of [{ _tag: "List", startAfter: null, maxKeys: 1 }, { _tag: "Delete" }] as const) {
+	for (const op of [{ _tag: "List", maxKeys: 1 }, { _tag: "Delete" }] as const) {
 		const response = await Effect.runPromise(execute(store, { id: 3n, bucket: "Log", key: "log/", op }, options))
 		assert.equal(response.result._tag, "Failed")
 	}

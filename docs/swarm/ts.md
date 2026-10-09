@@ -14,7 +14,7 @@ Owns: `ts/**` (except `ts/src/native/binding.d.ts`), `ts-log/**`, `examples/**`.
 | D17 TS side (sync compile/validate at definition, mirrored checks deleted, diagnostics named) | landed |
 | F7/F8 consumption (generated `binding.d.ts`, JSON inputs, `_tag` outputs) | landed |
 | D6 stores (MemStore with faults, FsStore, S3Store), I/O executor, machine driver | landed |
-| D6/F9 `Database.layer`, `Database.pool`, submit/consistency | waits on bridge hosted verbs over log-core `Machine` |
+| D6/F9 `Database.make/layer/pool`, submit, consistency, migrations on open | landed |
 | D7 migrations + CLI | after D6 |
 | D8 notes | after D6/D7 |
 
@@ -107,6 +107,20 @@ TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `impo
   (`Admitted | Rejected | Moved`); violations are `ViolationOut`; `ChangeRecord.kind` is
   `"Add" | "Remove"`; `DbInspection` is `{ schemaId, generation, diskBytes, retainedOperations }`.
   `DbError.reason` mirrors the addon's `RuntimeError` union; `CloseFailure.report` is `CloseOut`.
+
+- Hosted (`ts/src/database/database.ts`), exported from the package root:
+  - `Database.make({ schema, migrations, store, cache: { directory }, onOpen: "migrate" | "verify", tuning? })`
+    (scoped) and `Database.layer(Database.tag<S>("Key"), options)`; `Database.pool({ ...options,
+    store: (tenant) => ObjectStore, cache: (tenant) => { directory }, idleTimeToLive? })` with
+    `pool.get(tenant)`.
+  - `db.submit(changes, { requestId, precondition? })` -> `SubmitOutcome` =
+    `Decided { receipt } | Refused { refusal }` (the generated `SettledOut` arms);
+    `db.read("cached" | "latest" | { atLeast: seq })` -> scoped `QueryReader` plus `seq`;
+    `db.resolve(requestId)` -> `Option<ReceiptOut>`; `db.head`.
+  - `Migration.make({ id: "NNNN_name", hash: 64 hex, from?, to, populate? })`; relations that keep
+    name and fields are copied by default; `populate({ from: QueryReader<From>, into: ChangeDraft<To> })`
+    adds rows. `onOpen: "verify"` fails with `DbError` reason `Engine { kind: "MigrationPending" }`.
+  - `RequestId` (32 hex digits) and `Database.requestId()`.
 
 ### For ci
 - `examples/consumers/{log-ts,native-ledger}` are deleted (they used bumbledb-log).

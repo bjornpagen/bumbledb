@@ -261,6 +261,22 @@ class SnapshotLive<S extends AnySchema> implements Snapshot<S> {
 	}
 }
 
+/** A snapshot `start` pins, read through `theory` and released by the current scope. */
+function scopedSnapshot<S extends AnySchema>(
+	operation: string,
+	theory: S,
+	start: Start
+): Effect.Effect<Snapshot<S>, DbError, Scope.Scope> {
+	return Effect.map(
+		scoped(
+			"Snapshot.release",
+			call(operation, start, addon.runtimeSnapshotTake),
+			(opened) => (done) => addon.runtimeSnapshotClose(opened.snapshot, done)
+		),
+		(opened): Snapshot<S> => new SnapshotLive(theory, opened.snapshot, Object.freeze(opened.witness))
+	)
+}
+
 class DbLive<S extends AnySchema> implements Db<S> {
 	readonly #theory: S
 	readonly #handle: DbRef
@@ -273,16 +289,10 @@ class DbLive<S extends AnySchema> implements Db<S> {
 	}
 
 	snapshot(): Effect.Effect<Snapshot<S>, DbError, Scope.Scope> {
-		const theory = this.#theory
 		const handle = this.#handle
-		return Effect.map(
-			scoped(
-				"Snapshot.release",
-				call("Db.snapshot", (done) => addon.runtimeDbSnapshot(handle, done), addon.runtimeSnapshotTake),
-				(opened) => (done) => addon.runtimeSnapshotClose(opened.snapshot, done)
-			),
-			(opened): Snapshot<S> => new SnapshotLive(theory, opened.snapshot, Object.freeze(opened.witness))
-		).pipe(Effect.withSpan("Db.snapshot"))
+		return scopedSnapshot("Db.snapshot", this.#theory, (done) => addon.runtimeDbSnapshot(handle, done)).pipe(
+			Effect.withSpan("Db.snapshot")
+		)
 	}
 
 	apply(changes: ChangeSet<S>, expected?: Witness): Effect.Effect<ApplyOutcome, DbError> {
@@ -381,4 +391,4 @@ const Db = Object.freeze({
 
 export type { ApplyOutcome, JudgeOutcome } from "./native/binding.d.ts"
 export type { DbInspection, PreparedQuery, QueryReader, Snapshot, Witness }
-export { Db }
+export { Db, scopedSnapshot }

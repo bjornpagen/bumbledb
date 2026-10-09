@@ -40,6 +40,17 @@ export {
 	rowShape
 } from "./codec.ts"
 export type { SchemaId } from "./compile.ts"
+export type {
+	Consistency,
+	DatabaseOptions,
+	DatabasePool,
+	DatabaseReader,
+	PoolOptions,
+	SubmitOptions,
+	SubmitOutcome,
+	Tuning
+} from "./database/database.ts"
+export { Database, RequestId } from "./database/database.ts"
 export { FsStore } from "./database/fs.ts"
 export type {
 	Body,
@@ -55,6 +66,8 @@ export type {
 } from "./database/io.ts"
 export type { Fault, MemStoreOptions } from "./database/mem.ts"
 export { MemStore } from "./database/mem.ts"
+export type { AnyMigration, Migrations, Populate } from "./database/migration.ts"
+export { Migration } from "./database/migration.ts"
 export type { S3StoreOptions } from "./database/s3.ts"
 export { S3Store } from "./database/s3.ts"
 export type { CloseReport, OutstandingWork } from "./errors.ts"
@@ -106,7 +119,17 @@ export type {
 export { bool, bytes, f64, i64, interval, str, u64, uuid } from "./fields.ts"
 export type { Same, SameLen } from "./judgment.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "./law.ts"
-export type { FactOut, ViolationOut as Violation } from "./native/binding.d.ts"
+export type {
+	EvidenceOut,
+	FactOut,
+	HeadOut,
+	MigrationOut,
+	OutcomeOut,
+	ReceiptOut,
+	RefusalOut,
+	SettledOut,
+	ViolationOut as Violation
+} from "./native/binding.d.ts"
 export type { FindColumn } from "./query/atom.ts"
 export { ALLEN } from "./query/atom.ts"
 export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode } from "./query/compute.ts"

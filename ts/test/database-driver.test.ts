@@ -33,13 +33,13 @@ function fakeLog(): MachinePort<Submit, Settled> {
 			id: ioId,
 			bucket: "Log",
 			key: seqKey(state.seq),
-			op: { _tag: "PutIfAbsent", body: { _tag: "Bytes", bytes: state.bytes } }
+			op: { _tag: "PutBytes", bytes: state.bytes }
 		}
 	}
 	const getFor = (ticket: bigint, seq: number): IoRequest => {
 		ioId += 1n
 		inFlight.set(ioId, { ticket, verb: "get" })
-		return { id: ioId, bucket: "Log", key: seqKey(seq), op: { _tag: "Get", target: { _tag: "Memory" } } }
+		return { id: ioId, bucket: "Log", key: seqKey(seq), op: { _tag: "GetMemory" } }
 	}
 	const decide = (ticket: bigint, seq: number): Step<Settled> => {
 		open.delete(ticket)

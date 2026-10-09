@@ -7,9 +7,13 @@
 import type { Duration } from "effect"
 import { Effect, Schedule } from "effect"
 import { DbError } from "../errors.ts"
+import type { BucketOut, IoRequestOut } from "../native/binding.d.ts"
 
 /** `Log` is the commit log (`log/`, an S3 Express directory bucket); `Checkpoints` holds `ckpt/` and `mig/`. */
-type Bucket = "Log" | "Checkpoints"
+type Bucket = BucketOut
+
+/** One request from the machine. `key` is relative to the database prefix. */
+type IoRequest = IoRequestOut
 
 /** Unix milliseconds on the store's clock. */
 type Millis = bigint
@@ -19,20 +23,6 @@ type Target = { readonly _tag: "Memory" } | { readonly _tag: "File"; readonly pa
 
 /** What a create-only PUT uploads: bytes in memory, or a local file. */
 type Body = { readonly _tag: "Bytes"; readonly bytes: Uint8Array } | { readonly _tag: "File"; readonly path: string }
-
-type Op =
-	| { readonly _tag: "Get"; readonly target: Target }
-	| { readonly _tag: "PutIfAbsent"; readonly body: Body }
-	| { readonly _tag: "List"; readonly startAfter: string | null; readonly maxKeys: number }
-	| { readonly _tag: "Delete" }
-
-/** One request from the machine. `key` is relative to the database prefix. */
-interface IoRequest {
-	readonly id: bigint
-	readonly bucket: Bucket
-	readonly key: string
-	readonly op: Op
-}
 
 type Fetched =
 	| { readonly _tag: "Body"; readonly bytes: Uint8Array; readonly lastModified: Millis }
@@ -94,12 +84,16 @@ function refused(request: IoRequest): Effect.Effect<never, DbError> {
 function dispatch(store: ObjectStore, request: IoRequest): Effect.Effect<Reply<IoResult>, DbError> {
 	const { bucket, key, op } = request
 	switch (op._tag) {
-		case "Get":
-			return store.get(bucket, key, op.target)
-		case "PutIfAbsent":
-			return store.putIfAbsent(bucket, key, op.body)
+		case "GetMemory":
+			return store.get(bucket, key, { _tag: "Memory" })
+		case "GetFile":
+			return store.get(bucket, key, { _tag: "File", path: op.path })
+		case "PutBytes":
+			return store.putIfAbsent(bucket, key, { _tag: "Bytes", bytes: op.bytes })
+		case "PutFile":
+			return store.putIfAbsent(bucket, key, { _tag: "File", path: op.path })
 		case "List":
-			return bucket === "Checkpoints" ? store.list(key, op.startAfter, op.maxKeys) : refused(request)
+			return bucket === "Checkpoints" ? store.list(key, op.startAfter ?? null, op.maxKeys) : refused(request)
 		case "Delete":
 			return bucket === "Checkpoints" ? store.delete(key) : refused(request)
 	}
@@ -112,7 +106,8 @@ function execute(
 	options: ExecutorOptions = defaultExecutorOptions
 ): Effect.Effect<IoResponse> {
 	const once = Effect.timeout(dispatch(store, request), options.timeout)
-	const attempts = request.op._tag === "PutIfAbsent" ? once : Effect.retry(once, options.readRetry)
+	const write = request.op._tag === "PutBytes" || request.op._tag === "PutFile"
+	const attempts = write ? once : Effect.retry(once, options.readRetry)
 	return attempts.pipe(
 		Effect.map((reply): IoResponse => ({ id: request.id, date: reply.date, result: reply.result })),
 		Effect.catch(() => Effect.succeed<IoResponse>({ id: request.id, date: null, result: { _tag: "Failed" } }))
@@ -132,7 +127,6 @@ export type {
 	Listed,
 	Millis,
 	ObjectStore,
-	Op,
 	Reply,
 	Target
 }
