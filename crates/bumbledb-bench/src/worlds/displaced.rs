@@ -94,34 +94,7 @@ impl DispSizes {
             },
         }
     }
-
-    #[must_use]
-    pub fn hub_image_bytes(&self) -> u64 {
-        self.hubs * 2 * 8
-    }
 }
-
-/// The bytes a hash map sized for `positions` grows to once `distinct` keys
-/// land: the initial guess from `positions` (distinct keys are unknown before
-/// the pass), then rehash-doubling at a 5/16 load bound.
-#[must_use]
-pub fn forced_spoke_map_bytes(positions: u64, distinct: u64) -> u64 {
-    let count = usize::try_from(positions).expect("64-bit usize");
-    let landed = usize::try_from(distinct).expect("64-bit usize");
-    let guess = (count / 8).max(16).min(count.max(1) * 2);
-    let mut nbuckets = (guess * 5 / 16).max(1).next_power_of_two();
-    while (landed + 1) * 5 > nbuckets * 16 {
-        nbuckets *= 2;
-    }
-    let ctrl = nbuckets * 8;
-    let buckets = nbuckets * (8 + 8) * 8;
-    u64::try_from(ctrl + buckets).expect("fits u64")
-}
-
-/// Positions in the forced spoke map: `1 − e^-2` occupancy.
-pub const FORCED_MAP_POSITIONS: u64 = 1 << 20;
-
-pub const FORCED_MAP_DISTINCT: u64 = 453_241;
 
 pub fn relation_rows(
     sizes: DispSizes,
@@ -224,54 +197,53 @@ pub struct DisplacedFamily {
     pub query: fn() -> Query,
 
     pub displace_mib: u64,
-
-    pub about: &'static str,
 }
 
 #[must_use]
 pub fn all() -> &'static [DisplacedFamily] {
     &[
+        // 2^19 hub-side probes per pass into the ~34 MiB spoke map: the
+        // undisplaced control (itself DRAM-tier).
         DisplacedFamily {
             name: "disp_probe",
             kind: Kind::Report,
             query: probe_query,
             displace_mib: 0,
-            about: "2^19 hub-side probes/pass into the ~34 MiB forced spoke map — undisplaced control (itself DRAM-tier)",
         },
+        // The probe pass with 24 MiB foreign streaming between passes (SLC-tier displaced).
         DisplacedFamily {
             name: "disp_probe_d24",
             kind: Kind::Report,
             query: probe_query,
             displace_mib: 24,
-            about: "the probe pass with 24 MiB foreign streaming between passes (SLC-tier displaced)",
         },
+        // The probe pass with 96 MiB foreign streaming between passes (DRAM-tier displaced).
         DisplacedFamily {
             name: "disp_probe_d96",
             kind: Kind::Report,
             query: probe_query,
             displace_mib: 96,
-            about: "the probe pass with 96 MiB foreign streaming between passes (DRAM-tier displaced)",
         },
+        // The 16 MiB two-column scan fold: the stream-shaped resident control.
         DisplacedFamily {
             name: "disp_stream",
             kind: Kind::Report,
             query: stream_query,
             displace_mib: 0,
-            about: "the 16 MiB two-column scan fold — stream-shaped resident control",
         },
+        // The scan pass with 24 MiB foreign streaming between passes.
         DisplacedFamily {
             name: "disp_stream_d24",
             kind: Kind::Report,
             query: stream_query,
             displace_mib: 24,
-            about: "the scan pass with 24 MiB foreign streaming between passes",
         },
+        // The scan pass with 96 MiB foreign streaming between passes.
         DisplacedFamily {
             name: "disp_stream_d96",
             kind: Kind::Report,
             query: stream_query,
             displace_mib: 96,
-            about: "the scan pass with 96 MiB foreign streaming between passes",
         },
     ]
 }

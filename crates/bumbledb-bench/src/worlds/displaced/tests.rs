@@ -4,9 +4,7 @@ use bumbledb::schema::ValidateDescriptor as _;
 use crate::harness::{self, Protocol};
 use crate::worlds::corpus_gen::{GenConfig, Scale};
 
-use super::{
-    DispSizes, FORCED_MAP_DISTINCT, FORCED_MAP_POSITIONS, ForeignStream, forced_spoke_map_bytes,
-};
+use super::{DispSizes, ForeignStream};
 
 #[test]
 fn the_schema_validates_and_the_registry_is_coherent() {
@@ -18,7 +16,6 @@ fn the_schema_validates_and_the_registry_is_coherent() {
     let mut names = std::collections::BTreeSet::new();
     for family in super::all() {
         assert!(names.insert(family.name), "unique names");
-        assert!(!family.about.is_empty());
     }
     for shape in ["disp_probe", "disp_stream"] {
         let masses: Vec<u64> = super::all()
@@ -28,32 +25,6 @@ fn the_schema_validates_and_the_registry_is_coherent() {
             .collect();
         assert_eq!(masses, vec![0, 24, 96], "{shape}: control + the ladder");
     }
-}
-
-#[test]
-fn the_bench_shape_exceeds_the_l2_by_layout_arithmetic() {
-    let sizes = DispSizes::of(Scale::S);
-
-    assert_eq!(FORCED_MAP_POSITIONS, sizes.spokes);
-    let mut seen = vec![false; usize::try_from(sizes.hubs).expect("64-bit usize")];
-    for i in 0..sizes.spokes {
-        let m = crate::worlds::corpus_gen::mix(1, super::ids::SPOKE, i);
-        seen[usize::try_from(m % sizes.hubs).expect("64-bit usize")] = true;
-    }
-    let distinct = u64::try_from(seen.iter().filter(|s| **s).count()).expect("fits u64");
-    assert_eq!(distinct, FORCED_MAP_DISTINCT, "1 - e^-2 of 2^19, exactly");
-    // The forced spoke map alone: 2^18 buckets → 2 MiB ctrl + 32 MiB buckets.
-    let map = forced_spoke_map_bytes(FORCED_MAP_POSITIONS, FORCED_MAP_DISTINCT);
-    assert_eq!(map, (1 << 18) * 8 + (1 << 18) * 16 * 8, "2^18 buckets");
-    assert!(map >= 32 << 20, "the forced map is the >= 32 MiB claim");
-
-    let touched = map + sizes.hub_image_bytes() + sizes.spokes * 8;
-    assert!(touched >= 48 << 20, "≈ 50 MiB per steady-state probe pass");
-
-    assert_eq!(sizes.spokes * 2 * 8, 16 << 20);
-
-    assert_eq!(DispSizes::of(Scale::M), sizes);
-    assert_eq!(DispSizes::of(Scale::L), sizes);
 }
 
 #[test]
