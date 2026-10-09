@@ -25,9 +25,12 @@ impl ImageCache {
             (RelationSlot::Ordinary(cache), ViewEpoch::Store(version)) => cache
                 .lock()
                 .map
-                .get(&version)
+                .get_mut(&version)
                 .filter(|cached| cached.image.generation().ptr_eq(generation))
-                .map(|cached| Arc::clone(&cached.image)),
+                .map(|cached| {
+                    cached.used = self.budget.tick();
+                    Arc::clone(&cached.image)
+                }),
             (RelationSlot::Ordinary(_), ViewEpoch::Heap(_)) => None,
             (RelationSlot::Closed(_), _) => {
                 unreachable!("Closed slot carries no generation")

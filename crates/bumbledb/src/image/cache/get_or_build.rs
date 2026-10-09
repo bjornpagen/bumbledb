@@ -68,10 +68,11 @@ impl ImageCache {
         generation: &GenerationHandle,
     ) -> Result<Arc<RelationImage>> {
         {
-            let inner = cache.lock();
-            if let Some(cached) = inner.map.get(&version)
+            let mut inner = cache.lock();
+            if let Some(cached) = inner.map.get_mut(&version)
                 && cached.image.generation().ptr_eq(generation)
             {
+                cached.used = self.budget.tick();
                 return Ok(Arc::clone(&cached.image));
             }
         }
@@ -82,25 +83,35 @@ impl ImageCache {
             return Ok(image);
         }
         inner.newest = version;
-        match inner.map.entry(version) {
-            std::collections::hash_map::Entry::Occupied(mut winner) => {
-                if winner.get().image.generation().ptr_eq(generation) {
-                    Ok(Arc::clone(&winner.get().image))
-                } else {
-                    winner.insert(Cached {
-                        image: Arc::clone(&image),
-                    });
-                    Ok(image)
-                }
-            }
-            std::collections::hash_map::Entry::Vacant(slot) => {
-                slot.insert(Cached {
-                    image: Arc::clone(&image),
-                });
-                inner.map.retain(|&v, _| v >= version);
-                Ok(image)
-            }
+        if let Some(winner) = inner.map.get_mut(&version)
+            && winner.image.generation().ptr_eq(generation)
+        {
+            winner.used = self.budget.tick();
+            return Ok(Arc::clone(&winner.image));
         }
+        let budget = &self.budget;
+        inner.map.retain(|&cached_version, cached| {
+            let keep = cached_version > version;
+            if !keep {
+                budget.release(cached.bytes);
+            }
+            keep
+        });
+        let bytes = image.byte_size();
+        if bytes <= budget.cap {
+            budget.admit(bytes);
+            inner.map.insert(
+                version,
+                Cached {
+                    image: Arc::clone(&image),
+                    bytes,
+                    used: budget.tick(),
+                },
+            );
+        }
+        drop(inner);
+        self.evict_to_cap();
+        Ok(image)
     }
 
     fn get_or_synthesize(

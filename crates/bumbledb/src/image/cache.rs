@@ -9,16 +9,12 @@
 //! detaches map membership and rotates the current generation; live owners
 //! keep their exact old meanings.
 //!
-//! Reuse requires both the requested resolver owner and
-//! (relation, relation change version): the store
-//! advances a relation's version exactly when a committed transaction
-//! changed that relation's rows, so a write to relation A never invalidates
-//! relation B's image, and a host-record/attachment-only generation bump
-//! invalidates nothing (PERF-001 / APP-MUTATE — audit-core #1). Rotation
-//! detaches ordinary and closed images alike. Closed rows cannot contain
-//! text, but their shared generation handle must still match the execution
-//! owner and must not permanently retain a retired resolver allocation.
+//! Reuse requires both the requested resolver owner and (relation, relation
+//! change version): a write to relation A never invalidates relation B's
+//! image. Cached ordinary slabs stay under a byte cap, evicting the least
+//! recently used image first; an image larger than the cap is never cached.
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::image::RelationImage;
@@ -38,9 +34,41 @@ mod peek;
 #[cfg(test)]
 mod tests;
 
+/// The default cap on cached image slab bytes: the working set of a small
+/// (512 MB) device, next to LMDB's page cache.
+pub(crate) const DEFAULT_IMAGE_CACHE_BYTES: usize = 128 << 20;
+
 /// Cache membership shares the image's existing owner.
 struct Cached {
     image: Arc<RelationImage>,
+    bytes: usize,
+    /// The budget clock at the last hit or insert.
+    used: u64,
+}
+
+/// Cached slab bytes against their cap, and the clock that orders eviction.
+struct Budget {
+    cap: usize,
+    cached: AtomicUsize,
+    clock: AtomicU64,
+}
+
+impl Budget {
+    fn tick(&self) -> u64 {
+        self.clock.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn admit(&self, bytes: usize) {
+        self.cached.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    fn release(&self, bytes: usize) {
+        self.cached.fetch_sub(bytes, Ordering::Relaxed);
+    }
+
+    fn over(&self) -> bool {
+        self.cached.load(Ordering::Relaxed) > self.cap
+    }
 }
 
 pub(crate) struct VersionCache {
@@ -88,6 +116,7 @@ impl VersionCache {
 pub struct ImageCache {
     slots: Box<[RelationSlot]>,
     protocol: GenerationProtocol,
+    budget: Budget,
 }
 
 impl ImageCache {
@@ -145,10 +174,56 @@ impl ImageCache {
     fn detach_map_entries(&self) {
         for slot in &self.slots {
             match slot {
-                RelationSlot::Ordinary(cache) => cache.lock().map.clear(),
+                RelationSlot::Ordinary(cache) => {
+                    for (_, cached) in cache.lock().map.drain() {
+                        self.budget.release(cached.bytes);
+                    }
+                }
                 RelationSlot::Closed(slot) => {
                     *slot.lock().expect("closed cache mutex") = None;
                 }
+            }
+        }
+    }
+
+    /// Cached ordinary slab bytes.
+    #[cfg(test)]
+    pub(crate) fn cached_bytes(&self) -> usize {
+        self.budget.cached.load(Ordering::Relaxed)
+    }
+
+    /// Evicts least recently used images until the cached bytes fit the cap.
+    /// Locks one slot at a time, so it runs after an insert releases its own.
+    fn evict_to_cap(&self) {
+        while self.budget.over() {
+            let oldest = self
+                .slots
+                .iter()
+                .enumerate()
+                .filter_map(|(index, slot)| match slot {
+                    RelationSlot::Ordinary(cache) => cache
+                        .lock()
+                        .map
+                        .iter()
+                        .map(|(&version, cached)| (cached.used, index, version))
+                        .min(),
+                    RelationSlot::Closed(_) => None,
+                })
+                .min();
+            let Some((used, index, version)) = oldest else {
+                return;
+            };
+            let RelationSlot::Ordinary(cache) = &self.slots[index] else {
+                unreachable!("only ordinary slots hold budgeted images");
+            };
+            let mut inner = cache.lock();
+            if inner
+                .map
+                .get(&version)
+                .is_some_and(|cached| cached.used == used)
+                && let Some(cached) = inner.map.remove(&version)
+            {
+                self.budget.release(cached.bytes);
             }
         }
     }

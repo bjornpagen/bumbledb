@@ -230,9 +230,8 @@ impl RelationImage {
     }
 
     /// Retained word/byte slab capacity, excluding fixed metadata and text.
-    #[cfg(test)]
     #[must_use]
-    pub fn byte_size(&self) -> usize {
+    pub(crate) fn byte_size(&self) -> usize {
         self.words.capacity() * std::mem::size_of::<u64>() + self.bytes.capacity()
     }
 

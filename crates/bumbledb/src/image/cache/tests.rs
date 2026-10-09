@@ -529,3 +529,91 @@ fn numeric_images_survive_clear_and_release_after_the_last_reader() {
     assert!(weak_image.upgrade().is_none());
     assert!(weak_generation.upgrade().is_none());
 }
+
+fn three_relations() -> (Schema, TestSource) {
+    let relation = |name: &str| RelationDescriptor {
+        extension: None,
+        name: name.into(),
+        fields: vec![FieldDescriptor {
+            name: "id".into(),
+            value_type: ValueType::U64,
+        }],
+    };
+    let schema = SchemaDescriptor {
+        relations: vec![relation("A"), relation("B"), relation("C")],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture");
+    let rows = |count: u64| (0..count).map(|i| vec![Value::U64(i)]).collect::<Vec<_>>();
+    let source = TestSource::new(
+        &schema,
+        &[
+            (RelationId(0), rows(40)),
+            (RelationId(1), rows(40)),
+            (RelationId(2), rows(40)),
+        ],
+    );
+    (schema, source)
+}
+
+#[test]
+fn the_byte_cap_evicts_the_least_recently_used_image() {
+    let (schema, fixture) = three_relations();
+    let source = fixture.source();
+    let one = ImageCache::new(&schema)
+        .get_or_build_at(&source, &schema, RelationId(0), generation(1))
+        .expect("build")
+        .byte_size();
+    let cache = ImageCache::with_byte_cap(&schema, 2 * one);
+    let build = |rel: u32| {
+        cache
+            .get_or_build_at(&source, &schema, RelationId(rel), generation(1))
+            .expect("build")
+    };
+    let cached = |rel: u32| {
+        cache
+            .peek_at(RelationId(rel), generation(1), &cache.acquire())
+            .is_some()
+    };
+    build(0);
+    build(1);
+    assert!(cached(0), "A is touched, so B is the least recently used");
+    build(2);
+    assert!(cached(0) && !cached(1) && cached(2));
+    assert_eq!(cache.cached_bytes(), 2 * one);
+    cache.clear();
+    assert_eq!(cache.cached_bytes(), 0);
+}
+
+#[test]
+fn an_image_larger_than_the_cap_is_returned_but_never_cached() {
+    let (schema, fixture) = three_relations();
+    let source = fixture.source();
+    let cache = ImageCache::with_byte_cap(&schema, 1);
+    let image = cache
+        .get_or_build_at(&source, &schema, RelationId(0), generation(1))
+        .expect("build");
+    assert_eq!(image.row_count(), 40);
+    assert!(
+        cache
+            .peek_at(RelationId(0), generation(1), &cache.acquire())
+            .is_none()
+    );
+    assert_eq!(cache.cached_bytes(), 0);
+}
+
+#[test]
+fn a_newer_version_releases_the_bytes_of_the_one_it_retires() {
+    let (schema, fixture) = three_relations();
+    let source = fixture.source();
+    let cache = ImageCache::new(&schema);
+    let old = cache
+        .get_or_build_at(&source, &schema, RelationId(0), generation(1))
+        .expect("build");
+    assert_eq!(cache.cached_bytes(), old.byte_size());
+    let new = cache
+        .get_or_build_at(&source, &schema, RelationId(0), generation(2))
+        .expect("rebuild");
+    assert_eq!(cache.cached_bytes(), new.byte_size());
+}
