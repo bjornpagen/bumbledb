@@ -34,7 +34,6 @@ too_many_lines = "allow"
 [profile.release]
 lto = "fat"
 codegen-units = 1
-opt-level = 3
 
 # Native sampling needs inline frames and source locations, not debug-mode
 # execution. Keep the release optimizer and unwind information unchanged.
@@ -43,3 +42,26 @@ inherits = "release"
 debug = true
 split-debuginfo = "packed"
 strip = "none"
+
+# Test builds in CI: opt-level 1 keeps property and differential sweeps fast to
+# run without release compile times; CI caches gain nothing from incremental.
+[profile.ci]
+inherits = "dev"
+opt-level = 1
+debug = "line-tables-only"
+incremental = false
+
+# Release semantics for release-mode test gates, without the fat-LTO link.
+# Line tables keep a failing gate's backtrace located.
+[profile.gate]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = "line-tables-only"
+
+# Release semantics for the addon built on pull requests, without the fat-LTO
+# link that only shipped artifacts need.
+[profile.addon-ci]
+inherits = "release"
+lto = false
+codegen-units = 16

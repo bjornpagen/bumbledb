@@ -1,25 +1,27 @@
-# nextest runs every unit and integration test in one process pool.
-# cargo test compiles each tests/*.rs as its own binary and runs those
-# binaries one after another.
-#
-# The workspace command:
-#   cargo nextest run --workspace
+# Profiles: default (local), ci (pull requests and main), deep (nightly
+# BUMBLEDB_DEEP sweeps), default-miri (selected automatically by
+# `cargo miri nextest`). Every profile inherits default's settings and overrides.
+
+# Tests named `disk_*` or living in a `disk` module saturate the disk (fsync
+# loops, crash children); two at a time keeps them off each other's latency.
+[test-groups]
+disk = { max-threads = 2 }
 
 [profile.default]
-# One thread per CPU. The win is the shared pool across binaries.
-test-threads = "num-cpus"
-# Run all selected tests, and never convert a flaky first failure into green.
 fail-fast = false
-retries = 0
+slow-timeout = { period = "60s", terminate-after = 5 }
 
-# Multiprocess lanes sit on disk; they outlast nextest's default 60s
-# slow mark. Warn, do not terminate.
-slow-timeout = { period = "180s" }
+[[profile.default.overrides]]
+filter = "test(/(^|::)disk(_|::)/)"
+test-group = "disk"
 
 [profile.ci]
-# Each test has its own process; allocator/FPU/global-state checks do not
-# require serializing unrelated tests. Terminate a genuinely stuck process.
-slow-timeout = { period = "180s", terminate-after = 5 }
+failure-output = "immediate-final"
 
-[profile.ci.junit]
-path = "junit.xml"
+[profile.deep]
+failure-output = "immediate-final"
+slow-timeout = { period = "300s", terminate-after = 6 }
+
+[profile.default-miri]
+failure-output = "immediate-final"
+slow-timeout = { period = "600s", terminate-after = 6 }
