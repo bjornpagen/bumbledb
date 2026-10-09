@@ -218,7 +218,7 @@ pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
          `Inexpressible::PackAggregate`, enumerated, never silently skipped)"
     );
 
-    let naive_dir = cfg.out_dir.join("naive-db");
+    let naive_dir = cfg.out_dir.join("naive.bdb");
     let _ = std::fs::remove_dir_all(&naive_dir);
     let db = Db::create(&naive_dir, Ledger, crate::harness::bench_work())
         .expect("create naive-slice store")

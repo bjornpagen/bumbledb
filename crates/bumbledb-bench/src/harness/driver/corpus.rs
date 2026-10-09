@@ -21,9 +21,9 @@ pub fn corpus_paths(dir: &Path, cfg: GenConfig) -> CorpusPaths {
     let digest = corpus_gen::digest_hex(&corpus_gen::corpus_digest(cfg));
     let root = dir.join(&digest[..16]);
     CorpusPaths {
-        db: root.join("db"),
+        db: root.join("db.bdb"),
         oracle: root.join("oracle.sqlite"),
-        cal_db: root.join("cal-db"),
+        cal_db: root.join("cal.bdb"),
         cal_oracle: root.join("cal-oracle.sqlite"),
         stamp: root.join("verify.stamp"),
         root,
@@ -60,7 +60,7 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
             paths.root.display()
         );
 
-        let load_dir = paths.root.join("db-load");
+        let load_dir = paths.root.join("load.bdb");
         let db = Db::create(&load_dir, Ledger, crate::harness::bench_work())
             .map_err(|e| format!("create db: {e:?}"))?
             .expect("accepted");
@@ -68,10 +68,10 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
         db.compact(&paths.db, crate::harness::bench_work())
             .map_err(|e| format!("compact: {e:?}"))?;
         drop(db);
-        std::fs::remove_dir_all(&load_dir).map_err(|e| format!("remove db-load: {e}"))?;
+        std::fs::remove_dir_all(&load_dir).map_err(|e| format!("remove load.bdb: {e}"))?;
         corpus::load_sqlite(&paths.oracle, cfg).map_err(|e| format!("load sqlite: {e}"))?;
 
-        let cal_load_dir = paths.root.join("cal-db-load");
+        let cal_load_dir = paths.root.join("cal-load.bdb");
         let cal = Db::create(
             &cal_load_dir,
             crate::worlds::calendar::Scheduling,
@@ -84,7 +84,7 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
         cal.compact(&paths.cal_db, crate::harness::bench_work())
             .map_err(|e| format!("compact calendar: {e:?}"))?;
         drop(cal);
-        std::fs::remove_dir_all(&cal_load_dir).map_err(|e| format!("remove cal-db-load: {e}"))?;
+        std::fs::remove_dir_all(&cal_load_dir).map_err(|e| format!("remove cal-load.bdb: {e}"))?;
         crate::worlds::calendar::corpus::load_sqlite(&paths.cal_oracle, cfg)
             .map_err(|e| format!("load calendar sqlite: {e}"))?;
         Ok(())

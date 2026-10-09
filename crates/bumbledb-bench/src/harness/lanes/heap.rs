@@ -233,7 +233,7 @@ pub fn run(args: &HeapArgs) -> Result<i32, String> {
         bumbledb::Admission::Rejected(v) => return Err(format!("rejected: {v}")),
     };
 
-    let publish_dir = scratch.join("from-instance");
+    let publish_dir = scratch.join("from-instance.bdb");
     let publish_start = Instant::now();
     // `publish_ns` prices the durable publish path.
     let db = Db::from_instance(&publish_dir, &heap, crate::harness::bench_work())

@@ -197,7 +197,7 @@ mod tests {
             // Loader parity needs all relations, not a benchmark-sized corpus.
             scale: Scale::Tiny,
         };
-        let db = Db::create(&dir.join("db"), Ledger, crate::harness::bench_work())
+        let db = Db::create(&dir.join("db.bdb"), Ledger, crate::harness::bench_work())
             .expect("create")
             .expect("accepted");
         let ours = load_bumbledb(&db, cfg).expect("bumbledb load");

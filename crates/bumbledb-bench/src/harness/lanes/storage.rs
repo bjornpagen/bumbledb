@@ -630,7 +630,7 @@ mod tests {
     #[test]
     fn disk_size_equals_the_stat_path() {
         let dir = scratch("storage-lane-disksize");
-        let store = dir.join("db");
+        let store = dir.join("db.bdb");
         let db = Db::create(
             &store,
             crate::worlds::ledger::Ledger,

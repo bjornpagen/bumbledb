@@ -41,7 +41,7 @@ pub fn run_with_sql_override(
         cfg.corpus_gen.scale.label()
     );
     let db = Db::create(
-        &cfg.out_dir.join("db"),
+        &cfg.out_dir.join("db.bdb"),
         Ledger,
         crate::harness::bench_work(),
     )
@@ -52,7 +52,7 @@ pub fn run_with_sql_override(
         .expect("load oracle");
     eprintln!("verify: loading the calendar corpus");
     let cal_db = Db::create(
-        &cfg.out_dir.join("cal-db"),
+        &cfg.out_dir.join("cal.bdb"),
         crate::worlds::calendar::Scheduling,
         crate::harness::bench_work(),
     )
@@ -332,7 +332,7 @@ pub fn run_prepared(
     if run.bundles.len() < MAX_BUNDLES && cfg.random_cases > 0 {
         eprintln!("verify: loading the randomized lane's target corpus");
         let (target_db, target_conn) =
-            load_target_stores(&cfg.out_dir.join("target-db"), cfg.corpus_gen);
+            load_target_stores(&cfg.out_dir.join("target.bdb"), cfg.corpus_gen);
         let mut naive_routed = Vec::new();
         run.lane(&target_db, &target_conn, |lane| {
             random_lane(

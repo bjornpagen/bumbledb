@@ -302,7 +302,7 @@ pub fn load_stores(
     cfg: GenConfig,
 ) -> Result<(Db<DisplacedWorld>, rusqlite::Connection), String> {
     let sizes = DispSizes::of(cfg.scale);
-    let db = crate::harness::create_db(&dir.join("db"), DisplacedWorld)?;
+    let db = crate::harness::create_db(&dir.join("db.bdb"), DisplacedWorld)?;
     for rel in [ids::HUB, ids::SPOKE] {
         db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, relation_rows(sizes, cfg.seed, rel))

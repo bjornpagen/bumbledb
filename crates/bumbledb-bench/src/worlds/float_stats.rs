@@ -236,7 +236,7 @@ const CHUNK: u64 = 65_536;
 /// # Errors
 pub fn load(dir: &Path, seed: u64, rows: u64) -> Result<Stores, String> {
     let descriptor = descriptor();
-    let db = harness::create_db(&dir.join("db"), descriptor.clone())?;
+    let db = harness::create_db(&dir.join("db.bdb"), descriptor.clone())?;
     let mut start = 0;
     while start < rows {
         let end = (start + CHUNK).min(rows);

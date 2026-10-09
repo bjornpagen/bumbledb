@@ -10,7 +10,7 @@ use crate::worlds::ledger::{Ledger, schema};
 /// randomized slice must contain at least one gate-bearing query, so gate
 /// falsity is exercised by construction, not by luck.
 pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
-    let empty_dir = cfg.out_dir.join("empty-db");
+    let empty_dir = cfg.out_dir.join("empty.bdb");
     let _ = std::fs::remove_dir_all(&empty_dir);
     let empty_db = Db::create(&empty_dir, Ledger, crate::harness::bench_work())
         .expect("create empty store")
@@ -27,7 +27,7 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
         family_lane(lane, cfg, "empty family", &|_| None);
     });
 
-    let empty_cal_dir = cfg.out_dir.join("empty-cal-db");
+    let empty_cal_dir = cfg.out_dir.join("empty-cal.bdb");
     let _ = std::fs::remove_dir_all(&empty_cal_dir);
     let empty_cal = Db::create(
         &empty_cal_dir,
@@ -46,7 +46,7 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
         super::run_calendar::calendar_lane(lane, cfg, "empty calendar", false);
     });
 
-    let empty_target_dir = cfg.out_dir.join("empty-target-db");
+    let empty_target_dir = cfg.out_dir.join("empty-target.bdb");
     let _ = std::fs::remove_dir_all(&empty_target_dir);
     let empty_target = target::publish_admitted(&empty_target_dir);
     let target_conn = rusqlite::Connection::open_in_memory().expect("empty target oracle");

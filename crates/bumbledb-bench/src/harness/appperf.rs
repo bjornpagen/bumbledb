@@ -452,7 +452,7 @@ pub fn tenant_churn(
     let mut expected = Vec::with_capacity(tenants as usize);
     let query = projection(ids::ACCOUNT);
     for tenant in 0..tenants {
-        let dir = base.join(format!("tenant-{tenant}"));
+        let dir = base.join(format!("tenant-{tenant}.bdb"));
         let db = harness::create_db(&dir, Ledger)?;
         crate::worlds::corpus::load_bumbledb(&db, cfg)
             .map_err(|e| format!("tenant {tenant} load: {e:?}"))?;
@@ -564,7 +564,7 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
         seed: args.seed,
         scale: args.scale,
     };
-    let corpus_dir = scratch.join("corpus");
+    let corpus_dir = scratch.join("corpus.bdb");
     let db = harness::create_db(&corpus_dir, Ledger)?;
     crate::worlds::corpus::load_bumbledb(&db, cfg).map_err(|e| format!("corpus load: {e:?}"))?;
     let data = corpus_dir.join("data.mdb");

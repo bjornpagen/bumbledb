@@ -14,7 +14,7 @@ pub(super) fn load(dir: &Path, scenario: &Scenario, seed: u64) -> Result<Stores,
     let schema = (scenario.schema)();
 
     let db = Db::create(
-        &root.join("db"),
+        &root.join("db.bdb"),
         (scenario.descriptor)(),
         crate::harness::bench_work(),
     )

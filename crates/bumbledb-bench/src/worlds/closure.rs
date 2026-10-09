@@ -239,7 +239,7 @@ pub fn load_stores_sized(
     dir: &Path,
     sizes: ClosSizes,
 ) -> Result<(Db<Reachability>, rusqlite::Connection), String> {
-    let db = crate::harness::create_db(&dir.join("db"), Reachability)?;
+    let db = crate::harness::create_db(&dir.join("db.bdb"), Reachability)?;
     for rel in [ids::NODE, ids::EDGE] {
         db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, relation_rows(sizes, rel))

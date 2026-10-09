@@ -762,7 +762,7 @@ fn run_scale(
         Some(WorldStores {
             db,
             conn,
-            db_path: dir.join("db"),
+            db_path: dir.join("db.bdb"),
             oracle_path: dir.join("oracle.sqlite"),
         })
     } else {

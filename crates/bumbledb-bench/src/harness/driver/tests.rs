@@ -117,7 +117,7 @@ fn the_full_sequence_runs_at_tiny() {
     let paths = corpus_paths(&dir, CFG);
     assert!(paths.db.join("data.mdb").exists(), "compacted store");
     assert!(
-        !paths.root.join("db-load").exists(),
+        !paths.root.join("load.bdb").exists(),
         "no load-scratch residue"
     );
     assert_eq!(cmd_verify(&corpus, 25).expect("verify"), 0);

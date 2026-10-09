@@ -159,9 +159,13 @@ fn both_stores_load_the_same_corpus() {
         scale: Scale::Tiny,
         ..CFG
     };
-    let db = Db::create(&dir.join("db"), Scheduling, crate::harness::bench_work())
-        .expect("create")
-        .expect("accepted");
+    let db = Db::create(
+        &dir.join("db.bdb"),
+        Scheduling,
+        crate::harness::bench_work(),
+    )
+    .expect("create")
+    .expect("accepted");
     let ours = corpus::load_bumbledb(&db, cfg).expect("bumbledb load");
     let (conn, theirs) = corpus::load_sqlite(&dir.join("oracle.sqlite"), cfg).expect("sqlite load");
     assert_eq!(ours.facts, theirs.facts);
@@ -194,9 +198,13 @@ fn goldens_pin_the_translator() {
 fn every_family_has_witnesses_on_the_unit_corpus() {
     let dir = scratch("unit-witnesses");
     let sizes = CalSizes::unit();
-    let db = Db::create(&dir.join("db"), Scheduling, crate::harness::bench_work())
-        .expect("create")
-        .expect("accepted");
+    let db = Db::create(
+        &dir.join("db.bdb"),
+        Scheduling,
+        crate::harness::bench_work(),
+    )
+    .expect("create")
+    .expect("accepted");
     corpus::load_bumbledb_sized(&db, CFG, sizes).expect("unit load");
     for family in families::all() {
         let query = (family.query)();
@@ -227,9 +235,13 @@ fn every_family_has_witnesses_on_the_unit_corpus() {
 fn the_hand_coalesce_matches_pack() {
     let dir = scratch("coalesce");
     let sizes = CalSizes::unit();
-    let db = Db::create(&dir.join("db"), Scheduling, crate::harness::bench_work())
-        .expect("create")
-        .expect("accepted");
+    let db = Db::create(
+        &dir.join("db.bdb"),
+        Scheduling,
+        crate::harness::bench_work(),
+    )
+    .expect("create")
+    .expect("accepted");
     corpus::load_bumbledb_sized(&db, CFG, sizes).expect("unit load");
     let conn = rusqlite::Connection::open_in_memory().expect("oracle");
     corpus::load_sqlite_into(&conn, CFG, sizes).expect("oracle load");

@@ -230,10 +230,10 @@ pub fn write_families(
 
     std::fs::create_dir_all(scratch).map_err(|e| format!("windowed scratch: {e}"))?;
     eprintln!("bench: loading the windowed twin worlds");
-    let windowed = crate::harness::create_db(&scratch.join("windowed"), world::WindowedWorld)?;
+    let windowed = crate::harness::create_db(&scratch.join("windowed.bdb"), world::WindowedWorld)?;
     load(&windowed, Mass::BENCH)?;
     let unwindowed =
-        crate::harness::create_db(&scratch.join("baseline"), baseline::UnwindowedWorld)?;
+        crate::harness::create_db(&scratch.join("baseline.bdb"), baseline::UnwindowedWorld)?;
     load(&unwindowed, Mass::BENCH)?;
 
     let mut out = Vec::new();

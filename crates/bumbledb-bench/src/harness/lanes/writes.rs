@@ -332,7 +332,7 @@ fn delete_sqlite(
 }
 
 fn verify_insert_stream_pair(scratch: &Path, expected_postings: u64) -> Result<(), String> {
-    let dir = scratch.join("insert-stream-bumbledb-0");
+    let dir = scratch.join("insert-stream-0.bdb");
     let db =
         crate::harness::open_db(&dir, Ledger).map_err(|e| format!("insert_stream re-open: {e}"))?;
     let ours = db
@@ -455,7 +455,7 @@ fn run_ladder(
     let sizes = Sizes::of(cfg.scale);
 
     eprintln!("bench: writes — loading the scratch corpus");
-    let db = crate::harness::create_db(&scratch.join("db"), Ledger)?;
+    let db = crate::harness::create_db(&scratch.join("db.bdb"), Ledger)?;
     corpus::load_bumbledb(&db, cfg).map_err(|e| format!("load: {e:?}"))?;
 
     let (conn, _) = corpus::load_sqlite(&scratch.join("oracle.sqlite"), cfg)
@@ -756,7 +756,7 @@ mod tests {
             seed: 1,
             scale: Scale::Tiny,
         };
-        let db = Db::create(&dir.join("db"), Ledger, crate::harness::bench_work())
+        let db = Db::create(&dir.join("db.bdb"), Ledger, crate::harness::bench_work())
             .expect("create")
             .expect("accepted");
         for rel in writebench::non_posting_relations() {
@@ -810,7 +810,7 @@ mod tests {
             seed: 1,
             scale: Scale::Tiny,
         };
-        let db = Db::create(&dir.join("db"), Ledger, crate::harness::bench_work())
+        let db = Db::create(&dir.join("db.bdb"), Ledger, crate::harness::bench_work())
             .expect("create")
             .expect("accepted");
         corpus::load_bumbledb(&db, cfg).expect("load");

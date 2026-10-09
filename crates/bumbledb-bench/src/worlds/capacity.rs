@@ -299,13 +299,17 @@ pub fn write_families(
     }
     std::fs::create_dir_all(scratch).map_err(|e| format!("capacity scratch: {e}"))?;
     eprintln!("bench: loading the capacity twin worlds");
-    let budgeted = crate::harness::create_db(&scratch.join("power"), power::PowerWorld)?;
+    let budgeted = crate::harness::create_db(&scratch.join("power.bdb"), power::PowerWorld)?;
     load(&budgeted, Mass::BENCH, power_rows)?;
-    let unbudgeted =
-        crate::harness::create_db(&scratch.join("baseline"), power_baseline::UnbudgetedWorld)?;
+    let unbudgeted = crate::harness::create_db(
+        &scratch.join("baseline.bdb"),
+        power_baseline::UnbudgetedWorld,
+    )?;
     load(&unbudgeted, Mass::BENCH, power_rows)?;
-    let rooms =
-        crate::harness::create_db(&scratch.join("calendar"), calendar::CalendarCapacityWorld)?;
+    let rooms = crate::harness::create_db(
+        &scratch.join("calendar.bdb"),
+        calendar::CalendarCapacityWorld,
+    )?;
     load(&rooms, Mass::BENCH, calendar_rows)?;
 
     let mut out = Vec::new();

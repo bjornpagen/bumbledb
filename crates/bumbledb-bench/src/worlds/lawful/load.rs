@@ -21,7 +21,7 @@ pub fn load_stores(
 ) -> Result<(Db<LawfulWorld>, Connection), String> {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("lawful scratch: {e}"))?;
-    let db = crate::harness::create_db(&dir.join("db"), LawfulWorld)?;
+    let db = crate::harness::create_db(&dir.join("db.bdb"), LawfulWorld)?;
 
     let order = [
         ids::TASK,

@@ -99,7 +99,7 @@ pub const CHAIN: &str = "SELECT DISTINCT t1.\"source\", t0.\"amount\", t0.\"at\"
 /// account = a, amount, at), JournalEntry(id = e, source = src),
 /// Account(id = a, holder = h), Holder(id = h, name)` with `at >= ?0`:
 /// chain's walk extended one hop into the holder — the four-atom shape
-/// whose plan reaches node 3 (the mid-stream pump regime, R22/088).
+/// whose plan reaches node 3 (the mid-stream pump regime).
 pub const DEEP_CHAIN: &str = "SELECT DISTINCT t3.\"name\", t1.\"source\", t0.\"amount\", t0.\"at\" FROM \"Posting\" AS t0, \"JournalEntry\" AS t1, \"Account\" AS t2, \"Holder\" AS t3 WHERE t0.\"entry\" = t1.\"id\" AND t0.\"account\" = t2.\"id\" AND t2.\"holder\" = t3.\"id\" AND t0.\"at\" >= ?1";
 
 /// range — `Q(id, amount) :- Posting(id, amount, at)` with

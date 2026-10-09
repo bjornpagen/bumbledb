@@ -42,7 +42,7 @@ pub(super) fn write_families(
     let mut out = Vec::new();
     if PAIRED.iter().any(|(name, ..)| selected(name)) || selected("commit_witnessed") {
         eprintln!("bench: loading the scratch write corpus");
-        let db = crate::harness::create_db(&scratch.join("db"), Ledger)?;
+        let db = crate::harness::create_db(&scratch.join("db.bdb"), Ledger)?;
         corpus::load_bumbledb(&db, cfg).map_err(|e| format!("{e:?}"))?;
         let (conn, _) =
             corpus::load_sqlite(&scratch.join("oracle.sqlite"), cfg).map_err(|e| format!("{e}"))?;

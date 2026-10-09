@@ -379,9 +379,7 @@ pub(super) fn algebra_ops(seed: u64, sizes: &Sizes) -> (Vec<Op>, u64) {
 }
 
 enum Expected {
-    DnfCap {
-        naive_width: usize,
-    },
+    DnfCap { naive_width: usize },
 
     Vanished,
 
@@ -389,10 +387,7 @@ enum Expected {
 
     FullMask,
 
-    /// typed refusal since R1 (the flipped acceptance row).
-    CountAcrossRules {
-        rules: usize,
-    },
+    CountAcrossRules { rules: usize },
 }
 
 fn parity_cases() -> Vec<(&'static str, Query, Expected)> {

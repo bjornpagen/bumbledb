@@ -47,7 +47,7 @@ pub fn load_stores(
 ) -> Result<(Db<CrudWorld>, rusqlite::Connection), String> {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("crud scratch: {e}"))?;
-    let db = crate::harness::create_db(&dir.join("db"), CrudWorld)?;
+    let db = crate::harness::create_db(&dir.join("db.bdb"), CrudWorld)?;
     for rel in [ids::DOC, ids::COUNTER] {
         db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, relation_rows(sizes, seed, rel))

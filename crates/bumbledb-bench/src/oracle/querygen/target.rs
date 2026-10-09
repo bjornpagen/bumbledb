@@ -564,8 +564,8 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
             relation: ids::TRANSFER,
             projection: Box::new([ids::transfer::EXTREF]),
         },
-        // The vocabulary containments (the enum funeral) — appended
-        // after everything else so no earlier statement id shifts.
+        // The vocabulary containments, appended after everything else so
+        // no earlier statement id shifts.
         containment(
             side(ids::ACCOUNT, ids::account::CURRENCY, &[]),
             side(ids::CURRENCY, ids::currency::ID, &[]),
@@ -959,12 +959,10 @@ pub fn corpus_row(
         ids::IMPORT_BATCH => vec![Value::U64(import_batch_entry(i)), Value::U64(i)],
         ids::CURRENCY_BACKING => vec![Value::U64(i), Value::U64(1_000 + i)],
         ids::CASH_ROUNDING => vec![Value::U64(ZERO_DECIMAL_CURRENCY)],
-        // Lane row `i` opens at mandate row `i`'s start: `[s, s + 5)` —
-        // the fixed value beside the general interval it will classify
-        // against (Q1's mixed-width Allen surface). Deterministic, no
-        // draws: the corpus stream stays byte-stable for every earlier
-        // relation. Mandate starts sit far from the i64 ceiling, so the
-        // Q2 bound holds; the constructor is still the checked one.
+        // Lane row `i` opens at mandate row `i`'s start: `[s, s + 5)`, a
+        // fixed interval beside the general one it classifies against.
+        // No draws, so every earlier relation's stream is unchanged.
+        // Mandate starts sit far below the i64 ceiling.
         ids::LANE => {
             let (account, _, (start, _)) = mandate(cfg, domains, i);
             vec![
