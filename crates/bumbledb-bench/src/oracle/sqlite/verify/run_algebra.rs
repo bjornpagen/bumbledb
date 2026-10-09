@@ -498,7 +498,7 @@ pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
                 matches!(
                     verdict,
                     bumbledb::error::ValidationError::Comparison {
-                        refusal: bumbledb::ir::validate::error::ComparisonRefusal::EmptyAllenMask,
+                        refusal: bumbledb::error::ComparisonRefusal::EmptyAllenMask,
                         ..
                     }
                 )
@@ -507,7 +507,7 @@ pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
                 matches!(
                     verdict,
                     bumbledb::error::ValidationError::Comparison {
-                        refusal: bumbledb::ir::validate::error::ComparisonRefusal::FullAllenMask,
+                        refusal: bumbledb::error::ComparisonRefusal::FullAllenMask,
                         ..
                     }
                 )
