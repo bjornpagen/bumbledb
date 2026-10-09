@@ -78,6 +78,21 @@ pub struct DraftHandle {
 /// A sealed immutable `ChangeSet`.
 pub struct ChangesHandle(RegistryAdmission);
 
+impl ChangesHandle {
+    #[cfg(test)]
+    pub(crate) fn from_admission(admission: RegistryAdmission) -> Self {
+        Self(admission)
+    }
+
+    pub(crate) fn cap(&self) -> crate::runtime::Capability {
+        self.0.cap()
+    }
+
+    pub(crate) fn runtime(&self) -> &Arc<crate::runtime::Runtime> {
+        self.0.runtime()
+    }
+}
+
 /// The sealed `ChangeSet` crossing back from a draft finish or parse.
 pub struct ChangesOpened {
     pub changes: ChangeSet,

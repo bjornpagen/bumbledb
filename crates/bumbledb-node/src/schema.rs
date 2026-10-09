@@ -319,7 +319,7 @@ pub struct SchemaDescriptorOut {
 }
 
 impl SchemaHandle {
-    fn compile(spec: SchemaSpec) -> Result<Self, SchemaDiagnostic> {
+    pub(crate) fn compile(spec: SchemaSpec) -> Result<Self, SchemaDiagnostic> {
         let newtypes = spec
             .relations
             .iter()

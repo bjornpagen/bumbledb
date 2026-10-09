@@ -284,6 +284,10 @@ pub enum Output {
     DbReport(crate::db_wire::DbInspection),
     /// Owned bounded byte payloads (row codec responses).
     Bytes(QueuedBytes),
+    /// A hosted machine over its opened cache.
+    Hosted(crate::hosted::HostedOpened),
+    /// One hosted machine step.
+    HostedStep(crate::hosted::StepOut),
 }
 
 impl Output {

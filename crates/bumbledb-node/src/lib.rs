@@ -11,6 +11,7 @@ use napi_derive::napi;
 
 mod bindings;
 pub mod db_wire;
+pub mod hosted;
 pub mod input;
 pub mod marshal;
 pub mod query;

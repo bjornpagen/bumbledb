@@ -272,7 +272,9 @@ impl Runtime {
         })
     }
 
-    fn pin_snapshot(
+    /// Pin a snapshot of `lease`'s database on the current worker; called
+    /// from a job already running there.
+    pub(crate) fn pin_snapshot(
         self: &Arc<Self>,
         owner: u64,
         database: u64,

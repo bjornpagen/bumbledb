@@ -27,6 +27,12 @@ pub struct DirectoryHandle {
     owner: crate::runtime::owners::DirectoryOwner,
 }
 
+impl DirectoryHandle {
+    pub(crate) fn owner(&self) -> &crate::runtime::owners::DirectoryOwner {
+        &self.owner
+    }
+}
+
 impl Drop for RuntimeHandle {
     fn drop(&mut self) {
         self.runtime.begin_close();

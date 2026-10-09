@@ -32,6 +32,7 @@ pub enum NativeKind {
     Draft,
     Changes,
     ChangesCursor,
+    Hosted,
 }
 
 /// Live / in-use / draining. Busy and closing refuse new work.
@@ -106,6 +107,7 @@ pub(crate) enum Payload {
         fingerprint: String,
     },
     ChangesCursor(crate::db_wire::ChangesCursorOpened),
+    Hosted(Box<crate::hosted::Hosted>),
 }
 
 struct Route {

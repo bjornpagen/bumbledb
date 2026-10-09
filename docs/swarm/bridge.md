@@ -12,10 +12,10 @@ Owns: `crates/bumbledb-node/**`, `ts/src/native/binding.d.ts`, `docs/swarm/bridg
 | D17: sync `compileSchema` / `validateQuery` / `schemaBindings` returning branded handles | done |
 | F7: every export typed in the generated, committed `binding.d.ts` (`crates/bumbledb-node/dts.sh`, gate: `dts.sh --check` + standalone `tsc`) | done |
 | A: error arms against engine-storage's one `Error` / `Error::kind()` | waits on engine-storage C8 |
-| Hosted verbs over log-core's sans-IO `Machine` | waits on log-core |
+| Hosted verbs over log-core's sans-IO `Machine<Cache>` (open, step/feed, submit, migrate, snapshot, close) | done |
 
-The bridge no longer depends on `bumbledb-log`. The directory fence lives in
-`crates/bumbledb-node/src/runtime/fence.rs`.
+The bridge depends on the new `bumbledb-log` core only for hosted databases. The directory fence
+lives in `crates/bumbledb-node/src/runtime/fence.rs`.
 
 ## API (planned shapes; "Landed" below is authoritative)
 
@@ -58,9 +58,8 @@ the compiled `SchemaHandle` (db open/create, drafts, row codec). Query verbs tak
 
 - engine-storage: the bridge consumes `Error::kind()` and the `bumbledb::host` writer API when
   they land (C7/C8/C9); no extra requests yet.
-- ts: R-B1 and R-B2 are being implemented with the shapes above (one extra arm, `Malformed`, on
-  each sync verb). Bindings emission moved into the bridge (`schemaBindings`), so TS does not
-  need to port it.
+- ts: R-B1, R-B2 and R-B3 are landed (shapes below). Bindings emission lives in the bridge
+  (`schemaBindings`), so TS does not port it.
 
 ## Landed
 
@@ -125,3 +124,41 @@ F7 (all outputs generated; no hand-built objects remain):
   now PascalCase (`Bool`, `U64`, `I64`, `F64`, `String`, `Uuid`, `FixedBytes`, `IntervalU64`,
   `IntervalI64`, `IntervalF64`) with JS-native payloads.
 - Dropping a result, cursor, draft, change set or change cursor handle (including by GC) closes it.
+
+Hosted databases (R-B3, `bumbledb_log::Machine<Cache>`; one machine per database):
+
+- `hostedOpen(dir, childName, openJson, cb)` then `hostedTake(op): ExternalObject<HostedHandle>`.
+  The cache lives in `childName` of an owned directory (`runtimeDirectoryAcquire`); closing the
+  directory closes the machine. `openJson` is `HostedOpenIn = { bundle: BundleStepIn[], seed,
+  create?, probeWindow, checkpointEvery (decimal string), checkpointKeep, maxEntryBytes }` with
+  `BundleStepIn = { name, hash (64 hex), schema: SchemaSpecIn }` (bundle[0] is the initial schema;
+  the bridge compiles every step's spec itself). `seed` and `create` are 32 hex digits.
+- Steps (each returns an operation; take with `hostedStepTake(op): StepOut`). **Serialize them per
+  handle**: a step while another runs refuses `HandleBusy`.
+  - `hostedStep(hosted, input: HostedInput, cb)`: `Open { ticket } | Sync { ticket } |
+    Resolve { ticket, request } | Freeze { ticket, leaseMillis } | Close` (tickets are bigints the
+    caller chooses; `request` is 32 hex digits).
+  - `hostedSubmit(hosted, ticket, request, revision: bigint | null, changes: ChangesHandle, cb)`;
+    `revision` present is `ExactRevision`.
+  - `hostedMigrate(hosted, ticket, step, base, copy: CopyPair[], rows: ChangesHandle, cb)`;
+    `hostedUnchanged(hosted, step): CopyPair[]` is the bundle's default copy list
+    (`{ target, source }` relation ids).
+  - `hostedRespond(hosted, id, date: bigint | null, outcome: IoOutcomeIn, cb)` with
+    `IoOutcomeIn = Saved { lastModified } | Missing | Created | Occupied | Keys { keys } | Deleted | Failed`;
+    `hostedRespondBody(hosted, id, date, lastModified, body: Uint8Array, cb)` for a found
+    `GetMemory`. Times are Unix milliseconds from the store (`Date`, `Last-Modified`).
+- `StepOut = { io: IoRequestOut[], done: DoneOut[], head: HeadOut | null }`.
+  `IoRequestOut = { id: bigint, bucket: 'Log' | 'Checkpoints', key, op: OpOut }`,
+  `OpOut = GetMemory | GetFile { path } | PutBytes { bytes } | PutFile { path } | List { startAfter?, maxKeys } | Delete`
+  (puts are `If-None-Match: *`; report a put's first non-200 as `Occupied` or `Failed`, never retry it).
+  `DoneOut = { ticket, settled: SettledOut }`, `SettledOut = Opened { pending } | Decided { receipt } |
+  Synced { seq } | Resolved { receipt? } | Frozen { seq } | Migrated { seq } | Refused { refusal: RefusalOut }`.
+  `ReceiptOut = { request, command, seq, revision, outcome: OutcomeOut }` (`seq` is the read-your-writes
+  bookmark); `OutcomeOut = Committed { added, removed } | NoChange | PreconditionFailed { expected, observed } |
+  InvariantRejected { evidence: { violations: ViolationOut[], bytes } }`. `RefusalOut` mirrors
+  `bumbledb_log::Refusal` (`MigrationRejected` carries rendered evidence; `Cache { message }`).
+  `HeadOut = { database, seq, revision, schema, applied, rejected, frozenUntil? }`.
+- `hostedSnapshot(hosted, cb)` then `runtimeSnapshotTake(op)`: a snapshot of the cache's current
+  state with the head schema's `SchemaHandle`; every query and point-read verb works on it.
+  Refuses `ClosedHandle` before the first state exists.
+- `hostedClose(hosted, cb: CloseOut)`; step `Close` first to settle pending tickets.

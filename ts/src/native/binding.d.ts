@@ -26,6 +26,10 @@ export interface DraftHandle {
   readonly [handle]: 'DraftHandle'
 }
 
+export interface HostedHandle {
+  readonly [handle]: 'HostedHandle'
+}
+
 export interface OperationHandle {
   readonly [handle]: 'OperationHandle'
 }
@@ -94,6 +98,18 @@ export type BoundSpecIn =
   | { kind: 'Lit'; value: string }
   | { kind: 'Field'; field: string }
   | { kind: 'Duration'; field: string }
+
+export type BucketOut = 'Log' | 'Checkpoints'
+
+/**
+ * One bundled migration: its name, content hash (64 hex digits) and the
+ * schema spec it migrates to. The first step is the initial schema.
+ */
+export interface BundleStepIn {
+  name: string
+  hash: string
+  schema: SchemaSpecIn
+}
 
 export type CapacityWindowSpecIn =
   | { kind: 'Exact'; n: BoundSpecIn }
@@ -194,6 +210,15 @@ export type ConditionIn =
   | { kind: 'And'; children: Array<ConditionIn> }
   | { kind: 'Or'; children: Array<ConditionIn> }
 
+/**
+ * One relation a migration copies unchanged: `target` at the new schema
+ * from `source` at the old one.
+ */
+export interface CopyPair {
+  target: number
+  source: number
+}
+
 /** Bounded database diagnostics, never rows. */
 export interface DbInspection {
   generation: bigint
@@ -210,7 +235,21 @@ export type DbOpened =
 
 export type DirectionOut = 'SourceUnsatisfied' | 'TargetRequired'
 
+export interface DoneOut {
+  ticket: bigint
+  settled: SettledOut
+}
+
 export declare function engineVersion(): string
+
+/**
+ * A rejection's evidence, rendered against the schema it was judged under
+ * when this code bundles it.
+ */
+export interface EvidenceOut {
+  violations: Array<ViolationOut>
+  bytes: Uint8Array
+}
 
 /** One fact a violation cites, by relation and field names. */
 export interface FactOut {
@@ -245,10 +284,96 @@ export type FoldOpIn = 'Sum' | 'Mean' | 'Min' | 'Max'
 
 export type HeadOpIn = 'Sum' | 'Mean' | 'Min' | 'Max' | 'Count' | 'Pack'
 
+/**
+ * The decided state: identity, position, revision, schema fingerprint, the
+ * migration ledger, and the store-time end of a freeze.
+ */
+export interface HeadOut {
+  database: string
+  seq: bigint
+  revision: bigint
+  schema: string
+  applied: Array<MigrationOut>
+  rejected: Array<MigrationOut>
+  frozenUntil?: bigint
+}
+
 export type HeadTermIn =
   | { kind: 'Var' }
   | { kind: 'Compute' }
   | { kind: 'Aggregate'; op: HeadOpIn }
+
+/**
+ * Close the machine and its cache. Step `Close` first to settle every
+ * pending ticket.
+ */
+export declare function hostedClose(hosted: ExternalObject<HostedHandle>, callback: (arg: CloseOut) => void): void
+
+/** A machine input that carries no change set. */
+export type HostedInput =
+  | { _tag: 'Open'; ticket: bigint }
+  | { _tag: 'Sync'; ticket: bigint }
+  | { _tag: 'Resolve'; ticket: bigint; request: string }
+  | { _tag: 'Freeze'; ticket: bigint; leaseMillis: bigint }
+  | { _tag: 'Close' }
+
+/**
+ * Apply bundled migration `step`, computed at `base` (the head the rows
+ * were computed from): `copy` relations carried over unchanged plus the
+ * computed `rows` at the new schema.
+ */
+export declare function hostedMigrate(hosted: ExternalObject<HostedHandle>, ticket: bigint, step: number, base: bigint, copy: Array<CopyPair>, rows: ExternalObject<ChangesHandle>, callback: () => void): ExternalObject<OperationHandle>
+
+/**
+ * Open the hosted database whose cache lives in `childName` of an owned
+ * directory. `openJson` is a `HostedOpenIn`.
+ */
+export declare function hostedOpen(directory: ExternalObject<DirectoryHandle>, childName: string, openJson: string, callback: () => void): ExternalObject<OperationHandle>
+
+/**
+ * Everything a hosted database opens with. `seed` (32 hex digits) is
+ * random per process; `create` (32 hex digits) is the identity a new
+ * database gets when its log is empty, absent to refuse creation.
+ */
+export interface HostedOpenIn {
+  bundle: Array<BundleStepIn>
+  seed: string
+  create?: string
+  probeWindow: number
+  checkpointEvery: string
+  checkpointKeep: number
+  maxEntryBytes: number
+}
+
+/**
+ * Feed back one completed store request. `date` is the response's `Date`
+ * header in Unix milliseconds.
+ */
+export declare function hostedRespond(hosted: ExternalObject<HostedHandle>, id: bigint, date: bigint | undefined | null, outcome: IoOutcomeIn, callback: () => void): ExternalObject<OperationHandle>
+
+/** Feed back one `GetMemory` request that found its object. */
+export declare function hostedRespondBody(hosted: ExternalObject<HostedHandle>, id: bigint, date: bigint | undefined | null, lastModified: bigint, body: Uint8Array, callback: () => void): ExternalObject<OperationHandle>
+
+/**
+ * Pin a snapshot of the cache's current state; take it with
+ * `runtimeSnapshotTake`. Refuses `ClosedHandle` before the first state.
+ */
+export declare function hostedSnapshot(hosted: ExternalObject<HostedHandle>, callback: () => void): ExternalObject<OperationHandle>
+
+export declare function hostedStep(hosted: ExternalObject<HostedHandle>, input: HostedInput, callback: () => void): ExternalObject<OperationHandle>
+
+export declare function hostedStepTake(handle: ExternalObject<OperationHandle>): StepOut
+
+/**
+ * Submit one command: the request id (32 hex digits) is its idempotency
+ * key; `revision` present requires exactly that committed revision.
+ */
+export declare function hostedSubmit(hosted: ExternalObject<HostedHandle>, ticket: bigint, request: string, revision: bigint | undefined | null, changes: ExternalObject<ChangesHandle>, callback: () => void): ExternalObject<OperationHandle>
+
+export declare function hostedTake(handle: ExternalObject<OperationHandle>): ExternalObject<HostedHandle>
+
+/** The relations bundled migration `step` copies unchanged by default. */
+export declare function hostedUnchanged(hosted: ExternalObject<HostedHandle>, step: number): Array<CopyPair>
 
 /** Bounded runtime bookkeeping counts. */
 export interface InspectionOut {
@@ -268,6 +393,24 @@ export interface InteriorIn {
 export type IntervalElementIn = 'U64' | 'I64' | 'F64'
 
 export type IntervalElementOut = 'U64' | 'I64' | 'F64'
+
+/** The outcome of one store request other than a body read. */
+export type IoOutcomeIn =
+  | { _tag: 'Saved'; lastModified: bigint }
+  | { _tag: 'Missing' }
+  | { _tag: 'Created' }
+  | { _tag: 'Occupied' }
+  | { _tag: 'Keys'; keys: Array<string> }
+  | { _tag: 'Deleted' }
+  | { _tag: 'Failed' }
+
+/** One store request; `key` is relative to the database's prefix. */
+export interface IoRequestOut {
+  id: bigint
+  bucket: BucketOut
+  key: string
+  op: OpOut
+}
 
 /** One judgment of a private candidate; the database never changes. */
 export type JudgeOutcome =
@@ -294,6 +437,11 @@ export interface Malformed {
   message: string
 }
 
+export interface MigrationOut {
+  name: string
+  hash: string
+}
+
 /** One named cell of a rendered fact or closed row. */
 export interface NamedValueOut {
   name: string
@@ -301,6 +449,24 @@ export interface NamedValueOut {
 }
 
 export type NumericCastIn = 'ToF64' | 'ToF64Exact' | 'ToI64Exact' | 'ToU64Exact'
+
+/**
+ * One store operation. `GetFile` downloads into `path`; `PutFile` uploads
+ * the file at `path`; puts are create-only (`If-None-Match: *`).
+ */
+export type OpOut =
+  | { _tag: 'GetMemory' }
+  | { _tag: 'GetFile'; path: string }
+  | { _tag: 'PutBytes'; bytes: Uint8Array }
+  | { _tag: 'PutFile'; path: string }
+  | { _tag: 'List'; startAfter?: string; maxKeys: number }
+  | { _tag: 'Delete' }
+
+export type OutcomeOut =
+  | { _tag: 'Committed'; added: bigint; removed: bigint }
+  | { _tag: 'NoChange' }
+  | { _tag: 'PreconditionFailed'; expected: bigint; observed: bigint }
+  | { _tag: 'InvariantRejected'; evidence: EvidenceOut }
 
 /** One execute param, positional by `ParamId`. */
 export type ParamIn = CellIn | ParamSetIn
@@ -347,6 +513,15 @@ export type QueryValidated =
   | { _tag: 'Invalid'; diagnostic: QueryDiagnostic }
   | { _tag: 'Malformed'; path: string; message: string }
 
+/** One request's durable decision; `seq` is the read-your-writes bookmark. */
+export interface ReceiptOut {
+  request: string
+  command: string
+  seq: bigint
+  revision: bigint
+  outcome: OutcomeOut
+}
+
 /** A recursive stage: nonempty base and step arms. */
 export interface RecIn {
   base: Array<RecRuleIn>
@@ -366,6 +541,29 @@ export interface RecStepIn {
   atoms: Array<AtomIn>
   conditions: Array<ConditionIn>
 }
+
+/**
+ * Why a ticket settled without its effect. Every refusal of a submit except
+ * `Unknown` proves the command is not in the log.
+ */
+export type RefusalOut =
+  | { _tag: 'NotOpen' }
+  | { _tag: 'Closed' }
+  | { _tag: 'NotFound' }
+  | { _tag: 'Frozen'; deadline: bigint }
+  | { _tag: 'SchemaAdvanced' }
+  | { _tag: 'MigrationPending'; next: number }
+  | { _tag: 'MigrationRejected'; migration: MigrationOut; evidence: EvidenceOut }
+  | { _tag: 'MigrationsDiverged'; index: number }
+  | { _tag: 'NotPending' }
+  | { _tag: 'Stale'; head: bigint }
+  | { _tag: 'RequestReused'; request: string; command: string }
+  | { _tag: 'ForeignSchema' }
+  | { _tag: 'TooLarge' }
+  | { _tag: 'Unknown' }
+  | { _tag: 'NotSubmitted' }
+  | { _tag: 'Cache'; message: string }
+  | { _tag: 'Corrupt'; seq: bigint }
 
 export interface RelationOut {
   name: string
@@ -663,6 +861,15 @@ export interface SelectionOut {
   values: Array<CellValue>
 }
 
+export type SettledOut =
+  | { _tag: 'Opened'; pending: number }
+  | { _tag: 'Decided'; receipt: ReceiptOut }
+  | { _tag: 'Synced'; seq: bigint }
+  | { _tag: 'Resolved'; receipt?: ReceiptOut }
+  | { _tag: 'Frozen'; seq: bigint }
+  | { _tag: 'Migrated'; seq: bigint }
+  | { _tag: 'Refused'; refusal: RefusalOut }
+
 export interface SideOut {
   relation: number
   projection: Array<number>
@@ -709,6 +916,13 @@ export type StatementSpecIn =
   | { kind: 'Fd'; relation: string; projection: Array<string> }
   | { kind: 'Containment'; source: SideSpecIn; target: SideSpecIn; bidirectional: boolean }
   | { kind: 'Capacity'; target: SideSpecIn; weight: WeightSpecIn; window: CapacityWindowSpecIn; source: SideSpecIn }
+
+/** One step: requests to perform now, tickets settled by it, and the head. */
+export interface StepOut {
+  io: Array<IoRequestOut>
+  done: Array<DoneOut>
+  head?: HeadOut
+}
 
 export type TermIn =
   | { kind: 'Var'; var: number }

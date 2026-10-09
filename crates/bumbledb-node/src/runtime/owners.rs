@@ -57,6 +57,9 @@ pub(super) struct OwnerEntry {
     pub remove: bool,
     pub lock: Option<DirectoryLock>,
     pub databases: BTreeMap<u64, DatabaseEntry>,
+    /// Worker-table resources living in this directory (hosted machines);
+    /// closing the owner closes them.
+    pub resources: Vec<super::registry::Capability>,
 }
 
 impl OwnerEntry {
@@ -130,7 +133,9 @@ impl DbLease {
     }
 }
 
-struct ExternalLease {
+/// A registered hold on a directory owner: while it lives, the owner's
+/// cleanup (and so its kernel lock release) waits.
+pub(crate) struct ExternalLease {
     runtime: Arc<Runtime>,
     operation: Arc<Operation>,
 }
@@ -329,6 +334,7 @@ impl Runtime {
                 remove: false,
                 lock: None,
                 databases: BTreeMap::new(),
+                resources: Vec::new(),
             },
         );
         Ok(id)
@@ -498,6 +504,7 @@ impl DirectoryOwner {
                     .databases
                     .values()
                     .flat_map(DatabaseEntry::snapshot_caps)
+                    .chain(entry.resources.iter().copied())
                     .collect()
             } else {
                 Vec::new()
@@ -559,6 +566,31 @@ impl DirectoryReference {
             Err(error) => Err(io_error(error)),
         }
     }
+    pub(crate) fn lease(&self) -> Result<ExternalLease, RuntimeError> {
+        let operation = self
+            .runtime
+            .begin_external(self.id, None, WorkContext::new())?;
+        Ok(ExternalLease {
+            runtime: Arc::clone(&self.runtime),
+            operation,
+        })
+    }
+
+    /// Close `cap` whenever this owner closes; refuses if it already is.
+    pub(crate) fn adopt(&self, cap: super::registry::Capability) -> Result<(), RuntimeError> {
+        let mut state = lock(&self.runtime.state);
+        state.require_owner(Some(self.id))?;
+        let entry = state
+            .owners
+            .get_mut(&self.id)
+            .ok_or(RuntimeError::ClosedHandle)?;
+        entry
+            .resources
+            .retain(|held| self.runtime.registry.state(*held).is_ok());
+        entry.resources.push(cap);
+        Ok(())
+    }
+
     pub(crate) fn attach_db(&self, inner: crate::DbInner) -> Result<ManagedDb, RuntimeError> {
         let mut state = lock(&self.runtime.state);
         if state.phase != Phase::Open {

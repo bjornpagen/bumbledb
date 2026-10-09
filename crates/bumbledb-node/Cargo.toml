@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 bumbledb = { path = "../bumbledb" }
+bumbledb-log = { path = "../bumbledb-log" }
 napi = { version = "3.14", default-features = true, features = ["napi8"] }
 napi-derive = "3.6"
 serde = { version = "1.0.228", features = ["derive"] }
