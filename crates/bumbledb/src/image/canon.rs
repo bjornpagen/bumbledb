@@ -1,6 +1,6 @@
 //! Canonical-row → column-word decoding, the one place the word conventions live:
 //! Bool 0/1, U64 as is, I64 sign-biased, F64 its order key, String an interner
-//! token, bytes<N> and Uuid big-endian words, intervals two order words (start,
+//! token, `bytes<N>` and Uuid big-endian words, intervals two order words (start,
 //! end). Corrupt stored bytes refuse with typed corruption: the walker re-validates
 //! tags, widths, UTF-8, float payloads and interval bounds as the strict parser does.
 
