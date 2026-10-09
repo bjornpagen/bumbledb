@@ -231,10 +231,6 @@ impl ComputedSink {
 }
 
 impl Sink for ComputedSink {
-    fn retains_binding_slot(&self, slot: usize) -> bool {
-        self.inner.retains_binding_slot(slot)
-    }
-
     fn emit(&mut self, bindings: &Bindings) -> Flow {
         for slot in 0..self.slots {
             self.bindings.set(slot, bindings.get(slot));

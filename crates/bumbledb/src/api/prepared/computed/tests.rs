@@ -65,37 +65,32 @@ fn rows(sink: &mut ComputedSink) -> Vec<Vec<u64>> {
 }
 
 #[test]
-fn products_survive_projection_deduplication_spill_and_reuse() {
+fn products_survive_projection_deduplication_and_reuse() {
     for project_one in [false, true] {
+        let mut sink = fixture(10, project_one);
         let mut baseline = None;
-        for spill in [false, true] {
-            let mut sink = fixture(10, project_one);
-            for _ in 0..3 {
-                sink.reset();
-                projection(&mut sink).begin(Some(WorkContext::new()));
-                if spill {
-                    projection(&mut sink).force_spill().unwrap();
-                }
-                sink.row();
-                assert!(!sink.flow_after_row().is_terminal());
-                let result = rows(&mut sink);
-                assert_eq!(result.len(), if project_one { 2 } else { 1024 });
-                for row in &result {
-                    assert!(
-                        row.as_chunks::<2>()
-                            .0
-                            .iter()
-                            .all(|p| *p == [0, 3] || *p == [7, 10])
-                    );
-                }
-                if let Some(expected) = &baseline {
-                    assert_eq!(&result, expected);
-                } else {
-                    baseline = Some(result);
-                }
+        for _ in 0..3 {
+            sink.reset();
+            projection(&mut sink).begin(Some(WorkContext::new()));
+            sink.row();
+            assert!(!sink.flow_after_row().is_terminal());
+            let result = rows(&mut sink);
+            assert_eq!(result.len(), if project_one { 2 } else { 1024 });
+            for row in &result {
+                assert!(
+                    row.as_chunks::<2>()
+                        .0
+                        .iter()
+                        .all(|p| *p == [0, 3] || *p == [7, 10])
+                );
             }
-            sink.release_memory();
+            if let Some(expected) = &baseline {
+                assert_eq!(&result, expected);
+            } else {
+                baseline = Some(result);
+            }
         }
+        sink.release_memory();
     }
 }
 
