@@ -265,3 +265,33 @@ test("a pool opens one database per tenant", async () => {
 		})
 	)
 })
+
+test("the initial migration seeds a created database once, after every migration ran", async () => {
+	const seeded = Migration.make({
+		id: "0001_init",
+		hash: hash("1"),
+		to: V1,
+		populate: ({ into }) => into.insert(Note, [{ id: 100n, text: "welcome" }])
+	})
+	const store = MemStore.make()
+	await run(
+		Effect.gen(function* () {
+			const revisions: bigint[] = []
+			for (let open = 0; open < 2; open++) {
+				const db = yield* Effect.scoped(
+					Effect.gen(function* () {
+						const db = yield* Database.make(options(V2, [seeded, tags], store))
+						const reader = yield* db.read("latest")
+						return {
+							notes: yield* (yield* reader.execute(notesV2, {})).collect(),
+							revision: reader.revision
+						}
+					})
+				)
+				assert.deepEqual(db.notes, [{ id: 100n, text: "welcome" }])
+				revisions.push(db.revision)
+			}
+			assert.equal(revisions[1], revisions[0], "reopening does not seed again")
+		})
+	)
+})

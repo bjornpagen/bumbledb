@@ -45,9 +45,11 @@ interface SubmitOptions {
 	readonly precondition?: bigint
 }
 
-/** A snapshot reader and the log position the cache had reached when it was pinned. */
+/** A snapshot reader, with the log position and revision the cache had reached when it was pinned. */
 interface DatabaseReader<S extends AnySchema> extends QueryReader<S> {
 	readonly seq: bigint
+	/** The committed revision; a submit can require it with `precondition`. */
+	readonly revision: bigint
 }
 
 interface Database<S extends AnySchema> {
@@ -196,10 +198,11 @@ class DatabaseLive<S extends AnySchema> implements Database<S> {
 			if (consistency === "latest" || (typeof consistency === "object" && known < consistency.atLeast)) {
 				yield* Effect.flatMap(run({ _tag: "Sync" }), (settled) => settledAs("Database.read", settled, "Synced"))
 			}
-			const seq = seen()?.seq ?? 0n
+			const head = seen()
 			const snapshot = yield* scopedSnapshot("Database.read", schema, (done) => addon.hostedSnapshot(hosted, done))
 			return {
-				seq,
+				seq: head?.seq ?? 0n,
+				revision: head?.revision ?? 0n,
 				get: snapshot.get.bind(snapshot),
 				execute: snapshot.execute.bind(snapshot),
 				prepare: snapshot.prepare.bind(snapshot)
@@ -259,6 +262,28 @@ const migrateStep = (
 		}
 		yield* settledAs("Database.migrate", settled, "Migrated")
 	}).pipe(Effect.withSpan("Database.migrate"))
+
+/**
+ * Seeds a database nothing has written to yet with its initial migration's rows, after every
+ * migration ran: the seed's relations must still exist unchanged in the current schema. The request
+ * id comes from the migration's hash, so racing openers decide the seed once.
+ */
+const seedInitial = <S extends AnySchema>(
+	database: Database<S>,
+	hash: string,
+	seed: NonNullable<ReturnType<typeof populateOf>>
+) =>
+	Effect.scoped(
+		Effect.gen(function* () {
+			const from = yield* database.read("cached")
+			const into = yield* ChangeSets.builder(database.schema)
+			yield* seed({ from, into } as never)
+			const outcome = yield* database.submit(yield* into.finish(), { requestId: RequestId.make(hash.slice(0, 32)) })
+			if (outcome._tag === "Refused" && outcome.refusal._tag !== "RequestReused") {
+				return yield* Effect.fail(refused("Database.seed", outcome.refusal))
+			}
+		})
+	).pipe(Effect.withSpan("Database.seed"))
 
 /** Opens a database for the current scope. */
 const make = Effect.fn("Database.make")(function* <S extends AnySchema>(options: DatabaseOptions<S>) {
@@ -321,10 +346,17 @@ const make = Effect.fn("Database.make")(function* <S extends AnySchema>(options:
 			refused("Database.open", { _tag: "MigrationPending", next: migrations.length - opened.pending })
 		)
 	}
+	const fresh = seen()?.revision === 0n
 	for (let step = migrations.length - opened.pending; step < migrations.length; step++) {
 		yield* migrateStep(migrations, step, hosted, driver.run, seen, tuning)
 	}
-	return new DatabaseLive(theory, hosted, driver.run, seen) as Database<S>
+	const database = new DatabaseLive(theory, hosted, driver.run, seen) as Database<S>
+	const initial = migrations[0]
+	const seed = populateOf(initial)
+	if (options.onOpen === "migrate" && seed !== undefined && fresh) {
+		yield* seedInitial(database, initial.hash, seed)
+	}
+	return database
 })
 
 /** A service key for one application's database. */

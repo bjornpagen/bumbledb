@@ -23,14 +23,15 @@ type Populate<From extends AnySchema, To extends AnySchema> = (
 /**
  * One bundled migration: its stable `id` (the directory name), the content `hash` that
  * `bumbledb generate` wrote (64 hex digits), and the schema it migrates to. The first migration of a
- * bundle has no `from`: it is the initial schema.
+ * bundle has no `from`: it is the initial schema, and its `populate` seeds a newly created database
+ * once.
  */
 interface Migration<From extends AnySchema | undefined = AnySchema | undefined, To extends AnySchema = AnySchema> {
 	readonly id: string
 	readonly hash: string
 	readonly from: From
 	readonly to: To
-	readonly populate?: From extends AnySchema ? Populate<From, To> : never
+	readonly populate?: Populate<From extends AnySchema ? From : To, To>
 }
 
 /** Any migration of a bundle; its `populate` is read back through {@link populateOf}. */
@@ -53,7 +54,7 @@ function make<To extends AnySchema, From extends AnySchema = never>(input: {
 	readonly hash: string
 	readonly from?: From
 	readonly to: To
-	readonly populate?: Populate<From, To>
+	readonly populate?: Populate<[From] extends [never] ? To : From, To>
 }): Migration<[From] extends [never] ? undefined : From, To>
 function make(input: {
 	readonly id: string

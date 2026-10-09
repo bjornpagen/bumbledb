@@ -119,7 +119,8 @@ TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `impo
     `db.resolve(requestId)` -> `Option<ReceiptOut>`; `db.head`.
   - `Migration.make({ id: "NNNN_name", hash: 64 hex, from?, to, populate? })`; relations that keep
     name and fields are copied by default; `populate({ from: QueryReader<From>, into: ChangeDraft<To> })`
-    adds rows. `onOpen: "verify"` fails with `DbError` reason `Engine { kind: "MigrationPending" }`.
+    adds rows; the initial migration's `populate` seeds a newly created database once (after every
+    migration ran; request id from its hash). Readers carry `seq` and `revision`. `onOpen: "verify"` fails with `DbError` reason `Engine { kind: "MigrationPending" }`.
   - `RequestId` (32 hex digits) and `Database.requestId()`.
 
 - `bumbledb` bin (`ts/src/bin.ts`, `dist/bin.js`): `generate --schema <file>#<export> --name <name>
