@@ -1,20 +1,13 @@
-//! Schema-derived determinant indexing — physical arm of [`CompiledTheory`]
-//! (chapter 10 §4, chapter 40).
-//!
-//! One multimap entry per live row and non-home interned projection:
-//! `[TAG_DETERMINANT, projection id, scalar routing bytes, row id]`.
-//! Its value holds the relation's exact scalar home, or is empty for an
-//! unclustered relation. The selected home projection is served directly
-//! by the row-body bucket and has no determinant entry.
-//! Routing is either compact exact scalar bytes (≤16) or a 16-byte
-//! fingerprint over the canonical projected row encoding. Every consumer
-//! confirms with full decoded canonical values. Candidate indexes remain
-//! multimaps so conflicting tentative rows survive until judgment.
+//! Schema-derived determinant indexing: the physical arm of
+//! [`CompiledTheory`]. Each relation's home projection is its narrowest
+//! exact scalar key; every other interned projection keeps one multimap
+//! entry per live row, so conflicting proposals coexist until judgment.
+//! Routing is exact scalar bytes (at most 16) or a 16-byte fingerprint over
+//! the canonical projected encoding; consumers confirm by decoded values.
 
 use bumbledb_theory::schema::{RelationId, StatementId};
 
 use super::error::{StoreError, StoreResult};
-use super::fingerprint::FP_LEN;
 use crate::schema::compiled::{
     CompileError, CompiledProjection, CompiledTheory, DistinctnessWitness, KeyEncoding,
     MAX_EXACT_SCALAR_BYTES, ProjectionId, encode_scalar_group_into,
@@ -28,13 +21,17 @@ use crate::work::WorkContext;
 /// interpretation; shares the schema's interned [`CompiledTheory`].
 pub(crate) struct DeterminantTable {
     theory: std::sync::Arc<CompiledTheory>,
-    membership: Box<[Option<ProjectionId>]>,
+    home: Box<[Option<ProjectionId>]>,
 }
+
+/// One emitted projection of a row: the compiled projection and its
+/// projected determinant bytes.
+pub(crate) type Emit<'a> = &'a mut dyn FnMut(&CompiledProjection, &[u8]) -> StoreResult<()>;
 
 impl DeterminantTable {
     pub(crate) fn compile(schema: &Schema) -> Result<Self, CompileError> {
         let theory = schema.shared_compiled_theory()?;
-        let membership = (0..schema.relations().len())
+        let home = (0..schema.relations().len())
             .map(|index| {
                 let relation = RelationId(u32::try_from(index).expect("sealed relation id fits"));
                 theory
@@ -52,52 +49,29 @@ impl DeterminantTable {
                     .map(|projection| projection.id)
             })
             .collect();
-        Ok(Self { theory, membership })
+        Ok(Self { theory, home })
     }
 
-    /// One schema-fixed exact scalar key provides the clustered row home
-    /// and replaces a separate membership index. Candidate conflicts still
-    /// share its row-body multimap bucket; every
-    /// membership answer must compare the complete canonical row.
-    /// The narrowest key wins, with the stable projection id breaking ties.
-    pub(crate) fn membership_projection(
-        &self,
-        relation: RelationId,
-    ) -> Option<&CompiledProjection> {
-        self.membership
+    /// The relation's home: its narrowest exact scalar key, the stable
+    /// projection id breaking ties. Rows of a relation without one are homed
+    /// by their fingerprint.
+    pub(crate) fn home_projection(&self, relation: RelationId) -> Option<&CompiledProjection> {
+        self.home
             .get(relation.0 as usize)
             .copied()
             .flatten()
             .and_then(|id| self.theory.projection(id))
     }
 
-    /// The selected scalar projection is served by the clustered row body,
-    /// not by a duplicate determinant entry.
-    pub(crate) fn is_home(&self, projection: ProjectionId) -> bool {
-        self.theory
-            .projection(projection)
-            .is_some_and(|compiled| self.is_home_compiled(compiled))
-    }
-
-    pub(crate) fn is_home_compiled(&self, projection: &CompiledProjection) -> bool {
-        self.membership.get(projection.relation.0 as usize) == Some(&Some(projection.id))
-    }
-
-    pub(crate) fn home_width(&self, relation: RelationId) -> usize {
-        self.membership_projection(relation)
-            .map_or(0, |home| home.encoding.routing_width())
+    /// The home projection is served by the row bucket, not a `det` entry.
+    pub(crate) fn is_home(&self, projection: &CompiledProjection) -> bool {
+        self.home.get(projection.relation.0 as usize) == Some(&Some(projection.id))
     }
 
     /// Declaration order, including empty and closed relations.
     pub(crate) fn relations(&self) -> impl ExactSizeIterator<Item = RelationId> + '_ {
-        (0..self.membership.len())
+        (0..self.home.len())
             .map(|index| RelationId(u32::try_from(index).expect("sealed relation id fits")))
-    }
-
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn theory(&self) -> &CompiledTheory {
-        &self.theory
     }
 
     pub(crate) fn fields_of(&self, relation: RelationId) -> Option<&[FieldDescriptor]> {
@@ -125,29 +99,6 @@ impl DeterminantTable {
         self.theory.key_for(relation, projection)
     }
 
-    /// Emit every interned physical projection of one stored row.
-    /// Shared indexes emit once. Callers persist [`ProjectionId`], not a
-    /// restated statement.
-    ///
-    /// # Errors
-    /// Work exhaustion, malformed stored row, or sink failure.
-    pub(crate) fn emit_row(
-        &self,
-        relation: RelationId,
-        row: &[u8],
-        scratch: &mut crate::canonical::DecodeScratch<'_>,
-        emit: super::ProjectionEmitter<'_>,
-    ) -> StoreResult<()> {
-        if self.theory.projections_of_relation(relation).is_empty() {
-            return Ok(());
-        }
-        let fields = self.fields_of(relation).ok_or(StoreError::ForeignSchema)?;
-        let work = scratch.work();
-        scratch.with_decoded(fields, row, |values| {
-            self.emit_decoded(relation, values, work, emit)
-        })
-    }
-
     /// Descriptor-based visit of one decoded row's interned projections.
     /// Only scalar routing is emitted; interval values stay in canonical rows.
     ///
@@ -158,7 +109,7 @@ impl DeterminantTable {
         relation: RelationId,
         values: &[crate::Value],
         work: &WorkContext,
-        emit: super::ProjectionEmitter<'_>,
+        emit: Emit<'_>,
     ) -> StoreResult<()> {
         for id in self.theory.projections_of_relation(relation) {
             let projection = self.theory.projection(*id).expect("indexed id");
@@ -175,7 +126,7 @@ impl DeterminantTable {
                     fingerprinted.as_slice()
                 }
             };
-            emit(*id, projected)?;
+            emit(projection, projected)?;
         }
         Ok(())
     }
@@ -238,15 +189,6 @@ pub(crate) fn determinant_bytes(
             crate::canonical::CanonicalRow::encode(&projection.scalar_fields, values, work)?,
         )),
     }
-}
-
-/// Fingerprint routing for a projected byte slice (fingerprint arm only).
-pub(crate) fn fingerprint_routing(
-    fingerprinter: super::fingerprint::Fingerprinter,
-    projection: ProjectionId,
-    projected: &[u8],
-) -> [u8; FP_LEN] {
-    fingerprinter.determinant(projection, projected)
 }
 
 #[cfg(test)]
@@ -334,13 +276,10 @@ mod tests {
         let moved = owner;
         assert_eq!(moved.as_slice().as_ptr(), address);
         assert_eq!(moved.as_slice(), expected.as_bytes());
+        let fingerprinter = super::super::fingerprint::Fingerprinter::Blake3;
         assert_eq!(
-            fingerprint_routing(super::super::Fingerprinter::Blake3, projection.id, &moved),
-            fingerprint_routing(
-                super::super::Fingerprinter::Blake3,
-                projection.id,
-                &expected
-            )
+            fingerprinter.determinant(projection.id, &moved),
+            fingerprinter.determinant(projection.id, expected.as_bytes())
         );
         let before = crate::alloc_counter::snapshot().window;
         drop(moved);
@@ -382,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn membership_selection_uses_shortest_exact_key_then_stable_projection_id() {
+    fn home_selection_uses_shortest_exact_key_then_stable_projection_id() {
         let schema = SchemaDescriptor {
             relations: vec![RelationDescriptor {
                 extension: None,
@@ -402,32 +341,26 @@ mod tests {
         .validate()
         .unwrap();
         let det = table(&schema);
-        let selected = det.membership_projection(RelationId(0)).unwrap();
+        let selected = det.home_projection(RelationId(0)).unwrap();
         assert_eq!(selected.projection.as_ref(), &[FieldId(1)]);
-        assert_eq!(det.home_width(RelationId(0)), 8);
-        assert!(det.is_home(selected.id));
+        assert!(det.is_home(selected));
         for projection in det.theory.projections() {
-            assert_eq!(det.is_home(projection.id), projection.id == selected.id);
+            assert_eq!(det.is_home(projection), projection.id == selected.id);
         }
-        assert!(!det.is_home(ProjectionId(u16::MAX)));
         assert_eq!(
             selected.encoding,
             KeyEncoding::ExactBounded { scalar_width: 8 }
         );
         assert_eq!(
-            table(&schema)
-                .membership_projection(RelationId(0))
-                .unwrap()
-                .id,
+            table(&schema).home_projection(RelationId(0)).unwrap().id,
             selected.id
         );
         assert_eq!(det.relations().collect::<Vec<_>>(), [RelationId(0)]);
-        assert!(det.membership_projection(RelationId(1)).is_none());
-        assert_eq!(det.home_width(RelationId(1)), 0);
+        assert!(det.home_projection(RelationId(1)).is_none());
     }
 
     #[test]
-    fn membership_selection_excludes_hash_interval_and_nonkey_projections() {
+    fn home_selection_excludes_hash_interval_and_nonkey_projections() {
         let schema = SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
@@ -478,73 +411,15 @@ mod tests {
         .validate()
         .unwrap();
         let det = table(&schema);
-        assert!(det.membership_projection(RelationId(0)).is_some());
+        assert!(det.home_projection(RelationId(0)).is_some());
         assert!(
             det.source_of(StatementId(1)).is_some(),
             "source has a real index but no key law"
         );
         for relation in [RelationId(1), RelationId(2), RelationId(3), RelationId(4)] {
-            assert!(det.membership_projection(relation).is_none());
-            assert_eq!(det.home_width(relation), 0);
+            assert!(det.home_projection(relation).is_none());
         }
         assert_eq!(det.relations().len(), 5);
-    }
-
-    #[test]
-    fn row_emitter_reuses_decode_storage_and_releases_payload_on_sink_error() {
-        let schema = SchemaDescriptor {
-            relations: vec![RelationDescriptor {
-                extension: None,
-                name: "T".into(),
-                fields: vec![
-                    field("id", ValueType::U64),
-                    field("body", ValueType::String),
-                ],
-            }],
-            statements: vec![fd(RelationId(0), &[FieldId(0)])],
-        }
-        .validate()
-        .unwrap();
-        let donor = work();
-        let row = crate::canonical::CanonicalRow::encode(
-            schema.relation(RelationId(0)).fields(),
-            &[
-                Value::U64(42),
-                Value::String("unindexed".repeat(1000).into()),
-            ],
-            &donor,
-        )
-        .unwrap();
-        let det = table(&schema);
-        let context = work();
-        let baseline = crate::alloc_counter::snapshot().absolute.live_bytes;
-        let mut scratch = crate::canonical::DecodeScratch::new(&context);
-        assert_eq!(
-            det.emit_row(RelationId(0), &row, &mut scratch, &mut |_, bytes| {
-                assert_eq!(bytes, encode_u64(42));
-                Err(StoreError::ForeignSchema)
-            }),
-            Err(StoreError::ForeignSchema)
-        );
-        let retained = crate::alloc_counter::snapshot()
-            .absolute
-            .live_bytes
-            .saturating_sub(baseline);
-        assert!(
-            retained < 1000,
-            "only the small decode vector remains after the rejected sink"
-        );
-        let mut visits = 0;
-        det.emit_row(RelationId(0), &row, &mut scratch, &mut |_, bytes| {
-            assert_eq!(bytes, encode_u64(42));
-            visits += 1;
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(visits, 1);
-        assert!(crate::alloc_counter::snapshot().absolute.live_bytes <= baseline + retained);
-        drop(scratch);
-        assert!(crate::alloc_counter::snapshot().absolute.live_bytes <= baseline);
     }
 
     #[test]
@@ -630,7 +505,7 @@ mod tests {
             &[Value::U64(9)],
             &work(),
             &mut |id, bytes| {
-                t_emits.push((id, bytes.to_vec()));
+                t_emits.push((id.id, bytes.to_vec()));
                 Ok(())
             },
         )
@@ -653,7 +528,7 @@ mod tests {
             &[Value::U64(1), Value::U64(9)],
             &work(),
             &mut |id, bytes| {
-                s_emits.push((id, bytes.to_vec()));
+                s_emits.push((id.id, bytes.to_vec()));
                 Ok(())
             },
         )
@@ -734,7 +609,7 @@ mod tests {
                 &[Value::U64(1), Value::U64(payload)],
                 &work(),
                 &mut |id, bytes| {
-                    entries.push((id, bytes.to_vec()));
+                    entries.push((id.id, bytes.to_vec()));
                     Ok(())
                 },
             )
@@ -769,7 +644,7 @@ mod tests {
                 &work(),
                 &mut |id, routing| {
                     assert_eq!(routing, encode_u64(4));
-                    entries.push((id, routing.to_vec()));
+                    entries.push((id.id, routing.to_vec()));
                     Ok(())
                 },
             )

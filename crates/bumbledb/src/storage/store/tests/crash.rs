@@ -1,11 +1,6 @@
-//! G06 / E-DURABILITY process-death schedules: the durable commit boundary
-//! is exact. A child process killed after `commit` leaves every acknowledged
-//! row; killed with a prepared-but-uncommitted candidate it leaves none; and
-//! its death releases the kernel directory lock for the next owner.
-//!
-//! These are process-exit schedules. True power-loss/machine-failure
-//! qualification is a separate authorized hardware/filesystem gate and is
-//! not claimed here.
+//! Process death around the commit boundary: a child killed after commit
+//! leaves every acknowledged row, one killed with a sealed but uncommitted
+//! candidate leaves none, and death releases the directory lock.
 
 use super::*;
 
@@ -39,21 +34,11 @@ fn child_role() {
         "prepare-then-abort" => {
             let context = work();
             let mut owner = store.writer(&context).expect("writer");
-            let prepared = match owner
-                .prepare(
-                    &change_set(&schema(), &[(NOTE, note(2, "speculative"))], &[]),
-                    &FirstFieldKey,
-                    &AdmitAll,
-                )
-                .expect("prepare")
-            {
-                Prepared::Admitted(prepared) => prepared,
-                Prepared::Rejected {
-                    rejection: never, ..
-                } => match never {},
-            };
-            // Sealed but never committed: death must erase it.
-            let sealed = prepared.seal(NO_HOST).expect("seal");
+            let changes = change_set(&schema(), &[(NOTE, note(2, "speculative"))], &[]);
+            let prepared = owner
+                .prepare_decided(std::slice::from_ref(&changes))
+                .expect("prepare");
+            let sealed = prepared.seal(HostChanges::NONE).expect("seal");
             println!("CRASH_CHILD_SEALED");
             std::mem::forget(sealed);
             std::process::abort();
@@ -166,7 +151,7 @@ fn a_paused_owner_keeps_the_lock_and_death_releases_it() {
     let mut child = spawn_child("hold-lock", &path);
     wait_for_marker(&mut child, "CRASH_CHILD_HOLDING");
     // While the child lives, ownership refuses — time never mints an owner.
-    match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
+    match Store::open(&path, &schema(), Options::default()) {
         Err(StoreError::StoreLocked { .. }) => {}
         other => panic!("expected StoreLocked under a live child, got {other:?}"),
     }

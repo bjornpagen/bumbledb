@@ -1,8 +1,8 @@
-//! D06/D26 public-path discriminators: complete admit, no-clobber install.
+//! Population: complete judgment at admission, no-clobber publication, and
+//! incremental judgment of ordinary writes afterwards.
 
-use bumbledb::schema::ValidateDescriptor as _;
-use bumbledb::store::{InstallOutcome, StoreError, UnreadyStore};
-use bumbledb::{ApplyExpected, ApplyOutcome, ChangeSet, Db, Theory, Value, WorkContext};
+use bumbledb::host::{DatabaseId, HostChanges, Population};
+use bumbledb::{Admission, ChangeSet, Db, Error, Options, RelationId, Value, WorkContext};
 
 mod common;
 
@@ -17,213 +17,131 @@ bumbledb::schema! {
     User(email) -> User;
 }
 
-fn work() -> WorkContext {
-    common::work()
+const USER: RelationId = RelationId(0);
+
+fn user(schema: &bumbledb::schema::Schema, id: u64, email: &str) -> ChangeSet {
+    let mut builder = ChangeSet::builder(schema, common::work());
+    builder
+        .insert(USER, &[Value::U64(id), Value::String(email.into())])
+        .expect("insert");
+    builder.finish().expect("seal")
 }
 
+fn begin(dest: &std::path::Path) -> Population<GateAdmit> {
+    Population::begin(
+        dest,
+        GateAdmit,
+        DatabaseId::mint(),
+        Options::default(),
+        common::work(),
+    )
+    .expect("begin")
+}
+
+fn schema() -> bumbledb::schema::Schema {
+    use bumbledb::Theory as _;
+    use bumbledb::schema::ValidateDescriptor as _;
+    GateAdmit.descriptor().validate().expect("schema")
+}
+
+/// Unjudged applies may stage a key conflict; admission judges the whole
+/// state, rejects it, and publishes nothing.
 #[test]
-fn d26_two_key_conflicting_tuples_then_admit_with_no_delta_rejects() {
-    let dir = common::TempDir::new("gate-d26-conflict");
+fn admission_rejects_a_conflicting_population() {
+    let dir = common::TempDir::new("gate-admit-conflict");
     let dest = dir.path().join("store");
-    let schema = GateAdmit.descriptor().validate().expect("schema");
-    let ctx = work();
-    let unready = UnreadyStore::begin(&dest, &schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx)
-        .expect("begin");
-    let first = {
-        let mut builder = ChangeSet::builder(&schema, ctx.clone());
-        builder
-            .insert(
-                bumbledb::RelationId(0),
-                &[Value::U64(1), Value::String("dup@ex".into())],
-            )
-            .expect("insert");
-        builder.finish().expect("first")
-    };
-    let second = {
-        let mut builder = ChangeSet::builder(&schema, ctx.clone());
-        builder
-            .insert(
-                bumbledb::RelationId(0),
-                &[Value::U64(2), Value::String("dup@ex".into())],
-            )
-            .expect("insert");
-        builder.finish().expect("second")
-    };
-    unready
-        .populate(&ctx, |stage, work| {
-            stage.apply(&first, work)?;
-            stage.apply(&second, work)?;
-            Ok(())
-        })
-        .expect("populate");
-    assert!(
-        unready.admit(&schema, &ctx).is_err(),
-        "complete admit must reject the conflicting populated state"
+    let schema = schema();
+    let mut population = begin(&dest);
+    population
+        .apply(&user(&schema, 1, "dup@ex"))
+        .expect("apply");
+    population
+        .apply(&user(&schema, 2, "dup@ex"))
+        .expect("apply");
+    match population.admit(HostChanges::NONE).expect("admit") {
+        Admission::Rejected(violations) => assert_eq!(violations.len(), 1),
+        Admission::Accepted(_) => panic!("a key conflict was admitted"),
+    }
+    assert!(!dest.exists(), "nothing is published");
+}
+
+/// Two populations of one destination: the first publishes, the second is
+/// refused and leaves the winner intact.
+#[test]
+fn a_second_population_never_overwrites() {
+    let dir = common::TempDir::new("gate-admit-two");
+    let dest = dir.path().join("store");
+    let schema = schema();
+    let mut first = begin(&dest);
+    let mut second = begin(&dest);
+    first.apply(&user(&schema, 1, "a@ex")).expect("apply");
+    second.apply(&user(&schema, 2, "b@ex")).expect("apply");
+    drop(
+        first
+            .admit(HostChanges::NONE)
+            .expect("admit")
+            .expect("accepted"),
     );
-    assert!(!dest.exists(), "destination stays absent");
-}
-
-#[test]
-fn d06_two_installers_never_overwrite() {
-    let dir = common::TempDir::new("gate-d06-two");
-    let dest = dir.path().join("store");
-    let schema = GateAdmit.descriptor().validate().expect("schema");
-    let ctx = work();
-    let first = UnreadyStore::begin(&dest, &schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx)
-        .expect("first");
-    let second = UnreadyStore::begin(&dest, &schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx)
-        .expect("second");
-    let row = {
-        let mut builder = ChangeSet::builder(&schema, ctx.clone());
-        builder
-            .insert(
-                bumbledb::RelationId(0),
-                &[Value::U64(1), Value::String("a@ex".into())],
-            )
-            .expect("insert");
-        builder.finish().expect("row")
+    let Err(refused) = second.admit(HostChanges::NONE) else {
+        panic!("a second population published over the first");
     };
-    first
-        .populate(&ctx, |stage, work| stage.apply(&row, work).map(|_| ()))
-        .expect("populate");
-    let admitted = first.admit(&schema, &ctx).expect("admit");
-    match admitted.install(&schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx) {
-        InstallOutcome::Installed(store) => drop(store),
-        other => panic!("first installer publishes, got {other:?}"),
-    }
-    match second
-        .admit(&schema, &ctx)
-        .expect("second admit of empty sibling")
-        .install(&schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx)
-    {
-        InstallOutcome::NotInstalled { cleanup, detail } => {
-            assert!(matches!(detail, StoreError::DestinationExists { .. }));
-            cleanup.abandon();
-            assert!(dest.exists());
-        }
-        other => panic!("second must not overwrite, got {other:?}"),
-    }
-    let _reopen = Db::<GateAdmit>::open(&dest, GateAdmit, work()).expect("reopen winner");
-}
-
-/// After complete admit+install, ordinary apply is incremental: a new
-/// email commits, a duplicate email is `InvariantRejected`, and the
-/// owned pin still sees only the admitted rows. Verification `NotRun`.
-#[test]
-fn apply_after_admit_install_rejects_conflict_and_pins() {
-    let dir = common::TempDir::new("gate-apply-after-admit");
-    let dest = dir.path().join("store");
-    let schema = GateAdmit.descriptor().validate().expect("schema");
-    let ctx = work();
-    let unready = UnreadyStore::begin(&dest, &schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx)
-        .expect("begin");
-    let first = {
-        let mut builder = ChangeSet::builder(&schema, ctx.clone());
-        builder
-            .insert(
-                bumbledb::RelationId(0),
-                &[Value::U64(1), Value::String("a@ex".into())],
-            )
-            .expect("insert");
-        builder.finish().expect("first")
-    };
-    unready
-        .populate(&ctx, |stage, work| stage.apply(&first, work).map(|_| ()))
-        .expect("populate");
-    let admitted = unready.admit(&schema, &ctx).expect("complete admit");
-    match admitted.install(&schema, bumbledb::store::DEFAULT_MAP_CEILING, &ctx) {
-        InstallOutcome::Installed(_) => {}
-        other => panic!("install must publish, got {other:?}"),
-    }
-    let db = Db::<GateAdmit>::open(&dest, GateAdmit, work()).expect("open");
-    let second = {
-        let mut builder = ChangeSet::builder(db.schema(), ctx.clone());
-        builder
-            .insert(
-                bumbledb::RelationId(0),
-                &[Value::U64(2), Value::String("b@ex".into())],
-            )
-            .expect("insert");
-        builder.finish().expect("second")
-    };
-    match db
-        .apply(&second, ApplyExpected::Any, &ctx)
-        .expect("incremental apply")
-    {
-        ApplyOutcome::Accepted { .. } => {}
-        ApplyOutcome::NoChange { .. }
-        | ApplyOutcome::InvariantRejected { .. }
-        | ApplyOutcome::Moved { .. } => panic!("a distinct email must accept"),
-    }
-    let conflict = {
-        let mut builder = ChangeSet::builder(db.schema(), ctx.clone());
-        builder
-            .insert(
-                bumbledb::RelationId(0),
-                &[Value::U64(3), Value::String("a@ex".into())],
-            )
-            .expect("insert");
-        builder.finish().expect("conflict")
-    };
-    match db
-        .apply(&conflict, ApplyExpected::Any, &ctx)
-        .expect("conflict")
-    {
-        ApplyOutcome::InvariantRejected { violations } => {
-            assert!(!violations.is_empty());
-        }
-        ApplyOutcome::Accepted { .. } | ApplyOutcome::NoChange { .. } => {
-            panic!("duplicate email must reject")
-        }
-        ApplyOutcome::Moved { .. } => panic!("Any cannot Move"),
-    }
+    assert!(
+        matches!(refused, Error::DestinationExists { .. }),
+        "{refused:?}"
+    );
+    let db = Db::open(&dest, GateAdmit, common::work()).expect("reopen winner");
     let pin = db.owned_read().expect("pin");
-    assert_eq!(pin.count(bumbledb::RelationId(0)).expect("count"), 2);
-    let frame = pin.frame(&ctx);
+    let work = common::work();
+    let frame = pin.frame(&work);
     assert!(
         frame
-            .contains_dyn(
-                bumbledb::RelationId(0),
-                &[Value::U64(1), Value::String("a@ex".into())]
-            )
-            .expect("first remains")
+            .contains_dyn(USER, &[Value::U64(1), Value::String("a@ex".into())])
+            .expect("read")
     );
+    assert_eq!(pin.count(USER).expect("count"), 1);
+}
+
+/// After admission, ordinary writes are judged: a distinct email commits,
+/// a duplicate is rejected, a pinned read sees exactly the committed rows,
+/// and an empty write from the pin's witness commits unchanged.
+#[test]
+fn writes_after_admission_are_judged() {
+    let dir = common::TempDir::new("gate-admit-after");
+    let dest = dir.path().join("store");
+    let schema = schema();
+    let mut population = begin(&dest);
+    population.apply(&user(&schema, 1, "a@ex")).expect("apply");
+    let db = population
+        .admit(HostChanges::NONE)
+        .expect("admit")
+        .expect("accepted");
+    let work = WorkContext::new();
+    let committed = db
+        .apply(&user(db.schema(), 2, "b@ex"), &work)
+        .expect("apply")
+        .expect("a distinct email commits");
+    assert!(committed.changed);
+    let conflict = db
+        .apply(&user(db.schema(), 3, "a@ex"), &work)
+        .expect("apply");
     assert!(
-        frame
-            .contains_dyn(
-                bumbledb::RelationId(0),
-                &[Value::U64(2), Value::String("b@ex".into())]
-            )
-            .expect("second remains")
+        matches!(conflict, bumbledb::WriteOutcome::Rejected(ref violations) if violations.len() == 1),
+        "{conflict:?}"
     );
-    assert!(
-        !frame
-            .contains_dyn(
-                bumbledb::RelationId(0),
-                &[Value::U64(3), Value::String("a@ex".into())]
-            )
-            .expect("conflict never landed")
-    );
-    let empty = ChangeSet::builder(db.schema(), ctx.clone())
+
+    let pin = db.owned_read().expect("pin");
+    assert_eq!(pin.count(USER).expect("count"), 2);
+    let frame = pin.frame(&work);
+    for (id, email, present) in [(1, "a@ex", true), (2, "b@ex", true), (3, "a@ex", false)] {
+        let row = [Value::U64(id), Value::String(email.into())];
+        assert_eq!(frame.contains_dyn(USER, &row).expect("read"), present);
+    }
+    let empty = ChangeSet::builder(db.schema(), work.clone())
         .finish()
         .expect("empty");
-    match db
-        .apply(&empty, ApplyExpected::Exact(pin.witness()), &ctx)
-        .expect("no-change")
-    {
-        ApplyOutcome::NoChange { .. } => {}
-        ApplyOutcome::Accepted { .. }
-        | ApplyOutcome::InvariantRejected { .. }
-        | ApplyOutcome::Moved { .. } => panic!("empty apply under the pin's witness is NoChange"),
-    }
-    let close_work = work();
-    close_work.cancel();
-    match db.close(&close_work) {
-        bumbledb::CloseReport::Incomplete {
-            live_transactions, ..
-        } => assert!(live_transactions >= 1),
-        bumbledb::CloseReport::Closed => panic!("close cannot complete under a live pin"),
-    }
-    drop(pin);
-    assert_eq!(db.close(&work()), bumbledb::CloseReport::Closed);
+    let unchanged = db
+        .apply_from(&empty, &pin.witness(), &work)
+        .expect("apply")
+        .expect("the witness is current");
+    assert!(!unchanged.changed);
 }

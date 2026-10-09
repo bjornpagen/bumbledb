@@ -5,9 +5,8 @@
 //! this entry. An empty delta is not a shortcut: the populated final state
 //! is judged in full.
 //!
-//! [`judge_incremental`] requires a [`LawfulParent`] capability minted only
-//! by checked create/open or a previous admitted commit. An unready store
-//! cannot supply that premise. Incremental judgment enumerates affected
+//! [`judge_incremental`] assumes the committed parent is lawful: every
+//! commit was judged. Incremental judgment enumerates affected
 //! groups from the net delta and compiled adjacency, then visits those
 //! groups through interned descriptors (`visit_compiled_group`) when the
 //! state exposes them; it never treats an empty change set as complete
@@ -340,36 +339,6 @@ impl Default for JudgeBudget {
     }
 }
 
-/// Capability that the committed parent is lawful (C4). Only complete
-/// admission, trusted persisted open, or a prior admitted commit may mint it.
-/// An [`UnreadyStore`](crate::storage::store::UnreadyStore) cannot. This
-/// type has no public constructor; `LawfulParent::established` is
-/// crate-private so an unready owner cannot forge the premise.
-///
-/// ```compile_fail
-/// let _ = bumbledb::schema::LawfulParent {};
-/// ```
-/// ```compile_fail
-/// let _ = bumbledb::schema::LawfulParent::established();
-/// ```
-/// ```compile_fail
-/// fn unready_cannot_mint(unready: &bumbledb::store::UnreadyStore) {
-///     let _ = unready.lawful_parent();
-/// }
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LawfulParent {
-    _priv: (),
-}
-
-impl LawfulParent {
-    /// Established by complete final-state admission or trusted open.
-    #[must_use]
-    pub(crate) const fn established() -> Self {
-        Self { _priv: () }
-    }
-}
-
 /// Complete final-state judgment (C4). Staging, restore, migrate and the
 /// offline verifier use this entry — never an empty-delta incremental skip.
 ///
@@ -392,7 +361,6 @@ pub fn judge_complete<S: CandidateFacts>(
 /// # Errors
 /// As [`judge_final_state`].
 pub fn judge_incremental<S: DeltaFacts>(
-    _parent: LawfulParent,
     schema: &Schema,
     state: &S,
     work: &WorkContext,
@@ -443,9 +411,8 @@ pub fn judge_final_state<S: CandidateFacts>(
     }
 }
 
-/// Incremental production judgment under a lawful parent. Callers must
-/// hold [`LawfulParent`]; this function does not mint that premise and
-/// does not treat an empty delta as complete validation.
+/// Incremental judgment under a lawful parent; an empty delta is not
+/// complete validation.
 ///
 /// Equivalence with [`judge_final_state`] holds exactly when the committed
 /// parent satisfies every sealed statement. A parent made unlawful outside

@@ -3,16 +3,17 @@
 
 use super::*;
 
+fn small_store(path: &std::path::Path) -> Store {
+    Store::create(path, &schema(), DatabaseId::mint(), small_ceiling()).expect("create")
+}
+
 #[test]
 fn a_candidate_past_the_ceiling_is_full_and_commits_nothing() {
     let (_dir, path) = store_dir("ceiling-candidate");
-    let store = Store::create(&path, &schema(), SMALL_CEILING)
-        .expect("create")
-        .0;
+    let store = small_store(&path);
     let before = store.committed_generation(&work()).expect("generation");
     let huge = note(1, &"x".repeat(2 << 20));
-    let changes = change_set(&schema(), &[(NOTE, huge)], &[]);
-    match try_commit_changes(&store, &changes) {
+    match try_commit_changes(&store, &change_set(&schema(), &[(NOTE, huge)], &[])) {
         Err(StoreError::Full { ceiling }) => assert_eq!(ceiling, SMALL_CEILING),
         other => panic!("expected Full, got {other:?}"),
     }
@@ -25,45 +26,27 @@ fn a_candidate_past_the_ceiling_is_full_and_commits_nothing() {
         &change_set(&schema(), &[(NOTE, note(2, "fits"))], &[]),
     );
     assert!(commit.changed);
-    assert_eq!(
-        store
-            .snapshot(&work())
-            .expect("snapshot")
-            .row_count(NOTE)
-            .expect("count"),
-        1
-    );
+    let snapshot = store.snapshot(&work()).expect("snapshot");
+    assert_eq!(snapshot.row_count(NOTE).expect("count"), 1);
 }
 
 #[test]
 fn a_host_record_past_the_ceiling_drops_the_whole_sealed_candidate() {
     let (_dir, path) = store_dir("ceiling-seal");
-    let store = Store::create(&path, &schema(), SMALL_CEILING)
-        .expect("create")
-        .0;
+    let store = small_store(&path);
     let before = store.committed_generation(&work()).expect("generation");
     let huge = vec![0xABu8; 2 << 20];
     let records = host_put(b"receipt/huge", &huge);
     let changes = change_set(&schema(), &[(NOTE, note(1, "payload"))], &[]);
     let context = work();
     let mut owner = store.writer(&context).expect("writer");
-    let prepared = match owner
-        .prepare(&changes, &FirstFieldKey, &AdmitAll)
-        .expect("prepare")
-    {
-        Prepared::Admitted(prepared) => prepared,
-        Prepared::Rejected {
-            rejection: never, ..
-        } => match never {},
-    };
-    let error = prepared
-        .seal(HostChanges {
-            records: &records,
-            attachment: AttachmentChange::Keep,
-        })
-        .err()
-        .expect("the oversized host record cannot fit");
-    assert!(matches!(error, StoreError::Full { .. }), "{error:?}");
+    let prepared = owner
+        .prepare_decided(std::slice::from_ref(&changes))
+        .expect("prepare");
+    assert_full(prepared.seal(HostChanges {
+        records: &records,
+        head: super::super::host::Head::Keep,
+    }));
     drop(owner);
     assert_eq!(
         store.committed_generation(&work()).expect("generation"),
@@ -77,23 +60,15 @@ fn a_host_record_past_the_ceiling_drops_the_whole_sealed_candidate() {
 #[test]
 fn reopening_keeps_the_rows_under_a_different_ceiling() {
     let (_dir, path) = store_dir("ceiling-reopen");
-    let store = Store::create(&path, &schema(), SMALL_CEILING)
-        .expect("create")
-        .0;
+    let store = small_store(&path);
     commit_changes(
         &store,
         &change_set(&schema(), &[(NOTE, note(1, "kept"))], &[]),
     );
     drop(store);
-    let reopened = Store::open(&path, &schema(), DEFAULT_MAP_CEILING).expect("reopen");
-    assert_eq!(reopened.ceiling(), DEFAULT_MAP_CEILING);
+    let reopened = open_default(&path);
+    assert_eq!(reopened.ceiling(), Options::default().map_ceiling);
     assert!(reopened.file_bytes().expect("file bytes") < SMALL_CEILING);
-    assert_eq!(
-        reopened
-            .snapshot(&work())
-            .expect("snapshot")
-            .row_count(NOTE)
-            .expect("count"),
-        1
-    );
+    let snapshot = reopened.snapshot(&work()).expect("snapshot");
+    assert_eq!(snapshot.row_count(NOTE).expect("count"), 1);
 }

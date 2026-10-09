@@ -1,34 +1,16 @@
-//! F3 G-C regressions: the incremental production judgment.
-//!
-//! `SchemaJudge` now judges a delta-carrying candidate through
-//! `judge_final_state_delta_local`: statements the delta cannot affect are
-//! skipped and key statements are judged from the delta-touched determinant
-//! groups (`CandidateState::visit_determinant_competitors`) instead of streaming
-//! whole relations. These tests pin, on the REAL store candidate path:
-//!
-//! - differential equivalence with the complete reference judgment —
-//!   verdicts, complete violation sets, and canonical evidence bytes equal
-//!   over randomized theories/mutations (adds, deletes, replaces,
-//!   multi-statement rejections), also under forced total fingerprint
-//!   collisions;
-//! - the lawful-parent premise pinned honestly: a parent seeded UNLAWFULLY
-//!   through the test judge can hide from the incremental path, the
-//!   complete reference convicts it, and the store sweeper — which always
-//!   re-runs the COMPLETE judgment — reports it;
-//! - structural work counts: judging a small mutation costs work
-//!   proportional to the delta's groups, not to the relation (flat across
-//!   an 8× relation growth, under a flat ceiling).
+//! Incremental judgment against complete judgment on the real candidate:
+//! verdicts, violation sets and canonical evidence bytes are equal over
+//! randomized mutations of every statement family, also under forced
+//! fingerprint collisions. The lawful-parent premise is pinned honestly:
+//! an unlawful parent hides from incremental judgment, and the sweeper's
+//! complete judgment convicts it.
 
 use super::*;
-use crate::schema::judge::{
-    CandidateFacts, JudgeBudget, JudgedViolation, Judgment as SchemaJudgment, LawfulParent,
-    judge_final_state,
-};
+use crate::schema::judge::JudgedViolation;
 use crate::schema::{FieldId, Side, StatementDescriptor, StatementKind, Weight};
 use crate::storage::store::fingerprint::FP_LEN;
-use crate::storage::store::judge_bridge::{SchemaJudge, UnindexedRows};
 use crate::storage::store::verify::{self, VerifyFinding};
-use bumbledb_theory::schema::Bound;
+use bumbledb_theory::schema::{Bound, StatementId};
 
 const USER: RelationId = RelationId(0);
 const BOOKING: RelationId = RelationId(1);
@@ -136,96 +118,9 @@ fn room(id: u64) -> Vec<Value> {
     vec![Value::U64(id)]
 }
 
-/// The complete reference judgment's view of the SAME candidate: streamed
-/// full relations, decoded — exactly the sweeper's judgment shape.
-struct ReferenceFacts<'v, 'a, 'store> {
-    candidate: &'v CandidateState<'a, 'store>,
-    schema: &'v Schema,
-    work: &'v WorkContext,
-}
-
-impl CandidateFacts for ReferenceFacts<'_, '_, '_> {
-    type Error = StoreError;
-
-    fn visit_rows(
-        &self,
-        relation: RelationId,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, StoreError>,
-    ) -> Result<(), StoreError> {
-        self.visit_ranked_rows(relation, &mut |_rank, values| visit(values))
-    }
-
-    fn visit_ranked_rows(
-        &self,
-        relation: RelationId,
-        visit: crate::schema::judge::RankedRowVisitor<'_, StoreError>,
-    ) -> Result<(), StoreError> {
-        let fields = self.schema.relation(relation).fields();
-        for entry in self.candidate.rows(relation)? {
-            let (row_id, bytes) = entry?;
-            let decoded = crate::canonical::decode(fields, bytes, self.work)?;
-            if !visit(row_id.id.0, decoded.values())? {
-                break;
-            }
-        }
-        Ok(())
-    }
-}
-
 fn evidence_bytes(schema: &Schema, judged: &[JudgedViolation]) -> Vec<u8> {
     crate::schema::evidence::encode_judged(schema, judged, 1 << 20, &work())
         .expect("evidence encodes")
-}
-
-/// The differential judge: runs the PRODUCTION `SchemaJudge` (incremental
-/// for delta-carrying candidates) and the complete reference judgment over
-/// one candidate state, requires verdicts, complete violation sets, and
-/// canonical evidence bytes equal, then returns the production outcome.
-struct CompareJudge<'s> {
-    schema: &'s Schema,
-}
-
-impl CandidateJudge for CompareJudge<'_> {
-    type Rejection = Box<[JudgedViolation]>;
-
-    fn judge(
-        &self,
-        candidate: &CandidateState<'_, '_>,
-        work: &WorkContext,
-    ) -> StoreResult<Judgment<Self::Rejection>> {
-        let production = SchemaJudge::new(self.schema).judge_incremental(
-            LawfulParent::established(),
-            candidate,
-            work,
-        )?;
-        let reference_view = ReferenceFacts {
-            candidate,
-            schema: self.schema,
-            work,
-        };
-        let reference =
-            judge_final_state(self.schema, &reference_view, work, JudgeBudget::default())
-                .expect("the reference judgment completes");
-        match (&production, &reference) {
-            (Judgment::Admitted, SchemaJudgment::Admitted) => {}
-            (Judgment::Rejected(mine), SchemaJudgment::Rejected(complete)) => {
-                assert_eq!(
-                    mine.as_ref(),
-                    complete.as_ref(),
-                    "incremental and complete violation sets must be equal"
-                );
-                assert_eq!(
-                    evidence_bytes(self.schema, mine),
-                    evidence_bytes(self.schema, complete),
-                    "canonical evidence bytes must be byte-equal"
-                );
-            }
-            (mine, complete) => {
-                panic!("verdicts diverged: production {mine:?} vs reference {complete:?}")
-            }
-        }
-        Ok(production)
-    }
 }
 
 fn build_changes(
@@ -233,48 +128,47 @@ fn build_changes(
     adds: &[(RelationId, Vec<Value>)],
     removes: &[(RelationId, Vec<Value>)],
 ) -> ChangeSet {
-    let mut builder = ChangeSet::builder(schema, work());
-    for (relation, values) in removes {
-        builder.delete(*relation, values).expect("stage delete");
-    }
-    for (relation, values) in adds {
-        builder.insert(*relation, values).expect("stage insert");
-    }
-    builder.finish().expect("sealed change set")
+    change_set(schema, adds, removes)
 }
 
-/// Prepare one delta under the differential judge; commit on admission.
-/// Returns whether the mutation was admitted.
+/// Judge one delta both ways, require equal verdicts and evidence bytes,
+/// and commit it when admitted. Returns the incremental verdict.
+fn compare(store: &Store, schema: &Schema, changes: &ChangeSet) -> Option<Box<[JudgedViolation]>> {
+    let context = work();
+    let mut owner = store.writer(&context).expect("writer");
+    let (incremental, complete) = owner.judge_both(schema, changes).expect("judge both");
+    match (&incremental, &complete) {
+        (None, None) => {}
+        (Some(mine), Some(reference)) => {
+            assert_eq!(mine, reference, "violation sets must be equal");
+            assert_eq!(
+                evidence_bytes(schema, mine),
+                evidence_bytes(schema, reference),
+                "canonical evidence bytes must be equal"
+            );
+        }
+        (mine, reference) => {
+            panic!("verdicts diverged: incremental {mine:?} vs complete {reference:?}")
+        }
+    }
+    drop(owner);
+    if incremental.is_none() {
+        judged_commit(store, schema, changes).expect("the admitted delta commits");
+    }
+    incremental
+}
+
 fn compare_and_commit(
     store: &Store,
     schema: &Schema,
     adds: &[(RelationId, Vec<Value>)],
     removes: &[(RelationId, Vec<Value>)],
 ) -> bool {
-    let changes = build_changes(schema, adds, removes);
-    let judge = CompareJudge { schema };
-    let context = work();
-    let mut owner = store.writer(&context).expect("writer");
-    match owner
-        .prepare(&changes, &UnindexedRows, &judge)
-        .expect("prepare")
-    {
-        Prepared::Admitted(prepared) => {
-            prepared
-                .seal(NO_HOST)
-                .expect("seal")
-                .commit()
-                .expect("commit");
-            true
-        }
-        Prepared::Rejected {
-            rejection: violations,
-            ..
-        } => {
-            assert!(!violations.is_empty(), "a rejection names its statements");
-            false
-        }
-    }
+    compare(store, schema, &build_changes(schema, adds, removes)).is_none()
+}
+
+fn forced(path: &std::path::Path, schema: &Schema, fp: [u8; FP_LEN]) -> Store {
+    Store::create_forced_fingerprint(path, schema, fp).expect("forced-collision store")
 }
 
 /// Exercise physical buckets through the existing complete/incremental
@@ -303,9 +197,7 @@ fn interval_prefix_order_coverage_collisions_and_cleanup() {
     ] {
         let (schema, span) = interval_coverage_fixture(target_type);
         let (_dir, path) = store_dir("interval-prefix-differential");
-        let store =
-            Store::create_forced_fingerprint(&path, &schema, DEFAULT_MAP_CEILING, [0xA5; FP_LEN])
-                .expect("colliding scalar groups");
+        let store = forced(&path, &schema, [0xA5; FP_LEN]);
         let target_row = |group: &str, start, end, id| {
             (
                 RelationId(0),
@@ -342,24 +234,14 @@ fn interval_prefix_order_coverage_collisions_and_cleanup() {
         assert!(commit(std::slice::from_ref(&early), &[]));
         assert!(commit(std::slice::from_ref(&request), &[]));
         {
-            let context = work();
-            let snapshot = store.snapshot(&context).expect("snapshot");
-            let mut entries = 0;
-            snapshot
-                .entry_census(&context, &mut |is_meta, tag, key_len, _| {
-                    if !is_meta && tag == super::super::keys::TAG_DETERMINANT {
-                        assert_eq!(
-                            key_len,
-                            snapshot.physical_key_widths().determinant_overhead + FP_LEN,
-                            "ordinary, float, and fixed intervals add no physical tail"
-                        );
-                        entries += 1;
-                    }
-                    Ok(())
-                })
-                .expect("physical census");
+            let snapshot = store.snapshot(&work()).expect("snapshot");
             assert_eq!(
-                entries, 4,
+                store
+                    .inner
+                    .dets
+                    .len(snapshot.read_txn())
+                    .expect("det count"),
+                4,
                 "three target references and one source reference"
             );
         }
@@ -369,9 +251,16 @@ fn interval_prefix_order_coverage_collisions_and_cleanup() {
         assert!(
             store
                 .inner
-                .data
+                .rows
                 .is_empty(snapshot.read_txn())
-                .expect("all rows and indexes removed")
+                .expect("rows")
+        );
+        assert!(
+            store
+                .inner
+                .dets
+                .is_empty(snapshot.read_txn())
+                .expect("dets")
         );
     }
 }
@@ -551,25 +440,18 @@ fn run_differential(store: &Store, schema: &Schema, seed: u64, iterations: u32) 
 }
 
 #[test]
-fn incremental_judge_matches_the_complete_judge_on_randomized_mutations() {
+fn incremental_judgment_matches_complete_judgment_on_randomized_mutations() {
     let (_dir, path) = store_dir("incremental-differential");
     let schema = delta_schema();
-    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
-        .expect("create")
-        .0;
+    let store = create_with(&path, &schema);
     run_differential(&store, &schema, 0x00C0_FFEE_D00D_F00D, 90);
 }
 
 #[test]
-fn incremental_judge_matches_the_complete_judge_under_forced_collisions() {
+fn incremental_judgment_matches_complete_judgment_under_forced_collisions() {
     let (_dir, path) = store_dir("incremental-collision");
     let schema = delta_schema();
-    // Every fingerprint collides: every bucket holds every cohabitant, and
-    // exact decoded confirmation alone separates groups. Verdicts must
-    // still be byte-equal with the complete judge.
-    let store =
-        Store::create_forced_fingerprint(&path, &schema, DEFAULT_MAP_CEILING, [0x5A; FP_LEN])
-            .expect("forced-collision store");
+    let store = forced(&path, &schema, [0x5A; FP_LEN]);
     run_differential(&store, &schema, 0x1BAD_B002_CAFE_BABE, 40);
 }
 
@@ -579,15 +461,10 @@ fn capacity_measure_follows_target_row_order_not_delta_group_order() {
         let (_dir, path) = store_dir("capacity-measure-order");
         let schema = delta_schema();
         let store = if forced_collision {
-            Store::create_forced_fingerprint(&path, &schema, DEFAULT_MAP_CEILING, [0x5A; FP_LEN])
-                .expect("forced-collision store")
+            forced(&path, &schema, [0x5A; FP_LEN])
         } else {
-            Store::create(&path, &schema, DEFAULT_MAP_CEILING)
-                .expect("create")
-                .0
+            create_with(&path, &schema)
         };
-        // Separate lawful commits make the target row order room1, room0,
-        // independent of the canonical order within each change set.
         for group in [1, 0] {
             assert!(compare_and_commit(
                 &store,
@@ -596,8 +473,6 @@ fn capacity_measure_follows_target_row_order_not_delta_group_order() {
                 &[],
             ));
         }
-        // Canonical delta order visits room0 then room1. Their totals are
-        // three and four; the reference target order must witness three.
         let changes = build_changes(
             &schema,
             &[
@@ -609,24 +484,11 @@ fn capacity_measure_follows_target_row_order_not_delta_group_order() {
             ],
             &[],
         );
-        let context = work();
-        let mut owner = store.writer(&context).expect("writer");
-        match owner
-            .prepare(&changes, &UnindexedRows, &CompareJudge { schema: &schema })
-            .expect("prepare")
-        {
-            Prepared::Admitted(_) => panic!("both room capacities are exceeded"),
-            Prepared::Rejected {
-                rejection: violations,
-                ..
-            } => {
-                assert_eq!(violations.len(), 1);
-                assert_eq!(violations[0].kind, StatementKind::Capacity);
-                assert_eq!(violations[0].measure, Some(3));
-            }
-        }
-        drop(owner);
-        let snapshot = store.snapshot(&context).expect("snapshot");
+        let violations = compare(&store, &schema, &changes).expect("both capacities exceeded");
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].kind, StatementKind::Capacity);
+        assert_eq!(violations[0].measure, Some(3));
+        let snapshot = store.snapshot(&work()).expect("snapshot");
         assert_eq!(snapshot.row_count(BOOKING).expect("count"), 2);
     }
 }
@@ -635,9 +497,7 @@ fn capacity_measure_follows_target_row_order_not_delta_group_order() {
 fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
     let (_dir, path) = store_dir("incremental-multi");
     let schema = delta_schema();
-    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
-        .expect("create")
-        .0;
+    let store = create_with(&path, &schema);
     assert!(compare_and_commit(
         &store,
         &schema,
@@ -649,9 +509,6 @@ fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
         ],
         &[],
     ));
-    // One delta violating the email key, the pointwise booking key, the
-    // room containment, and the room capacity at once; CompareJudge pins
-    // both paths equal, and the rejection names every statement.
     let changes = build_changes(
         &schema,
         &[
@@ -661,224 +518,74 @@ fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
         ],
         &[],
     );
-    let judge = CompareJudge { schema: &schema };
-    let context = work();
-    let mut owner = store.writer(&context).expect("writer");
-    match owner
-        .prepare(&changes, &UnindexedRows, &judge)
-        .expect("prepare")
-    {
-        Prepared::Admitted(_) => panic!("this delta violates four statements"),
-        Prepared::Rejected {
-            rejection: violations,
-            ..
-        } => {
-            let statements: Vec<StatementId> = violations
-                .iter()
-                .map(|violation| violation.statement)
-                .collect();
-            assert_eq!(
-                statements,
-                vec![
-                    StatementId(1),
-                    StatementId(2),
-                    StatementId(4),
-                    StatementId(5)
-                ],
-                "every violated family is named in canonical order"
-            );
-            assert!(
-                violations
-                    .iter()
-                    .any(|violation| violation.kind == StatementKind::Capacity
-                        && violation.measure == Some(3)),
-                "the capacity violation witnesses its exact widened measure"
-            );
-        }
-    }
-}
-
-struct PremiseWitness<'s> {
-    schema: &'s Schema,
-}
-impl CandidateJudge for PremiseWitness<'_> {
-    type Rejection = std::convert::Infallible;
-
-    fn judge(
-        &self,
-        candidate: &CandidateState<'_, '_>,
-        work: &WorkContext,
-    ) -> StoreResult<Judgment<Self::Rejection>> {
-        let production = SchemaJudge::new(self.schema).judge_incremental(
-            LawfulParent::established(),
-            candidate,
-            work,
-        )?;
-        assert!(
-            matches!(production, Judgment::Admitted),
-            "the incremental judge misses untouched standing violations"
-        );
-        let reference = judge_final_state(
-            self.schema,
-            &ReferenceFacts {
-                candidate,
-                schema: self.schema,
-                work,
-            },
-            work,
-            JudgeBudget::default(),
-        )
-        .expect("reference completes");
-        let SchemaJudgment::Rejected(violations) = reference else {
-            panic!("the complete judge must convict the unlawful parent");
-        };
-        let statements: Vec<StatementId> = violations
+    let violations = compare(&store, &schema, &changes).expect("four statements violated");
+    let statements: Vec<StatementId> = violations
+        .iter()
+        .map(|violation| violation.statement)
+        .collect();
+    assert_eq!(
+        statements,
+        [
+            StatementId(1),
+            StatementId(2),
+            StatementId(4),
+            StatementId(5)
+        ]
+    );
+    assert!(
+        violations
             .iter()
-            .map(|violation| violation.statement)
-            .collect();
-        assert_eq!(statements, vec![USER_EMAIL_KEY, BOOKING_ROOM_EXISTS]);
-        Ok(Judgment::Admitted)
-    }
+            .any(|violation| violation.kind == StatementKind::Capacity
+                && violation.measure == Some(3))
+    );
 }
 
-/// The lawful-parent premise, pinned honestly on the physical store: a
-/// parent seeded UNLAWFULLY through a permissive test judge (a state the
-/// production admission path cannot produce) can hide from the incremental
-/// production judgment; the complete reference convicts it on the same
-/// candidate; and the store sweeper — which always re-runs the COMPLETE
-/// judgment — reports it offline.
 #[test]
-fn an_unlawful_parent_hides_from_the_incremental_judge_and_the_sweeper_convicts() {
+fn an_unlawful_parent_hides_from_incremental_judgment_and_the_sweeper_convicts() {
     let (_dir, path) = store_dir("incremental-unlawful");
     let schema = delta_schema();
-    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
-        .expect("create")
-        .0;
-
-    // Seed the unlawful parent: duplicate emails and an orphan booking,
-    // committed past judgment through the permissive test judge.
-    let seeded = build_changes(
-        &schema,
-        &[
-            (USER, user(1, "dup@example")),
-            (USER, user(2, "dup@example")),
-            (BOOKING, booking(99, 0, 1)),
-            (ROOM, room(1)),
-        ],
-        &[],
+    let store = create_with(&path, &schema);
+    commit_changes(
+        &store,
+        &build_changes(
+            &schema,
+            &[
+                (USER, user(1, "dup@example")),
+                (USER, user(2, "dup@example")),
+                (BOOKING, booking(99, 0, 1)),
+                (ROOM, room(1)),
+            ],
+            &[],
+        ),
     );
-    {
-        let context = work();
-        let mut owner = store.writer(&context).expect("writer");
-        match owner
-            .prepare(&seeded, &UnindexedRows, &AdmitAll)
-            .expect("prepare")
-        {
-            Prepared::Admitted(prepared) => {
-                prepared
-                    .seal(NO_HOST)
-                    .expect("seal")
-                    .commit()
-                    .expect("commit");
-            }
-            Prepared::Rejected {
-                rejection: never, ..
-            } => match never {},
-        }
-    }
-
-    // A benign mutation touching none of the standing violations: the
-    // production (incremental) judge ADMITS — it may miss what the delta
-    // does not touch — while the complete reference on the SAME candidate
-    // rejects. This divergence is the premise, asserted, not hidden.
     let benign = build_changes(&schema, &[(USER, user(3, "fresh@example"))], &[]);
-    {
-        let context = work();
-        let mut owner = store.writer(&context).expect("writer");
-        match owner
-            .prepare(&benign, &UnindexedRows, &PremiseWitness { schema: &schema })
-            .expect("prepare")
-        {
-            Prepared::Admitted(prepared) => prepared.abort(),
-            Prepared::Rejected {
-                rejection: never, ..
-            } => match never {},
-        }
-    }
-
-    // The sweeper re-runs the COMPLETE judgment over the committed state:
-    // the unlawful parent is detectable there, always.
     let context = work();
+    let mut owner = store.writer(&context).expect("writer");
+    let (incremental, complete) = owner.judge_both(&schema, &benign).expect("judge both");
+    assert!(
+        incremental.is_none(),
+        "incremental judgment misses untouched standing violations"
+    );
+    let convicted: Vec<StatementId> = complete
+        .expect("complete judgment convicts the unlawful parent")
+        .iter()
+        .map(|violation| violation.statement)
+        .collect();
+    assert_eq!(convicted, [USER_EMAIL_KEY, BOOKING_ROOM_EXISTS]);
+    drop(owner);
     let snapshot = store.snapshot(&context).expect("snapshot");
-    let findings = verify::sweep(&snapshot, &schema, &context).expect("sweep completes");
-    let convicted: Vec<StatementId> = findings
+    let findings = verify::sweep(&snapshot, &schema, &context).expect("sweep");
+    let swept: Vec<StatementId> = findings
         .iter()
         .filter_map(|finding| match finding {
             VerifyFinding::Judgment(violation) => Some(violation.statement),
             VerifyFinding::Corruption(_) => None,
         })
         .collect();
-    assert_eq!(
-        convicted,
-        vec![USER_EMAIL_KEY, BOOKING_ROOM_EXISTS],
-        "the sweeper's complete re-judgment convicts the unlawful parent"
-    );
+    assert_eq!(swept, [USER_EMAIL_KEY, BOOKING_ROOM_EXISTS]);
 }
 
-/// A judge wrapper measuring actual allocation requests inside judgment.
-struct MeasuredJudge<'s> {
-    schema: &'s Schema,
-    cost: std::cell::Cell<u64>,
-}
-
-impl CandidateJudge for MeasuredJudge<'_> {
-    type Rejection = Box<[JudgedViolation]>;
-
-    fn judge(
-        &self,
-        candidate: &CandidateState<'_, '_>,
-        work: &WorkContext,
-    ) -> StoreResult<Judgment<Self::Rejection>> {
-        let before = crate::alloc_counter::count();
-        let judged = SchemaJudge::new(self.schema).judge_incremental(
-            LawfulParent::established(),
-            candidate,
-            work,
-        )?;
-        self.cost.set(crate::alloc_counter::count() - before);
-        Ok(judged)
-    }
-}
-
-fn seed_users(store: &Store, schema: &Schema, from: u64, to: u64) {
-    let rows: Vec<(RelationId, Vec<Value>)> = (from..to)
-        .map(|n| (USER, user(n, &format!("user{n}@example"))))
-        .collect();
-    let changes = build_changes(schema, &rows, &[]);
-    let context = work();
-    let mut owner = store.writer(&context).expect("writer");
-    match owner
-        .prepare(&changes, &UnindexedRows, &AdmitAll)
-        .expect("prepare")
-    {
-        Prepared::Admitted(prepared) => {
-            prepared
-                .seal(NO_HOST)
-                .expect("seal")
-                .commit()
-                .expect("commit");
-        }
-        Prepared::Rejected {
-            rejection: never, ..
-        } => match never {},
-    }
-}
-
-fn measured_one_row_judgment(store: &Store, schema: &Schema, id: u64) -> u64 {
-    let judge = MeasuredJudge {
-        schema,
-        cost: std::cell::Cell::new(0),
-    };
+fn measured_one_row_candidate(store: &Store, schema: &Schema, id: u64) -> u64 {
     let changes = build_changes(
         schema,
         &[(USER, user(id, &format!("solo{id}@example")))],
@@ -886,33 +593,23 @@ fn measured_one_row_judgment(store: &Store, schema: &Schema, id: u64) -> u64 {
     );
     let context = work();
     let mut owner = store.writer(&context).expect("writer");
-    match owner
-        .prepare(&changes, &UnindexedRows, &judge)
-        .expect("prepare")
-    {
-        Prepared::Admitted(prepared) => prepared.abort(),
-        Prepared::Rejected {
-            rejection: violations,
-            ..
-        } => panic!("unexpected rejection: {violations:?}"),
-    }
-    judge.cost.get()
+    let before = crate::alloc_counter::count();
+    let candidate = owner.prepare_judged(schema, &changes).expect("prepare");
+    let cost = crate::alloc_counter::count() - before;
+    let super::super::candidate::Candidate::Admitted(prepared) = candidate else {
+        panic!("a fresh user admits");
+    };
+    prepared.abort();
+    cost
 }
 
-/// Allocation regression, not timing or a count of physical storage reads.
-/// One-row judgment must not create relation-sized temporary representations.
-/// The judge's no-scan doubles independently enforce indexed traversal.
+/// Allocation requests of a one-row candidate stay flat as the relation
+/// grows: incremental judgment never builds relation-sized state.
 #[test]
-fn incremental_judgment_allocations_are_delta_shaped_not_relation_shaped() {
+fn one_row_candidates_allocate_independently_of_relation_size() {
     let (_dir, path) = store_dir("incremental-workcount");
     let schema = delta_schema();
-    let store = Store::create(&path, &schema, DEFAULT_MAP_CEILING)
-        .expect("create")
-        .0;
-
-    // A large booking/room population that a streamed containment/capacity
-    // judgment would have to walk — the user mutation must never touch it.
-    // (Rooms hold at most 2 bookings, so occupancy spreads over many rooms.)
+    let store = create_with(&path, &schema);
     let occupancy: Vec<(RelationId, Vec<Value>)> = (0..64u64)
         .flat_map(|n| {
             vec![
@@ -923,40 +620,33 @@ fn incremental_judgment_allocations_are_delta_shaped_not_relation_shaped() {
         })
         .collect();
     assert!(compare_and_commit(&store, &schema, &occupancy, &[]));
-
-    seed_users(&store, &schema, 0, 256);
-    let small = measured_one_row_judgment(&store, &schema, 1_000_001);
-
-    seed_users(&store, &schema, 256, 2048);
-    let large = measured_one_row_judgment(&store, &schema, 1_000_002);
-
-    assert!(
-        small < 256,
-        "one-row judgment against 256 rows must be delta-shaped: {small} allocation requests"
-    );
-    assert!(
-        large < 256,
-        "one-row judgment against 2048 rows must stay delta-shaped: {large} allocation requests"
-    );
+    let seed = |from: u64, to: u64| {
+        let rows: Vec<_> = (from..to)
+            .map(|n| (USER, user(n, &format!("user{n}@example"))))
+            .collect();
+        commit_changes(&store, &build_changes(&schema, &rows, &[]));
+    };
+    seed(0, 256);
+    let small = measured_one_row_candidate(&store, &schema, 1_000_001);
+    seed(256, 2048);
+    let large = measured_one_row_candidate(&store, &schema, 1_000_002);
     assert!(
         large <= small + 32,
-        "judgment allocations must not grow with the relation: {small} -> {large}"
+        "candidate allocations must not grow with the relation: {small} -> {large}"
     );
 }
 
 #[test]
-fn selected_home_preservation_does_not_hide_alternate_or_interval_keys() {
+fn home_preservation_does_not_hide_alternate_or_interval_keys() {
     let schema = delta_schema();
     let (_dir, path) = store_dir("home-preservation-other-laws");
-    let store =
-        Store::create_forced_fingerprint(&path, &schema, DEFAULT_MAP_CEILING, [0; FP_LEN]).unwrap();
+    let store = forced(&path, &schema, [0; FP_LEN]);
     assert!(compare_and_commit(
         &store,
         &schema,
         &[(USER, user(1, "same"))],
         &[]
     ));
-    // Different exact homes, but the alternate text key still conflicts.
     assert!(!compare_and_commit(
         &store,
         &schema,

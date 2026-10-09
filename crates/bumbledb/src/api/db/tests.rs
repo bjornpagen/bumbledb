@@ -1,29 +1,8 @@
-//! Authored embedding-surface tests over the successor store (F1: written,
-//! executed only in F3).
-//!
-//! Gate mapping (chapter 70 / audit 50):
-//! - typed/dyn/accepted lane equality, reports, walls → E-DELTA, E-CODEC
-//!   consumers, SDK substrate; the three lanes share one shape judgment.
-//! - own-writes/committed fall-through point reads → E-VISIBILITY (api
-//!   half), G06 candidate children.
-//! - key-conflict rejection with both competing rows cited → ENG-005 /
-//!   E-ADMIT through the full public path (the historical shared-key
-//!   counterexample, preserved across the fresh-mechanism deletion).
-//! - closed-relation refusals and sealed-extension reads → E-VALUE.
-//! - witness lifecycle (clone/stale/foreign) → CONC substrate, SDK-009.
-//! - deleted text unreachable after delete + reopen → ENG-006 (E-TEXT api
-//!   remainder; no dictionary exists to leak).
-//! - no `*_nosync` constructor exists — structural: the surface
-//!   has no such symbol; E-DURABILITY execution lives in the store tests.
-//! - generation moves only on change → E-SNAPSHOT/G06 remainder.
-//!
-//! The fresh/reserve mechanism tests of the transitional surface are
-//! deleted WITH the mechanism (ENG-004/E-NO-RESERVE): `reserve`,
-//! `FreshRange`, `fresh_field` and `DynIdError::NotAFreshField` no longer
-//! exist to test. Their safety intent — an aborted write leaks no issued
-//! authority — is unrepresentable now: identities are application values.
+//! Embedding-surface tests: typed, dynamic and accepted write lanes, point
+//! reads over own writes and committed rows, key conflicts citing every
+//! competitor, closed relations, witnesses, deleted text, generations,
+//! compaction and the host surface.
 
-use crate::integration::Preparation;
 use bumbledb_theory::schema::{
     FieldDescriptor, RelationId, Row, SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
 };
@@ -31,12 +10,26 @@ use bumbledb_theory::schema::{
 use crate::error::{Admission, Error, Result, Violation};
 use crate::ir::Value;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::store::StoreError;
 use crate::testutil::{TempDir, expect_rejected};
 use crate::work::WorkContext;
 use crate::{ChangeSet, Db, InstanceBuilder};
 
 use super::row_reader::RowReader;
+
+/// Every stored row, sorted: the content two databases share exactly when
+/// they hold the same facts.
+fn content<S>(db: &Db<S>) -> Vec<(RelationId, Vec<u8>)> {
+    let mut rows = Vec::new();
+    db.read(operation(), |frame| {
+        frame.export(&mut |relation, row| {
+            rows.push((relation, row.to_vec()));
+            Ok(())
+        })
+    })
+    .expect("export");
+    rows.sort();
+    rows
+}
 use super::{Fact, Key};
 
 // --- Test theory: one keyed relation, hand-built (the exact Fact/Key
@@ -227,7 +220,7 @@ fn cancelled_pending_write_keeps_its_prefix_but_cannot_publish() {
             work.cancel();
             let error = tx.insert_dyn(ENTRY, [entry_row("005", 5)]).unwrap_err();
             assert!(tx.poisoned().is_some());
-            assert!(matches!(error, Error::Store(_)));
+            assert!(error.is_cancelled(), "{error:?}");
             Ok(())
         })
         .unwrap_err();
@@ -278,6 +271,10 @@ fn cancelled_collection_and_seal_release_all_owned_memory() {
 }
 
 // --- The three write lanes produce identical stores. ---
+
+fn digest(frame: &super::ReadFrame<'_, Ledger>) -> crate::Result<[u8; 32]> {
+    frame.content_digest()
+}
 
 #[test]
 fn the_three_write_lanes_produce_identical_stores() {
@@ -333,12 +330,9 @@ fn the_three_write_lanes_produce_identical_stores() {
         .expect("write")
         .unwrap();
 
-    let digest = typed.catalog_digest(operation()).expect("digest");
-    assert_eq!(digest, dynamic.catalog_digest(operation()).expect("digest"));
-    assert_eq!(
-        digest,
-        accepted.catalog_digest(operation()).expect("digest")
-    );
+    let typed_digest = typed.read(operation(), digest);
+    assert_eq!(typed_digest, dynamic.read(operation(), digest));
+    assert_eq!(typed_digest, accepted.read(operation(), digest));
 }
 
 #[test]
@@ -471,18 +465,16 @@ fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
 fn keyed_reads_retain_snapshot_bytes_across_collisions_repeated_reads_and_replacement() {
     use crate::Theory as _;
     use crate::schema::FieldId;
-    use crate::storage::store::{MapPolicy, Store};
+    use crate::storage::store::{DatabaseId, Options, Store};
 
     for forced_collision in [false, true] {
         let dir = TempDir::new("db-get-borrowed-snapshot");
         let schema = Ledger.descriptor().validate().expect("schema");
         let store = if forced_collision {
-            Store::create_forced_fingerprint(dir.path(), &schema, MapPolicy::default(), [0xCC; 16])
-                .expect("forced store")
+            Store::create_forced_fingerprint(dir.path(), &schema, [0xCC; 16]).expect("forced store")
         } else {
-            Store::create(dir.path(), &schema, MapPolicy::default())
+            Store::create(dir.path(), &schema, DatabaseId::mint(), Options::default())
                 .expect("store")
-                .0
         };
         let db = Db::<Ledger>::assemble(store, schema, operation()).expect("db");
         db.write(operation(), |tx| {
@@ -500,7 +492,8 @@ fn keyed_reads_retain_snapshot_bytes_across_collisions_repeated_reads_and_replac
         .unwrap();
         let work = operation();
         let pin = db.owned_read().expect("old pin");
-        let snapshot = pin.snapshot();
+        let frame = pin.frame(&work);
+        let snapshot = frame.snapshot();
         let key = snapshot
             .determinants()
             .key_for(ENTRY, &[FieldId(0)])
@@ -580,7 +573,7 @@ fn keyed_reads_retain_snapshot_bytes_across_collisions_repeated_reads_and_replac
 fn selected_free_join_images_confirm_composite_fingerprint_collisions() {
     use crate::ir::{Atom, AtomSource, FindTerm, ParamId, Query, Rule, Term, VarId};
     use crate::schema::{FieldId, RelationDescriptor, Side, StatementDescriptor};
-    use crate::storage::store::{MapPolicy, Store};
+    use crate::storage::store::Store;
 
     let fields = [FieldId(0), FieldId(1), FieldId(2)];
     let side = |relation| Side {
@@ -618,9 +611,7 @@ fn selected_free_join_images_confirm_composite_fingerprint_collisions() {
     .validate()
     .unwrap();
     let dir = TempDir::new("selected-image-collision");
-    let store =
-        Store::create_forced_fingerprint(dir.path(), &schema, MapPolicy::default(), [0xA5; 16])
-            .unwrap();
+    let store = Store::create_forced_fingerprint(dir.path(), &schema, [0xA5; 16]).unwrap();
     let db = Db::<()>::assemble(store, schema, operation()).unwrap();
     db.write(operation(), |tx| {
         tx.insert_dyn(
@@ -696,10 +687,7 @@ fn get_with_work_observes_the_supplied_cancellation_context() {
                 &stopped,
             )
             .unwrap_err();
-        assert!(
-            matches!(failure, Error::Store(_)),
-            "cancellation is not a miss"
-        );
+        assert!(failure.is_cancelled(), "cancellation is not a miss");
         let hit = snap.get_dyn_with_work(
             ENTRY,
             ENTRY_NAME_KEY,
@@ -969,12 +957,9 @@ fn apply_and_owned_snapshot_are_the_public_path() {
         .insert(ENTRY, &entry_row("snap", 1))
         .expect("insert");
     let changes = builder.finish().expect("seal");
-    match db
-        .apply(&changes, super::ApplyExpected::Any, &work)
-        .expect("apply")
-    {
-        super::ApplyOutcome::Accepted { .. } => {}
-        _ => panic!("expected Accepted"),
+    match db.apply(&changes, &work).expect("apply") {
+        super::WriteOutcome::Committed(super::Committed { changed: true, .. }) => {}
+        _ => panic!("expected a changing commit"),
     }
     let pin = db.snapshot(&work).expect("pin");
     assert_eq!(pin.count(ENTRY).expect("count"), 1);
@@ -992,30 +977,20 @@ fn apply_and_owned_snapshot_are_the_public_path() {
     let empty = ChangeSet::builder(db.schema(), work.clone())
         .finish()
         .expect("empty");
-    match db
-        .apply(&empty, super::ApplyExpected::Exact(witness), &work)
-        .expect("no-change")
-    {
-        super::ApplyOutcome::NoChange { .. } => {}
-        super::ApplyOutcome::InvariantRejected { .. } => {
-            panic!("empty delta under a lawful parent is not invariant rejection")
-        }
-        _ => panic!("expected NoChange"),
+    match db.apply_from(&empty, &witness, &work).expect("no-change") {
+        super::WriteOutcome::Committed(super::Committed { changed: false, .. }) => {}
+        _ => panic!("expected an unchanged commit"),
     }
 }
 
 // --- Witnesses. ---
 
 #[test]
-#[expect(
-    clippy::redundant_closure_for_method_calls,
-    reason = "the bare `witness` method path defeats the read closure's HRTB inference"
-)]
 fn write_from_borrows_a_cloneable_witness() {
     let dir = TempDir::new("db-witness");
     let db = create(&dir);
     let witness = db
-        .read(operation(), |snap| snap.witness())
+        .read(operation(), |snap| Ok(snap.witness()))
         .expect("witness");
     let again = witness.clone();
     let outcome = db
@@ -1027,7 +1002,7 @@ fn write_from_borrows_a_cloneable_witness() {
             .map(|_| ())
         })
         .expect("write");
-    assert!(matches!(outcome, crate::ConditionalWrite::Accepted(_)));
+    assert!(matches!(outcome, crate::WriteOutcome::Committed(_)));
     // The clone is now stale: the compare answers Moved, not an error.
     let moved = db
         .write_from(operation(), &again, |tx| {
@@ -1038,7 +1013,7 @@ fn write_from_borrows_a_cloneable_witness() {
             .map(|_| ())
         })
         .expect("write");
-    assert!(matches!(moved, crate::ConditionalWrite::Moved { .. }));
+    assert!(matches!(moved, crate::WriteOutcome::Moved { .. }));
     assert_eq!(
         db.read(operation(), |snap| snap.count(ENTRY))
             .expect("count"),
@@ -1047,16 +1022,14 @@ fn write_from_borrows_a_cloneable_witness() {
 }
 
 #[test]
-#[expect(
-    clippy::redundant_closure_for_method_calls,
-    reason = "the bare `witness` method path defeats the read closure's HRTB inference"
-)]
 fn write_from_rejects_a_foreign_witness() {
     let a_dir = TempDir::new("db-foreign-witness-a");
     let b_dir = TempDir::new("db-foreign-witness-b");
     let a = create(&a_dir);
     let b = create(&b_dir);
-    let foreign = b.read(operation(), |snap| snap.witness()).expect("witness");
+    let foreign = b
+        .read(operation(), |snap| Ok(snap.witness()))
+        .expect("witness");
     let err = a
         .write_from(operation(), &foreign, |tx| {
             tx.insert([&Entry {
@@ -1152,13 +1125,7 @@ fn dynamic_ingestion_stops_at_cancellation_before_later_bad_rows() {
                 }
             });
             let error = tx.insert_dyn(ENTRY, rows).unwrap_err();
-            assert!(
-                matches!(error, Error::Store(ref error) if matches!(error.as_ref(),
-                    StoreError::Changes(crate::changes::ChangeError::Row(
-                        crate::canonical::RowError::Work(crate::WorkError::Cancelled)
-                    ))
-                ))
-            );
+            assert!(error.is_cancelled(), "{error:?}");
             assert_eq!(seen, if cancel_before { 1 } else { 2 });
             assert_eq!(tx.poisoned().is_some(), prefix);
             let pending = tx.into_pending().seal(&db.schema, &operation()).unwrap();
@@ -1205,9 +1172,18 @@ fn poison_preserves_the_original_error_after_an_applied_prefix() {
 fn an_empty_write_commits_without_moving_the_generation() {
     let dir = TempDir::new("db-empty-write");
     let db = create(&dir);
-    let committed = db.write(operation(), |_tx| Ok(42)).expect("write").unwrap();
-    assert_eq!(committed.value, 42);
-    assert_eq!(committed.generation.value(), 0);
+    let outcome = db.write(operation(), |_tx| Ok(42)).expect("write");
+    let super::WriteOutcome::Committed(super::Committed {
+        value,
+        generation,
+        changed,
+    }) = outcome
+    else {
+        panic!("an empty write commits: {outcome:?}");
+    };
+    assert_eq!(value, 42);
+    assert_eq!(generation.value(), 0);
+    assert!(!changed);
 }
 
 #[test]
@@ -1272,10 +1248,7 @@ fn a_reentrant_write_is_refused_typed_not_deadlocked() {
             }
         })
         .expect_err("nested write refused");
-    assert!(
-        matches!(&err, Error::Store(inner) if matches!(**inner, StoreError::ReentrantWriter)),
-        "{err:?}"
-    );
+    assert!(matches!(err, Error::ReentrantWriter), "{err:?}");
 }
 
 // --- Closed relations. ---
@@ -1442,10 +1415,24 @@ fn a_builder_admits_judged_content_and_publishes_it() {
     let dir = TempDir::new("db-from-instance");
     let path = dir.path().join("published");
     let db = Db::from_instance(&path, &instance, operation()).expect("publish");
+    let mut instance_rows: Vec<(RelationId, Vec<u8>)> = instance
+        .schema()
+        .relations()
+        .iter()
+        .enumerate()
+        .flat_map(|(index, _)| {
+            let relation = RelationId(u32::try_from(index).expect("relation id"));
+            instance
+                .relation_rows(relation)
+                .iter()
+                .map(move |row| (relation, row.to_vec()))
+        })
+        .collect();
+    instance_rows.sort();
     assert_eq!(
-        db.catalog_digest(operation()).expect("digest"),
-        instance.catalog_digest().expect("digest"),
-        "the replication oracle agrees across backends"
+        content(&db),
+        instance_rows,
+        "the published copy holds the instance"
     );
 }
 
@@ -1585,10 +1572,10 @@ fn accepted_reports_are_exact_and_delete_never_mints() {
     );
 }
 
-// --- Compaction and the integration adjunct. ---
+// --- Compaction and the host surface. ---
 
 #[test]
-fn compact_copies_content_host_records_and_generation_coherently() {
+fn compact_copies_content_host_records_head_and_generation() {
     let dir = TempDir::new("db-compact");
     let db = create(&dir);
     db.write(operation(), |tx| {
@@ -1600,58 +1587,48 @@ fn compact_copies_content_host_records_and_generation_coherently() {
     })
     .expect("write")
     .unwrap();
-    // Attach one host record + attachment through the integration seam.
     let work = super::test_operation();
     {
-        let mut session = db.integration_writer(&work).expect("session");
-        let empty = ChangeSet::builder(db.schema(), work.clone())
-            .finish()
-            .expect("empty delta");
-        let prepared = match session.prepare(&empty).expect("prepare") {
-            Preparation::Accepted(prepared) => prepared,
-            Preparation::Rejected { .. } => panic!("the empty delta admits"),
-        };
-        let records = [crate::storage::store::HostRecordChange::Put {
+        let mut session = db.host_writer(&work).expect("session");
+        let records = [crate::host::HostRecord::Put {
             key: b"receipt/1",
             value: b"decided",
         }];
-        let sealed = prepared
-            .seal(crate::storage::store::HostChanges {
+        let commit = session
+            .unchanged()
+            .expect("unchanged")
+            .seal(crate::host::HostChanges {
                 records: &records,
-                attachment: crate::storage::store::AttachmentChange::Put(b"control"),
+                head: crate::host::Head::Put(b"control"),
             })
-            .expect("seal");
-        let commit = sealed.commit().expect("commit");
+            .expect("seal")
+            .commit()
+            .expect("commit");
         assert!(commit.changed, "host mutation advances the generation once");
     }
     let generation = db.generation(operation()).expect("generation");
     let dest = dir.path().join("compacted");
     db.compact(&dest, operation()).expect("compact");
     let copy = Db::open(&dest, Ledger, operation()).expect("open copy");
-    assert_eq!(
-        copy.catalog_digest(operation()).expect("digest"),
-        db.catalog_digest(operation()).expect("digest")
-    );
+    assert_eq!(copy.database_id(), db.database_id());
+    assert_eq!(content(&copy), content(&db));
     assert_eq!(
         copy.generation(operation()).expect("generation"),
         generation
     );
     copy.read(operation(), |snap| {
         assert_eq!(
-            snap.integration_host_record(b"receipt/1").expect("record"),
+            snap.host_record(b"receipt/1").expect("record"),
             Some(b"decided".as_slice())
         );
-        assert_eq!(
-            snap.integration_host_attachment()?,
-            Some(b"control".as_slice())
-        );
+        assert_eq!(snap.head()?, Some(b"control".as_slice()));
         Ok(())
     })
     .expect("read copy");
 }
 
 #[test]
-fn a_rejected_integration_candidate_retains_the_session() {
+fn a_rejected_decision_keeps_the_session_for_the_receipt() {
     let dir = TempDir::new("db-session-retained");
     let db = create(&dir);
     let work: WorkContext = super::test_operation();
@@ -1665,38 +1642,29 @@ fn a_rejected_integration_candidate_retains_the_session() {
             .expect("draft row");
         builder.finish().expect("sealed delta")
     };
-    let mut session = db.integration_writer(&work).expect("session");
-    match session.prepare(&conflicting).expect("prepare") {
-        Preparation::Rejected {
-            violations,
-            application,
-        } => {
-            assert_eq!(violations.len(), 1);
-            assert_eq!(application.added, 2);
-            assert_eq!(application.removed, 0);
-        }
-        Preparation::Accepted(_) => panic!("conflicting keys must reject"),
+    let mut session = db.host_writer(&work).expect("session");
+    match session
+        .decide_all(std::slice::from_ref(&conflicting))
+        .expect("decide")
+        .as_slice()
+    {
+        [crate::host::Judged::Rejected(violations)] => assert_eq!(violations.len(), 1),
+        other => panic!("conflicting keys must reject: {other:?}"),
     }
-    // The same exclusive session prepares the receipt-only follow-up: no
-    // gap for another writer, no application fact changed.
-    let empty = ChangeSet::builder(db.schema(), work.clone())
-        .finish()
-        .expect("empty delta");
-    let prepared = match session.prepare(&empty).expect("prepare") {
-        Preparation::Accepted(prepared) => prepared,
-        Preparation::Rejected { .. } => panic!("the empty delta admits"),
-    };
-    let records = [crate::storage::store::HostRecordChange::Put {
+    let records = [crate::host::HostRecord::Put {
         key: b"receipt/rejected",
         value: b"rejection recorded",
     }];
-    let sealed = prepared
-        .seal(crate::storage::store::HostChanges {
+    session
+        .unchanged()
+        .expect("unchanged")
+        .seal(crate::host::HostChanges {
             records: &records,
-            attachment: crate::storage::store::AttachmentChange::Keep,
+            head: crate::host::Head::Keep,
         })
-        .expect("seal");
-    sealed.commit().expect("commit");
+        .expect("seal")
+        .commit()
+        .expect("commit");
     drop(session);
     assert_eq!(
         db.read(operation(), |snap| snap.count(ENTRY))
@@ -1704,11 +1672,7 @@ fn a_rejected_integration_candidate_retains_the_session() {
         0
     );
     db.read(operation(), |snap| {
-        assert!(
-            snap.integration_host_record(b"receipt/rejected")
-                .expect("record")
-                .is_some()
-        );
+        assert!(snap.host_record(b"receipt/rejected")?.is_some());
         Ok(())
     })
     .expect("read");
@@ -1729,16 +1693,9 @@ fn apply_conflict_is_invariant_rejected_after_accepted_write() {
             .expect("insert");
         builder.finish().expect("seal")
     };
-    match db
-        .apply(&accepted, super::ApplyExpected::Any, &work)
-        .expect("apply")
-    {
-        super::ApplyOutcome::Accepted { .. } => {}
-        super::ApplyOutcome::NoChange { .. } => panic!("a new row must change"),
-        super::ApplyOutcome::InvariantRejected { .. } => {
-            panic!("a lone keyed row is lawful")
-        }
-        super::ApplyOutcome::Moved { .. } => panic!("Any cannot Move"),
+    match db.apply(&accepted, &work).expect("apply") {
+        super::WriteOutcome::Committed(super::Committed { changed: true, .. }) => {}
+        other => panic!("a lone keyed row is a changing commit: {other:?}"),
     }
     let conflict = {
         let mut builder = ChangeSet::builder(db.schema(), work.clone());
@@ -1747,17 +1704,11 @@ fn apply_conflict_is_invariant_rejected_after_accepted_write() {
             .expect("insert");
         builder.finish().expect("seal")
     };
-    match db
-        .apply(&conflict, super::ApplyExpected::Any, &work)
-        .expect("conflict")
-    {
-        super::ApplyOutcome::InvariantRejected { violations } => {
+    match db.apply(&conflict, &work).expect("conflict") {
+        super::WriteOutcome::Rejected(violations) => {
             assert!(!violations.is_empty(), "the key statement is cited");
         }
-        super::ApplyOutcome::Accepted { .. } | super::ApplyOutcome::NoChange { .. } => {
-            panic!("a second row on the same key must reject")
-        }
-        super::ApplyOutcome::Moved { .. } => panic!("Any cannot Move"),
+        other => panic!("a second row on the same key must reject: {other:?}"),
     }
     let pin = db.snapshot(&work).expect("pin");
     assert_eq!(pin.count(ENTRY).expect("count"), 1);
@@ -1803,7 +1754,7 @@ fn scoped_read_borrows_metadata_while_owned_read_retains_it() {
                     amount: 7,
                 })
             );
-            frame.witness()
+            Ok(frame.witness())
         })
         .expect("scoped read");
     assert_eq!(metadata_owners(), before);
@@ -1812,9 +1763,9 @@ fn scoped_read_borrows_metadata_while_owned_read_retains_it() {
         .finish()
         .expect("empty delta");
     assert!(matches!(
-        db.apply(&empty, super::ApplyExpected::Exact(witness), &work)
+        db.apply_from(&empty, &witness, &work)
             .expect("scoped witness remains usable"),
-        super::ApplyOutcome::NoChange { .. }
+        super::WriteOutcome::Committed(super::Committed { changed: false, .. })
     ));
     let snapshot = db.snapshot(&operation()).expect("owned snapshot");
     assert_eq!(metadata_owners(), before.map(|count| count + 1));
@@ -1966,7 +1917,7 @@ fn owned_read_text_queries_refresh_resolvers_without_refreshing_rows_or_work() {
         .expect_err("execution obeys its fresh work, not admission's work");
     assert!(matches!(
         error,
-        Error::Store(error) if matches!(error.as_ref(), StoreError::Work(crate::work::WorkError::Cancelled))
+        error if error.is_cancelled()
     ));
     let recovered = prepared
         .execute_collect_owned(&snapshot, &operation(), params)
@@ -1990,14 +1941,9 @@ fn owned_read_frame_reads_applied_row_and_close_waits() {
         builder.insert(ENTRY, &entry_row("pin", 4)).expect("insert");
         builder.finish().expect("seal")
     };
-    match db
-        .apply(&changes, super::ApplyExpected::Any, &work)
-        .expect("apply")
-    {
-        super::ApplyOutcome::Accepted { .. } => {}
-        super::ApplyOutcome::NoChange { .. }
-        | super::ApplyOutcome::InvariantRejected { .. }
-        | super::ApplyOutcome::Moved { .. } => panic!("expected Accepted"),
+    match db.apply(&changes, &work).expect("apply") {
+        super::WriteOutcome::Committed(super::Committed { changed: true, .. }) => {}
+        other => panic!("expected a changing commit: {other:?}"),
     }
     let pin = db.owned_read().expect("pin");
     assert_eq!(pin.count(ENTRY).expect("count"), 1);
@@ -2009,13 +1955,11 @@ fn owned_read_frame_reads_applied_row_and_close_waits() {
         .finish()
         .expect("empty");
     match db
-        .apply(&empty, super::ApplyExpected::Exact(pin.witness()), &work)
+        .apply_from(&empty, &pin.witness(), &work)
         .expect("no-change")
     {
-        super::ApplyOutcome::NoChange { .. } => {}
-        super::ApplyOutcome::Accepted { .. }
-        | super::ApplyOutcome::InvariantRejected { .. }
-        | super::ApplyOutcome::Moved { .. } => {
+        super::WriteOutcome::Committed(super::Committed { changed: false, .. }) => {}
+        _ => {
             panic!("empty apply under the pin's witness is NoChange")
         }
     }

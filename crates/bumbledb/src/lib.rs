@@ -47,16 +47,14 @@ compile_error!("bumbledb targets 64-bit platforms only");
 extern crate self as bumbledb;
 
 pub mod allen;
-/// Counting allocator for the zero-warm-allocation gate and the bench
-/// harness. Not embedding API.
+/// Counting allocator for allocation gates and benchmark diagnostics. Not
+/// embedding API.
 #[doc(hidden)]
 pub mod alloc_counter;
 pub(crate) mod api;
 pub mod canonical;
 pub mod changes;
-/// Content digest used by the bench corpus/stamp harness. Not embedding API.
-#[doc(hidden)]
-pub mod digest;
+pub(crate) mod digest;
 pub(crate) mod encoding;
 pub mod error;
 pub(crate) mod exec;
@@ -67,18 +65,19 @@ pub(crate) mod plan;
 pub mod scalar;
 pub mod schema;
 pub(crate) mod storage;
-mod value;
+#[cfg(test)]
+use storage::store;
 mod verify_store;
 pub mod work;
 
 pub use allen::{AllenMask, Basic, classify};
-/// the bridge crates' parse-once write representation, consumed by the
-/// doc-hidden `*_accepted` verbs. A transport form, not embedding API.
+/// The bridge's parse-once write representation for `WriteTx::insert_accepted`.
 #[doc(hidden)]
-pub use api::db::{AcceptedCollection, CollectionBuilder};
+pub use api::db::AcceptedCollection;
+pub use api::db::host;
 pub use api::db::{
-    ApplyExpected, ApplyOutcome, Db, Fact, InstanceBuilder, Key, MutationReport, Options,
-    OwnedInstance, OwnedRead, ReadFrame, ReadInstance, RowReader, Witness, WriteTx,
+    Committed, Db, Fact, InstanceBuilder, Key, MutationReport, OwnedInstance, OwnedRead, ReadFrame,
+    RowReader, Witness, WriteOutcome, WriteTx,
 };
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindArgs, BindValue, CompleteResult, DeliveryTicket, ParamArg,
@@ -87,21 +86,9 @@ pub use api::prepared::{
 pub use bumbledb_theory::interval::SegmentOp;
 pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Uuid};
 pub use changes::{ChangeError, ChangeSet, ChangeSetBuilder};
-pub use scalar::{NumericCast, Rounding, ScalarError, ScalarEvaluator, ScalarExpr};
-/// Narrow native wrapper seam; not a public key/value database product.
-#[doc(hidden)]
-pub mod integration {
-    pub use crate::api::db::session::{
-        ApplicationChanges, CoreCommit, IntegrationError, Preparation, PreparedWrite, SealedWrite,
-        WriterSession,
-    };
-    pub use crate::storage::store::{
-        AttachmentChange, HostChanges, HostRecordChange, HostSealError,
-    };
-}
 pub use error::{
-    Admission, Capacity, Check, Committed, ConditionalWrite, Conflict, Direction, Error,
-    ErrorFamily, Exceeded, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation,
+    Admission, Capacity, Check, Conflict, CorruptionError, Counter, Direction, Error, ErrorKind,
+    Exceeded, HostKeyFault, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation,
     Violations,
 };
 pub use exec::kernel::numeric::{F64Math, FloatCardinalityOverflow, UnsupportedNumericalPlatform};
@@ -109,6 +96,10 @@ pub use interval::{Discrete, Element, FloatMeasureError, Interval};
 /// The grounding off switch, for dependent crates' differential tests.
 #[cfg(feature = "testing")]
 pub use plan::ground::with_grounding_disabled;
+pub use scalar::{NumericCast, Rounding, ScalarError, ScalarEvaluator, ScalarExpr};
+pub use storage::GenerationId;
+pub use storage::store::{CloseReport, Durability, Options};
+pub use work::{WorkContext, WorkError};
 
 /// Kernels at an explicit SIMD level and their scalar twins, for the bench
 /// crate's micro report. Not embedding API.
@@ -116,22 +107,6 @@ pub use plan::ground::with_grounding_disabled;
 pub mod kernels {
     pub use crate::exec::kernel::bench::*;
     pub use crate::exec::kernel::reference;
-}
-/// The storage format version (`storage/env.rs`), public so
-/// store-shaped derived identities (the bench corpus cache, stamps) can
-/// key on it: a format bump must regenerate every store-derived
-/// artifact, never reuse one.
-pub use storage::GenerationId;
-pub use storage::store::CloseReport;
-pub use storage::store::format::LAYOUT as STORAGE_FORMAT_VERSION;
-pub use work::{
-    GenerationHandle, GenerationState, ResolverView, WeakGenerationHandle, WorkContext, WorkError,
-};
-
-/// Successor physical store: LMDB owner, owned snapshots, private
-/// candidate. Consumed by the internal log and the native runtime.
-pub mod store {
-    pub use crate::storage::store::*;
 }
 
 pub use ir::{
@@ -154,34 +129,18 @@ pub use schema::{
     SchemaDescriptor, SchemaSpec, SchemaSpecError, StatementId, StatementKind, Theory,
     render_rejection,
 };
-/// Offline store sweeper used by the bench harness and engine tests.
-/// Not embedding API.
-#[doc(hidden)]
-pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 
-/// The declarative schema surface. (The macro and the `schema`
-/// module share a name across disjoint namespaces — deliberate:
-/// `bumbledb::schema! {}` declares, `bumbledb::schema::…` are the
-/// descriptor types.)
-/// The grammar is parse-shape only and names resolve to ids at expansion;
-/// semantics beyond names flow through schema validation (typed
-/// [`error::SchemaError`] from [`Db::create`] / [`Db::open`]). The
-/// invocation's first item is the header `pub Name;` — the unit struct
+/// The declarative schema surface: `schema! { pub Name; ... }` declares a
+/// theory type implementing [`Theory`] and one typed fact struct per
+/// relation. Names resolve to ids at expansion; a field is
+/// `name: type` or `name: type as NewType`:
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     relation Holder { id: u64 as HolderId }
 /// }
 /// ```
-/// statement:
-/// Field-level constraint words do not exist — everything relational is a
-/// ```compile_fail
-/// bumbledb::schema! {
-///     pub Ledger;
-///     relation Holder { id: u64 as HolderId, unique }
-/// }
-/// ```
-/// An unknown modifier — field modifiers do not exist, and the dead SQL
-/// (``schema!: unknown field modifier `autoincrement` (field modifiers do not exist)``):
+/// Field modifiers do not exist
+/// (``schema!: unknown field modifier `autoincrement` — a field is `name: type` or `name: type as NewType` ``):
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
@@ -197,7 +156,7 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 ///     Account(holder) -> Holder;
 /// }
 /// ```
-/// An FD takes no selection (the descriptor cannot represent one):
+/// An FD takes no selection:
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
@@ -210,7 +169,7 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 ///     Account(id | kind == Savings) -> Account;
 /// }
 /// ```
-/// declaration-order ids, so the error names the relation and field
+/// An unknown field is refused with the relation and field named
 /// (``schema!: relation `Holder` has no field `nope` ``):
 /// ```compile_fail
 /// bumbledb::schema! {
@@ -219,21 +178,14 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 ///     Holder(nope) -> Holder;
 /// }
 /// ```
-/// (``schema!: unknown type `bytes` — write `bytes<N>` ``); variable-width
-/// binary does not exist:
+/// Variable-width binary does not exist (``schema!: unknown type `bytes` — write `bytes<N>` ``):
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
 ///     relation Blob { id: u64 as BlobId, payload: bytes }
 /// }
 /// ```
-pub use bumbledb_macros::schema;
-
-/// Named-parameter binder for typed templates.
-pub use bumbledb_query_macros::params;
-/// The typed query AST macro: `query! { ... }` builds a typed
-/// per-expansion template (Deref to the untyped core IR).
-pub use bumbledb_query_macros::query;
+pub use bumbledb_macros::{params, query, schema};
 
 /// `schema!` expansion plumbing. Not API: no stability promises, nothing
 /// here is part of the documented surface — the macro is the only caller.
@@ -249,16 +201,15 @@ pub(crate) mod testutil {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use crate::error::{Admission, Result, Violations};
+    use crate::WriteOutcome;
+    use crate::error::{Result, Violations};
 
     #[track_caller]
-    pub fn expect_rejected<T>(result: Result<Admission<T>>) -> Violations {
+    pub fn expect_rejected<T: std::fmt::Debug>(result: Result<WriteOutcome<T>>) -> Violations {
         match result {
-            Ok(Admission::Rejected(violations)) => violations,
-            Ok(Admission::Accepted(_)) => {
-                panic!("expected admission rejection, the write admitted")
-            }
-            Err(error) => panic!("expected admission rejection, the engine said {error:?}"),
+            Ok(WriteOutcome::Rejected(violations)) => violations,
+            Ok(other) => panic!("expected a rejection, the write said {other:?}"),
+            Err(error) => panic!("expected a rejection, the engine said {error:?}"),
         }
     }
 

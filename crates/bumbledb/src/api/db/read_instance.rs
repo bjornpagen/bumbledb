@@ -1,14 +1,6 @@
-//! Owned pinned read object plus one ephemeral borrowed frame (C4/C7).
-//!
-//! [`OwnedRead`] owns the LMDB [`OwnedSnapshot`] together with the shared
-//! schema, closed-row and image-cache owners. It is `Send` and `!Sync` —
-//! the snapshot moves between workers whole; it does not invent an unsafe
-//! cross-thread lifetime. Metadata (`generation`, `witness`) is read from
-//! this snapshot; a second transaction is never opened for it.
-//!
-//! [`ReadFrame`] borrows snapshot and metadata for one operation and carries that
-//! operation's explicit [`WorkContext`]. Snapshot age does not cancel later
-//! operations or impose an execution deadline.
+//! [`OwnedRead`] owns one LMDB snapshot with the shared schema, closed-row
+//! and image-cache owners: `Send`, not `Sync`. [`ReadFrame`] borrows it for
+//! one operation and carries that operation's [`WorkContext`].
 //!
 //! ```compile_fail
 //! fn require_sync<T: Sync>() {}
@@ -44,8 +36,7 @@ use super::row_reader::RowReader;
 use super::tx::row_error;
 use super::{Fact, Key};
 
-/// Owned pinned read object (C4/C7): LMDB snapshot plus shared
-/// schema/closed/cache owners. Not a borrowed [`super::Db`] lease.
+/// One pinned snapshot plus the shared schema, closed-row and cache owners.
 pub struct OwnedRead<S> {
     pub(super) schema: Arc<Schema>,
     pub(super) closed: Arc<ClosedRows>,
@@ -54,8 +45,7 @@ pub struct OwnedRead<S> {
     pub(super) marker: PhantomData<fn() -> S>,
 }
 
-/// Short borrowed per-operation frame over snapshot and metadata (C4).
-/// Cancellation belongs to this operation, not to the snapshot's age.
+/// One operation's borrowed view of a pinned snapshot.
 pub struct ReadFrame<'read, S> {
     pub(super) schema: &'read Arc<Schema>,
     pub(super) closed: &'read ClosedRows,
@@ -65,18 +55,17 @@ pub struct ReadFrame<'read, S> {
     pub(super) marker: PhantomData<fn() -> S>,
 }
 
-/// Historical name for [`ReadFrame`]. Prefer [`ReadFrame`].
-pub type ReadInstance<'read, S> = ReadFrame<'read, S>;
+pub(crate) type ReadInstance<'read, S> = ReadFrame<'read, S>;
 
 impl<S> OwnedRead<S> {
-    #[must_use]
-    pub fn schema(&self) -> &Schema {
-        self.schema.as_ref()
+    #[cfg(test)]
+    pub(crate) fn snapshot(&self) -> &OwnedSnapshot {
+        &self.snapshot
     }
 
     #[must_use]
-    pub fn snapshot(&self) -> &OwnedSnapshot {
-        &self.snapshot
+    pub fn schema(&self) -> &Schema {
+        self.schema.as_ref()
     }
 
     /// The generation this pin witnessed — from this snapshot, not a new one.
@@ -160,8 +149,7 @@ impl<S> ReadFrame<'_, S> {
         self.work
     }
 
-    #[must_use]
-    pub fn snapshot(&self) -> &OwnedSnapshot {
+    pub(crate) fn snapshot(&self) -> &OwnedSnapshot {
         self.snapshot
     }
 

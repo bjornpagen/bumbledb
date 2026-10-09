@@ -1,9 +1,10 @@
-//! The workspace error taxonomy, categorized per
-//! .
-//! Everything reachable from user input or disk returns these typed errors;
-//! ids and owned fact bytes, never formatted strings — no `format!` runs on
-//! a hot path; `Display` formats lazily when the host actually prints.
-//! panics are reserved for programmer-invariant violations. Payloads carry
+//! The one engine error and the domain verdicts.
+//!
+//! Everything reachable from user input or disk returns these typed values.
+//! Payloads are ids and owned bytes, never formatted strings; `Display`
+//! formats only when the host prints. Panics are programmer-invariant
+//! violations.
+
 mod convert;
 mod display;
 
@@ -15,8 +16,6 @@ use crate::encoding::InternId;
 use crate::ir::ParamId;
 use crate::schema::KeyId;
 use crate::schema::StatementRef;
-use crate::schema::fingerprint::SchemaFingerprint;
-use crate::storage::GenerationId;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId, ValueType};
 
 /// Occurrence index of an atom inside the first failing rule (positive
@@ -80,41 +79,21 @@ pub struct TargetKeyCandidate {
     pub projection_names: Box<[Box<str>]>,
 }
 
-/// Corruption detected while decoding stored bytes — a hard error, never a
-/// skip, never a default. The offline
-/// sweeper reports the same facts as [`crate::StoreFinding::Corruption`].
+/// Impossible stored bytes: a hard error, never a skip or a default.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CorruptionError {
     InvalidBool(u8),
 
-    /// Physical total-order bytes representing a noncanonical F64.
+    /// Order-key bytes representing a noncanonical F64.
     NonCanonicalF64([u8; 8]),
 
     InvalidInterval([u8; 16]),
 
+    /// A fixed-width interval whose start plus width reaches the ceiling.
     InvalidFixedIntervalStart([u8; 8]),
 
-    /// 2026-07-23, R18). A half-created store (no `_meta` over an empty
-    MetaMissing,
-
-    /// A projected query text token that the answering image's process-scoped
-    /// interner never minted (the persisted dictionary is deleted; tokens are
-    /// query-image-scoped).
+    /// A query text token the answering image's interner never minted.
     DanglingInternId(InternId),
-
-    MissingFact {
-        relation: RelationId,
-        row_id: u64,
-    },
-
-    MembershipDesync {
-        relation: RelationId,
-        row_id: u64,
-    },
-
-    DispositionDesync {
-        relation: RelationId,
-    },
 
     WrongFactWidth {
         relation: RelationId,
@@ -127,98 +106,24 @@ pub enum CorruptionError {
         stored: u64,
     },
 
-    /// over-approximates any one relation's rows. The reopen-trust
-    CounterDesync {
-        relation: RelationId,
-        exceeded: Exceeded<u64>,
-    },
-
     MalformedValue(&'static str),
 
     NonzeroFixedBytesPad([u8; 8]),
 
-    FactWithoutMembership {
-        relation: RelationId,
-        row_id: u64,
-        membership_key: Box<[u8]>,
-    },
+    /// A required `meta` entry is absent or malformed.
+    MetaMissing(&'static str),
 
-    MembershipWithoutFact {
-        relation: RelationId,
-        row_id: u64,
-        membership_key: Box<[u8]>,
-    },
+    /// A physical key has an impossible shape.
+    MalformedKey(&'static str),
 
-    FactWithoutDeterminant {
-        relation: RelationId,
-        statement: StatementId,
-        row_id: u64,
-        determinant_key: Box<[u8]>,
-    },
-
-    DeterminantWithoutFact {
-        relation: RelationId,
-        statement: StatementId,
-        determinant_key: Box<[u8]>,
-    },
-
-    PointwiseOverlap {
-        relation: RelationId,
-        statement: StatementId,
-        first: Box<[u8]>,
-        second: Box<[u8]>,
-    },
-
-    FactWithoutReverseEdge {
-        statement: StatementId,
-        relation: RelationId,
-        row_id: u64,
-        reverse_key: Box<[u8]>,
-    },
-
-    ReverseEdgeWithoutFact {
-        statement: StatementId,
-        reverse_key: Box<[u8]>,
-    },
-
-    ReverseEdgeWeightDesync {
-        statement: StatementId,
-        reverse_key: Box<[u8]>,
-        stored: Box<[u8]>,
-        derived: Box<[u8]>,
-    },
-
-    RowCountDesync {
-        relation: RelationId,
-        stored: u64,
-        counted: u64,
-    },
-
-    RowIdHighWaterLow {
-        relation: RelationId,
-        stored: u64,
-        max_row_id: u64,
-    },
-
-    ClosedRelationEntry {
-        relation: RelationId,
-        key: Box<[u8]>,
-    },
-
-    Malformed {
-        key: Box<[u8]>,
-        what: &'static str,
-    },
+    /// An index entry names a row that does not exist.
+    DanglingIndexEntry,
 }
 
-/// A schema declaration error. Every illegal schema shape has a
-/// distinct variant; an invalid schema is unconstructible, not flagged.
-/// Two levels, and the partition is typed: declaration-scoped variants
-/// live here and carry no statement id; every statement-roster rejection
-/// is the one [`SchemaError::Statement`] arm — id beside its
-/// [`StatementErrorKind`], one kind variant per roster line of, no catch-all. The roster's
-/// "FD with selection" and "non-key FD form" lines have no variants:
-/// [`crate::schema::StatementDescriptor::Functionality`] carries neither a
+/// A schema declaration error: one variant per illegal shape, so an invalid
+/// schema is unconstructible. Declaration-scoped variants carry no statement
+/// id; every statement rejection is [`SchemaError::Statement`], its id beside
+/// a [`StatementErrorKind`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaError {
     DuplicateRelationName {
@@ -568,58 +473,6 @@ pub enum Check {
     Violated(Violation),
 }
 
-/// A durable write that admitted: the callback value and the generation
-/// after the commit. Rejection carries no callback value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Committed<R> {
-    pub value: R,
-    pub generation: GenerationId,
-}
-
-/// [`crate::Db::write_from`]'s proved outcomes: admission plus the
-/// compare-and-swap miss. A moved generation is an answer, not an
-/// error — the caller proceeds on the two generations in the arm.
-#[must_use]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConditionalWrite<R> {
-    Accepted(Committed<R>),
-    Rejected(Violations),
-    Moved {
-        witnessed: GenerationId,
-        current: GenerationId,
-    },
-}
-
-impl<R> ConditionalWrite<R> {
-    /// # Panics
-    #[track_caller]
-    pub fn unwrap(self) -> Committed<R> {
-        match self {
-            Self::Accepted(committed) => committed,
-            Self::Rejected(violations) => {
-                panic!("conditional write rejected: {violations}")
-            }
-            Self::Moved { witnessed, current } => {
-                panic!("conditional write moved ({witnessed} → {current})")
-            }
-        }
-    }
-
-    /// # Panics
-    #[track_caller]
-    pub fn expect(self, msg: &str) -> Committed<R> {
-        match self {
-            Self::Accepted(committed) => committed,
-            Self::Rejected(violations) => {
-                panic!("{msg}: conditional write rejected: {violations}")
-            }
-            Self::Moved { witnessed, current } => {
-                panic!("{msg}: conditional write moved ({witnessed} → {current})")
-            }
-        }
-    }
-}
-
 /// Scalar put-conflict vs pointwise neighbor probe — two conviction
 /// shapes, not an optional incumbent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -964,15 +817,7 @@ impl From<std::io::Error> for IoFailure {
     }
 }
 
-/// Concrete bridge decline. Maps to the shared [`ErrorFamily::Io`]
-/// classification. Only [`Error::hatch`] mints it; only
-/// [`Error::is_hatch`] matches it. Unforgeable from real I/O.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[doc(hidden)]
-pub struct Hatch;
-
-/// inner boxed payload (it was never clone-faithful); the variant remains.
-/// An LMDB/heed failure owned by [`Error`]. Encoding/decoding drop the
+/// An LMDB failure owned by [`Error`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LmdbFailure {
     Io(IoFailure),
@@ -994,262 +839,192 @@ impl From<heed::Error> for LmdbFailure {
     }
 }
 
-/// The one workspace error type, categorized per
-/// .
-/// (`Io`, `Lmdb`, `CommitSync`, `TransactionPoisoned`); the structured
-/// variants (`Corruption`, `Schema`, `Validation`, `FactShape`, …) carry
-/// data payloads, not nested errors — a decision, not an omission:
-/// chain-walkers see exactly the real causes, and the structured detail
-/// renders through `Display`.
+/// A persisted counter that would wrap; it is refused, never reused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Counter {
+    RowIds,
+    Generations,
+}
+
+/// A host record key outside the grammar.
+pub use crate::storage::store::error::HostKeyFault;
+
+/// The one engine error. Domain rejections are not errors: they are
+/// [`crate::WriteOutcome::Rejected`] and [`Admission::Rejected`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// Storage format version mismatch — checked before the fingerprint.
-    FormatMismatch {
-        mismatch: Mismatch<u32>,
+    /// The directory holds no bumbledb store of this format.
+    NotABumbleDb {
+        path: PathBuf,
     },
-
-    SchemaMismatch {
-        mismatch: Mismatch<SchemaFingerprint>,
+    /// The store was created with another schema.
+    SchemaMismatch,
+    /// Another live owner holds the directory lock.
+    Locked {
+        path: PathBuf,
     },
-    /// `create` refused a directory that already holds an LMDB
-    /// Open-time: a foreign LMDB environment, or a half-created empty
-    AlreadyInitialized,
-
+    /// A create or install destination already exists.
     DestinationExists {
         path: PathBuf,
     },
-
-    PublishedButUnsynced {
-        path: PathBuf,
-        source: IoFailure,
+    /// The database is closing or closed.
+    Closed,
+    /// A second writer was requested on the thread that holds the writer.
+    ReentrantWriter,
+    /// Every LMDB reader slot holds a live snapshot.
+    ReadersFull,
+    /// A write needed more pages than the store's fixed map ceiling.
+    Full {
+        ceiling: u64,
     },
-
-    EnvironmentLocked,
     Io(IoFailure),
-
-    #[doc(hidden)]
-    Hatch(Hatch),
     Lmdb(LmdbFailure),
-
-    /// not diagnosing LMDB.
-    ReadersFull {
-        max_readers: u32,
-    },
-
-    Schema(SchemaError),
-    Validation(ValidationError),
-
-    FactShape(FactShapeError),
-
-    /// delta. Checked at every write-surface entry before any encoding
+    Corruption(CorruptionError),
+    /// A change set sealed for another schema.
+    ForeignSchema,
+    /// A witness of another environment.
+    ForeignWitness,
+    /// A prepared query of another database.
+    ForeignPreparedQuery,
+    /// Closed relations are ground axioms of the schema, never written.
     ClosedRelationWrite {
         relation: RelationId,
     },
-
-    /// a raw OS errno from its write/sync path — on macOS the data-page
-    /// meta write; LMDB reports one errno for the phase and names no
-    CommitSync {
-        /// Bounded retries consumed before the error escaped.
-        retries: u32,
-        error: IoFailure,
-    },
-
-    /// after catching, still abort — no prefix reaches LMDB.
+    /// The write closure caught an error after a mutation; nothing commits.
     TransactionPoisoned {
         source: Box<Error>,
     },
-
-    ForeignPreparedQuery,
-
-    ForeignWitness,
-
+    Changes(crate::changes::ChangeError),
+    HostKey(HostKeyFault),
+    Exhausted(Counter),
+    /// A capacity statement asks for the finite measure of a ray.
+    CapacityRayMeasure {
+        statement: StatementId,
+    },
+    /// A capacity group's measure exceeds the widened accumulator.
+    MeasureOverflow {
+        statement: StatementId,
+    },
+    Schema(SchemaError),
+    Compile(crate::schema::CompileError),
+    Validation(ValidationError),
+    FactShape(FactShapeError),
     ParamCountMismatch {
         mismatch: Mismatch<usize>,
     },
-
     ParamTypeMismatch {
         param: ParamId,
         expected: ValueType,
     },
-
     ParamSetExpected {
         param: ParamId,
     },
-
     ParamScalarExpected {
         param: ParamId,
     },
-
     ParamElementTypeMismatch {
         param: ParamId,
         element: usize,
         expected: ValueType,
     },
-
     PointParamAtCeiling {
         param: ParamId,
     },
-
-    /// The statement asks for a finite measure of an unbounded interval.
-    CapacityRayMeasure {
-        statement: StatementId,
-    },
-
     Overflow(OverflowKind),
     Scalar {
         find: FindIndex,
         source: crate::ScalarError,
     },
-
-    /// limit — NOT the map size; do not sweep it with the map constant.)
-    ResultBytesOverflow,
-
     /// An in-memory representation reached its fixed capacity.
     Capacity(Capacity),
-
-    /// A write needed more pages than the store's fixed map ceiling.
-    Full {
-        ceiling: u64,
-    },
-
-    Corruption(CorruptionError),
-
-    /// A successor-store condition, surfaced with its full typed roster
-    /// ([`crate::storage::store::StoreError`]) — distinct physical
-    /// conditions stay distinct.
+    ResultBytesOverflow,
+    /// Cancellation or refused allocation, until it becomes
+    /// `Error::Cancelled` / `Error::Allocation`.
     Store(Box<crate::storage::store::StoreError>),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Stable error taxonomy shared by native and TypeScript error surfaces.
-/// The engine's exhaustive descriptor table assigns each [`Error`] variant
-/// a family and an optional source error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ErrorFamily {
-    FormatMismatch,
+/// The variant of an [`Error`], without its payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ErrorKind {
+    NotABumbleDb,
     SchemaMismatch,
-    AlreadyInitialized,
+    Locked,
     DestinationExists,
-    PublishedButUnsynced,
-    EnvironmentLocked,
+    Closed,
+    ReentrantWriter,
+    ReadersFull,
+    Full,
     Io,
     Lmdb,
-    ReadersFull,
+    Corruption,
+    ForeignSchema,
+    ForeignWitness,
+    ForeignPreparedQuery,
+    ClosedRelationWrite,
+    TransactionPoisoned,
+    Changes,
+    HostKey,
+    Exhausted,
+    CapacityRayMeasure,
+    MeasureOverflow,
     Schema,
+    Compile,
     Validation,
     FactShape,
-    ClosedRelationWrite,
-    CommitSync,
-    TransactionPoisoned,
-    ForeignPreparedQuery,
-    ForeignWitness,
     Param,
-    CapacityRayMeasure,
     Overflow,
     Scalar,
-    ResultBytesOverflow,
     Capacity,
-    Full,
-    Corruption,
-    Store,
-}
-
-pub(crate) struct ErrorDescriptor<'a> {
-    pub family: ErrorFamily,
-    pub source: Option<&'a (dyn std::error::Error + 'static)>,
-}
-
-fn family_only<'a>(family: ErrorFamily) -> ErrorDescriptor<'a> {
-    ErrorDescriptor {
-        family,
-        source: None,
-    }
-}
-
-fn family_source<'a>(
-    family: ErrorFamily,
-    source: &'a (dyn std::error::Error + 'static),
-) -> ErrorDescriptor<'a> {
-    ErrorDescriptor {
-        family,
-        source: Some(source),
-    }
+    Cancelled,
+    Allocation,
 }
 
 impl Error {
-    #[doc(hidden)]
     #[must_use]
-    pub fn hatch() -> Self {
-        Self::Hatch(Hatch)
-    }
-
-    #[doc(hidden)]
-    #[must_use]
-    pub fn is_hatch(&self) -> bool {
-        matches!(self, Self::Hatch(_))
-    }
-
-    #[must_use]
-    pub(crate) fn descriptor(&self) -> ErrorDescriptor<'_> {
+    pub fn kind(&self) -> ErrorKind {
         match self {
-            Self::FormatMismatch { .. } => family_only(ErrorFamily::FormatMismatch),
-            Self::SchemaMismatch { .. } => family_only(ErrorFamily::SchemaMismatch),
-            Self::AlreadyInitialized => family_only(ErrorFamily::AlreadyInitialized),
-            Self::DestinationExists { .. } => family_only(ErrorFamily::DestinationExists),
-            Self::PublishedButUnsynced { source, .. } => {
-                family_source(ErrorFamily::PublishedButUnsynced, source)
-            }
-            Self::EnvironmentLocked => family_only(ErrorFamily::EnvironmentLocked),
-            Self::Io(err) => family_source(ErrorFamily::Io, err),
-            Self::Hatch(_) => family_only(ErrorFamily::Io),
-            Self::Lmdb(err) => family_source(ErrorFamily::Lmdb, err),
-            Self::ReadersFull { .. } => family_only(ErrorFamily::ReadersFull),
-            Self::Schema(_) => family_only(ErrorFamily::Schema),
-            Self::Validation(_) => family_only(ErrorFamily::Validation),
-            Self::FactShape(_) => family_only(ErrorFamily::FactShape),
-            Self::ClosedRelationWrite { .. } => family_only(ErrorFamily::ClosedRelationWrite),
-            Self::CommitSync { error, .. } => family_source(ErrorFamily::CommitSync, error),
-            Self::TransactionPoisoned { source } => {
-                family_source(ErrorFamily::TransactionPoisoned, source.as_ref())
-            }
-            Self::ForeignPreparedQuery => family_only(ErrorFamily::ForeignPreparedQuery),
-            Self::ForeignWitness => family_only(ErrorFamily::ForeignWitness),
+            Self::NotABumbleDb { .. } => ErrorKind::NotABumbleDb,
+            Self::SchemaMismatch => ErrorKind::SchemaMismatch,
+            Self::Locked { .. } => ErrorKind::Locked,
+            Self::DestinationExists { .. } => ErrorKind::DestinationExists,
+            Self::Closed => ErrorKind::Closed,
+            Self::ReentrantWriter => ErrorKind::ReentrantWriter,
+            Self::ReadersFull => ErrorKind::ReadersFull,
+            Self::Full { .. } => ErrorKind::Full,
+            Self::Io(_) => ErrorKind::Io,
+            Self::Lmdb(_) => ErrorKind::Lmdb,
+            Self::Corruption(_) => ErrorKind::Corruption,
+            Self::ForeignSchema => ErrorKind::ForeignSchema,
+            Self::ForeignWitness => ErrorKind::ForeignWitness,
+            Self::ForeignPreparedQuery => ErrorKind::ForeignPreparedQuery,
+            Self::ClosedRelationWrite { .. } => ErrorKind::ClosedRelationWrite,
+            Self::TransactionPoisoned { .. } => ErrorKind::TransactionPoisoned,
+            Self::Changes(_) => ErrorKind::Changes,
+            Self::HostKey(_) => ErrorKind::HostKey,
+            Self::Exhausted(_) => ErrorKind::Exhausted,
+            Self::CapacityRayMeasure { .. } => ErrorKind::CapacityRayMeasure,
+            Self::MeasureOverflow { .. } => ErrorKind::MeasureOverflow,
+            Self::Schema(_) => ErrorKind::Schema,
+            Self::Compile(_) => ErrorKind::Compile,
+            Self::Validation(_) => ErrorKind::Validation,
+            Self::FactShape(_) => ErrorKind::FactShape,
             Self::ParamCountMismatch { .. }
             | Self::ParamTypeMismatch { .. }
             | Self::ParamSetExpected { .. }
             | Self::ParamScalarExpected { .. }
             | Self::ParamElementTypeMismatch { .. }
-            | Self::PointParamAtCeiling { .. } => family_only(ErrorFamily::Param),
-            Self::CapacityRayMeasure { .. } => family_only(ErrorFamily::CapacityRayMeasure),
-            Self::Overflow(_) => family_only(ErrorFamily::Overflow),
-            Self::Scalar { .. } => family_only(ErrorFamily::Scalar),
-            Self::ResultBytesOverflow => family_only(ErrorFamily::ResultBytesOverflow),
-            Self::Capacity(_) => family_only(ErrorFamily::Capacity),
-            Self::Full { .. } => family_only(ErrorFamily::Full),
-            Self::Corruption(_) => family_only(ErrorFamily::Corruption),
-            Self::Store(err) => family_source(ErrorFamily::Store, err.as_ref()),
+            | Self::PointParamAtCeiling { .. } => ErrorKind::Param,
+            Self::Overflow(_) => ErrorKind::Overflow,
+            Self::Scalar { .. } => ErrorKind::Scalar,
+            Self::Capacity(_) | Self::ResultBytesOverflow => ErrorKind::Capacity,
+            Self::Store(error) => match **error {
+                crate::storage::store::StoreError::Work(crate::WorkError::Cancelled) => {
+                    ErrorKind::Cancelled
+                }
+                _ => ErrorKind::Allocation,
+            },
         }
-    }
-
-    #[must_use]
-    pub fn family(&self) -> ErrorFamily {
-        self.descriptor().family
-    }
-}
-
-#[cfg(test)]
-mod hatch_tests {
-    use super::*;
-
-    #[test]
-    fn hatch_reuses_io_family_and_downcasts() {
-        let error = Error::hatch();
-        assert_eq!(error.family(), ErrorFamily::Io);
-        assert!(error.is_hatch());
-        let interrupted = Error::from(std::io::Error::from(std::io::ErrorKind::Interrupted));
-        assert!(!interrupted.is_hatch());
-        assert_eq!(interrupted.family(), ErrorFamily::Io);
-        assert_ne!(interrupted, error);
     }
 }

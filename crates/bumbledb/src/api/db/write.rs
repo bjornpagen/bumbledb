@@ -1,36 +1,21 @@
-//! [`Db::write`] / [`Db::write_from`]: the embedded durable write path over
-//! the successor candidate protocol.
-//!
-//! Flow: acquire the store's one writer capability (exclusive, reentrancy
-//! refused as a typed error) → witness check against the true parent →
-//! open the parent snapshot → run the closure over an in-memory net delta
-//! → drop the parent reader → prepare the sealed delta as a private
-//! candidate, judged incrementally under a [`crate::schema::judge::LawfulParent`] →
-//! seal (no host adjunct on the embedded path) → one durable LMDB commit
-//! for facts and generation together. An abort — closure error, judge
-//! rejection, or panic — never wrote a fact: the pending delta is plain
-//! memory and the candidate transaction drops whole.
+//! The durable write path: [`Db::write`], [`Db::write_from`], [`Db::apply`]
+//! and [`Db::apply_from`] share one private commit path. The writer is
+//! taken first, a witness is checked against the true parent, the change
+//! set is applied to a private candidate, judged incrementally, and
+//! committed once. An abort (closure error, rejection, panic) never wrote a
+//! fact.
 
 use super::{Db, OwnedRead, ReadFrame, WriteTx};
-use crate::error::{Committed, ConditionalWrite, Error, Result};
-use crate::schema::judge::LawfulParent;
+use crate::error::{Error, Result, Violations};
 use crate::storage::GenerationId;
-use crate::storage::store::{
-    AttachmentChange, EnvironmentId, HostChanges, Prepared, SchemaJudge, UnindexedRows,
-};
+use crate::storage::store::HostChanges;
+use crate::storage::store::candidate::{Candidate, WriteOwner};
+use crate::storage::store::format::EnvironmentId;
 use crate::work::WorkContext;
 
-fn admitted_parent() -> LawfulParent {
-    LawfulParent::established()
-}
-
-/// The generation witness, reified: the environment identity and
-/// generation one [`OwnedRead`] observed. Fields are private and the
-/// construction sites are [`OwnedRead::witness`] / [`ReadFrame::witness`],
-/// so a witness stays evidence — never an integer a caller could fabricate.
-/// A stale witness is exactly what the commit-time compare convicts as
-/// [`ConditionalWrite::Moved`]. Evidence does not wear out: `Clone`, not
-/// `Copy` (cloning is a decision at the call site).
+/// The environment and generation one [`OwnedRead`] observed. Only
+/// [`OwnedRead::witness`] and [`ReadFrame::witness`] mint one, so a witness
+/// stays evidence. `Clone`, not `Copy`.
 /// ```compile_fail
 /// fn require_copy<T: Copy>() {}
 /// require_copy::<bumbledb::Witness<()>>();
@@ -43,174 +28,156 @@ pub struct Witness<S> {
     marker: std::marker::PhantomData<fn() -> S>,
 }
 
-/// Expected parent for [`Db::apply`].
-pub enum ApplyExpected<S> {
-    Any,
-    Exact(Witness<S>),
+/// An admitted write: the closure's value and the generation after it.
+/// `changed` is false when the change set matched the committed state; the
+/// generation moved exactly when it is true.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Committed<R> {
+    pub value: R,
+    pub generation: GenerationId,
+    pub changed: bool,
 }
 
-/// Typed public write outcome. Distinct from a JS callback.
-///
-/// ```compile_fail
-/// fn require_rejected(outcome: bumbledb::ApplyOutcome) {
-///     let _ = match outcome {
-///         bumbledb::ApplyOutcome::Rejected(_) => {}
-///         _ => {}
-///     };
-/// }
-/// ```
-pub enum ApplyOutcome {
-    Accepted {
-        generation: GenerationId,
-    },
-    NoChange {
-        generation: GenerationId,
-    },
-    InvariantRejected {
-        violations: crate::error::Violations,
-    },
+/// The outcome of one durable write.
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteOutcome<R> {
+    Committed(Committed<R>),
+    /// The proposed state violates the theory; nothing was written.
+    Rejected(Violations),
+    /// The witnessed generation is not the current one; nothing was written.
     Moved {
         witnessed: GenerationId,
         current: GenerationId,
     },
 }
 
+impl<R> WriteOutcome<R> {
+    /// # Panics
+    /// If the write was rejected or moved.
+    #[track_caller]
+    pub fn unwrap(self) -> Committed<R> {
+        self.expect("write outcome")
+    }
+
+    /// # Panics
+    /// If the write was rejected or moved.
+    #[track_caller]
+    pub fn expect(self, msg: &str) -> Committed<R> {
+        match self {
+            Self::Committed(committed) => committed,
+            Self::Rejected(violations) => panic!("{msg}: rejected: {violations}"),
+            Self::Moved { witnessed, current } => {
+                panic!("{msg}: moved ({witnessed} -> {current})")
+            }
+        }
+    }
+}
+
 impl<S> OwnedRead<S> {
     pub fn witness(&self) -> Witness<S> {
-        snapshot_witness(&self.snapshot)
+        Witness {
+            environment: self.snapshot.identity().environment,
+            generation: self.snapshot.generation(),
+            marker: std::marker::PhantomData,
+        }
     }
 }
 
 impl<S> ReadFrame<'_, S> {
-    /// Capture the pinned generation for a later conditional write.
-    /// # Errors
-    /// No current failure; matches the fallible read-frame operations.
-    pub fn witness(&self) -> Result<Witness<S>> {
-        Ok(snapshot_witness(self.snapshot))
-    }
-}
-
-fn snapshot_witness<S>(snapshot: &crate::storage::store::OwnedSnapshot) -> Witness<S> {
-    Witness {
-        environment: snapshot.identity().environment,
-        generation: snapshot.generation(),
-        marker: std::marker::PhantomData,
+    pub fn witness(&self) -> Witness<S> {
+        Witness {
+            environment: self.snapshot.identity().environment,
+            generation: self.snapshot.generation(),
+            marker: std::marker::PhantomData,
+        }
     }
 }
 
 impl<S> Db<S> {
-    /// One durable write with cooperative cancellation: in-memory
-    /// set arithmetic inside the closure, then incremental judgment under
-    /// the admitted lawful parent, then one LMDB commit.
+    /// One durable write: set arithmetic inside the closure, incremental
+    /// judgment, one commit.
     /// # Errors
-    /// Storage failure, exhausted work, reentrant write, or the closure's
-    /// own error (which aborts: LMDB never saw a fact).
+    /// Storage failure, cancellation, a reentrant write, or the closure's
+    /// own error (which aborts).
     pub fn write<R>(
         &self,
         work: WorkContext,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
-    ) -> Result<crate::Admission<Committed<R>>> {
-        match self.write_witnessed(work, None, f)? {
-            ConditionalWrite::Accepted(committed) => Ok(crate::Admission::Accepted(committed)),
-            ConditionalWrite::Rejected(violations) => Ok(crate::Admission::Rejected(violations)),
-            ConditionalWrite::Moved { .. } => {
-                unreachable!("Db::write has no witness, so Moved is unrepresentable")
-            }
-        }
+    ) -> Result<WriteOutcome<R>> {
+        let mut owner = self.store.writer(&work).map_err(Error::from_store)?;
+        self.write_owned(&mut owner, work, f)
     }
 
-    /// Conditional write with cooperative cancellation: the engine
-    /// ships the outcome, never a loop — retry is host policy.
+    /// A write conditional on `witness` still naming the current generation.
+    /// The outcome is reported, never retried.
     /// # Errors
-    /// `ForeignWitness` for a witness from another environment; otherwise
-    /// as [`Db::write`].
+    /// `ForeignWitness` for a witness of another environment; otherwise as
+    /// [`Db::write`].
     pub fn write_from<R>(
         &self,
         work: WorkContext,
         witness: &Witness<S>,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
-    ) -> Result<ConditionalWrite<R>> {
-        if witness.environment != self.store.environment_id() {
-            return Err(Error::ForeignWitness);
+    ) -> Result<WriteOutcome<R>> {
+        let mut owner = self.store.writer(&work).map_err(Error::from_store)?;
+        if let Some(moved) = self.moved(&owner, witness)? {
+            return Ok(moved);
         }
-        self.write_witnessed(work, Some(witness.generation), f)
+        self.write_owned(&mut owner, work, f)
     }
 
-    /// Apply a sealed change set with cooperative cancellation.
-    ///
+    /// Commit a sealed change set.
     /// # Errors
-    /// `ForeignWitness` for a witness from another environment; otherwise
-    /// storage failure, exhausted work, or reentrant write.
+    /// A foreign-schema change set; otherwise as [`Db::write`].
     pub fn apply(
         &self,
         changes: &crate::ChangeSet,
-        expected: ApplyExpected<S>,
         work: &WorkContext,
-    ) -> Result<ApplyOutcome> {
-        let witnessed = match expected {
-            ApplyExpected::Any => None,
-            ApplyExpected::Exact(witness) => {
-                if witness.environment != self.store.environment_id() {
-                    return Err(Error::ForeignWitness);
-                }
-                Some(witness.generation)
-            }
-        };
+    ) -> Result<WriteOutcome<()>> {
         let mut owner = self.store.writer(work).map_err(Error::from_store)?;
-        if let Some(witnessed) = witnessed {
-            let current = owner.parent_generation().map_err(Error::from_store)?;
-            if current != witnessed {
-                return Ok(ApplyOutcome::Moved { witnessed, current });
-            }
-        }
-        let judge = SchemaJudge::new(self.schema.as_ref());
-        match owner
-            .prepare_incremental(admitted_parent(), changes, &UnindexedRows, &judge)
-            .map_err(Error::from_store)?
-        {
-            Prepared::Rejected {
-                rejection: judged, ..
-            } => Ok(ApplyOutcome::InvariantRejected {
-                violations: super::violations::violations_from_judged(
-                    self.schema.as_ref(),
-                    judged,
-                    work,
-                )?,
-            }),
-            Prepared::Admitted(prepared) => {
-                let sealed = prepared
-                    .seal(HostChanges {
-                        records: &[],
-                        attachment: AttachmentChange::Keep,
-                    })
-                    .map_err(Error::from_store)?;
-                let commit = sealed.commit().map_err(Error::from_store)?;
-                if commit.changed {
-                    Ok(ApplyOutcome::Accepted {
-                        generation: commit.generation,
-                    })
-                } else {
-                    Ok(ApplyOutcome::NoChange {
-                        generation: commit.generation,
-                    })
-                }
-            }
-        }
+        self.commit(&mut owner, changes, (), work)
     }
 
-    fn write_witnessed<R>(
+    /// Commit a sealed change set conditional on `witness`.
+    /// # Errors
+    /// As [`Db::write_from`] and [`Db::apply`].
+    pub fn apply_from(
         &self,
-        work: WorkContext,
-        witnessed: Option<GenerationId>,
-        f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
-    ) -> Result<ConditionalWrite<R>> {
-        let mut owner = self.store.writer(&work).map_err(Error::from_store)?;
-        if let Some(witnessed) = witnessed {
-            let current = owner.parent_generation().map_err(Error::from_store)?;
-            if current != witnessed {
-                return Ok(ConditionalWrite::Moved { witnessed, current });
-            }
+        changes: &crate::ChangeSet,
+        witness: &Witness<S>,
+        work: &WorkContext,
+    ) -> Result<WriteOutcome<()>> {
+        let mut owner = self.store.writer(work).map_err(Error::from_store)?;
+        if let Some(moved) = self.moved(&owner, witness)? {
+            return Ok(moved);
         }
+        self.commit(&mut owner, changes, (), work)
+    }
+
+    fn moved<R>(
+        &self,
+        owner: &WriteOwner<'_>,
+        witness: &Witness<S>,
+    ) -> Result<Option<WriteOutcome<R>>> {
+        if witness.environment != self.store.identity().environment {
+            return Err(Error::ForeignWitness);
+        }
+        let current = owner.parent_generation().map_err(Error::from_store)?;
+        Ok(
+            (current != witness.generation).then_some(WriteOutcome::Moved {
+                witnessed: witness.generation,
+                current,
+            }),
+        )
+    }
+
+    fn write_owned<R>(
+        &self,
+        owner: &mut WriteOwner<'_>,
+        work: WorkContext,
+        f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
+    ) -> Result<WriteOutcome<R>> {
         let parent = self.store.snapshot(&work).map_err(Error::from_store)?;
         let mut tx = WriteTx::new(&self.schema, self.closed.as_ref(), &parent, &work);
         let value = f(&mut tx)?;
@@ -222,27 +189,33 @@ impl<S> Db<S> {
         let pending = tx.into_pending();
         drop(parent);
         let changes = pending.seal(self.schema.as_ref(), &work)?;
-        let judge = SchemaJudge::new(self.schema.as_ref());
+        self.commit(owner, &changes, value, &work)
+    }
+
+    /// The one private commit path.
+    fn commit<R>(
+        &self,
+        owner: &mut WriteOwner<'_>,
+        changes: &crate::ChangeSet,
+        value: R,
+        work: &WorkContext,
+    ) -> Result<WriteOutcome<R>> {
         match owner
-            .prepare_incremental(admitted_parent(), &changes, &UnindexedRows, &judge)
+            .prepare_judged(self.schema.as_ref(), changes)
             .map_err(Error::from_store)?
         {
-            Prepared::Rejected {
-                rejection: judged, ..
-            } => Ok(ConditionalWrite::Rejected(
-                super::violations::violations_from_judged(self.schema.as_ref(), judged, &work)?,
+            Candidate::Rejected(judged) => Ok(WriteOutcome::Rejected(
+                super::violations::violations_from_judged(self.schema.as_ref(), judged, work)?,
             )),
-            Prepared::Admitted(prepared) => {
-                let sealed = prepared
-                    .seal(HostChanges {
-                        records: &[],
-                        attachment: AttachmentChange::Keep,
-                    })
+            Candidate::Admitted(prepared) => {
+                let commit = prepared
+                    .seal(HostChanges::NONE)
+                    .and_then(crate::storage::store::candidate::SealedWrite::commit)
                     .map_err(Error::from_store)?;
-                let commit = sealed.commit().map_err(Error::from_store)?;
-                Ok(ConditionalWrite::Accepted(Committed {
+                Ok(WriteOutcome::Committed(Committed {
                     value,
                     generation: commit.generation,
+                    changed: commit.changed,
                 }))
             }
         }

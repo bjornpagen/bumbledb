@@ -1,38 +1,21 @@
-//! 16-byte exact-checked local fingerprints.
-//!
-//! The persisted fingerprint is the first 16 bytes of a domain-separated
-//! BLAKE3 digest. It selects candidate buckets; **full canonical bytes decide
-//! equality**. Truncation does not reduce the compression work, only the
-//! stored width. The algorithm and domain separators are persisted-format
-//! choices; changing them requires a layout bump.
-//!
-//! Tests and the HASH-02 bench probe may force constant fingerprints to
-//! exercise collision buckets through insert/contains/delete/judgment/
-//! export; the forcing variant exists only under `cfg(test)` or the
-//! bench-only `collision-probe` feature, and only at store construction —
-//! no production constructor can select it.
+//! 16-byte fingerprints: the first 16 bytes of a domain-separated BLAKE3
+//! digest. A fingerprint selects a bucket; full canonical bytes decide
+//! equality. Tests force a constant fingerprint to drive collision buckets.
 
 use bumbledb_theory::schema::RelationId;
 
 use crate::schema::ProjectionId;
 
-/// The persisted exact-checked local fingerprint width.
-pub const FP_LEN: usize = 16;
+pub(crate) const FP_LEN: usize = 16;
 
 const ROW_DOMAIN: &[u8] = b"bumbledb/1/row-fp";
 const DETERMINANT_DOMAIN: &[u8] = b"bumbledb/1/det-fp";
 
-/// The store's fingerprint function. Exactly one production variant; the
-/// algorithm is fixed by the format family, never varied by CPU.
 #[derive(Debug, Clone, Copy)]
-pub enum Fingerprinter {
+pub(crate) enum Fingerprinter {
     Blake3,
-    /// Forced-collision probe: every input maps to the same bucket. A store
-    /// constructed with this cannot be reopened by a production constructor
-    /// (its membership keys would not match); collision suites create and
-    /// use the store within one process. Reachable only from tests and the
-    /// bench-only `collision-probe` feature.
-    #[cfg(any(test, feature = "testing"))]
+    /// Every input maps to one bucket.
+    #[cfg(test)]
     Constant([u8; FP_LEN]),
 }
 
@@ -46,7 +29,7 @@ impl Fingerprinter {
                 digest.update(row);
                 truncate(digest.finalize())
             }
-            #[cfg(any(test, feature = "testing"))]
+            #[cfg(test)]
             Self::Constant(fp) => fp,
         }
     }
@@ -60,7 +43,7 @@ impl Fingerprinter {
                 digest.update(projected);
                 truncate(digest.finalize())
             }
-            #[cfg(any(test, feature = "testing"))]
+            #[cfg(test)]
             Self::Constant(fp) => fp,
         }
     }

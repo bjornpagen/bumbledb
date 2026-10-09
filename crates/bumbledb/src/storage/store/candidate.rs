@@ -1,172 +1,105 @@
-//! Private candidate: prepare/admit → opaque seal → commit/abort.
-//!
-//! The candidate is one uncommitted LMDB write transaction on its owning
-//! worker. Existing committed readers never observe it; a losing candidate
-//! is dropped, never readable. Judgment sees the
-//! **proposed final state** — the transaction's own view, where the
-//! determinant namespace is a multimap holding every competing proposal —
-//! before any decision, so unique-index installation order cannot hide a
-//! second conflicting row.
-//!
-//! `seal` writes only opaque host records and the attachment: it can
-//! never amend judged application facts, so sealing cannot invalidate the
-//! admission evidence. A failed seal drops the entire transaction —
-//! including any host-record prefix — and dispatches nothing. After seal,
-//! the only capabilities are commit and abort. A write past the map ceiling
-//! is the typed `Full` refusal with nothing committed.
-
-use std::sync::MutexGuard;
+//! The private candidate: one uncommitted write transaction on its owning
+//! worker that committed readers never observe. Rows apply first; judgment
+//! reads the proposed final state through the same transaction; seal adds
+//! only host records and the head, so it cannot invalidate a verdict; commit
+//! is the one durability point. A failed seal drops the whole transaction.
 
 use bumbledb_theory::schema::{RelationId, StatementId};
-use heed::RoTxn;
+use heed::{RoTxn, RwTxn};
 
-use crate::schema::ProjectionId;
-
-use super::error::{HostKeyFault, StoreError, StoreResult};
-use super::format::{K_ATTACHMENT, K_GENERATION, K_HOST_RECORD_TAG, RowId, RowLocator};
-use super::host::{AttachmentChange, HostChanges, HostRecordChange};
-use super::keys::HOST_KEY_MAX;
-use super::rows;
-use super::store_env::{GatedRwTxn, Store, read_generation};
-use crate::Value;
+use super::error::{StoreError, StoreResult};
+use super::format::{K_GENERATION, RowId};
+use super::host::HostChanges;
+use super::judge_bridge::Verdict;
+use super::rows::{self, RowWriter};
+use super::store_env::{GatedRwTxn, Store, StoreInner, WriterGuard, read_generation};
 use crate::changes::{ChangeKind, ChangeSet};
+use crate::schema::judge::JudgedViolation;
+use crate::schema::{CompiledProjection, Schema};
 use crate::storage::GenerationId;
 use crate::work::WorkContext;
 
-/// Net application-fact changes of one candidate, independent of
-/// metadata-only generation movement.
+/// Net row changes of one applied change set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct AppliedChanges {
+pub struct Applied {
     pub added: u64,
     pub removed: u64,
 }
 
-/// The committed outcome. `changed` covers facts **or** host records; the
-/// generation moved exactly when it is true.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StoreCommit {
-    pub generation: GenerationId,
-    pub application: AppliedChanges,
-    pub changed: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CommitKind {
-    Changed { new_generation: GenerationId },
-    Noop { generation: GenerationId },
-}
-
-impl CommitKind {
-    fn generation(self) -> GenerationId {
-        match self {
-            Self::Changed { new_generation } => new_generation,
-            Self::Noop { generation } => generation,
-        }
+impl Applied {
+    fn changed(self) -> bool {
+        self.added + self.removed > 0
     }
 }
 
-/// Interned projections a stored row participates in, as
-/// (`ProjectionId`, routing bytes). Shared physical
-/// indexes emit once. The store fingerprints and maintains the entries;
-/// projection semantics stay with the schema owner.
-pub type ProjectionEmitter<'a> = &'a mut (dyn FnMut(ProjectionId, &[u8]) -> StoreResult<()> + 'a);
-
-pub trait RowIndexer {
-    /// Emit only projections interned by this store's schema for `relation`.
-    /// Unknown or foreign-relation projections refuse the whole candidate
-    /// with `ForeignSchema`; this seam cannot install an undeclared index.
-    /// # Errors
-    /// Propagates work exhaustion or the emit sink's storage failure.
-    fn index_row(
-        &self,
-        relation: RelationId,
-        row: &[u8],
-        work: &WorkContext,
-        emit: super::ProjectionEmitter<'_>,
-    ) -> StoreResult<()>;
-}
-
-/// Judge the proposed final state before any
-/// commit capability exists. A completed semantic rejection carries the
-/// producer's evidence type; a resource failure is a `StoreError`, never a
-/// fabricated rejection.
-pub trait CandidateJudge {
-    type Rejection;
-
-    /// # Errors
-    /// Resource/storage failure only; a domain rejection is a `Judgment`.
-    fn judge(
-        &self,
-        candidate: &CandidateState<'_, '_>,
-        work: &WorkContext,
-    ) -> StoreResult<Judgment<Self::Rejection>>;
-}
-
+/// One change set of a batch decision: its own net changes and the
+/// judge's rejection, if any.
 #[derive(Debug)]
-pub enum Judgment<R> {
-    Admitted,
-    Rejected(R),
+pub(crate) struct Decided {
+    pub(crate) applied: Applied,
+    pub(crate) rejection: Verdict,
 }
 
-/// Outcome of `prepare`: an owned prepared capability, or the judge's
-/// completed rejection with the writer session retained.
-pub enum Prepared<'owner, 'store, R> {
+/// A judged candidate: admitted with its open transaction, or rejected with
+/// the transaction already dropped.
+pub(crate) enum Candidate<'owner, 'store> {
     Admitted(PreparedWrite<'owner, 'store>),
-    Rejected {
-        rejection: R,
-        application: AppliedChanges,
-    },
+    Rejected(Box<[JudgedViolation]>),
 }
 
-impl<R: std::fmt::Debug> std::fmt::Debug for Prepared<'_, '_, R> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Admitted(prepared) => write!(
-                f,
-                "Prepared::Admitted(generation {})",
-                prepared.proposed_generation()
-            ),
-            Self::Rejected {
-                rejection,
-                application,
-            } => f
-                .debug_struct("Prepared::Rejected")
-                .field("rejection", rejection)
-                .field("application", application)
-                .finish(),
-        }
-    }
-}
-
-/// The exclusive writer session. `!Send`/`!Sync` (mutex guard); it stays on
-/// its owning worker across a hosted publication attempt. A domain
-/// rejection or aborted candidate leaves the session owned, so the log can
-/// prepare its receipt-only transaction against the unchanged parent with
-/// no gap for another local writer.
-pub struct WriteOwner<'store> {
+/// The exclusive writer session: it holds the writer mutex, so it stays on
+/// its owning worker, and a rejected or aborted candidate leaves it owned.
+pub(crate) struct WriteOwner<'store> {
     store: &'store Store,
     work: WorkContext,
-    _guard: MutexGuard<'store, ()>,
+    _guard: WriterGuard<'store>,
 }
 
-impl std::fmt::Debug for WriteOwner<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "WriteOwner({})", self.store.store_id())
-    }
+struct AppliedRows {
+    applied: Applied,
+    home_keys_preserved: bool,
 }
 
-impl Drop for WriteOwner<'_> {
-    fn drop(&mut self) {
-        self.store.release_writer_thread();
+fn apply_rows(
+    inner: &StoreInner,
+    txn: &mut RwTxn<'_>,
+    changes: &ChangeSet,
+    work: &WorkContext,
+) -> StoreResult<AppliedRows> {
+    if changes.schema() != inner.schema_fp {
+        return Err(StoreError::ForeignSchema);
     }
+    let mut writer = RowWriter::new(inner, txn, work);
+    let mut applied = Applied::default();
+    // Removes before adds: a sealed change set already normalized its
+    // one-command tie, so physical order cannot change the final state.
+    for kind in [ChangeKind::Remove, ChangeKind::Add] {
+        for record in changes.records().filter(|record| record.kind == kind) {
+            work.checkpoint()?;
+            match kind {
+                ChangeKind::Remove => {
+                    if writer.remove(record.relation, record.row)? {
+                        applied.removed += 1;
+                    }
+                }
+                ChangeKind::Add => {
+                    if writer.insert(record.relation, record.row)?.is_some() {
+                        applied.added += 1;
+                    }
+                }
+            }
+        }
+    }
+    let home_keys_preserved = writer.home_keys_preserved();
+    writer.finish()?;
+    Ok(AppliedRows {
+        applied,
+        home_keys_preserved,
+    })
 }
 
 impl<'store> WriteOwner<'store> {
-    pub(crate) fn new(
-        store: &'store Store,
-        guard: MutexGuard<'store, ()>,
-        work: WorkContext,
-    ) -> Self {
+    pub(crate) fn new(store: &'store Store, guard: WriterGuard<'store>, work: WorkContext) -> Self {
         Self {
             store,
             work,
@@ -175,635 +108,302 @@ impl<'store> WriteOwner<'store> {
     }
 
     /// The committed parent generation, read while exclusivity is held.
-    /// Gated: the read transaction must not race an exclusive resize.
-    /// # Errors
-    /// Storage failure or stopped work.
-    pub fn parent_generation(&self) -> StoreResult<GenerationId> {
-        let _pass = self.store.inner.gate.enter(&self.work)?;
-        let txn = self
-            .store
-            .inner
-            .env
-            .read_txn()
-            .map_err(StoreError::from_heed)?;
-        read_generation(&self.store.inner, &txn)
+    pub(crate) fn parent_generation(&self) -> StoreResult<GenerationId> {
+        self.store.committed_generation(&self.work)
     }
 
-    /// Prepare and judge one sealed canonical delta as a private candidate
-    /// through a custom [`CandidateJudge`]. Production admitted writes use
-    /// [`Self::prepare_incremental`] instead.
-    /// # Errors
-    /// `ForeignSchema`, malformed change bytes, growth refusals, storage
-    /// failure or stopped work. A judge rejection is a `Prepared::Rejected`,
-    /// not an error, and retains this session.
-    pub fn prepare<'owner, I, J>(
+    /// Apply `changes` and judge the proposed final state incrementally: the
+    /// committed parent is lawful because every commit was judged.
+    pub(crate) fn prepare_judged<'owner>(
         &'owner mut self,
+        schema: &Schema,
         changes: &ChangeSet,
-        indexer: &I,
-        judge: &J,
-    ) -> StoreResult<Prepared<'owner, 'store, J::Rejection>>
-    where
-        I: RowIndexer + ?Sized,
-        J: CandidateJudge + ?Sized,
-    {
-        self.prepare_judged(changes, indexer, |state, work| judge.judge(state, work))
-    }
-
-    /// Ordinary write on an already-admitted store: apply the delta, then
-    /// incremental judgment under a real [`crate::schema::judge::LawfulParent`].
-    /// Never minted from [`super::staging::UnreadyStore`]. An empty
-    /// `ChangeSet` is a no-op under that parent, not complete validation.
-    /// # Errors
-    /// As [`Self::prepare`].
-    pub fn prepare_incremental<'owner, I>(
-        &'owner mut self,
-        parent: crate::schema::judge::LawfulParent,
-        changes: &ChangeSet,
-        indexer: &I,
-        judge: &super::judge_bridge::SchemaJudge<'_>,
-    ) -> StoreResult<Prepared<'owner, 'store, Box<[crate::schema::judge::JudgedViolation]>>>
-    where
-        I: RowIndexer + ?Sized,
-    {
-        self.prepare_judged(changes, indexer, |state, work| {
-            judge.judge_incremental(parent, state, work)
-        })
-    }
-
-    fn prepare_judged<'owner, I, R>(
-        &'owner mut self,
-        changes: &ChangeSet,
-        indexer: &I,
-        mut decide: impl FnMut(&CandidateState<'_, '_>, &WorkContext) -> StoreResult<Judgment<R>>,
-    ) -> StoreResult<Prepared<'owner, 'store, R>>
-    where
-        I: RowIndexer + ?Sized,
-    {
-        if changes.schema() != self.store.inner.schema_fp {
-            return Err(StoreError::ForeignSchema);
-        }
+    ) -> StoreResult<Candidate<'owner, 'store>> {
         self.work.checkpoint()?;
-        let (txn, report, application, home_keys_preserved) = self.attempt(changes, indexer)?;
+        let inner = &self.store.inner;
+        let mut txn = self.store.gated_write_txn(&self.work)?;
+        let parent = read_generation(inner, &txn.txn)?;
+        let rows = apply_rows(inner, &mut txn.txn, changes, &self.work)?;
         let state = CandidateState {
-            store: self.store,
-            txn: &txn,
-            changes: Some(changes),
-            home_keys_preserved,
+            inner,
+            txn: &txn.txn,
+            changes,
+            home_keys_preserved: rows.home_keys_preserved,
         };
-        match decide(&state, &self.work)? {
-            Judgment::Rejected(rejection) => {
-                drop(txn);
-                Ok(Prepared::Rejected {
-                    rejection,
-                    application,
-                })
-            }
-            Judgment::Admitted => Ok(Prepared::Admitted(PreparedWrite {
+        let verdict = super::judge_bridge::judge_incremental(schema, &state, &self.work)?;
+        match verdict {
+            Some(rejection) => Ok(Candidate::Rejected(rejection)),
+            None => Ok(Candidate::Admitted(PreparedWrite {
                 owner: self,
                 txn,
-                report,
-                application,
+                parent,
+                applied: vec![rows.applied],
             })),
         }
     }
 
-    /// Apply a sealed delta without judgment. Only the unready population
-    /// path may call this; readiness is [`super::staging::UnreadyStore::admit`].
-    pub(crate) fn ingest<I: RowIndexer + ?Sized>(
-        &mut self,
-        changes: &ChangeSet,
-        indexer: &I,
-    ) -> StoreResult<StoreCommit> {
-        if changes.schema() != self.store.inner.schema_fp {
-            return Err(StoreError::ForeignSchema);
-        }
-        self.work.checkpoint()?;
-        let (txn, report, application, _home_keys_preserved) = self.attempt(changes, indexer)?;
-        PreparedWrite {
-            owner: self,
-            txn,
-            report,
-            application,
-        }
-        .seal(HostChanges {
-            records: &[],
-            attachment: AttachmentChange::Keep,
-        })?
-        .commit()
-    }
-
-    /// A metadata-only transaction against the unchanged committed parent:
-    /// the rejection-receipt / no-op decision path. No application fact can
-    /// change through it; sealing host records may still advance the
-    /// generation.
-    /// # Errors
-    /// Storage failure or stopped work.
-    pub fn prepare_unchanged<'owner>(
+    /// Apply already-decided change sets in order, unjudged.
+    pub(crate) fn prepare_decided<'owner>(
         &'owner mut self,
+        changes: &[ChangeSet],
     ) -> StoreResult<PreparedWrite<'owner, 'store>> {
-        let txn = self.store.gated_write_txn(&self.work)?;
-        let generation = read_generation(&self.store.inner, &txn.txn)?;
+        self.work.checkpoint()?;
+        let inner = &self.store.inner;
+        let mut txn = self.store.gated_write_txn(&self.work)?;
+        let parent = read_generation(inner, &txn.txn)?;
+        let mut applied = Vec::with_capacity(changes.len());
+        for changes in changes {
+            applied.push(apply_rows(inner, &mut txn.txn, changes, &self.work)?.applied);
+        }
         Ok(PreparedWrite {
             owner: self,
             txn,
-            report: CommitKind::Noop { generation },
-            application: AppliedChanges::default(),
+            parent,
+            applied,
         })
     }
 
-    fn attempt<I: RowIndexer + ?Sized>(
-        &self,
-        changes: &ChangeSet,
-        indexer: &I,
-    ) -> StoreResult<(GatedRwTxn<'store>, CommitKind, AppliedChanges, bool)> {
+    /// Insert canonical rows of one relation, unjudged: a migration
+    /// population copying rows from another database.
+    pub(crate) fn prepare_rows<'owner, 'row>(
+        &'owner mut self,
+        relation: RelationId,
+        rows: &mut dyn Iterator<Item = StoreResult<&'row [u8]>>,
+    ) -> StoreResult<PreparedWrite<'owner, 'store>> {
         let inner = &self.store.inner;
-        let gated = self.store.gated_write_txn(&self.work)?;
-        let mut writer = rows::RowWriter::new(inner, gated, &self.work);
-        let mut application = AppliedChanges::default();
-        // The relations this candidate actually changed (a staged add of an
-        // already-present row or a remove of an absent one changes nothing):
-        // exactly these advance their per-relation change version below, so
-        // an untouched relation's image memos stay provably reusable.
-        let mut changed_relations: std::collections::BTreeSet<RelationId> =
-            std::collections::BTreeSet::new();
-        // Deletes before inserts: the one-command tie rule is already
-        // normalized inside the sealed ChangeSet (add wins); physical order
-        // here cannot change the final state.
-        for kind in [ChangeKind::Remove, ChangeKind::Add] {
-            for record in changes.records().filter(|record| record.kind == kind) {
-                self.work.checkpoint()?;
-                let relation = record.relation;
-                match kind {
-                    ChangeKind::Remove => {
-                        if writer.remove(relation, record.row, indexer)? {
-                            application.removed += 1;
-                            changed_relations.insert(relation);
-                        }
-                    }
-                    ChangeKind::Add => {
-                        if writer.insert(relation, record.row, indexer)?.is_some() {
-                            application.added += 1;
-                            changed_relations.insert(relation);
-                        }
-                    }
-                }
+        let mut txn = self.store.gated_write_txn(&self.work)?;
+        let parent = read_generation(inner, &txn.txn)?;
+        let mut writer = RowWriter::new(inner, &mut txn.txn, &self.work);
+        let mut applied = Applied::default();
+        for row in rows {
+            self.work.checkpoint()?;
+            if writer.insert(relation, row?)?.is_some() {
+                applied.added += 1;
             }
         }
-        let home_keys_preserved = writer.home_keys_preserved();
-        let mut gated = writer.finish()?;
-        let parent = read_generation(inner, &gated.txn)?;
-        let report = if application.added + application.removed > 0 {
-            let new_generation = next_generation(parent)?;
-            inner
-                .meta
-                .put(
-                    &mut gated.txn,
-                    K_GENERATION,
-                    &new_generation.storage_word().to_be_bytes(),
-                )
+        writer.finish()?;
+        Ok(PreparedWrite {
+            owner: self,
+            txn,
+            parent,
+            applied: vec![applied],
+        })
+    }
+
+    /// Judge each change set in order against the parent plus the earlier
+    /// admitted sets; a rejected set rolls back alone. Nothing commits.
+    pub(crate) fn decide_all(
+        &mut self,
+        schema: &Schema,
+        changes: &[ChangeSet],
+    ) -> StoreResult<Vec<Decided>> {
+        self.work.checkpoint()?;
+        let inner = &self.store.inner;
+        let mut txn = self.store.gated_write_txn(&self.work)?;
+        let mut decided = Vec::with_capacity(changes.len());
+        for changes in changes {
+            let mut nested = inner
+                .env
+                .nested_write_txn(&mut txn.txn)
                 .map_err(|error| inner.txn_error(error))?;
-            // Advance exactly the touched relations' change versions, in the
-            // same transaction as the rows they cover. Host-record-only
-            // seals never reach this arm (they change no relation's rows).
-            for relation in &changed_relations {
-                self.work.checkpoint()?;
-                let next =
-                    super::format::read_relation_version(&inner.meta, &gated.txn, *relation)?
-                        .next()?;
-                inner
-                    .meta
-                    .put(
-                        &mut gated.txn,
-                        super::format::relation_version_key(*relation).as_slice(),
-                        &next.storage_word().to_be_bytes(),
-                    )
-                    .map_err(|error| inner.txn_error(error))?;
+            let rows = apply_rows(inner, &mut nested, changes, &self.work)?;
+            let state = CandidateState {
+                inner,
+                txn: &nested,
+                changes,
+                home_keys_preserved: rows.home_keys_preserved,
+            };
+            let rejection = super::judge_bridge::judge_incremental(schema, &state, &self.work)?;
+            if rejection.is_none() {
+                nested.commit().map_err(|error| inner.txn_error(error))?;
             }
-            CommitKind::Changed { new_generation }
-        } else {
-            CommitKind::Noop { generation: parent }
-        };
-        Ok((gated, report, application, home_keys_preserved))
+            decided.push(Decided {
+                applied: rows.applied,
+                rejection,
+            });
+        }
+        Ok(decided)
+    }
+
+    /// A transaction against the unchanged parent for host records only.
+    pub(crate) fn prepare_unchanged<'owner>(
+        &'owner mut self,
+    ) -> StoreResult<PreparedWrite<'owner, 'store>> {
+        let txn = self.store.gated_write_txn(&self.work)?;
+        let parent = read_generation(&self.store.inner, &txn.txn)?;
+        Ok(PreparedWrite {
+            owner: self,
+            txn,
+            parent,
+            applied: Vec::new(),
+        })
     }
 }
 
-fn next_generation(parent: GenerationId) -> StoreResult<GenerationId> {
-    parent
-        .value()
-        .checked_add(1)
-        .map(GenerationId::from_storage)
-        .ok_or(StoreError::GenerationExhausted)
-}
-
-/// The proposed final state, exposed to judgment only. Every read comes
-/// from the candidate transaction itself; committed readers elsewhere still
-/// see the parent snapshot.
-pub struct CandidateState<'a, 'store> {
-    store: &'store Store,
-    txn: &'a GatedRwTxn<'store>,
-    changes: Option<&'a ChangeSet>,
+/// The proposed final state, readable by judgment only: every read comes
+/// from the candidate transaction itself.
+pub(crate) struct CandidateState<'a> {
+    inner: &'a StoreInner,
+    txn: &'a RoTxn<'a, heed::AnyTls>,
+    changes: &'a ChangeSet,
     home_keys_preserved: bool,
 }
 
-impl CandidateState<'_, '_> {
-    /// Committed populated state with no delta — complete judgment only.
-    pub(crate) fn of_committed<'a, 'store>(
-        store: &'store Store,
-        txn: &'a GatedRwTxn<'store>,
-    ) -> CandidateState<'a, 'store> {
-        CandidateState {
-            store,
-            txn,
-            changes: None,
-            home_keys_preserved: false,
-        }
+impl<'a> CandidateState<'a> {
+    pub(crate) fn changes(&self) -> &'a ChangeSet {
+        self.changes
     }
 
-    /// Preservation, not final-state admission. Only an incremental view
-    /// holding `LawfulParent` may consume this transaction-local fact.
-    pub(crate) fn preserves_home_key(
-        &self,
-        schema: &crate::Schema,
-        statement: StatementId,
-    ) -> bool {
+    /// No insertion met a different row in its home bucket, so a scalar home
+    /// key the lawful parent satisfied still holds.
+    pub(crate) fn preserves_home_key(&self, statement: StatementId) -> bool {
         self.home_keys_preserved
-            && self.changes.is_some()
-            && crate::schema::fingerprint::fingerprint(schema) == self.store.inner.schema_fp
             && self
-                .store
                 .inner
                 .det
                 .projection_of(statement)
                 .is_some_and(|projection| {
-                    projection.interval_field().is_none()
-                        && self.store.inner.det.is_home_compiled(projection)
+                    projection.interval_field().is_none() && self.inner.det.is_home(projection)
                 })
     }
 
-    fn read_txn(&self) -> &RoTxn<'_, heed::AnyTls> {
-        &self.txn.txn
-    }
-
-    /// The sealed delta under judgment (absent for metadata-only
-    /// transactions, which propose no fact changes).
-    #[must_use]
-    pub fn changes(&self) -> Option<&ChangeSet> {
-        self.changes
-    }
-
-    /// Proposed final rows of one relation, in physical key order. Each
-    /// locator retains the stable ordinal used for logical witness ranking.
-    /// # Errors
-    /// Storage failure.
-    pub fn rows(
+    /// Proposed rows of one relation in key order, ranked by ordinal.
+    pub(crate) fn rows(
         &self,
         relation: RelationId,
-    ) -> StoreResult<impl Iterator<Item = StoreResult<(RowLocator, &[u8])>>> {
-        rows::scan_rows(&self.store.inner, self.read_txn(), relation)
+    ) -> StoreResult<impl Iterator<Item = StoreResult<(RowId, &'a [u8])>> + use<'a>> {
+        Ok(rows::scan(self.inner, self.txn, relation)?
+            .map(|entry| entry.map(|(key, bytes)| (key.row, bytes))))
     }
 
-    /// Exact membership in the proposed final state.
-    /// # Errors
-    /// Storage failure or stopped work.
-    pub fn contains(
+    /// Candidates of one determinant group in the proposed state.
+    pub(crate) fn visit_determinant_bucket(
         &self,
-        relation: RelationId,
-        row: &[u8],
-        work: &WorkContext,
-    ) -> StoreResult<bool> {
-        Ok(rows::exact_lookup(&self.store.inner, self.read_txn(), relation, row, work)?.is_some())
-    }
-
-    /// All candidate physical locators sharing one determinant bucket.
-    /// # Errors
-    /// Storage failure or stopped work.
-    pub fn determinant_candidates(
-        &self,
-        projection: ProjectionId,
+        compiled: &CompiledProjection,
         projected: &[u8],
         work: &WorkContext,
-    ) -> StoreResult<Vec<RowLocator>> {
-        rows::determinant_bucket_ids(
-            &self.store.inner,
-            self.read_txn(),
-            projection,
-            projected,
-            work,
-        )
-    }
-
-    /// Bounded visitor over one determinant bucket in the proposed final
-    /// state. The visitor receives each `(row id, canonical row bytes)`;
-    /// return `false` to stop early.
-    /// # Errors
-    /// Storage failure, stopped work, or visitor failure.
-    pub fn visit_determinant_bucket(
-        &self,
-        projection: ProjectionId,
-        projected: &[u8],
-        work: &WorkContext,
-        visit: &mut dyn FnMut(RowId, &[u8]) -> StoreResult<bool>,
+        visit: &mut dyn FnMut(RowId, &'a [u8]) -> StoreResult<bool>,
     ) -> StoreResult<()> {
-        let inner = &self.store.inner;
-        let Some(compiled) = inner.det.projection(projection) else {
-            return Ok(());
-        };
-        let routing = rows::routing_for_compiled(inner, compiled, projected);
-        rows::visit_determinant_bucket(
-            inner,
-            self.read_txn(),
-            compiled,
-            &routing,
-            work,
-            &mut |locator, bytes| visit(locator.id, bytes),
-        )
-    }
-
-    /// Bounded visitor over confirmed determinant-group competitors.
-    /// Charged decoded rows are borrowed for the visit; there is no owning
-    /// `CompetingRows` / `into_values` extraction. Returns `None` when the
-    /// statement is not a sealed key.
-    /// # Errors
-    /// Storage failure or stopped work.
-    pub fn visit_determinant_competitors(
-        &self,
-        statement: StatementId,
-        determinant: &[Value],
-        work: &WorkContext,
-        visit: &mut dyn FnMut(u64, &[Value]) -> StoreResult<bool>,
-    ) -> StoreResult<Option<()>> {
-        let inner = &self.store.inner;
-        let Some(key) = inner.det.projection_of(statement) else {
-            return Ok(None);
-        };
-        let projected = super::det_index::determinant_bytes(key, determinant, work)?;
-        let fields = inner
-            .det
-            .fields_of(key.relation)
-            .ok_or(StoreError::ForeignSchema)?;
-        self.visit_determinant_bucket(key.id, &projected, work, &mut |id, bytes| {
-            work.checkpoint()?;
-            let decoded = crate::canonical::decode(fields, bytes, work)?;
-            if key.scalar_values(decoded.values()).as_slice() == determinant {
-                visit(id.0, decoded.values())
-            } else {
-                Ok(true)
-            }
-        })?;
-        Ok(Some(()))
-    }
-
-    /// Fetch one proposed row's canonical bytes by its physical locator.
-    /// # Errors
-    /// Storage failure.
-    pub fn fetch(&self, relation: RelationId, row: RowLocator) -> StoreResult<Option<&[u8]>> {
-        rows::fetch_row(&self.store.inner, self.read_txn(), relation, row)
-    }
-
-    /// Live row count of one relation in the proposed final state.
-    /// # Errors
-    /// Storage failure.
-    pub fn row_count(&self, relation: RelationId) -> StoreResult<u64> {
-        rows::row_count(&self.store.inner, self.read_txn(), relation)
+        let routing = rows::routing(self.inner, compiled, projected)?;
+        rows::visit_bucket(self.inner, self.txn, compiled, &routing, work, visit)
     }
 }
 
-/// An admitted private candidate: owns the uncommitted transaction and its
-/// admission evidence. Not clonable; exposes no committed read capability;
-/// `!Send`/`!Sync` through the transaction and owner borrow.
-pub struct PreparedWrite<'owner, 'store> {
+/// An admitted or decided candidate: owns the uncommitted transaction.
+pub(crate) struct PreparedWrite<'owner, 'store> {
     owner: &'owner mut WriteOwner<'store>,
     txn: GatedRwTxn<'store>,
-    report: CommitKind,
-    application: AppliedChanges,
+    parent: GenerationId,
+    applied: Vec<Applied>,
 }
 
 impl<'owner, 'store> PreparedWrite<'owner, 'store> {
-    #[must_use]
-    pub fn application_changes(&self) -> AppliedChanges {
-        self.application
+    pub(crate) fn applied_each(&self) -> &[Applied] {
+        &self.applied
     }
 
-    #[must_use]
-    pub fn proposed_generation(&self) -> GenerationId {
-        self.report.generation()
+    pub(crate) fn applied(&self) -> Applied {
+        self.applied
+            .iter()
+            .fold(Applied::default(), |sum, each| Applied {
+                added: sum.added + each.added,
+                removed: sum.removed + each.removed,
+            })
     }
 
-    /// Seal opaque host records and the attachment into the same
-    /// transaction. Only host bytes can change — never application facts or
-    /// indexes — so admission evidence stays valid. Any failure (including
-    /// map-full) consumes the capability and drops the entire private
-    /// transaction: nothing was dispatched, nothing committed.
-    /// # Errors
-    /// Host-key grammar violations, growth exhaustion, storage failure or
-    /// stopped work.
-    pub fn seal(mut self, host: HostChanges<'_>) -> StoreResult<SealedWrite<'owner, 'store>> {
-        let work = self.owner.work.clone();
-        let mutated = apply_host_changes(self.owner.store, &mut self.txn, host, &work)?;
-        if mutated && let CommitKind::Noop { generation } = self.report {
-            let new_generation = next_generation(generation)?;
-            self.owner
-                .store
-                .inner
+    /// Seal host records and the head into the same transaction; the
+    /// generation advances once when facts or host bytes changed.
+    pub(crate) fn seal(
+        mut self,
+        host: HostChanges<'_>,
+    ) -> StoreResult<SealedWrite<'owner, 'store>> {
+        let inner = &self.owner.store.inner;
+        let host_mutated = super::host::apply(inner, &mut self.txn.txn, host, &self.owner.work)?;
+        let changed = host_mutated || self.applied.iter().any(|applied| applied.changed());
+        let generation = if changed {
+            let next = self
+                .parent
+                .value()
+                .checked_add(1)
+                .map(GenerationId::from_storage)
+                .ok_or(StoreError::GenerationExhausted)?;
+            inner
                 .meta
                 .put(
                     &mut self.txn.txn,
                     K_GENERATION,
-                    &new_generation.storage_word().to_be_bytes(),
+                    &next.storage_word().to_be_bytes(),
                 )
-                .map_err(|error| self.owner.store.inner.txn_error(error))?;
-            self.report = CommitKind::Changed { new_generation };
-        }
+                .map_err(|error| inner.txn_error(error))?;
+            next
+        } else {
+            self.parent
+        };
         Ok(SealedWrite {
             _owner: self.owner,
             txn: self.txn,
-            report: self.report,
-            application: self.application,
+            generation,
+            changed,
         })
     }
 
-    /// Drop the candidate. Committed state is untouched; the writer session
-    /// is retained by the owner.
-    pub fn abort(self) {
+    pub(crate) fn abort(self) {
         drop(self.txn);
     }
 }
 
-/// Sealed: one LMDB durability point for facts, generation, host records
-/// and attachment together. Commit or abort only.
-pub struct SealedWrite<'owner, 'store> {
+/// The committed outcome. `changed` covers facts or host bytes; the
+/// generation moved exactly when it is true.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Commit {
+    pub generation: GenerationId,
+    pub changed: bool,
+}
+
+/// Commit or abort only; facts and host bytes are frozen.
+pub(crate) struct SealedWrite<'owner, 'store> {
     _owner: &'owner mut WriteOwner<'store>,
     txn: GatedRwTxn<'store>,
-    report: CommitKind,
-    application: AppliedChanges,
+    generation: GenerationId,
+    changed: bool,
 }
 
 impl SealedWrite<'_, '_> {
-    /// # Errors
-    /// Local durability failure, reported without any claim about a remote
-    /// publication; a hosted caller preserves its already-known receipt.
-    pub fn commit(self) -> StoreResult<StoreCommit> {
-        let report = self.report;
-        let application = self.application;
-        {
-            self.txn.commit()?;
-        }
-        Ok(StoreCommit {
-            generation: report.generation(),
-            application,
-            changed: matches!(report, CommitKind::Changed { .. }),
-        })
+    pub(crate) fn commit(self) -> StoreResult<Commit> {
+        let commit = Commit {
+            generation: self.generation,
+            changed: self.changed,
+        };
+        self.txn.commit()?;
+        Ok(commit)
     }
 
-    pub fn abort(self) {
+    pub(crate) fn abort(self) {
         drop(self.txn);
     }
 }
 
-const BYTE_QUANTUM: usize = rows::BYTE_QUANTUM;
-
-fn host_key<'k>(key: &[u8], buffer: &'k mut [u8; 1 + HOST_KEY_MAX]) -> StoreResult<&'k [u8]> {
-    if key.len() > HOST_KEY_MAX {
-        return Err(StoreError::HostKey(HostKeyFault::TooLong {
-            actual: key.len(),
-        }));
-    }
-    buffer[0] = K_HOST_RECORD_TAG;
-    buffer[1..=key.len()].copy_from_slice(key);
-    Ok(&buffer[..=key.len()])
-}
-
-fn same_value(existing: Option<&[u8]>, proposed: &[u8], work: &WorkContext) -> StoreResult<bool> {
-    match existing {
-        Some(existing) => rows::chunked_eq(existing, proposed, work),
-        None => Ok(false),
-    }
-}
-
-fn validate_host(host: &HostChanges<'_>, work: &WorkContext) -> StoreResult<()> {
-    work.checkpoint()?;
-    let mut previous: Option<&[u8]> = None;
-    for record in host.records {
-        work.checkpoint()?;
-        let key = match *record {
-            HostRecordChange::Put { key, .. } | HostRecordChange::Delete { key } => key,
+#[cfg(test)]
+impl WriteOwner<'_> {
+    /// Apply `changes` in a transaction that is then dropped; returns the
+    /// incremental verdict and the complete verdict over the same state.
+    pub(crate) fn judge_both(
+        &mut self,
+        schema: &Schema,
+        changes: &ChangeSet,
+    ) -> StoreResult<(Verdict, Verdict)> {
+        let inner = &self.store.inner;
+        let mut txn = self.store.gated_write_txn(&self.work)?;
+        let rows = apply_rows(inner, &mut txn.txn, changes, &self.work)?;
+        let state = CandidateState {
+            inner,
+            txn: &txn.txn,
+            changes,
+            home_keys_preserved: rows.home_keys_preserved,
         };
-        if key.len() > HOST_KEY_MAX {
-            return Err(StoreError::HostKey(HostKeyFault::TooLong {
-                actual: key.len(),
-            }));
-        }
-        work.checkpoint()?;
-        if previous.is_some_and(|previous| previous >= key) {
-            return Err(StoreError::HostKey(HostKeyFault::NotStrictlyOrdered));
-        }
-        previous = Some(key);
+        Ok((
+            super::judge_bridge::judge_incremental(schema, &state, &self.work)?,
+            super::judge_bridge::judge_complete_candidate(schema, &state, &self.work)?,
+        ))
     }
-    if let AttachmentChange::Put(_) = host.attachment {
-        work.checkpoint()?;
-    }
-    Ok(())
-}
-
-fn put_chunked(
-    store: &Store,
-    txn: &mut GatedRwTxn<'_>,
-    key: &[u8],
-    value: &[u8],
-    work: &WorkContext,
-) -> StoreResult<()> {
-    use std::io::Write as _;
-    work.checkpoint()?;
-    let mut stopped = None;
-    let result = store
-        .inner
-        .meta
-        .put_reserved(&mut txn.txn, key, value.len(), |space| {
-            for chunk in value.chunks(BYTE_QUANTUM) {
-                work.checkpoint().map_err(|error| {
-                    stopped = Some(error);
-                    std::io::Error::from(std::io::ErrorKind::Interrupted)
-                })?;
-                space.write_all(chunk)?;
-            }
-            Ok(())
-        });
-    if let Some(error) = stopped {
-        return Err(StoreError::Work(error));
-    }
-    result.map_err(|error| store.inner.txn_error(error))
-}
-
-fn apply_host_changes(
-    store: &Store,
-    txn: &mut GatedRwTxn<'_>,
-    host: HostChanges<'_>,
-    work: &WorkContext,
-) -> StoreResult<bool> {
-    validate_host(&host, work)?;
-    let mut buffer = [0u8; 1 + HOST_KEY_MAX];
-    let mut mutated = false;
-    for (index, record) in host.records.iter().enumerate() {
-        work.checkpoint()?;
-        #[cfg(not(test))]
-        let _ = index;
-        #[cfg(test)]
-        if *store
-            .inner
-            .fail_host_after
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            == Some(index)
-        {
-            return Err(StoreError::Full {
-                ceiling: store.ceiling(),
-            });
-        }
-        match *record {
-            HostRecordChange::Put { key, value } => {
-                let key = host_key(key, &mut buffer)?;
-                let existing = store
-                    .inner
-                    .meta
-                    .get(&txn.txn, key)
-                    .map_err(StoreError::from_heed)?;
-                if !same_value(existing, value, work)? {
-                    put_chunked(store, txn, key, value, work)?;
-                    mutated = true;
-                }
-            }
-            HostRecordChange::Delete { key } => {
-                let key = host_key(key, &mut buffer)?;
-                mutated |= store
-                    .inner
-                    .meta
-                    .delete(&mut txn.txn, key)
-                    .map_err(|error| store.inner.txn_error(error))?;
-            }
-        }
-    }
-    work.checkpoint()?;
-    match host.attachment {
-        AttachmentChange::Keep => {}
-        AttachmentChange::Put(bytes) => {
-            let existing = store
-                .inner
-                .meta
-                .get(&txn.txn, K_ATTACHMENT)
-                .map_err(StoreError::from_heed)?;
-            if !same_value(existing, bytes, work)? {
-                put_chunked(store, txn, K_ATTACHMENT, bytes, work)?;
-                mutated = true;
-            }
-        }
-        AttachmentChange::Clear => {
-            mutated |= store
-                .inner
-                .meta
-                .delete(&mut txn.txn, K_ATTACHMENT)
-                .map_err(|error| store.inner.txn_error(error))?;
-        }
-    }
-    work.checkpoint()?;
-    Ok(mutated)
 }

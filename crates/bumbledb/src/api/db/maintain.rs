@@ -1,30 +1,31 @@
-//! Maintenance surface: compaction, size and generation reads.
+//! Maintenance: compaction, file size, generation and close.
 
 use std::path::Path;
 
 use super::Db;
 use crate::error::{Error, Result};
 use crate::storage::GenerationId;
-use crate::storage::store::{CloseReport, Store};
+use crate::storage::store::CloseReport;
+use crate::storage::store::store_env::DATA_FILE;
 use crate::work::WorkContext;
 
 impl<S> Db<S> {
-    /// Compact into a fresh store at `dest` (which must not exist) under an
-    /// cooperative cancellation: one coherent source snapshot supplies
-    /// rows, indexes, host records, attachment and generation together. The
-    /// destination packs the existing physical entries in key order, without
-    /// decoding rows or rebuilding indexes, in one durable
-    /// transaction — a crash leaves `dest` absent, empty-staged, or complete.
+    /// Write a compacted image of the committed state into `dest`, a new
+    /// directory: `dest/data.mdb` is the image, and `dest` opens as a
+    /// database with the same identity, head and host records.
     /// # Errors
-    /// `DestinationExists`, storage failure, or stopped work.
+    /// `DestinationExists`, storage failure, or cancellation.
     pub fn compact(&self, dest: &Path, work: WorkContext) -> Result<()> {
-        let snapshot = self.store.snapshot(&work).map_err(Error::from_store)?;
-        let (target, fresh) = Store::create(dest, self.schema.as_ref(), self.store.ceiling())
+        if dest.exists() {
+            return Err(Error::DestinationExists {
+                path: dest.to_path_buf(),
+            });
+        }
+        std::fs::create_dir_all(dest)?;
+        self.store
+            .write_image(&dest.join(DATA_FILE), &work)
             .map_err(Error::from_store)?;
-        target
-            .compact_snapshot(&snapshot, fresh, &work)
-            .map_err(Error::from_store)?;
-        drop(target);
+        std::fs::File::open(dest)?.sync_all()?;
         Ok(())
     }
 
@@ -38,7 +39,7 @@ impl<S> Db<S> {
 
     /// The committed generation.
     /// # Errors
-    /// Storage failure or stopped work.
+    /// Storage failure or cancellation.
     pub fn generation(&self, work: WorkContext) -> Result<GenerationId> {
         self.store
             .committed_generation(&work)
@@ -46,7 +47,7 @@ impl<S> Db<S> {
     }
 
     /// Bounded close: stop admitting transactions and report.
-    /// `Incomplete` keeps Closing state — live snapshots stay valid.
+    /// `Incomplete` keeps the store closing; live snapshots stay valid.
     #[must_use = "an incomplete close reports the live readers to release"]
     pub fn close(&self, work: &WorkContext) -> CloseReport {
         self.store.close(work)

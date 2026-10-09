@@ -145,12 +145,9 @@ fn span(off: u32, len: u32) -> std::ops::Range<usize> {
     off as usize..off as usize + len as usize
 }
 
-/// The bridge's owned collection parser: feeds cells positionally,
-/// judges each against the sealed roster, and [`CollectionBuilder::seal`]s
-/// into the proof-carrying [`AcceptedCollection`]. Generic value rows and
-/// typed bridge pushes use the same `value_matches` compatibility rules as
-/// direct Rust writes, which encode into owned canonical rows.
-pub struct CollectionBuilder<'s> {
+/// Feeds cells positionally, checks each against the sealed roster, and
+/// seals into the proof-carrying [`AcceptedCollection`].
+pub(crate) struct CollectionBuilder<'s> {
     relation: RelationId,
     fields: &'s [FieldDescriptor],
 
@@ -168,7 +165,7 @@ impl<'s> CollectionBuilder<'s> {
     /// # Panics
     /// A sealed schema bounds field counts at `u16::MAX`.
     #[must_use]
-    pub fn new(relation: RelationId, fields: &'s [FieldDescriptor]) -> Self {
+    pub(crate) fn new(relation: RelationId, fields: &'s [FieldDescriptor]) -> Self {
         Self {
             relation,
             fields,
@@ -205,7 +202,7 @@ impl<'s> CollectionBuilder<'s> {
 
     /// # Errors
     /// Arity/type refusals.
-    pub fn push_value_row(&mut self, row: &[Value]) -> Result<()> {
+    pub(crate) fn push_value_row(&mut self, row: &[Value]) -> Result<()> {
         if row.len() != self.fields.len() {
             return Err(FactShapeError::ArityMismatch {
                 relation: self.relation,
@@ -236,7 +233,7 @@ impl<'s> CollectionBuilder<'s> {
 
     /// # Errors
     /// Arity/type refusals.
-    pub fn push_value(&mut self, value: &Value) -> Result<()> {
+    fn push_value(&mut self, value: &Value) -> Result<()> {
         let (field, expected) = self.expected()?;
         if let Err(mismatch) = value_matches(value, expected) {
             return Err(shape_mismatch(self.relation, field, mismatch).into());
@@ -253,90 +250,6 @@ impl<'s> CollectionBuilder<'s> {
             Value::IntervalI64(interval) => Cell::IntervalI64(*interval),
             Value::IntervalF64(interval) => Cell::IntervalF64(*interval),
         };
-        self.cells.push(cell);
-        self.advance();
-        Ok(())
-    }
-
-    /// # Errors
-    /// Arity/type refusals.
-    pub fn push_bool(&mut self, value: bool) -> Result<()> {
-        self.push_scalar(&Value::Bool(value), Cell::Bool(value))
-    }
-
-    /// # Errors
-    /// Arity/type refusals.
-    pub fn push_u64(&mut self, value: u64) -> Result<()> {
-        self.push_scalar(&Value::U64(value), Cell::U64(value))
-    }
-
-    /// # Errors
-    /// Arity/type refusals.
-    pub fn push_i64(&mut self, value: i64) -> Result<()> {
-        self.push_scalar(&Value::I64(value), Cell::I64(value))
-    }
-
-    /// # Errors
-    /// Arity/type refusals.
-    pub fn push_f64(&mut self, value: F64) -> Result<()> {
-        self.push_scalar(&Value::F64(value), Cell::F64(value))
-    }
-
-    /// # Errors
-    /// Arity/type refusals.
-    pub fn push_uuid(&mut self, value: Uuid) -> Result<()> {
-        self.push_scalar(&Value::Uuid(value), Cell::Uuid(value))
-    }
-
-    /// # Errors
-    /// Arity/type refusals.
-    pub fn push_interval_u64(&mut self, value: Interval<u64>) -> Result<()> {
-        self.push_scalar(&Value::IntervalU64(value), Cell::IntervalU64(value))
-    }
-
-    /// # Errors
-    /// Arity/type refusals.
-    pub fn push_interval_i64(&mut self, value: Interval<i64>) -> Result<()> {
-        self.push_scalar(&Value::IntervalI64(value), Cell::IntervalI64(value))
-    }
-
-    /// # Errors
-    /// Arity/type refusals.
-    pub fn push_interval_f64(&mut self, value: Interval<F64>) -> Result<()> {
-        self.push_scalar(&Value::IntervalF64(value), Cell::IntervalF64(value))
-    }
-
-    fn push_scalar(&mut self, judge: &Value, cell: Cell) -> Result<()> {
-        let (field, expected) = self.expected()?;
-        if let Err(mismatch) = value_matches(judge, expected) {
-            return Err(shape_mismatch(self.relation, field, mismatch).into());
-        }
-        self.cells.push(cell);
-        self.advance();
-        Ok(())
-    }
-
-    /// # Errors
-    /// Arity/type refusals.
-    pub fn push_str(&mut self, value: &str) -> Result<()> {
-        let (field, expected) = self.expected()?;
-        if !matches!(expected, ValueType::String) {
-            return Err(shape_mismatch(self.relation, field, ValueMismatch::Type).into());
-        }
-        let cell = self.land_str(value)?;
-        self.cells.push(cell);
-        self.advance();
-        Ok(())
-    }
-
-    /// # Errors
-    /// Arity/type refusals.
-    pub fn push_bytes(&mut self, value: &[u8]) -> Result<()> {
-        let (field, expected) = self.expected()?;
-        if !matches!(expected, ValueType::FixedBytes { len } if value.len() == usize::from(*len)) {
-            return Err(shape_mismatch(self.relation, field, ValueMismatch::Type).into());
-        }
-        let cell = self.land_bytes(value)?;
         self.cells.push(cell);
         self.advance();
         Ok(())
@@ -369,7 +282,7 @@ impl<'s> CollectionBuilder<'s> {
     /// # Errors
     /// A nonempty roster refuses this seal: on a fieldless roster no push
     /// can have run, so the stated count IS the collection.
-    pub fn seal_nullary(mut self, rows: u64) -> Result<AcceptedCollection> {
+    pub(crate) fn seal_nullary(mut self, rows: u64) -> Result<AcceptedCollection> {
         if !self.fields.is_empty() {
             return Err(FactShapeError::ArityMismatch {
                 relation: self.relation,
@@ -388,7 +301,7 @@ impl<'s> CollectionBuilder<'s> {
 
     /// # Errors
     /// A partially filled final row refuses the seal.
-    pub fn seal(self) -> Result<AcceptedCollection> {
+    pub(crate) fn seal(self) -> Result<AcceptedCollection> {
         if self.fill != 0 {
             return Err(FactShapeError::ArityMismatch {
                 relation: self.relation,

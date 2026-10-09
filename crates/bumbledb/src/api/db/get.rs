@@ -155,7 +155,7 @@ pub(super) fn find_snapshot_row_scan<'s>(
 }
 
 fn store_work(error: crate::work::WorkError) -> crate::error::Error {
-    crate::error::Error::from_store(crate::storage::store::StoreError::Work(error))
+    crate::error::Error::from(error)
 }
 
 /// Find the closed-relation row matching the key projection.

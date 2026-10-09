@@ -119,9 +119,7 @@ impl<S> OwnedInstance<S> {
             }),
             work,
         )
-        .map_err(|error| {
-            crate::Error::from_store(crate::storage::store::StoreError::Changes(error))
-        })
+        .map_err(crate::Error::from)
     }
 
     /// # Errors

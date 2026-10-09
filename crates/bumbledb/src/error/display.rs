@@ -1,9 +1,7 @@
-//! `Display` rendering for every error type — formatting runs lazily, only
-//! when the host actually prints.
-//! Statements are anonymous, so
-//! the plain `Display` impls cite them by id; the [`Error::display_with`]
-//! and [`SchemaError::display_with`] adapters pair the error with the
-//! schema it speaks about and render the statement back in the `schema!`
+//! `Display` for every error type. Statements are anonymous, so plain
+//! `Display` cites them by id; [`Violations::display_with`] and
+//! [`SchemaError::display_with`] render them back as declared.
+
 use std::fmt;
 
 use crate::schema::{Schema, render};
@@ -221,26 +219,10 @@ impl fmt::Display for CorruptionError {
                 f,
                 "fixed-width interval start {bytes:02x?}: start + w at or past the domain ceiling"
             ),
-            Self::MetaMissing => write!(f, "the _meta database or a required key is absent"),
-            Self::DanglingInternId(id) => {
-                write!(
-                    f,
-                    "text token {} was never minted by the query image's interner",
-                    id.raw()
-                )
-            }
-            Self::MissingFact { relation, row_id } => {
-                write!(f, "relation {}: row {row_id} has no fact", relation.0)
-            }
-            Self::MembershipDesync { relation, row_id } => write!(
+            Self::DanglingInternId(id) => write!(
                 f,
-                "relation {}: membership entry for row {row_id} desynced from its F/U entries",
-                relation.0
-            ),
-            Self::DispositionDesync { relation } => write!(
-                f,
-                "relation {}: base state disagrees with a net disposition the delta proved",
-                relation.0
+                "text token {} was never minted by the query image's interner",
+                id.raw()
             ),
             Self::WrongFactWidth {
                 relation,
@@ -248,114 +230,24 @@ impl fmt::Display for CorruptionError {
                 mismatch,
             } => write!(
                 f,
-                "relation {}: row {row_id} is {} bytes, schema says {}",
+                "relation {}: row {row_id} is {} bytes, the schema says {}",
                 relation.0, mismatch.witnessed, mismatch.required
             ),
             Self::RowCountMismatch { relation, stored } => write!(
                 f,
-                "relation {}: stored row count {stored} desynced from the facts",
+                "relation {}: stored row count {stored} disagrees with the rows",
                 relation.0
-            ),
-            Self::CounterDesync { relation, exceeded } => write!(
-                f,
-                "relation {}: stored row count {} exceeds the store's {}-entry witness",
-                relation.0, exceeded.observed, exceeded.ceiling
             ),
             Self::MalformedValue(kind) => write!(f, "malformed stored value: {kind}"),
-            Self::NonzeroFixedBytesPad(tail) => write!(
-                f,
-                "bytes<N> trailing word {tail:02x?}: nonzero pad byte — the pad is encoding, not data"
-            ),
-            Self::FactWithoutMembership {
-                relation, row_id, ..
-            } => write!(
-                f,
-                "relation {}: row {row_id} has no membership entry",
-                relation.0
-            ),
-            Self::MembershipWithoutFact {
-                relation, row_id, ..
-            } => write!(
-                f,
-                "relation {}: membership row {row_id} has no fact",
-                relation.0
-            ),
-            Self::FactWithoutDeterminant {
-                relation,
-                statement,
-                row_id,
-                ..
-            } => write!(
-                f,
-                "relation {}: row {row_id} has no determinant for statement {}",
-                relation.0, statement.0
-            ),
-            Self::DeterminantWithoutFact {
-                relation,
-                statement,
-                ..
-            } => write!(
-                f,
-                "relation {}: determinant of statement {} has no fact",
-                relation.0, statement.0
-            ),
-            Self::PointwiseOverlap {
-                relation,
-                statement,
-                ..
-            } => write!(
-                f,
-                "relation {}: pointwise overlap under statement {}",
-                relation.0, statement.0
-            ),
-            Self::FactWithoutReverseEdge {
-                statement,
-                relation,
-                row_id,
-                ..
-            } => write!(
-                f,
-                "relation {}: row {row_id} has no reverse edge for statement {}",
-                relation.0, statement.0
-            ),
-            Self::ReverseEdgeWithoutFact { statement, .. } => {
+            Self::NonzeroFixedBytesPad(tail) => {
                 write!(
                     f,
-                    "statement {}: reverse edge has no source fact",
-                    statement.0
+                    "bytes<N> trailing word {tail:02x?} has a nonzero pad byte"
                 )
             }
-            Self::ReverseEdgeWeightDesync { statement, .. } => write!(
-                f,
-                "statement {}: reverse-edge weight slot disagrees with the live fact",
-                statement.0
-            ),
-            Self::RowCountDesync {
-                relation,
-                stored,
-                counted,
-            } => write!(
-                f,
-                "relation {}: stored row count {stored} desynced from counted {counted}",
-                relation.0
-            ),
-            Self::RowIdHighWaterLow {
-                relation,
-                stored,
-                max_row_id,
-            } => write!(
-                f,
-                "relation {}: stored high-water {stored} does not exceed row {max_row_id}",
-                relation.0
-            ),
-            Self::ClosedRelationEntry { relation, .. } => {
-                write!(
-                    f,
-                    "relation {}: stored entry names a closed relation",
-                    relation.0
-                )
-            }
-            Self::Malformed { what, .. } => write!(f, "malformed stored entry: {what}"),
+            Self::MetaMissing(what) => write!(f, "meta entry `{what}` is absent or malformed"),
+            Self::MalformedKey(what) => write!(f, "malformed physical key: {what}"),
+            Self::DanglingIndexEntry => f.write_str("an index entry names no row"),
         }
     }
 }
@@ -682,98 +574,94 @@ impl fmt::Display for super::Capacity {
     }
 }
 
+impl fmt::Display for super::HostKeyFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLong { actual } => write!(
+                f,
+                "host key has {actual} bytes; the limit is {}",
+                crate::storage::store::keys::HOST_KEY_MAX
+            ),
+            Self::NotStrictlyOrdered => f.write_str("host keys must be strictly increasing"),
+        }
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::FormatMismatch { mismatch } => {
+            Self::NotABumbleDb { path } => {
                 write!(
                     f,
-                    "storage format version {}, this build expects {}; \
-                     no migration read arm exists — ETL through the SDK is the story",
-                    mismatch.witnessed, mismatch.required
+                    "{} is not a bumbledb store of this format",
+                    path.display()
                 )
             }
-            Self::SchemaMismatch { mismatch } => {
-                write!(
-                    f,
-                    "stored schema fingerprint {}, this build's schema is {}",
-                    mismatch.witnessed, mismatch.required
-                )
-            }
-            Self::AlreadyInitialized => {
-                write!(
-                    f,
-                    "the directory already holds an LMDB environment; open it instead"
-                )
+            Self::SchemaMismatch => f.write_str("the store was created with another schema"),
+            Self::Locked { path } => {
+                write!(f, "another live owner holds the lock on {}", path.display())
             }
             Self::DestinationExists { path } => {
-                write!(
-                    f,
-                    "destination {} already exists — including as an empty directory",
-                    path.display()
-                )
+                write!(f, "destination {} already exists", path.display())
             }
-            Self::PublishedButUnsynced { path, source } => {
-                write!(
-                    f,
-                    "published {} but the directory entry is unsynced: {source}",
-                    path.display()
-                )
-            }
-            Self::EnvironmentLocked => {
-                write!(f, "another live handle holds this environment's lock")
+            Self::Closed => f.write_str("the database is closing or closed"),
+            Self::ReentrantWriter => f.write_str("this thread already holds the writer"),
+            Self::ReadersFull => f.write_str("every reader slot holds an open snapshot"),
+            Self::Full { ceiling } => {
+                write!(f, "the store is full at its {ceiling}-byte map ceiling")
             }
             Self::Io(err) => write!(f, "io: {err}"),
-            Self::Hatch(_) => write!(f, "io: bridge decline"),
             Self::Lmdb(err) => write!(f, "lmdb: {err}"),
-            Self::ReadersFull { max_readers } => {
-                write!(f, "all {max_readers} reader slots hold open snapshots")
+            Self::Corruption(err) => write!(f, "corruption: {err}"),
+            Self::ForeignSchema => f.write_str("the change set was sealed for another schema"),
+            Self::ForeignWitness => {
+                f.write_str("the witness belongs to another database environment")
             }
-            Self::Schema(err) => write!(f, "schema declaration: {err}"),
-            Self::Validation(err) => write!(f, "query validation: {err}"),
-            Self::FactShape(err) => write!(f, "dynamic fact: {err}"),
+            Self::ForeignPreparedQuery => {
+                f.write_str("the prepared query belongs to another database")
+            }
             Self::ClosedRelationWrite { relation } => write!(
                 f,
-                "relation {}: closed — its rows are ground axioms; changing them is a new theory",
+                "relation {} is closed: its rows are ground axioms of the schema",
                 relation.0
             ),
-            Self::CommitSync { retries, error } => write!(
+            Self::TransactionPoisoned { source } => {
+                write!(f, "write transaction poisoned: {source}")
+            }
+            Self::Changes(err) => write!(f, "change set: {err}"),
+            Self::HostKey(fault) => write!(f, "host record: {fault}"),
+            Self::Exhausted(super::Counter::RowIds) => f.write_str("row ordinals exhausted"),
+            Self::Exhausted(super::Counter::Generations) => {
+                f.write_str("generation counter exhausted")
+            }
+            Self::CapacityRayMeasure { statement } => write!(
                 f,
-                "commit durability boundary (page pwrite / F_FULLFSYNC) failed after {retries} retries: {error}"
+                "statement {}: a capacity weight or bound is a ray, which has no finite measure",
+                statement.0
             ),
-            Self::ForeignPreparedQuery => {
-                write!(
-                    f,
-                    "a prepared query executes only against snapshots of the database that prepared it"
-                )
-            }
-            Self::ForeignWitness => {
-                write!(
-                    f,
-                    "a witness proves nothing about another database — \
-                     write_from takes witnesses of the database being written"
-                )
-            }
-            Self::ParamCountMismatch { mismatch } => {
-                write!(
-                    f,
-                    "{} parameters supplied, the query takes {}",
-                    mismatch.witnessed, mismatch.required
-                )
-            }
+            Self::MeasureOverflow { statement } => write!(
+                f,
+                "statement {}: a capacity group's measure overflows",
+                statement.0
+            ),
+            Self::Schema(err) => write!(f, "schema declaration: {err}"),
+            Self::Compile(err) => write!(f, "schema compile: {err}"),
+            Self::Validation(err) => write!(f, "query validation: {err}"),
+            Self::FactShape(err) => write!(f, "dynamic fact: {err}"),
+            Self::ParamCountMismatch { mismatch } => write!(
+                f,
+                "{} parameters supplied, the query takes {}",
+                mismatch.witnessed, mismatch.required
+            ),
             Self::ParamTypeMismatch { param, expected } => {
                 write!(f, "parameter {}: expected {expected:?}", param.0)
             }
-            Self::ParamSetExpected { param } => write!(
-                f,
-                "parameter {}: the query binds a set — supply a slice",
-                param.0
-            ),
-            Self::ParamScalarExpected { param } => write!(
-                f,
-                "parameter {}: the query binds a scalar — a set was supplied",
-                param.0
-            ),
+            Self::ParamSetExpected { param } => {
+                write!(f, "parameter {}: the query binds a set", param.0)
+            }
+            Self::ParamScalarExpected { param } => {
+                write!(f, "parameter {}: the query binds a scalar", param.0)
+            }
             Self::ParamElementTypeMismatch {
                 param,
                 element,
@@ -785,41 +673,21 @@ impl fmt::Display for Error {
             ),
             Self::PointParamAtCeiling { param } => write!(
                 f,
-                "parameter {}: point value at the domain ceiling — \
-                 points are MIN..=MAX-1; MAX is the ray's \u{221e}",
+                "parameter {}: a point is MIN..=MAX-1; MAX is a ray's open end",
                 param.0
-            ),
-            Self::CapacityRayMeasure { statement } => write!(
-                f,
-                "statement {}: capacity measure of a ray — a row's Duration weight or \
-                 bound is [s, ∞), which has no finite measure; the commit refuses whole",
-                statement.0
             ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")
             }
             Self::Overflow(super::OverflowKind::OriginCapacity) => {
-                write!(f, "origin capacity exceeded")
+                f.write_str("origin capacity exceeded")
             }
             Self::Overflow(super::OverflowKind::Cardinality) => {
-                write!(f, "aggregate binding cardinality exceeds u64::MAX")
+                f.write_str("aggregate binding cardinality exceeds u64::MAX")
             }
             Self::Scalar { find, source } => write!(f, "find {find}: {source}"),
-            Self::TransactionPoisoned { source } => {
-                write!(f, "write transaction poisoned: {source}")
-            }
-            Self::ResultBytesOverflow => {
-                write!(
-                    f,
-                    "the result buffer's byte heap exceeds u32 offsets (4 GiB)"
-                )
-            }
             Self::Capacity(capacity) => write!(f, "capacity reached: {capacity}"),
-            Self::Full { ceiling } => write!(
-                f,
-                "the store is full at its {ceiling}-byte map ceiling; reopen with a larger ceiling"
-            ),
-            Self::Corruption(err) => write!(f, "corruption: {err}"),
+            Self::ResultBytesOverflow => f.write_str("the result byte heap exceeds u32 offsets"),
             Self::Store(err) => err.fmt(f),
         }
     }
@@ -857,24 +725,6 @@ impl fmt::Display for ViolationsDisplayWith<'_> {
             violation.tail(f)?;
         }
         Ok(())
-    }
-}
-
-impl Error {
-    #[must_use]
-    pub fn display_with<'a>(&'a self, schema: &'a Schema) -> impl fmt::Display + 'a {
-        let _ = schema;
-        DisplayWith { error: self }
-    }
-}
-
-struct DisplayWith<'a> {
-    error: &'a Error,
-}
-
-impl fmt::Display for DisplayWith<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.error)
     }
 }
 

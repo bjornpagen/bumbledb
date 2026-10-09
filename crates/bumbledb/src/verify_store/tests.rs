@@ -1,24 +1,17 @@
-//! Authored sweeper tests over the successor store (F1: written, executed
-//! only in F3). Gate mapping: ENG-003/ENG-006 closure evidence (the sweep
-//! itself reads one coherent snapshot and knows no dictionary), G06
-//! verify-family children, E-ADMIT's offline re-judgment half (a store
-//! holding an unlawful state is convicted by the same production judge).
-//!
-//! Corruption fixtures write impossible bytes through the store's own
-//! crate-private handles — the exact desync each finding names, never a
-//! second key-derivation implementation.
+//! The sweeper over the real store: a lawful store is coherent, every forged
+//! physical desync is its own typed finding, and a state no writer judged is
+//! convicted by the complete judgment.
 
 use bumbledb_theory::schema::{
     FieldDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, ValueType,
 };
 
-use crate::storage::store::verify::{VerifyCorruption, VerifyFinding};
-use crate::storage::store::{
-    CandidateJudge, CandidateState, Judgment as StoreJudgment, StoreResult, UnindexedRows,
-};
+use crate::storage::store::VerifyCorruption;
+use crate::storage::store::format::{K_NEXT_ROW_ID, RowId, relation_key};
+use crate::storage::store::keys;
 use crate::testutil::TempDir;
 use crate::work::WorkContext;
-use crate::{Db, StoreVerdict, Theory, Value};
+use crate::{Db, Theory, Value};
 
 const ENTRY: RelationId = RelationId(0);
 
@@ -54,263 +47,154 @@ fn row(name: &str, amount: i64) -> Vec<Value> {
     vec![Value::String(name.into()), Value::I64(amount)]
 }
 
+fn work() -> WorkContext {
+    WorkContext::new()
+}
+
 fn create(dir: &TempDir) -> Db<Ledger> {
-    let work = WorkContext::new();
-    Db::create(dir.path(), Ledger, work)
+    Db::create(dir.path(), Ledger, work())
         .expect("create")
         .expect("empty theory admits")
+}
+
+fn insert(db: &Db<Ledger>, rows: impl IntoIterator<Item = Vec<Value>>) {
+    db.write(work(), |tx| tx.insert_dyn(ENTRY, rows).map(|_| ()))
+        .expect("write")
+        .unwrap();
+}
+
+/// Forge raw bytes through the store's own handles.
+fn forge(
+    db: &Db<Ledger>,
+    f: impl FnOnce(&crate::storage::store::store_env::StoreInner, &mut heed::RwTxn<'_>),
+) {
+    let store = &db.store;
+    let mut wtxn = store.gated_write_txn(&work()).expect("fixture txn");
+    f(&store.inner, &mut wtxn.txn);
+    wtxn.commit().expect("fixture commit");
 }
 
 #[test]
 fn a_lawful_store_sweeps_coherent_after_mixed_commits() {
     let dir = TempDir::new("verify-coherent");
     let db = create(&dir);
-    db.write(crate::api::db::test_operation(), |tx| {
-        tx.insert_dyn(ENTRY, [row("a", 1), row("b", 2)])?;
-        Ok(())
-    })
-    .expect("write")
-    .unwrap();
-    db.write(crate::api::db::test_operation(), |tx| {
+    insert(&db, [row("a", 1), row("b", 2)]);
+    db.write(work(), |tx| {
         tx.delete_dyn(ENTRY, [row("a", 1)])?;
         tx.insert_dyn(ENTRY, [row("c", 3)])?;
         Ok(())
     })
     .expect("write")
     .unwrap();
-    let report = db.verify_store().expect("sweep");
-    assert_eq!(report.verdict, StoreVerdict::Coherent, "{report:?}");
-    assert!(report.findings().is_empty());
+    let report = db.verify_store(&work()).expect("sweep");
+    assert!(report.is_coherent(), "{report:?}");
 }
 
 #[test]
-fn a_dangling_membership_entry_is_a_typed_finding() {
-    let dir = TempDir::new("verify-dangling-membership");
+fn a_moved_row_is_a_foreign_home() {
+    let dir = TempDir::new("verify-foreign-home");
     let db = create(&dir);
-    db.write(crate::api::db::test_operation(), |tx| {
-        tx.insert_dyn(ENTRY, [row("a", 1)]).map(|_| ())
-    })
-    .expect("write")
-    .unwrap();
-    // Forge a membership entry pointing at a row id that does not exist.
-    let store = db.integration_store();
-    {
-        let inner = &store.inner;
-        let mut wtxn = store
-            .gated_write_txn(&crate::api::db::test_operation())
-            .expect("fixture txn");
-        let fake = inner
-            .keys
-            .membership_key(
-                ENTRY,
-                &[0xAB; crate::storage::store::FP_LEN],
-                crate::storage::store::RowId(9_999),
-            )
-            .expect("key");
-        inner
-            .data
-            .put(&mut wtxn.txn, fake.as_slice(), &[])
-            .expect("fixture put");
-        wtxn.commit().expect("fixture commit");
-    }
-    let report = db.verify_store().expect("sweep");
-    assert!(
-        report.findings().iter().any(|finding| matches!(
-            finding,
-            VerifyFinding::Corruption(VerifyCorruption::DanglingMembership { relation, row })
-                if *relation == ENTRY && row.0 == 9_999
-        )),
-        "{report:?}"
-    );
-}
-
-#[test]
-fn a_row_without_membership_and_a_wrong_bucket_are_distinct_findings() {
-    let dir = TempDir::new("verify-membership-shape");
-    let db = create(&dir);
-    db.write(crate::api::db::test_operation(), |tx| {
-        tx.insert_dyn(ENTRY, [row("a", 1)]).map(|_| ())
-    })
-    .expect("write")
-    .unwrap();
-    let store = db.integration_store();
-    // Move the real membership entry into a foreign bucket: the row loses
-    // its exact-fingerprint backing (MissingMembership) and the moved entry
-    // convicts separately (ForeignMembership).
-    {
-        let inner = &store.inner;
-        let (row_id, fp) = {
-            let rtxn = inner.env.read_txn().expect("fixture read");
-            let mut iter = inner
-                .data
-                .prefix_iter(
-                    &rtxn,
-                    [crate::storage::store::keys::TAG_MEMBERSHIP].as_slice(),
-                )
-                .expect("fixture iter");
-            let (key, _) = iter.next().expect("one membership entry").expect("entry");
-            let (_, fp, row_id) = inner.keys.decode_membership(key).expect("membership");
-            (row_id, fp)
+    insert(&db, [row("a", 1)]);
+    forge(&db, |inner, txn| {
+        let (key, value) = {
+            let mut iter = inner.rows.iter(txn).expect("iter");
+            let (key, value) = iter.next().expect("one row").expect("entry");
+            (key.to_vec(), value.to_vec())
         };
-        let mut wtxn = store
-            .gated_write_txn(&crate::api::db::test_operation())
-            .expect("fixture txn");
-        let real = inner.keys.membership_key(ENTRY, &fp, row_id).expect("key");
+        let parsed = keys::parse(&key).expect("key");
+        let mut moved = parsed.route;
+        moved[0] ^= 0xFF;
+        inner.rows.delete(txn, &key).expect("delete");
         inner
-            .data
-            .delete(&mut wtxn.txn, real.as_slice())
-            .expect("fixture delete");
-        let mut wrong = fp;
-        wrong[0] ^= 0xFF;
-        let forged = inner
-            .keys
-            .membership_key(ENTRY, &wrong, row_id)
-            .expect("key");
-        inner
-            .data
-            .put(&mut wtxn.txn, forged.as_slice(), &[])
-            .expect("fixture put");
-        wtxn.commit().expect("fixture commit");
-    }
-    let report = db.verify_store().expect("sweep");
-    let findings = report.findings();
+            .rows
+            .put(txn, &keys::entry(parsed.prefix, &moved, parsed.row), &value)
+            .expect("put");
+    });
+    let report = db.verify_store(&work()).expect("sweep");
     assert!(
-        findings.iter().any(|finding| matches!(
-            finding,
-            VerifyFinding::Corruption(VerifyCorruption::MissingMembership { relation, .. })
-                if *relation == ENTRY
-        )),
-        "{report:?}"
-    );
-    assert!(
-        findings.iter().any(|finding| matches!(
-            finding,
-            VerifyFinding::Corruption(VerifyCorruption::ForeignMembership { relation, .. })
-                if *relation == ENTRY
-        )),
+        report
+            .corruption
+            .iter()
+            .any(|found| matches!(found, VerifyCorruption::ForeignRowHome { relation, .. } if *relation == ENTRY)),
         "{report:?}"
     );
 }
 
 #[test]
-fn a_stale_row_count_and_a_behind_ratchet_are_convicted() {
+fn stale_counts_a_behind_ratchet_and_a_dangling_entry_are_distinct_findings() {
     let dir = TempDir::new("verify-counters");
     let db = create(&dir);
-    db.write(crate::api::db::test_operation(), |tx| {
-        tx.insert_dyn(ENTRY, [row("a", 1), row("b", 2)]).map(|_| ())
-    })
-    .expect("write")
-    .unwrap();
-    let store = db.integration_store();
-    {
-        let inner = &store.inner;
-        let mut wtxn = store
-            .gated_write_txn(&crate::api::db::test_operation())
-            .expect("fixture txn");
-        // Stored count lies.
+    insert(&db, [row("a", 1), row("b", 2)]);
+    forge(&db, |inner, txn| {
+        let mut meta = [0u8; 16];
+        meta[..8].copy_from_slice(&7u64.to_be_bytes());
         inner
             .meta
-            .put(
-                &mut wtxn.txn,
-                crate::storage::store::format::row_count_key(ENTRY).as_slice(),
-                &7u64.to_be_bytes(),
-            )
-            .expect("fixture count");
-        // Ratchet behind the allocated ids.
+            .put(txn, &relation_key(ENTRY).expect("key"), &meta)
+            .expect("count");
         inner
             .meta
+            .put(txn, K_NEXT_ROW_ID, &1u64.to_be_bytes())
+            .expect("ratchet");
+        inner
+            .rows
             .put(
-                &mut wtxn.txn,
-                crate::storage::store::format::K_NEXT_ROW_ID,
-                &1u64.to_be_bytes(),
+                txn,
+                &keys::entry([0, 0], &[0xAB; keys::HOME_LEN], RowId(9_999)),
+                b"not a canonical row",
             )
-            .expect("fixture ratchet");
-        wtxn.commit().expect("fixture commit");
-    }
-    let report = db.verify_store().expect("sweep");
-    let findings = report.findings();
+            .expect("garbage row");
+    });
+    let report = db.verify_store(&work()).expect("sweep");
     assert!(
-        findings.iter().any(|finding| matches!(
-            finding,
-            VerifyFinding::Corruption(VerifyCorruption::RowCountMismatch {
-                relation,
-                stored: 7,
-                counted: 2,
-            }) if *relation == ENTRY
+        report.corruption.iter().any(|found| matches!(
+            found,
+            VerifyCorruption::RowCountMismatch { relation, stored: 7, counted: 3 } if *relation == ENTRY
         )),
         "{report:?}"
     );
     assert!(
-        findings.iter().any(|finding| matches!(
-            finding,
-            VerifyFinding::Corruption(VerifyCorruption::RowIdRatchetBehind { next: 1, .. })
-        )),
+        report
+            .corruption
+            .iter()
+            .any(|found| matches!(found, VerifyCorruption::RowIdRatchetBehind { next: 1, .. })),
         "{report:?}"
     );
-}
-
-/// Admits everything: builds the unlawful fixture the global re-judgment
-/// must convict (the sweeper never trusts commit-time judgment).
-struct AdmitAll;
-
-impl CandidateJudge for AdmitAll {
-    type Rejection = std::convert::Infallible;
-
-    fn judge(
-        &self,
-        _candidate: &CandidateState<'_, '_>,
-        _work: &WorkContext,
-    ) -> StoreResult<StoreJudgment<Self::Rejection>> {
-        Ok(StoreJudgment::Admitted)
-    }
-}
-
-fn lawful_work() -> WorkContext {
-    crate::work::WorkContext::new()
+    assert!(
+        report
+            .corruption
+            .iter()
+            .any(|found| matches!(found, VerifyCorruption::MalformedRow { row: 9_999, .. })),
+        "{report:?}"
+    );
+    assert!(
+        report.violations.is_none(),
+        "structural faults skip judgment"
+    );
 }
 
 #[test]
-fn the_global_re_judgment_convicts_a_state_the_writer_never_judged() {
+fn the_complete_judgment_convicts_a_state_no_writer_judged() {
     let dir = TempDir::new("verify-judgment");
     let db = create(&dir);
-    // Commit two rows sharing one key THROUGH the store with a bypassing
-    // judge — exactly the corruption class an incremental verifier once
-    // preserved forever; the sweeper re-judges globally.
-    let work = lawful_work();
     let changes = {
-        let mut builder = crate::ChangeSet::builder(db.schema(), work.clone());
+        let mut builder = crate::ChangeSet::builder(db.schema(), work());
         builder.insert(ENTRY, &row("dup", 1)).expect("draft");
         builder.insert(ENTRY, &row("dup", 2)).expect("draft");
         builder.finish().expect("sealed")
     };
-    {
-        let store = db.integration_store();
-        let mut owner = store.writer(&work).expect("writer");
-        let prepared = match owner
-            .prepare(&changes, &UnindexedRows, &AdmitAll)
-            .expect("prepare")
-        {
-            crate::storage::store::Prepared::Admitted(prepared) => prepared,
-            crate::storage::store::Prepared::Rejected {
-                rejection: impossible,
-                ..
-            } => match impossible {},
-        };
-        let sealed = prepared
-            .seal(crate::storage::store::HostChanges {
-                records: &[],
-                attachment: crate::storage::store::AttachmentChange::Keep,
-            })
-            .expect("seal");
-        sealed.commit().expect("commit");
-    }
-    let report = db.verify_store().expect("sweep");
-    assert!(
-        report.findings().iter().any(|finding| matches!(
-            finding,
-            VerifyFinding::Judgment(violation)
-                if violation.kind == bumbledb_theory::schema::StatementKind::Functionality
-        )),
-        "{report:?}"
-    );
+    let context = work();
+    let mut session = db.host_writer(&context).expect("writer");
+    session
+        .apply_decided(std::slice::from_ref(&changes))
+        .expect("apply")
+        .seal(crate::host::HostChanges::NONE)
+        .expect("seal")
+        .commit()
+        .expect("commit");
+    drop(session);
+    let report = db.verify_store(&work()).expect("sweep");
+    assert!(report.corruption.is_empty(), "{report:?}");
+    let violations = report.violations.expect("the duplicate key is convicted");
+    assert_eq!(violations.len(), 1);
 }

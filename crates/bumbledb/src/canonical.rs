@@ -408,10 +408,6 @@ impl<'work> DecodeScratch<'work> {
         }
     }
 
-    pub(crate) const fn work(&self) -> &'work WorkContext {
-        self.work
-    }
-
     /// The visitor borrows one decoded row. Normal errors clear payloads;
     /// a panic retains them until this workspace is dropped or reused.
     pub(crate) fn with_decoded<T, E: From<RowError>>(

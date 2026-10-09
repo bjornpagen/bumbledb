@@ -1,9 +1,6 @@
-//! The theory's manifest: name → id, as plain data
-//! . The macro's id
-//! (`Calendar::BUSY`, `Calendar::BUSY_PERSON`); the manifest gives a
-//! struct straight off the descriptor, no serde, no derive machinery
-//! (the dependency law: a downstream binding serializes it however it
-//! likes; the engine never learns the wire format).
+//! The theory's manifest: every name to id pairing as plain data, the
+//! runtime twin of the macro's `Calendar::Busy.relation()` and
+//! `Calendar::Busy.person`. Bindings serialize it however they like.
 use super::{FieldId, RelationId, SchemaDescriptor, StatementId, StatementKind, ValueType};
 use bumbledb_theory::Value;
 

@@ -21,7 +21,7 @@ use crate::changes::ChangeKind;
 use crate::error::{DynIdError, Error, FactShapeError, Mismatch, Result};
 use crate::ir::Value;
 use crate::schema::Schema;
-use crate::storage::store::{OwnedSnapshot, StoreError};
+use crate::storage::store::OwnedSnapshot;
 use crate::work::WorkContext;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
@@ -91,7 +91,7 @@ impl PendingDelta {
             }),
             work,
         )
-        .map_err(|error| Error::from_store(StoreError::Changes(error)))
+        .map_err(Error::from)
     }
 }
 
@@ -126,7 +126,7 @@ pub struct WriteTx<'a, S> {
 }
 
 pub(super) fn row_error(error: crate::canonical::RowError) -> Error {
-    Error::from_store(StoreError::Changes(crate::changes::ChangeError::Row(error)))
+    Error::from(error)
 }
 
 /// Encode one dynamic value row to canonical row bytes (shape judged by
@@ -704,7 +704,7 @@ impl<'a, S> WriteTx<'a, S> {
 }
 
 fn store_work(error: crate::work::WorkError) -> Error {
-    Error::from_store(StoreError::Work(error))
+    Error::from(error)
 }
 
 #[cfg(test)]

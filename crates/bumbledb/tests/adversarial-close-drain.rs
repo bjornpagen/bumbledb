@@ -1,18 +1,14 @@
-//! P12 adversarial integration: close/drain under load and retained results
-//! after close, over the landed successor store's public embedding surface
-//! (SDK-002/SDK-005/SDK-007 successor properties at the CORE boundary,
-//! RUN-04/RUN-05 shape, E-SNAPSHOT/E-DURABILITY, G11/G12). The Node-side
-//! twins live in `ts/test/adversarial-boundary.test.ts`; this file proves
-//! the underlying Rust ownership truth those wrappers report.
+//! Close under load: a live lease keeps close incomplete, close then
+//! drains, every later verb refuses typed, owned results outlive the store,
+//! and writers racing close leave a coherent store.
 
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bumbledb::schema::{
     FieldDescriptor, RelationDescriptor, RelationId, SchemaDescriptor, ValueType,
 };
-use bumbledb::store::CloseReport;
-use bumbledb::{Db, Error, Value, WorkContext};
+use bumbledb::{CloseReport, Db, Error, Value, WorkContext};
 
 mod common;
 
@@ -112,7 +108,7 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
         // Ask close to stop waiting while the reader is deliberately held.
         // There is no hidden deadline in an ordinary WorkContext.
         close_work.cancel();
-        match db.integration_store().close(&close_work) {
+        match db.close(&close_work) {
             CloseReport::Incomplete {
                 live_transactions, ..
             } => {
@@ -124,29 +120,20 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
     });
 
     // Drained: the repeated close converges to Closed.
-    let start = Instant::now();
-    loop {
-        match db.integration_store().close(&work()) {
-            CloseReport::Closed => break,
-            CloseReport::Incomplete { .. } => {
-                assert!(start.elapsed() < Duration::from_secs(30), "close drains");
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-    }
+    assert_eq!(db.close(&work()), CloseReport::Closed);
     // Every new verb refuses typed — never a panic, never a silent no-op.
     let read_refused = db.read(common::work(), |_read| Ok(()));
     assert!(
-        matches!(read_refused, Err(Error::Store(_))),
-        "reads after close refuse with the typed store error: {read_refused:?}"
+        matches!(read_refused, Err(Error::Closed)),
+        "reads after close refuse: {read_refused:?}"
     );
     let write_refused = db.write(common::work(), |tx| {
         tx.insert_dyn(RelationId(0), [vec![Value::U64(2)]])?;
         Ok(())
     });
     assert!(
-        matches!(write_refused, Err(Error::Store(_))),
-        "writes after close refuse typed: {write_refused:?}"
+        matches!(write_refused, Err(Error::Closed)),
+        "writes after close refuse: {write_refused:?}"
     );
     // Real reclamation: dropping the closed owner releases the kernel lock
     // and a successor opens the same directory with the durable facts.
@@ -173,16 +160,7 @@ fn retained_owned_results_survive_close_byte_for_byte() {
     let collected = scan_ids(&db);
     assert_eq!(collected, vec![1, 2, 3]);
 
-    let start = Instant::now();
-    loop {
-        match db.integration_store().close(&work()) {
-            CloseReport::Closed => break,
-            CloseReport::Incomplete { .. } => {
-                assert!(start.elapsed() < Duration::from_secs(30));
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-    }
+    assert_eq!(db.close(&work()), CloseReport::Closed);
     drop(db);
     // The owned result is untouched by the native teardown.
     assert_eq!(collected, vec![1, 2, 3], "owned results outlive the store");
@@ -212,36 +190,26 @@ fn writers_racing_close_refuse_typed_and_leave_a_coherent_store() {
                     });
                     match outcome {
                         Ok(_admission) => {}
-                        Err(Error::Store(_)) => break, // close revoked admission, typed
-                        Err(other) => panic!("only the typed store refusal is lawful: {other:?}"),
+                        Err(Error::Closed) => break,
+                        Err(other) => panic!("only the close refusal is lawful: {other:?}"),
                     }
                 }
             });
         }
         // Close mid-flight; writers between prepare and commit are drained
         // or refused, never torn.
-        let _ = db.integration_store().close(&work());
+        let _ = db.close(&work());
     });
 
-    let start = Instant::now();
-    loop {
-        match db.integration_store().close(&work()) {
-            CloseReport::Closed => break,
-            CloseReport::Incomplete { .. } => {
-                assert!(start.elapsed() < Duration::from_secs(30));
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-    }
+    assert_eq!(db.close(&work()), CloseReport::Closed);
     drop(db);
 
     let successor =
         Db::open(dir.path(), theory(), common::work()).expect("reopen after racing close");
-    let report = successor.verify_store().expect("offline sweep runs");
-    assert_eq!(
-        report.verdict,
-        bumbledb::StoreVerdict::Coherent,
-        "no admission raced the teardown into physical or semantic corruption"
+    let report = successor.verify_store(&work()).expect("offline sweep runs");
+    assert!(
+        report.is_coherent(),
+        "no admission raced the teardown into corruption: {report:?}"
     );
     drop(successor);
 }

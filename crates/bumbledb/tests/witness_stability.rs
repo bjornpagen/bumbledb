@@ -80,7 +80,9 @@ fn insert_child(db: &Db<WitnessWorld>, id: u64, parent: u64) {
     .unwrap();
 }
 
-fn rejection<T: std::fmt::Debug>(outcome: bumbledb::Result<bumbledb::Admission<T>>) -> Violations {
+fn rejection<T: std::fmt::Debug>(
+    outcome: bumbledb::Result<bumbledb::WriteOutcome<T>>,
+) -> Violations {
     common::expect_rejected(outcome)
 }
 

@@ -41,12 +41,8 @@ impl ClosedRows {
             let mut rows = Vec::with_capacity(extension.len());
             for sealed in extension {
                 let values = crate::canonical::decode_sealed(relation, &sealed.fact, work)?;
-                let canonical =
-                    CanonicalRow::encode(relation.fields(), &values, work).map_err(|error| {
-                        crate::error::Error::from_store(crate::storage::store::StoreError::Changes(
-                            crate::changes::ChangeError::Row(error),
-                        ))
-                    })?;
+                let canonical = CanonicalRow::encode(relation.fields(), &values, work)
+                    .map_err(crate::Error::from)?;
                 rows.push(ClosedRow { canonical, values });
             }
             relations.insert(id, rows);

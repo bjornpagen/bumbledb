@@ -1,34 +1,19 @@
-//! Typed successor-store failures. Distinct physical conditions stay
-//! distinct: map exhaustion, growth refusal, blocked resize, reader-slot
-//! exhaustion, disk failure and corruption are different diagnostics, never
-//! one boolean. This enum is store-local; the P00 error hub re-exports it
-//! (see the P02 hub patch request) rather than flattening it into `Error`.
+//! Store failures. Each becomes the [`crate::Error`] variant of the same
+//! name; only cancellation and refused allocation stay boxed.
 
 use std::path::PathBuf;
 
-use crate::error::{IoFailure, LmdbFailure};
+use crate::error::{CorruptionError, IoFailure, LmdbFailure};
 use crate::work::WorkError;
 
 pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
-/// Corruption observed inside an otherwise recognized successor store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoreCorruption {
-    /// A required `_core_meta` entry is absent or the wrong width.
-    MetaMissing(&'static str),
-    /// A physical key in a store namespace has an impossible shape.
-    MalformedKey(&'static str),
-    /// A membership/determinant entry references a row that does not exist.
-    DanglingIndexEntry,
-}
-
-/// A host-record grammar refusal, structured so the integration facade can
-/// surface the exact [`super::host::HostSealError`] variant.
+/// A host key outside the grammar: longer than the key limit, or not
+/// strictly after the previous key of the same seal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostKeyFault {
     TooLong { actual: usize },
     NotStrictlyOrdered,
-    LengthOverflow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,26 +22,24 @@ pub enum StoreError {
     Io(IoFailure),
     /// LMDB failure that is not one of the named conditions below.
     Lmdb(LmdbFailure),
-    /// The directory holds no successor-family store. Refused before any
-    /// cleanup, write, or adoption; old-format files are never "repaired".
-    UnrecognizedStore { path: PathBuf },
-    /// Recognized family, incompatible layout counter.
-    LayoutMismatch { found: u32, expected: u32 },
+    /// The directory holds no store of this format; refused before any write.
+    UnrecognizedStore {
+        path: PathBuf,
+    },
     /// The store's schema fingerprint disagrees with the caller's schema.
     SchemaMismatch,
     /// Another live owner holds the directory's kernel lock.
-    StoreLocked { path: PathBuf },
-    /// `create` refused because the destination already exists.
-    DestinationExists { path: PathBuf },
-    /// Staging rename reached the destination, but a later sync/open step
-    /// failed. The destination path may exist; callers retain cleanup
-    /// ownership of the exact staging identity.
-    InstallSettlementFailed {
+    StoreLocked {
         path: PathBuf,
-        detail: Box<StoreError>,
+    },
+    /// `create` refused because the destination already exists.
+    DestinationExists {
+        path: PathBuf,
     },
     /// A write needed more pages than the fixed virtual map ceiling holds.
-    Full { ceiling: u64 },
+    Full {
+        ceiling: u64,
+    },
     /// LMDB's reader table is full; a distinct condition from map exhaustion.
     ReaderSlotsExhausted,
     /// The store is closing or closed; no new transaction is admitted.
@@ -70,18 +53,13 @@ pub enum StoreError {
     GenerationExhausted,
     /// The submitted `ChangeSet` belongs to a different schema.
     ForeignSchema,
-    /// The opaque host-record grammar was violated (bounded key width,
-    /// strictly increasing unique keys, representable lengths).
     HostKey(HostKeyFault),
-    /// The judge refused to complete (undefined ray duration, measure
-    /// overflow): an explicit resource/semantic refusal, never a fabricated
-    /// domain rejection.
-    JudgeRefused {
+    /// A capacity weight or bound asks for the finite measure of a ray.
+    CapacityRayMeasure {
         statement: bumbledb_theory::schema::StatementId,
-        detail: &'static str,
     },
-    /// A capacity weight or ceiling asks for the finite duration of a ray.
-    UndefinedDuration {
+    /// A capacity group's measure overflows the widened accumulator.
+    MeasureOverflow {
         statement: bumbledb_theory::schema::StatementId,
     },
     /// Cancellation or unavailable allocation capacity stopped the operation.
@@ -91,7 +69,7 @@ pub enum StoreError {
     /// Malformed input change/row bytes (from the canonical boundary).
     Changes(crate::changes::ChangeError),
     /// The recognized store contains impossible bytes.
-    Corruption(StoreCorruption),
+    Corruption(CorruptionError),
     /// Schema compilation failed (interned projection ids exhausted).
     /// Distinct from corruption: the on-disk store is intact.
     Compile(crate::schema::CompileError),
@@ -140,57 +118,9 @@ impl From<crate::schema::CompileError> for StoreError {
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io(io) => write!(f, "store I/O failure: {:?}", io.kind),
-            Self::Lmdb(err) => write!(f, "store LMDB failure: {err:?}"),
-            Self::UnrecognizedStore { path } => {
-                write!(f, "no successor-family store at {}", path.display())
-            }
-            Self::LayoutMismatch { found, expected } => {
-                write!(f, "store layout {found}, this build reads {expected}")
-            }
-            Self::SchemaMismatch => f.write_str("store schema fingerprint mismatch"),
-            Self::StoreLocked { path } => {
-                write!(f, "store directory {} is owned elsewhere", path.display())
-            }
-            Self::DestinationExists { path } => {
-                write!(f, "create destination {} already exists", path.display())
-            }
-            Self::InstallSettlementFailed { path, detail } => {
-                write!(
-                    f,
-                    "install settlement failed at {} after publish: {detail}",
-                    path.display()
-                )
-            }
-            Self::Full { ceiling } => write!(f, "store full at its {ceiling}-byte map ceiling"),
-            Self::ReaderSlotsExhausted => f.write_str("LMDB reader slots exhausted"),
-            Self::Closed => f.write_str("store is closing or closed"),
-            Self::ReentrantWriter => f.write_str("writer session is already owned by this thread"),
-            Self::RowIdExhausted => f.write_str("local physical row identifiers exhausted"),
-            Self::GenerationExhausted => f.write_str("store generation exhausted"),
-            Self::ForeignSchema => f.write_str("change set sealed for a different schema"),
-            Self::HostKey(fault) => match fault {
-                HostKeyFault::TooLong { actual } => write!(
-                    f,
-                    "host key has {actual} bytes; limit is {}",
-                    super::keys::HOST_KEY_MAX
-                ),
-                HostKeyFault::NotStrictlyOrdered => {
-                    f.write_str("host keys must be strictly ordered and unique")
-                }
-                HostKeyFault::LengthOverflow => f.write_str("host record byte length overflow"),
-            },
-            Self::JudgeRefused { statement, detail } => {
-                write!(f, "judgment refused at statement {}: {detail}", statement.0)
-            }
-            Self::UndefinedDuration { statement } => {
-                write!(f, "statement {} has undefined ray duration", statement.0)
-            }
             Self::Work(err) => err.fmt(f),
             Self::Allocation => f.write_str("in-memory allocation refused"),
-            Self::Changes(err) => err.fmt(f),
-            Self::Corruption(what) => write!(f, "store corruption: {what:?}"),
-            Self::Compile(err) => write!(f, "store compile: {err}"),
+            other => crate::Error::from_store(other.clone()).fmt(f),
         }
     }
 }
@@ -201,7 +131,6 @@ impl std::error::Error for StoreError {
             Self::Work(err) => Some(err),
             Self::Changes(err) => Some(err),
             Self::Compile(err) => Some(err),
-            Self::InstallSettlementFailed { detail, .. } => Some(detail),
             _ => None,
         }
     }

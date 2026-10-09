@@ -40,7 +40,7 @@ pub use compiled::{
     LMDB_KEY_LIMIT, MAX_EXACT_SCALAR_BYTES, ProjectionBinding, ProjectionId, ProjectionInternKey,
     VisitControl, VisitOutcome, encode_scalar_group,
 };
-pub use judge::{LawfulParent, judge_complete, judge_incremental};
+pub use judge::{judge_complete, judge_incremental};
 pub use manifest::{
     FieldManifest, Manifest, ManifestDescriptor, RelationManifest, RowManifest, StatementManifest,
 };

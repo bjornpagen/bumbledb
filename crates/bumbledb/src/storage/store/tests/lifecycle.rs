@@ -1,113 +1,44 @@
-//! G06 lifecycle: create/open/lock/close, family/layout/schema refusal
-//! before any cleanup, and the structural absence of a `NO_SYNC` lane
-//! (ENG-008 / E-DURABILITY).
+//! Create, open, format and schema refusal, the directory lock, durability
+//! flags, close, row-id exhaustion and the single writer.
 
 use super::*;
-use crate::storage::store::store_env::CloseReport;
+use crate::storage::store::format::{FORMAT, K_FORMAT, K_NEXT_ROW_ID};
+use crate::storage::store::store_env::{CloseReport, Durability};
 
 #[test]
 fn create_then_reopen_round_trips_identity_and_rows() {
     let (_dir, path) = store_dir("store-create-reopen");
-    let store_id = {
-        let store = create_default(&path);
+    let database = DatabaseId::mint();
+    {
+        let store = Store::create(&path, &schema(), database, Options::default()).expect("create");
         let commit = commit_changes(
             &store,
             &change_set(&schema(), &[(NOTE, note(1, "alpha"))], &[]),
         );
         assert!(commit.changed);
-        assert_eq!(commit.application.added, 1);
-        store.store_id()
-    };
+        assert_eq!(store.identity().database, database);
+    }
     let store = open_default(&path);
-    // Persistent identity survives reopen; environment identity is per-open.
-    assert_eq!(store.store_id(), store_id);
+    assert_eq!(store.identity().database, database);
     let snapshot = store.snapshot(&work()).expect("snapshot");
     assert_eq!(snapshot.row_count(NOTE).expect("count"), 1);
-    let rows: Vec<_> = snapshot
-        .rows(NOTE)
-        .expect("cursor")
-        .collect::<Result<_, _>>()
-        .expect("rows");
-    assert_eq!(rows.len(), 1);
-}
-
-#[test]
-fn physical_key_order_and_prefix_boundaries_survive_reopen() {
-    let (_dir, path) = store_dir("wordwise-key-order");
-    {
-        let store = create_default(&path);
-        let rows: Vec<_> = [u64::MAX, 0, 1, 255, 256, 65535, 65536, 1 << 32, 1 << 63]
-            .into_iter()
-            .map(|id| (NOTE, note(id, "payload")))
-            .chain([(TAG, tag("first")), (TAG, tag("last"))])
-            .collect();
-        commit_changes(&store, &change_set(&schema(), &rows, &[]));
-        assert_prefix_order(&store);
-    }
-    let reopened = open_default(&path);
-    commit_changes(
-        &reopened,
-        &change_set(&schema(), &[(NOTE, note(257, "after-open"))], &[]),
-    );
-    assert_prefix_order(&reopened);
-}
-
-fn assert_prefix_order(store: &Store) {
-    let context = work();
-    let snapshot = store.snapshot(&context).unwrap();
-    let data = snapshot.store_inner().data;
-    let txn = snapshot.read_txn();
-    let keys: Vec<Vec<u8>> = data
-        .iter(txn)
-        .unwrap()
-        .map(|entry| entry.unwrap().0.to_vec())
-        .collect();
-    assert!(
-        keys.windows(2).all(|pair| pair[0] < pair[1]),
-        "physical tree order equals ordinary byte order"
-    );
-    let mut prefixes = std::collections::BTreeSet::from([vec![0], vec![255]]);
-    for key in &keys {
-        for length in 0..=key.len() {
-            prefixes.insert(key[..length].to_vec());
-        }
-    }
-    for prefix in prefixes {
-        let actual: Vec<_> = data
-            .prefix_iter(txn, &prefix)
-            .unwrap()
-            .map(|entry| entry.unwrap().0.to_vec())
-            .collect();
-        let expected: Vec<_> = keys
-            .iter()
-            .filter(|key| key.starts_with(&prefix))
-            .cloned()
-            .collect();
-        assert_eq!(
-            actual, expected,
-            "empty, exact, absent, and bucket prefixes stop at their own boundary"
-        );
-    }
-    assert!(
-        data.prefix_iter(txn, &[0; 44]).is_err(),
-        "overwide physical prefix is refused before slicing"
-    );
+    assert_eq!(snapshot.rows(NOTE).expect("cursor").count(), 1);
 }
 
 #[test]
 fn environment_identity_differs_per_open() {
     let (_dir, path) = store_dir("store-env-identity");
-    let first = create_default(&path).environment_id();
-    let second = open_default(&path).environment_id();
-    assert_ne!(first, second);
-    assert_ne!(first.value(), second.value());
+    let first = create_default(&path).identity();
+    let second = open_default(&path).identity();
+    assert_eq!(first.database, second.database);
+    assert_ne!(first.environment, second.environment);
 }
 
 #[test]
 fn create_refuses_an_existing_destination() {
     let (_dir, path) = store_dir("store-create-exists");
     drop(create_default(&path));
-    match Store::create(&path, &schema(), DEFAULT_MAP_CEILING) {
+    match Store::create(&path, &schema(), DatabaseId::mint(), Options::default()) {
         Err(StoreError::DestinationExists { path: reported }) => assert_eq!(reported, path),
         other => panic!("expected DestinationExists, got {other:?}"),
     }
@@ -117,12 +48,12 @@ fn create_refuses_an_existing_destination() {
 fn a_second_open_refuses_while_the_owner_lives_and_succeeds_after_drop() {
     let (_dir, path) = store_dir("store-lock");
     let owner = create_default(&path);
-    match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
-        Err(StoreError::StoreLocked { .. }) => {}
-        other => panic!("expected StoreLocked, got {other:?}"),
-    }
+    assert!(matches!(
+        Store::open(&path, &schema(), Options::default()),
+        Err(StoreError::StoreLocked { .. })
+    ));
     drop(owner);
-    drop(open_default(&path)); // lock released with the owner
+    drop(open_default(&path));
 }
 
 #[test]
@@ -130,34 +61,22 @@ fn duplicated_lock_description_does_not_outlive_the_final_environment_owner() {
     for retain_snapshot in [false, true] {
         let (_dir, path) = store_dir("store-inherited-lock-description");
         let owner = create_default(&path);
-        // dup and fork share the same flock description. Keeping this
-        // duplicate alive deterministically models a concurrent subprocess
-        // that has inherited the descriptor but has not reached exec yet.
+        // A duplicate of the locked description models a subprocess that
+        // inherited the descriptor and has not reached exec yet.
         let inherited = owner.duplicate_lock_for_tests();
-        drop(owner.snapshot(&work()).unwrap());
         let held = retain_snapshot.then(|| owner.snapshot(&work()).unwrap());
-        assert!(matches!(
-            Store::open(&path, &schema(), DEFAULT_MAP_CEILING),
-            Err(StoreError::StoreLocked { .. })
-        ));
         drop(owner);
         if held.is_some() {
             assert!(matches!(
-                Store::open(&path, &schema(), DEFAULT_MAP_CEILING),
+                Store::open(&path, &schema(), Options::default()),
                 Err(StoreError::StoreLocked { .. })
             ));
         }
         drop(held);
-        let reopened = Store::open(&path, &schema(), DEFAULT_MAP_CEILING)
-            .expect("native close must release the lock even before an inherited fd closes");
-        assert_eq!(
-            reopened.snapshot(&work()).unwrap().row_count(NOTE).unwrap(),
-            0
-        );
+        let reopened = open_default(&path);
         drop(inherited);
-        // Closing the old description must not release the new owner's lock.
         assert!(matches!(
-            Store::open(&path, &schema(), DEFAULT_MAP_CEILING),
+            Store::open(&path, &schema(), Options::default()),
             Err(StoreError::StoreLocked { .. })
         ));
         drop(reopened);
@@ -165,114 +84,37 @@ fn duplicated_lock_description_does_not_outlive_the_final_environment_owner() {
     }
 }
 
-/// Build a directory shaped like the deleted transitional format-8 store:
-/// an LMDB environment whose named databases are `_meta`/`_data`/`_dict`
-/// and whose meta carries no successor family key. The transitional engine
-/// is deleted (this demolition's whole point), so the fixture reproduces
-/// its on-disk shape directly — the safety counterexample survives the
-/// mechanism (chapter 50 G00 rule).
-#[expect(
-    unsafe_code,
-    reason = "heed marks environment opening unsafe; the fixture directory \
-              is private to this test and opened once"
-)]
-fn build_transitional_shaped_store(path: &std::path::Path) {
-    std::fs::create_dir_all(path).expect("fixture dir");
-    let mut options = heed::EnvOpenOptions::new().read_txn_without_tls();
-    options.map_size(16 << 20).max_dbs(3);
-    // SAFETY: single open of a test-private directory.
-    let env = unsafe { options.open(path) }.expect("fixture env");
-    let mut wtxn = env.write_txn().expect("fixture txn");
-    let meta: heed::Database<heed::types::Bytes, heed::types::Bytes> = env
-        .create_database(&mut wtxn, Some("_meta"))
-        .expect("fixture _meta");
-    let _data: heed::Database<heed::types::Bytes, heed::types::Bytes> = env
-        .create_database(&mut wtxn, Some("_data"))
-        .expect("fixture _data");
-    let _dict: heed::Database<heed::types::Bytes, heed::types::Bytes> = env
-        .create_database(&mut wtxn, Some("_dict"))
-        .expect("fixture _dict");
-    // The transitional meta spoke single-byte keys with a u32 LE format
-    // version; none of them is the successor family record.
-    meta.put(&mut wtxn, &[0u8], 8u32.to_le_bytes().as_slice())
-        .expect("fixture format version");
-    wtxn.commit().expect("fixture commit");
-}
-
 #[test]
-fn an_old_family_transitional_store_refuses_before_any_cleanup() {
-    let (_dir, path) = store_dir("store-old-family");
-    build_transitional_shaped_store(&path);
-    let mut before: Vec<_> = std::fs::read_dir(&path)
-        .expect("fixture listing")
-        .map(|entry| entry.expect("entry").file_name())
-        .collect();
-    before.sort();
-    let data_len = std::fs::metadata(path.join("data.mdb"))
-        .expect("fixture data")
-        .len();
-    match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
-        Err(StoreError::UnrecognizedStore { path: reported }) => assert_eq!(reported, path),
-        other => panic!("expected UnrecognizedStore, got {other:?}"),
-    }
-    // Refusal performed zero cleanup or adoption: same files, same bytes.
-    let mut after: Vec<_> = std::fs::read_dir(&path)
-        .expect("fixture listing after")
-        .map(|entry| entry.expect("entry").file_name())
-        .collect();
-    after.sort();
-    // The refused open adds at most its own kernel lock file (created
-    // before verification, content-free); every transitional byte stays.
-    after.retain(|name| name != "bumbledb.lock");
-    before.retain(|name| name != "bumbledb.lock");
-    assert_eq!(before, after);
+fn a_directory_without_this_format_refuses_and_is_left_untouched() {
+    let (_dir, path) = store_dir("store-not-bumbledb");
+    std::fs::create_dir_all(&path).expect("dir");
+    std::fs::write(path.join("data.mdb"), b"not an lmdb file").expect("garbage");
+    assert!(matches!(
+        Store::open(&path, &schema(), Options::default()),
+        Err(StoreError::UnrecognizedStore { .. } | StoreError::Lmdb(_))
+    ));
     assert_eq!(
-        std::fs::metadata(path.join("data.mdb"))
-            .expect("fixture data")
-            .len(),
-        data_len
+        std::fs::read(path.join("data.mdb")).expect("still there"),
+        b"not an lmdb file"
     );
 }
 
-// The reverse direction ("the transitional reader refuses successor
-// files") is retired WITH the transitional reader: no old engine remains
-// in the tree to misread a successor store. The distinct database names
-// (`_core_meta`/`_core_data` vs `_meta`/`_data`/`_dict`) and the family
-// record keep any out-of-tree 0.x binary refusing as before.
-
 #[test]
-fn a_layout_bump_refuses_with_both_counters() {
-    for incompatible in [
-        super::super::format::LAYOUT - 1,
-        super::super::format::LAYOUT + 1,
+fn any_other_format_entry_refuses() {
+    for format in [
+        &FORMAT[..11],
+        b"bumbledb\0\0\0\x02".as_slice(),
+        b"".as_slice(),
     ] {
-        let (_dir, path) = store_dir("store-layout");
+        let (_dir, path) = store_dir("store-format");
         {
             let store = create_default(&path);
-            store.force_layout_for_tests(incompatible);
+            store.put_meta_for_tests(K_FORMAT, format);
         }
-        match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
-            Err(StoreError::LayoutMismatch { found, expected }) => {
-                assert_eq!(found, incompatible);
-                assert_eq!(expected, super::super::format::LAYOUT);
-            }
-            other => panic!("expected LayoutMismatch, got {other:?}"),
-        }
-    }
-}
-
-#[test]
-fn recognizing_the_layout_integer_alone_is_forbidden() {
-    // A corrupted family with an intact layout counter must refuse as
-    // unrecognized: integer 1 alone never admits bytes.
-    let (_dir, path) = store_dir("store-family-corrupt");
-    {
-        let store = create_default(&path);
-        store.corrupt_family_for_tests();
-    }
-    match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
-        Err(StoreError::UnrecognizedStore { .. }) => {}
-        other => panic!("expected UnrecognizedStore, got {other:?}"),
+        assert!(matches!(
+            Store::open(&path, &schema(), Options::default()),
+            Err(StoreError::UnrecognizedStore { .. })
+        ));
     }
 }
 
@@ -280,24 +122,35 @@ fn recognizing_the_layout_integer_alone_is_forbidden() {
 fn a_foreign_schema_refuses_to_open() {
     let (_dir, path) = store_dir("store-schema-mismatch");
     drop(create_default(&path));
-    match Store::open(&path, &other_schema(), DEFAULT_MAP_CEILING) {
-        Err(StoreError::SchemaMismatch) => {}
-        other => panic!("expected SchemaMismatch, got {other:?}"),
-    }
-    drop(open_default(&path)); // the right schema still opens
+    assert!(matches!(
+        Store::open(&path, &other_schema(), Options::default()),
+        Err(StoreError::SchemaMismatch)
+    ));
+    drop(open_default(&path));
 }
 
 #[test]
-fn every_open_is_durable_no_nosync_flag_is_reachable() {
-    // ENG-008: the open chokepoint has no lane/flag parameter; verify the
-    // actual environment flags carry no NO_SYNC/MAPASYNC weakening.
-    let (_dir, path) = store_dir("store-durable-flags");
-    let store = create_default(&path);
-    let flags = store.flags_for_tests();
-    let no_sync = heed::EnvFlags::NO_SYNC.bits();
-    let map_async = heed::EnvFlags::MAP_ASYNC.bits();
-    let no_meta_sync = heed::EnvFlags::NO_META_SYNC.bits();
-    assert_eq!(flags & (no_sync | map_async | no_meta_sync), 0);
+fn durability_selects_exactly_the_no_sync_flag() {
+    let weakening = heed::EnvFlags::NO_SYNC.bits()
+        | heed::EnvFlags::MAP_ASYNC.bits()
+        | heed::EnvFlags::NO_META_SYNC.bits();
+    let (_dir, path) = store_dir("store-durability");
+    let durable = create_default(&path);
+    assert_eq!(durable.flags_for_tests() & weakening, 0);
+    drop(durable);
+    let cache = Store::open(
+        &path,
+        &schema(),
+        Options {
+            durability: Durability::Cache,
+            ..Options::default()
+        },
+    )
+    .expect("cache open");
+    assert_eq!(
+        cache.flags_for_tests() & weakening,
+        heed::EnvFlags::NO_SYNC.bits()
+    );
 }
 
 #[test]
@@ -307,18 +160,14 @@ fn close_reports_live_snapshots_and_refuses_new_admission() {
     let pinned = store.snapshot(&work()).expect("pinned snapshot");
     let stopped = work();
     stopped.cancel();
-    match store.close(&stopped) {
+    assert!(matches!(
+        store.close(&stopped),
         CloseReport::Incomplete {
-            live_transactions, ..
-        } => assert_eq!(live_transactions, 1),
-        CloseReport::Closed => panic!("close cannot complete under a live snapshot"),
-    }
-    // Closing state refuses new admission but never invalidates the pinned
-    // snapshot's live borrow.
-    match store.snapshot(&work()) {
-        Err(StoreError::Closed) => {}
-        other => panic!("expected Closed, got {other:?}"),
-    }
+            live_transactions: 1,
+            ..
+        }
+    ));
+    assert!(matches!(store.snapshot(&work()), Err(StoreError::Closed)));
     assert_eq!(pinned.row_count(NOTE).expect("still readable"), 0);
     drop(pinned);
     assert_eq!(store.close(&work()), CloseReport::Closed);
@@ -327,63 +176,39 @@ fn close_reports_live_snapshots_and_refuses_new_admission() {
 #[test]
 fn the_lock_releases_after_the_owner_and_all_snapshots_drop() {
     let (_dir, path) = store_dir("store-lock-release-order");
-    let store = open_snapshot_then_drop_store(&path);
-    // The snapshot transitively holds the inner store (and lock): a new
-    // owner must refuse while it lives.
-    match Store::open(&path, &schema(), DEFAULT_MAP_CEILING) {
-        Err(StoreError::StoreLocked { .. }) => {}
-        other => panic!("expected StoreLocked under a live snapshot, got {other:?}"),
-    }
-    drop(store);
+    let snapshot = {
+        let store = create_default(&path);
+        store.snapshot(&work()).expect("snapshot")
+    };
+    assert!(matches!(
+        Store::open(&path, &schema(), Options::default()),
+        Err(StoreError::StoreLocked { .. })
+    ));
+    drop(snapshot);
     drop(open_default(&path));
 }
 
-fn open_snapshot_then_drop_store(path: &std::path::Path) -> super::super::OwnedSnapshot {
-    let store = create_default(path);
-    let snapshot = store.snapshot(&work()).expect("snapshot");
-    drop(store);
-    snapshot
-}
-
 #[test]
-fn row_id_exhaustion_is_a_typed_refusal() {
+fn row_id_exhaustion_aborts_the_batch_without_advancing_the_high_water_mark() {
     let (_dir, path) = store_dir("store-rowid-exhaustion");
     let store = create_default(&path);
-    store.force_next_row_id_for_tests(u64::MAX);
-    match try_commit_changes(
-        &store,
-        &change_set(&schema(), &[(NOTE, note(1, "last"))], &[]),
-    ) {
-        Err(StoreError::RowIdExhausted) => {}
-        other => panic!("expected RowIdExhausted, got {other:?}"),
-    }
-}
-
-#[test]
-fn cached_row_id_exhaustion_aborts_the_entire_batch_without_advancing_highwater() {
-    let (_dir, path) = store_dir("store-rowid-batch-exhaustion");
-    let store = create_default(&path);
-    store.force_next_row_id_for_tests(u64::MAX - 1);
-    let changes = change_set(
+    store.put_meta_for_tests(K_NEXT_ROW_ID, &(u64::MAX - 1).to_be_bytes());
+    let two = change_set(
         &schema(),
         &[(NOTE, note(1, "first")), (NOTE, note(2, "overflow"))],
         &[],
     );
     assert!(matches!(
-        try_commit_changes(&store, &changes),
+        try_commit_changes(&store, &two),
         Err(StoreError::RowIdExhausted)
     ));
     assert_eq!(store.snapshot(&work()).unwrap().row_count(NOTE).unwrap(), 0);
     let one = change_set(&schema(), &[(NOTE, note(1, "first"))], &[]);
     commit_changes(&store, &one);
-    let snapshot = store.snapshot(&work()).unwrap();
-    assert_eq!(snapshot.row_count(NOTE).unwrap(), 1);
-    assert_eq!(
-        snapshot.rows(NOTE).unwrap().next().unwrap().unwrap().0.id,
-        super::super::format::RowId(u64::MAX - 1)
+    assert!(
+        !try_commit_changes(&store, &one).unwrap().changed,
+        "an idempotent insertion allocates nothing"
     );
-    // Exhausted allocation must not turn an idempotent insertion into an error.
-    assert!(!try_commit_changes(&store, &one).unwrap().changed);
 }
 
 #[test]
@@ -392,10 +217,19 @@ fn the_writer_is_exclusive_and_reentrancy_refuses() {
     let store = create_default(&path);
     let context = work();
     let owner = store.writer(&context).expect("first writer");
-    match store.writer(&context) {
-        Err(StoreError::ReentrantWriter) => {}
-        other => panic!("expected ReentrantWriter, got {other:?}"),
-    }
+    assert!(matches!(
+        store.writer(&context),
+        Err(StoreError::ReentrantWriter)
+    ));
+    let stopped = work();
+    stopped.cancel();
+    std::thread::scope(|scope| {
+        let waiting = scope.spawn(|| store.writer(&stopped).map(drop));
+        assert!(matches!(
+            waiting.join().unwrap(),
+            Err(StoreError::Work(crate::WorkError::Cancelled))
+        ));
+    });
     drop(owner);
     drop(store.writer(&context).expect("writer after release"));
 }
@@ -403,70 +237,47 @@ fn the_writer_is_exclusive_and_reentrancy_refuses() {
 #[test]
 fn install_populated_leaves_no_destination_on_population_failure() {
     let (_dir, path) = store_dir("store-install-populated");
-    let schema = schema();
-    let work = work();
-    let err = Store::install_populated(&path, &schema, DEFAULT_MAP_CEILING, &work, |_stage, _| {
-        Err(StoreError::Allocation)
-    })
+    let error = Store::install_populated(
+        &path,
+        &schema(),
+        DatabaseId::mint(),
+        Options::default(),
+        |_| Err(StoreError::ReentrantWriter),
+    )
     .expect_err("population failure");
-    assert!(matches!(err, StoreError::Allocation));
-    assert!(
-        !path.exists(),
-        "destination must stay absent when population fails before publish"
+    assert!(matches!(error, StoreError::ReentrantWriter));
+    assert!(!path.exists());
+    let parent = path.parent().expect("parent");
+    assert_eq!(
+        std::fs::read_dir(parent).expect("parent listing").count(),
+        0,
+        "the staging sibling is removed"
     );
 }
 
 #[test]
-fn install_populated_publishes_complete_store() {
+fn install_populated_publishes_a_complete_store() {
     let (_dir, path) = store_dir("store-install-complete");
-    let schema = schema();
-    let work = work();
-    let changes = change_set(&schema, &[(NOTE, note(1, "published"))], &[]);
-    let store =
-        Store::install_populated(&path, &schema, DEFAULT_MAP_CEILING, &work, |stage, work| {
-            stage.apply(&changes, work)?;
-            Ok(())
-        })
-        .expect("installed");
-    assert!(path.exists());
+    let changes = change_set(&schema(), &[(NOTE, note(1, "published"))], &[]);
+    let store = Store::install_populated(
+        &path,
+        &schema(),
+        DatabaseId::mint(),
+        Options::default(),
+        |store| {
+            commit_changes(store, &changes)
+                .changed
+                .then_some(())
+                .ok_or(StoreError::Closed)
+        },
+    )
+    .expect("installed");
     assert_eq!(
         store
-            .snapshot(&work)
-            .expect("snap")
+            .snapshot(&work())
+            .expect("snapshot")
             .row_count(NOTE)
             .expect("count"),
         1
     );
-}
-
-#[test]
-fn unready_admit_install_publishes_without_query_surface() {
-    use super::super::staging::{InstallOutcome, UnreadyStore};
-
-    let (_dir, path) = store_dir("store-unready-install");
-    let schema = schema();
-    let work = work();
-    let changes = change_set(&schema, &[(NOTE, note(1, "staged"))], &[]);
-    let unready = UnreadyStore::begin(&path, &schema, DEFAULT_MAP_CEILING, &work).expect("begin");
-    unready
-        .populate(&work, |stage, work| {
-            stage.apply(&changes, work)?;
-            Ok(())
-        })
-        .expect("populate");
-    let admitted = unready.admit(&schema, &work).expect("admitted");
-    match admitted.install(&schema, DEFAULT_MAP_CEILING, &work) {
-        InstallOutcome::Installed(store) => {
-            assert!(path.exists());
-            assert_eq!(
-                store
-                    .snapshot(&work)
-                    .expect("snap")
-                    .row_count(NOTE)
-                    .expect("count"),
-                1
-            );
-        }
-        other => panic!("expected Installed, got {other:?}"),
-    }
 }

@@ -603,18 +603,13 @@ fn open_mismatches_and_snapshot_usability() {
     let Err(err) = Db::open(dir.path(), other, common::work()).map(|_| ()) else {
         panic!("a different schema must refuse to open");
     };
-    assert!(
-        matches!(&err, bumbledb::Error::Store(e)
-            if matches!(**e, bumbledb::store::StoreError::SchemaMismatch)),
-        "{err:?}"
-    );
+    assert!(matches!(err, bumbledb::Error::SchemaMismatch), "{err:?}");
 
     let Err(err) = Db::create(dir.path(), Ledger, common::work()).map(|_| ()) else {
         panic!("create over an existing environment must refuse");
     };
     assert!(
-        matches!(&err, bumbledb::Error::Store(e)
-            if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
+        matches!(err, bumbledb::Error::DestinationExists { .. }),
         "{err:?}"
     );
 
@@ -968,8 +963,7 @@ fn compaction_drops_the_freelist_and_preserves_content() {
         .compact(&compact_dir, common::work())
         .expect_err("must refuse");
     assert!(
-        matches!(&err, bumbledb::Error::Store(e)
-            if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
+        matches!(err, bumbledb::Error::DestinationExists { .. }),
         "{err:?}"
     );
     drop(db);
@@ -1088,17 +1082,12 @@ fn a_second_handle_on_a_live_path_is_locked_out() {
     let err = Db::open(dir.path(), Ledger, common::work())
         .map(|_| ())
         .unwrap_err();
-    assert!(
-        matches!(&err, bumbledb::Error::Store(e)
-            if matches!(**e, bumbledb::store::StoreError::StoreLocked { .. })),
-        "{err:?}"
-    );
+    assert!(matches!(err, bumbledb::Error::Locked { .. }), "{err:?}");
     let err = Db::create(dir.path(), Ledger, common::work())
         .map(|_| ())
         .unwrap_err();
     assert!(
-        matches!(&err, bumbledb::Error::Store(e)
-            if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
+        matches!(err, bumbledb::Error::DestinationExists { .. }),
         "create refuses an existing destination before the lock: {err:?}"
     );
     drop(db);
@@ -1134,8 +1123,7 @@ fn create_refuses_a_foreign_lmdb_environment() {
         .map(|_| ())
         .unwrap_err();
     assert!(
-        matches!(&err, bumbledb::Error::Store(e)
-            if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
+        matches!(err, bumbledb::Error::DestinationExists { .. }),
         "{err:?}"
     );
 
@@ -1158,16 +1146,14 @@ fn create_refuses_a_foreign_lmdb_environment() {
         .map(|_| ())
         .unwrap_err();
     assert!(
-        matches!(&err, bumbledb::Error::Store(e)
-            if matches!(**e, bumbledb::store::StoreError::UnrecognizedStore { .. })),
+        matches!(err, bumbledb::Error::NotABumbleDb { .. }),
         "{err:?}"
     );
     let err = Db::create(dir.path(), Ledger, common::work())
         .map(|_| ())
         .unwrap_err();
     assert!(
-        matches!(&err, bumbledb::Error::Store(e)
-            if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
+        matches!(err, bumbledb::Error::DestinationExists { .. }),
         "{err:?}"
     );
 }
@@ -1179,17 +1165,13 @@ fn nested_write_is_a_typed_refusal_instead_of_deadlocking() {
         .expect("create")
         .expect("accepted");
     // The successor refuses reentrancy with the typed
-    // `StoreError::ReentrantWriter` — never a deadlock, never a panic.
+    // `Error::ReentrantWriter` — never a deadlock, never a panic.
     let err = db
         .write(common::work(), |_| {
             db.write(common::work(), |_| Ok(())).map(|_| ())
         })
         .expect_err("the nested write refuses");
-    assert!(
-        matches!(&err, bumbledb::Error::Store(e)
-            if matches!(**e, bumbledb::store::StoreError::ReentrantWriter)),
-        "{err:?}"
-    );
+    assert!(matches!(err, bumbledb::Error::ReentrantWriter), "{err:?}");
 
     db.write(common::work(), |tx| {
         let id = HolderId(mint());

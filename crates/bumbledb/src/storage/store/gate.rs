@@ -33,13 +33,6 @@ pub(crate) struct GatePass {
     state: Arc<Mutex<GateState>>,
     released: Arc<Condvar>,
     id: u64,
-    admitted: Instant,
-}
-
-impl GatePass {
-    pub(crate) fn age(&self) -> Duration {
-        self.admitted.elapsed()
-    }
 }
 
 impl Drop for GatePass {
@@ -86,13 +79,11 @@ impl TransactionGate {
         }
         let id = state.next_pass;
         state.next_pass += 1;
-        let admitted = Instant::now();
-        state.live.insert(id, admitted);
+        state.live.insert(id, Instant::now());
         Ok(GatePass {
             state: Arc::clone(&self.state),
             released: Arc::clone(&self.released),
             id,
-            admitted,
         })
     }
 

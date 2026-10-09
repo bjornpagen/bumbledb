@@ -469,31 +469,6 @@ fn pointwise_float_interval_keys_use_exact_dense_endpoint_order() {
     assert_eq!(judge(&schema, &split), Judgment::Admitted);
 }
 
-/// Forced fingerprint collisions cannot reach this judgment at all: the
-/// reference path compares decoded canonical values only. Two long rows
-/// that share a forced-constant fingerprint stay distinct facts and are
-/// judged as such (HASH-02's semantic half).
-#[test]
-fn forced_fingerprint_collisions_cannot_merge_judged_facts() {
-    use crate::storage::store::Fingerprinter;
-    let forced = Fingerprinter::Constant([7; 16]);
-    let schema = user_schema();
-    let long = "x".repeat(4096);
-    let mut state = MapState::new();
-    state.insert(RelationId(0), user(1, &long));
-    state.insert(RelationId(0), user(2, &long));
-    // The two rows collide under the forced fingerprinter…
-    assert_eq!(
-        forced.row(RelationId(0), format!("{:?}", user(1, &long)).as_bytes()),
-        forced.row(RelationId(0), format!("{:?}", user(2, &long)).as_bytes()),
-    );
-    // …and the judgment still sees two distinct facts fighting one email.
-    let violations = rejected(&schema, &state);
-    assert_eq!(violations.len(), 1);
-    assert_eq!(violations[0].statement, StatementId(1));
-    assert_eq!(violations[0].examples.len(), 2);
-}
-
 /// Metadata-only / no-op candidates: an empty state and a state equal to
 /// itself both admit — the judgment is total over empty relations.
 #[test]

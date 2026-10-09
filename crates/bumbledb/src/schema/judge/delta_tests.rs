@@ -13,7 +13,7 @@
 //! and untouched statements were skipped.
 
 use super::{
-    CandidateFacts, DeltaFacts, DeltaShape, JudgeBudget, Judgment, LawfulParent, judge_final_state,
+    CandidateFacts, DeltaFacts, DeltaShape, JudgeBudget, Judgment, judge_final_state,
     judge_incremental,
 };
 use crate::schema::tests::{capacity, closed, containment, fd, field, row, side, side_where};
@@ -427,8 +427,7 @@ impl DeltaFacts for DeltaState {
 fn assert_equivalent(schema: &Schema, state: &DeltaState, budget: JudgeBudget) -> Judgment {
     let complete =
         judge_final_state(schema, state, &work(), budget).expect("complete judgment completes");
-    let delta = judge_incremental(LawfulParent::established(), schema, state, &work(), budget)
-        .expect("delta judgment");
+    let delta = judge_incremental(schema, state, &work(), budget).expect("delta judgment");
     assert_eq!(
         delta, complete,
         "delta-local judgment must equal the complete reference"
@@ -553,14 +552,7 @@ fn assert_closed_open_twin(
         expected
     );
     assert_eq!(
-        judge_incremental(
-            LawfulParent::established(),
-            closed_schema,
-            &closed,
-            &work(),
-            budget
-        )
-        .unwrap(),
+        judge_incremental(closed_schema, &closed, &work(), budget).unwrap(),
         expected
     );
     expected
@@ -672,14 +664,7 @@ fn valid_closed_delta_uses_no_full_scans_scratch_or_parent_cardinality_work() {
                 DeltaState::new(&parent, &[closed_source(0, size, true)], &[]).refusing_streams();
             let work = WorkContext::new();
             assert_eq!(
-                judge_incremental(
-                    LawfulParent::established(),
-                    &schema,
-                    &state,
-                    &work,
-                    JudgeBudget::default()
-                )
-                .unwrap(),
+                judge_incremental(&schema, &state, &work, JudgeBudget::default()).unwrap(),
                 Judgment::Admitted
             );
             assert_eq!(state.row_visits(), 0);
@@ -736,14 +721,7 @@ fn invalid_closed_delta_cites_only_added_offenders_without_rescanning_parent() {
     let expected = assert_closed_open_twin(&pair, &parent, &adds, &[], budget);
     let state = DeltaState::new(&parent, &adds, &[]).refusing_streams();
     assert_eq!(
-        judge_incremental(
-            LawfulParent::established(),
-            &pair.0,
-            &state,
-            &work(),
-            budget
-        )
-        .unwrap(),
+        judge_incremental(&pair.0, &state, &work(), budget).unwrap(),
         expected
     );
     assert_eq!(state.row_visits(), 0);
@@ -808,24 +786,12 @@ fn closed_delta_propagates_cancellation_and_provider_errors_without_partial_verd
     let state = ClosedAddedFailure(closed_source(256, 0, true).1);
     let context = work();
     assert!(matches!(
-        judge_incremental(
-            LawfulParent::established(),
-            &schema,
-            &state,
-            &context,
-            JudgeBudget::default()
-        ),
+        judge_incremental(&schema, &state, &context, JudgeBudget::default()),
         Err(super::JudgeError::State("injected added-row failure"))
     ));
     context.cancel();
     assert!(matches!(
-        judge_incremental(
-            LawfulParent::established(),
-            &schema,
-            &state,
-            &context,
-            JudgeBudget::default()
-        ),
+        judge_incremental(&schema, &state, &context, JudgeBudget::default()),
         Err(super::JudgeError::Work(crate::WorkError::Cancelled))
     ));
 }
@@ -1071,14 +1037,8 @@ fn an_unlawful_parent_can_hide_from_the_delta_local_judge_by_design() {
     let state = DeltaState::new(&unlawful_parent, &adds, &[]);
     let complete = judge_final_state(&schema, &state, &work(), JudgeBudget::default())
         .expect("complete judgment");
-    let delta = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &state,
-        &work(),
-        JudgeBudget::default(),
-    )
-    .expect("delta judgment");
+    let delta = judge_incremental(&schema, &state, &work(), JudgeBudget::default())
+        .expect("delta judgment");
     // The complete judge — the sweeper's judgment — convicts the standing
     // violations; the delta-local judge, whose soundness ASSUMES a lawful
     // parent, admits. This divergence is the documented premise, pinned so
@@ -1109,14 +1069,8 @@ fn a_delta_touching_an_unlawful_group_still_convicts_delta_locally() {
     ];
     let adds = vec![(USER, user(3, "dup@example"))];
     let state = DeltaState::new(&unlawful_parent, &adds, &[]);
-    let delta = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &state,
-        &work(),
-        JudgeBudget::default(),
-    )
-    .expect("delta judgment");
+    let delta = judge_incremental(&schema, &state, &work(), JudgeBudget::default())
+        .expect("delta judgment");
     let Judgment::Rejected(violations) = delta else {
         panic!("a delta-touched unlawful group must convict");
     };
@@ -1147,25 +1101,13 @@ fn delta_local_key_judgment_never_streams_any_relation() {
     // the group index alone and untouched containment/capacity statements
     // are skipped, structurally.
     let benign = DeltaState::new(&parent, &[(USER, user(3, "c@example"))], &[]).refusing_streams();
-    let verdict = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &benign,
-        &work(),
-        JudgeBudget::default(),
-    )
-    .expect("delta judgment");
+    let verdict = judge_incremental(&schema, &benign, &work(), JudgeBudget::default())
+        .expect("delta judgment");
     assert_eq!(verdict, Judgment::Admitted);
 
     let dup = DeltaState::new(&parent, &[(USER, user(3, "b@example"))], &[]).refusing_streams();
-    let verdict = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &dup,
-        &work(),
-        JudgeBudget::default(),
-    )
-    .expect("delta judgment");
+    let verdict =
+        judge_incremental(&schema, &dup, &work(), JudgeBudget::default()).expect("delta judgment");
     let Judgment::Rejected(violations) = verdict else {
         panic!("expected the duplicate-email rejection");
     };
@@ -1192,14 +1134,8 @@ fn scalar_key_valid_growth_retains_no_good_groups() {
         state.row_visits.set(0);
         // Visits scale with added competitors, not the untouched parent.
         let context = work();
-        let actual = judge_incremental(
-            LawfulParent::established(),
-            &schema,
-            &state,
-            &context,
-            JudgeBudget::default(),
-        )
-        .expect("lawful scalar groups require no retained good-key map");
+        let actual = judge_incremental(&schema, &state, &context, JudgeBudget::default())
+            .expect("lawful scalar groups require no retained good-key map");
         assert_eq!(actual, expected);
         assert_eq!(state.row_visits(), 0);
         assert_eq!(state.key_row_visits.get(), 2 * added.len() as u64);
@@ -1382,14 +1318,7 @@ fn indexed_grouped_verdicts_and_canonical_citations_match_complete() {
             state.refuse_stream = true;
             state.row_visits.set(0);
             let context = work();
-            let actual = judge_incremental(
-                LawfulParent::established(),
-                &schema,
-                &state,
-                &context,
-                budget,
-            )
-            .unwrap();
+            let actual = judge_incremental(&schema, &state, &context, budget).unwrap();
             assert_eq!(actual, expected, "{family:?}");
             assert_eq!(state.row_visits(), 0);
         }
@@ -1406,14 +1335,7 @@ fn oversized_determinant_preserves_exact_judgment_without_a_hidden_allowance() {
     let state = state.refusing_streams();
     state.row_visits.set(0);
     let context = work();
-    let actual = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &state,
-        &context,
-        budget,
-    )
-    .unwrap();
+    let actual = judge_incremental(&schema, &state, &context, budget).unwrap();
     assert_eq!(actual, expected);
     assert_eq!(state.row_visits(), 0);
 }
@@ -1435,14 +1357,7 @@ fn scalar_key_bad_groups_probe_two_then_cite_once_in_canonical_order() {
         let state = DeltaState::new(&parent, &added, &[]);
         let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
         let indexed = DeltaState::new(&parent, &added, &[]).refusing_streams();
-        let actual = judge_incremental(
-            LawfulParent::established(),
-            &schema,
-            &indexed,
-            &work(),
-            budget,
-        )
-        .unwrap();
+        let actual = judge_incremental(&schema, &indexed, &work(), budget).unwrap();
         assert_eq!(actual, expected);
         let Judgment::Rejected(violations) = actual else {
             panic!("email keys violated")
@@ -1510,13 +1425,7 @@ fn scalar_key_bad_group_state_releases_memory_on_success_and_mid_probe_cancellat
         if cancelled {
             state.cancel_on_key_row = Some((state.key_row_visits.get() + 2, context.clone()));
         }
-        let actual = judge_incremental(
-            LawfulParent::established(),
-            &schema,
-            &state,
-            &context,
-            budget,
-        );
+        let actual = judge_incremental(&schema, &state, &context, budget);
         if cancelled {
             assert!(matches!(
                 actual,
@@ -1565,14 +1474,7 @@ fn scalar_key_reordered_large_text_projection_matches_complete() {
     assert!(matches!(expected, Judgment::Rejected(_)));
     state.refuse_stream = true;
     assert_eq!(
-        judge_incremental(
-            LawfulParent::established(),
-            &schema,
-            &state,
-            &work(),
-            budget
-        )
-        .unwrap(),
+        judge_incremental(&schema, &state, &work(), budget).unwrap(),
         expected,
     );
 
@@ -1581,14 +1483,7 @@ fn scalar_key_reordered_large_text_projection_matches_complete() {
     state.keys = &[(StatementId(0), USER, &[2, 0])];
     let context = work();
     assert_eq!(
-        judge_incremental(
-            LawfulParent::established(),
-            &schema,
-            &state,
-            &context,
-            budget
-        )
-        .unwrap(),
+        judge_incremental(&schema, &state, &context, budget).unwrap(),
         Judgment::Admitted
     );
     assert_eq!(
@@ -1605,13 +1500,7 @@ fn scalar_key_second_competitor_cancellation_is_not_a_verdict() {
         DeltaState::new(&[(USER, user(1, "a"))], &[(USER, user(1, "b"))], &[]).refusing_streams();
     state.cancel_on_key_row = Some((2, context.clone()));
     assert!(matches!(
-        judge_incremental(
-            LawfulParent::established(),
-            &theory(),
-            &state,
-            &context,
-            JudgeBudget::default()
-        ),
+        judge_incremental(&theory(), &state, &context, JudgeBudget::default()),
         Err(super::JudgeError::Work(crate::WorkError::Cancelled))
     ));
     assert_eq!(state.key_row_visits.get(), 2);
@@ -1673,14 +1562,7 @@ fn scalar_containment_witness_skips_existing_source_fanout() {
     let added = [(source, vec![Value::U64(0), Value::U64(1024)])];
     let mut state = DeltaState::new(&parent, &added, &[]).refusing_streams();
     state.keys = &[(StatementId(0), RelationId(1), &[0])];
-    let verdict = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &state,
-        &work(),
-        JudgeBudget::default(),
-    )
-    .unwrap();
+    let verdict = judge_incremental(&schema, &state, &work(), JudgeBudget::default()).unwrap();
     assert_eq!(verdict, Judgment::Admitted);
     assert!(
         state.compiled_row_visits.get() <= 4,
@@ -1796,8 +1678,7 @@ fn assert_late_index_fallback(schema: &Schema, state: &DeltaState, budget: Judge
     let expected = judge_final_state(schema, state, &work(), budget).unwrap();
     state.row_visits.set(0);
     let context = work();
-    let actual =
-        judge_incremental(LawfulParent::established(), schema, state, &context, budget).unwrap();
+    let actual = judge_incremental(schema, state, &context, budget).unwrap();
     assert_eq!(actual, expected);
     assert!(matches!(actual, Judgment::Rejected(_)));
     assert_eq!(
@@ -1885,14 +1766,7 @@ fn capacity_admission_remains_index_only() {
     let parent = [(ROOM, room(0)), (BOOKING, booking(0, 0, 1))];
     let added = [(BOOKING, booking(0, 1, 2))];
     let state = DeltaState::new(&parent, &added, &[]).refusing_streams();
-    let verdict = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &state,
-        &work(),
-        JudgeBudget::default(),
-    )
-    .unwrap();
+    let verdict = judge_incremental(&schema, &state, &work(), JudgeBudget::default()).unwrap();
     assert_eq!(verdict, Judgment::Admitted);
     assert!(state.group_visits() > 0);
     assert_eq!(state.row_visits(), 0);
@@ -1953,14 +1827,7 @@ fn capacity_measure_uses_global_rank_without_full_scans_for_equal_or_differing_t
                 indexed.row_visits.set(0);
                 let indexed = indexed.refusing_streams();
                 let context = work();
-                let actual = judge_incremental(
-                    LawfulParent::established(),
-                    &schema,
-                    &indexed,
-                    &context,
-                    budget,
-                )
-                .unwrap();
+                let actual = judge_incremental(&schema, &indexed, &context, budget).unwrap();
                 assert_eq!(actual, expected);
                 assert!(indexed.group_visits() > 0);
                 assert_eq!(indexed.row_visits(), 0);
@@ -1971,14 +1838,7 @@ fn capacity_measure_uses_global_rank_without_full_scans_for_equal_or_differing_t
             let mut unranked = DeltaState::new(&parent, &added, &[]);
             unranked.ranked_available = false;
             let context = work();
-            let actual = judge_incremental(
-                LawfulParent::established(),
-                &schema,
-                &unranked,
-                &context,
-                budget,
-            )
-            .unwrap();
+            let actual = judge_incremental(&schema, &unranked, &context, budget).unwrap();
             assert_eq!(actual, expected);
             assert!(unranked.group_visits() > 0);
             assert!(unranked.row_visits() > 0);

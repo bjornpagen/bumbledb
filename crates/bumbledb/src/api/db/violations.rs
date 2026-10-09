@@ -24,29 +24,19 @@ use crate::work::WorkContext;
 /// neither is a domain rejection.
 pub(super) fn judge_refusal<E: Into<Error>>(error: crate::schema::judge::JudgeError<E>) -> Error {
     match error {
-        crate::schema::judge::JudgeError::Work(work) => {
-            Error::from_store(crate::storage::store::StoreError::Work(work))
-        }
+        crate::schema::judge::JudgeError::Work(work) => Error::from(work),
         crate::schema::judge::JudgeError::State(error) => error.into(),
-        crate::schema::judge::JudgeError::Compile(error) => {
-            Error::from_store(crate::storage::store::StoreError::Compile(error))
-        }
+        crate::schema::judge::JudgeError::Compile(error) => Error::Compile(error),
         crate::schema::judge::JudgeError::UndefinedDuration { statement } => {
-            Error::from_store(crate::storage::store::StoreError::JudgeRefused {
-                statement,
-                detail: "undefined ray duration in a measured position",
-            })
+            Error::CapacityRayMeasure { statement }
         }
         crate::schema::judge::JudgeError::MeasureOverflow { statement } => {
-            Error::from_store(crate::storage::store::StoreError::JudgeRefused {
-                statement,
-                detail: "grouped measure exceeded the widened accumulator",
-            })
+            Error::MeasureOverflow { statement }
         }
     }
 }
 
-pub(super) fn violations_from_judged(
+pub(crate) fn violations_from_judged(
     schema: &Schema,
     judged: Box<[JudgedViolation]>,
     work: &WorkContext,
@@ -95,22 +85,9 @@ pub(super) fn violations_from_judged(
             })
             .collect();
         citations.push((typed, cited));
-        // The judge's own per-statement example-budget label survives the
-        // public boundary (one flag per citation, same order): decide-time
-        // evidence encoding reads it back via `Violations::examples_truncated`.
         truncated.push(violation.examples_truncated);
     }
-    if citations.is_empty() {
-        // Unreachable by the judge contract; refuse loudly instead of
-        // minting an empty rejection.
-        return Err(Error::from_store(
-            crate::storage::store::StoreError::Corruption(
-                crate::storage::store::error::StoreCorruption::MalformedKey(
-                    "empty judge rejection",
-                ),
-            ),
-        ));
-    }
+    assert!(!citations.is_empty(), "a judge rejection cites a violation");
     Ok(Violations::from_pairs_with_truncation(
         citations.into_boxed_slice(),
         truncated.into_boxed_slice(),

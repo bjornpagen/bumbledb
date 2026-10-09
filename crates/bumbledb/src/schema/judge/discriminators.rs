@@ -3,8 +3,7 @@
 
 use super::delta_tests::DeltaState;
 use super::{
-    JudgeBudget, Judgment, LawfulParent, MapState, judge_complete, judge_final_state,
-    judge_incremental,
+    JudgeBudget, Judgment, MapState, judge_complete, judge_final_state, judge_incremental,
 };
 use crate::Value;
 use crate::schema::evidence::encode_judged;
@@ -63,14 +62,7 @@ fn d04_compiled_indexes_earn_locality() {
         examples_per_statement: 4,
     };
     let complete = judge_complete(&schema, &state, &work(), budget).expect("complete");
-    let incremental = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &state,
-        &work(),
-        budget,
-    )
-    .expect("incremental");
+    let incremental = judge_incremental(&schema, &state, &work(), budget).expect("incremental");
     let independent = judge_final_state(&schema, &state, &work(), budget).expect("independent");
     assert_eq!(
         complete, independent,
@@ -87,14 +79,7 @@ fn d04_compiled_indexes_earn_locality() {
     assert_eq!(violations[0].examples.len(), 2);
 
     let local = DeltaState::new(&parent, &adds, &[]).refusing_streams();
-    let _ = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &local,
-        &work(),
-        budget,
-    )
-    .expect("indexed key path");
+    let _ = judge_incremental(&schema, &local, &work(), budget).expect("indexed key path");
     assert_eq!(
         local.row_visits(),
         0,
@@ -104,14 +89,7 @@ fn d04_compiled_indexes_earn_locality() {
     assert!(groups > 0, "the touched email group is visited");
 
     let scaled = DeltaState::new(&parent_users(256), &adds, &[]).refusing_streams();
-    let _ = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &scaled,
-        &work(),
-        budget,
-    )
-    .expect("scaled");
+    let _ = judge_incremental(&schema, &scaled, &work(), budget).expect("scaled");
     assert_eq!(
         scaled.group_visits(),
         groups,
@@ -157,14 +135,7 @@ fn d04_capacity_floor_and_target_replacement_match_complete() {
     let floor = DeltaState::new(&parent, &[], &removed);
     let budget = JudgeBudget::default();
     let complete = judge_complete(&schema, &floor, &work(), budget).expect("complete");
-    let incremental = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &floor,
-        &work(),
-        budget,
-    )
-    .expect("incremental");
+    let incremental = judge_incremental(&schema, &floor, &work(), budget).expect("incremental");
     assert_eq!(complete, incremental);
     let Judgment::Rejected(violations) = complete else {
         panic!("floor after removal must reject");
@@ -204,14 +175,8 @@ fn d04_capacity_floor_and_target_replacement_match_complete() {
         &[(RelationId(0), vec![Value::U64(1), Value::U64(2)])],
     );
     let complete = judge_complete(&replaced_schema, &replaced, &work(), budget).expect("complete");
-    let incremental = judge_incremental(
-        LawfulParent::established(),
-        &replaced_schema,
-        &replaced,
-        &work(),
-        budget,
-    )
-    .expect("incremental");
+    let incremental =
+        judge_incremental(&replaced_schema, &replaced, &work(), budget).expect("incremental");
     assert_eq!(
         complete, incremental,
         "selected target replacement matches the independent model"
@@ -222,14 +187,7 @@ fn d04_capacity_floor_and_target_replacement_match_complete() {
     );
 
     let local = DeltaState::new(&parent, &[], &removed).refusing_streams();
-    let _ = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &local,
-        &work(),
-        budget,
-    )
-    .expect("compiled capacity path");
+    let _ = judge_incremental(&schema, &local, &work(), budget).expect("compiled capacity path");
     assert_eq!(
         local.row_visits(),
         0,
@@ -283,14 +241,7 @@ fn d04_incremental_containment_consumes_compiled_groups() {
     let state = DeltaState::new(&parent, &[], &removed);
     let budget = JudgeBudget::default();
     let complete = judge_complete(&schema, &state, &work(), budget).expect("complete");
-    let incremental = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &state,
-        &work(),
-        budget,
-    )
-    .expect("incremental");
+    let incremental = judge_incremental(&schema, &state, &work(), budget).expect("incremental");
     assert_eq!(complete, incremental);
     assert!(
         matches!(complete, Judgment::Rejected(_)),
@@ -298,14 +249,7 @@ fn d04_incremental_containment_consumes_compiled_groups() {
     );
 
     let local = DeltaState::new(&parent, &[], &removed).refusing_streams();
-    let _ = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &local,
-        &work(),
-        budget,
-    )
-    .expect("compiled containment path");
+    let _ = judge_incremental(&schema, &local, &work(), budget).expect("compiled containment path");
     assert_eq!(
         local.row_visits(),
         0,
@@ -320,14 +264,7 @@ fn d04_incremental_containment_consumes_compiled_groups() {
         scaled.push((RelationId(1), vec![Value::U64(100 + id), Value::U64(id)]));
     }
     let scaled = DeltaState::new(&scaled, &[], &removed).refusing_streams();
-    let _ = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &scaled,
-        &work(),
-        budget,
-    )
-    .expect("scaled containment");
+    let _ = judge_incremental(&schema, &scaled, &work(), budget).expect("scaled containment");
     assert_eq!(
         scaled.group_visits(),
         groups,
@@ -343,9 +280,7 @@ fn agree_reject(
     let state = DeltaState::new(parent, &[], removed);
     let budget = JudgeBudget::default();
     let complete = judge_complete(schema, &state, &work(), budget).expect("complete");
-    let incremental =
-        judge_incremental(LawfulParent::established(), schema, &state, &work(), budget)
-            .expect("incremental");
+    let incremental = judge_incremental(schema, &state, &work(), budget).expect("incremental");
     assert_eq!(
         complete, incremental,
         "complete and incremental must share logical group coordinates"
@@ -589,14 +524,8 @@ fn d26_complete_judgment_cannot_borrow_a_lawful_parent() {
         &[],
         &[],
     );
-    let incremental = judge_incremental(
-        LawfulParent::established(),
-        &schema,
-        &empty_delta,
-        &work(),
-        JudgeBudget::default(),
-    )
-    .expect("incremental empty");
+    let incremental = judge_incremental(&schema, &empty_delta, &work(), JudgeBudget::default())
+        .expect("incremental empty");
     assert_eq!(
         incremental,
         Judgment::Admitted,

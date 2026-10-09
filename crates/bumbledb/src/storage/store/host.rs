@@ -1,187 +1,125 @@
-//! Opaque transaction adjunct grammar for native wrappers (C04 seal input).
-//!
-//! Core does not interpret a receipt, request, history stamp, or migration
-//! record: these are host bytes riding the same durable transaction as the
-//! facts they describe. The grammar moved here from the deleted transitional
-//! `storage::env::host` module; the exported symbol roster
-//! (`bumbledb::integration::{HostChanges, HostRecordChange, AttachmentChange,
-//! HostSealError}`) is unchanged for the log/native bridge.
+//! Host records and the head: opaque bytes a host (the log) seals into the
+//! same transaction as the facts they describe. The engine never interprets
+//! them; it only bounds key width and keeps keys strictly ordered.
 
-use crate::error::Error;
-use crate::work::WorkError;
+use heed::RwTxn;
 
-pub use super::keys::HOST_KEY_MAX as MAX_HOST_KEY;
+use super::error::{HostKeyFault, StoreError, StoreResult};
+use super::format::{K_HEAD, K_HOST};
+use super::keys::HOST_KEY_MAX;
+use super::store_env::StoreInner;
+use crate::work::WorkContext;
 
-/// A host-grammar refusal or the storage failure a host read/seal hit.
-/// Sealing failures consume the prepared capability: any error drops the
-/// whole private transaction, never a prefix.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HostSealError {
-    KeyTooLong { actual: usize, limit: usize },
-    KeysNotStrictlyOrdered,
-    LengthOverflow,
-    GenerationExhausted,
-    Work(WorkError),
-    Storage(Error),
-}
-
-impl From<Error> for HostSealError {
-    fn from(error: Error) -> Self {
-        Self::Storage(error)
-    }
-}
-
-impl From<WorkError> for HostSealError {
-    fn from(error: WorkError) -> Self {
-        Self::Work(error)
-    }
-}
-
-impl From<super::error::StoreError> for HostSealError {
-    fn from(error: super::error::StoreError) -> Self {
-        match error {
-            super::error::StoreError::HostKey(fault) => seal_error_of(fault),
-            super::error::StoreError::Work(work) => Self::Work(work),
-            super::error::StoreError::GenerationExhausted => Self::GenerationExhausted,
-            other => Self::Storage(Error::from_store(other)),
-        }
-    }
-}
-
-impl std::fmt::Display for HostSealError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::KeyTooLong { actual, limit } => {
-                write!(f, "host key has {actual} bytes; limit is {limit}")
-            }
-            Self::KeysNotStrictlyOrdered => {
-                f.write_str("host keys must be strictly ordered and unique")
-            }
-            Self::LengthOverflow => f.write_str("host record byte length overflow"),
-            Self::GenerationExhausted => f.write_str("core generation exhausted"),
-            Self::Work(error) => error.fmt(f),
-            Self::Storage(error) => error.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for HostSealError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Work(error) => Some(error),
-            Self::Storage(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
-/// Keys are strictly increasing; a key occurs once. The caller owns these
-/// bytes through seal completion. Nothing retains caller memory afterward.
+/// One host record change. Keys in one [`HostChanges`] are strictly
+/// increasing and at most [`HOST_KEY_MAX`] bytes.
 #[derive(Debug, Clone, Copy)]
-pub enum HostRecordChange<'a> {
+pub enum HostRecord<'a> {
     Put { key: &'a [u8], value: &'a [u8] },
     Delete { key: &'a [u8] },
 }
 
+/// The change to the head: the host's single opaque position record.
 #[derive(Debug, Clone, Copy)]
-pub enum AttachmentChange<'a> {
+pub enum Head<'a> {
     Keep,
     Put(&'a [u8]),
     Clear,
 }
 
+/// Everything a seal writes besides facts.
 #[derive(Debug, Clone, Copy)]
 pub struct HostChanges<'a> {
-    pub records: &'a [HostRecordChange<'a>],
-    pub attachment: AttachmentChange<'a>,
+    pub records: &'a [HostRecord<'a>],
+    pub head: Head<'a>,
 }
 
-/// Exclusive resume after one bounded host window. Holds only the last
-/// visited key — never the remaining set.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HostResume {
-    key: [u8; MAX_HOST_KEY],
-    len: u16,
+impl HostChanges<'static> {
+    /// No host records and an unchanged head.
+    pub const NONE: Self = Self {
+        records: &[],
+        head: Head::Keep,
+    };
 }
 
-impl HostResume {
-    /// # Errors
-    /// Key longer than [`MAX_HOST_KEY`].
-    /// # Panics
-    /// If `MAX_HOST_KEY` is changed to exceed its u16 length representation.
-    pub fn from_key(key: &[u8]) -> Result<Self, super::error::StoreError> {
-        if key.len() > MAX_HOST_KEY {
-            return Err(super::error::StoreError::HostKey(
-                super::error::HostKeyFault::TooLong { actual: key.len() },
-            ));
+/// The physical meta key of one host key.
+pub(crate) fn host_key(key: &[u8], buffer: &mut [u8; 1 + HOST_KEY_MAX]) -> StoreResult<usize> {
+    if key.len() > HOST_KEY_MAX {
+        return Err(StoreError::HostKey(HostKeyFault::TooLong {
+            actual: key.len(),
+        }));
+    }
+    buffer[0] = K_HOST;
+    buffer[1..=key.len()].copy_from_slice(key);
+    Ok(1 + key.len())
+}
+
+fn validate(host: &HostChanges<'_>) -> StoreResult<()> {
+    let mut previous: Option<&[u8]> = None;
+    for record in host.records {
+        let (HostRecord::Put { key, .. } | HostRecord::Delete { key }) = *record;
+        if key.len() > HOST_KEY_MAX {
+            return Err(StoreError::HostKey(HostKeyFault::TooLong {
+                actual: key.len(),
+            }));
         }
-        let mut stored = [0u8; MAX_HOST_KEY];
-        stored[..key.len()].copy_from_slice(key);
-        Ok(Self {
-            key: stored,
-            len: u16::try_from(key.len())
-                .expect("host key length was checked against MAX_HOST_KEY"),
-        })
+        if previous.is_some_and(|previous| previous >= key) {
+            return Err(StoreError::HostKey(HostKeyFault::NotStrictlyOrdered));
+        }
+        previous = Some(key);
     }
-
-    #[must_use]
-    pub fn as_key(&self) -> &[u8] {
-        &self.key[..usize::from(self.len)]
-    }
+    Ok(())
 }
 
-/// One bounded host window. Peak RAM is this window, not every matching key.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "The bounded resume key stays inline to avoid an allocation for each streamed host window"
-)]
-pub enum HostWindow {
-    /// More keys may exist after [`HostResume`].
-    More {
-        resume: HostResume,
-        records: u64,
-        bytes: u64,
-    },
-    /// This prefix is exhausted in the scanned range.
-    Done { records: u64, bytes: u64 },
+fn put(inner: &StoreInner, txn: &mut RwTxn<'_>, key: &[u8], value: &[u8]) -> StoreResult<bool> {
+    if inner.meta.get(txn, key).map_err(StoreError::from_heed)? == Some(value) {
+        return Ok(false);
+    }
+    inner
+        .meta
+        .put(txn, key, value)
+        .map_err(|error| inner.txn_error(error))?;
+    Ok(true)
 }
 
-impl HostWindow {
-    #[must_use]
-    pub fn resume(&self) -> Option<&HostResume> {
-        match self {
-            Self::More { resume, .. } => Some(resume),
-            Self::Done { .. } => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn records(&self) -> u64 {
-        match *self {
-            Self::More { records, .. } | Self::Done { records, .. } => records,
-        }
-    }
-
-    #[must_use]
-    pub const fn bytes(&self) -> u64 {
-        match *self {
-            Self::More { bytes, .. } | Self::Done { bytes, .. } => bytes,
-        }
-    }
+fn delete(inner: &StoreInner, txn: &mut RwTxn<'_>, key: &[u8]) -> StoreResult<bool> {
+    inner
+        .meta
+        .delete(txn, key)
+        .map_err(|error| inner.txn_error(error))
 }
 
-/// The exact seal-side grammar refusal for one structured store fault:
-/// the integration facade surfaces the same [`HostSealError`] the grammar
-/// has always spoken.
-#[must_use]
-pub(crate) fn seal_error_of(fault: super::error::HostKeyFault) -> HostSealError {
-    match fault {
-        super::error::HostKeyFault::TooLong { actual } => HostSealError::KeyTooLong {
-            actual,
-            limit: MAX_HOST_KEY,
-        },
-        super::error::HostKeyFault::NotStrictlyOrdered => HostSealError::KeysNotStrictlyOrdered,
-        super::error::HostKeyFault::LengthOverflow => HostSealError::LengthOverflow,
+/// Apply host changes; true when any stored byte changed. The grammar is
+/// checked before the first write.
+pub(crate) fn apply(
+    inner: &StoreInner,
+    txn: &mut RwTxn<'_>,
+    host: HostChanges<'_>,
+    work: &WorkContext,
+) -> StoreResult<bool> {
+    validate(&host)?;
+    let mut buffer = [0u8; 1 + HOST_KEY_MAX];
+    let mut mutated = false;
+    for (index, record) in host.records.iter().enumerate() {
+        work.checkpoint()?;
+        #[cfg(test)]
+        inner.fail_host_write(index)?;
+        #[cfg(not(test))]
+        let _ = index;
+        mutated |= match *record {
+            HostRecord::Put { key, value } => {
+                let len = host_key(key, &mut buffer)?;
+                put(inner, txn, &buffer[..len], value)?
+            }
+            HostRecord::Delete { key } => {
+                let len = host_key(key, &mut buffer)?;
+                delete(inner, txn, &buffer[..len])?
+            }
+        };
     }
+    mutated |= match host.head {
+        Head::Keep => false,
+        Head::Put(bytes) => put(inner, txn, K_HEAD, bytes)?,
+        Head::Clear => delete(inner, txn, K_HEAD)?,
+    };
+    Ok(mutated)
 }
