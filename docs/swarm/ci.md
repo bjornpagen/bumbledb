@@ -158,7 +158,10 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
 - **numeric:** `scripts/check-asm.sh` checks the symbols `allen_code_batch_neon`,
   `allen_code_batch_const_neon` and `allen_filter_batch_neon` (each must exist in the release
   `bumbledb-bench` binary and be free of flag writers, `b.cond` and calls). Keep those names or
-  tell me the new ones.
+  tell me the new ones. **Red at `590f8af79`:** the entry `assert!`s that replaced the
+  `debug_assert!`s compile into `cmp`/`b.ne`/`bl core::panicking::*` inside all three symbols.
+  Keep the proof but move it out of the kernel symbols: check lengths once in the `#[inline]`
+  dispatcher in `allen.rs`, or hand the kernel a type whose constructor checked them (R3).
 
 ### bench
 - `scripts/bump-toolchain.sh` runs, never blocking:
