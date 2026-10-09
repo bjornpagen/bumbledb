@@ -14,7 +14,7 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
 | G3: cargo profiles `ci`/`gate`/`addon-ci`; nextest `ci`/`deep`/`default-miri`, `disk` group | landed |
 | G13/L: delete release bureaucracy scripts and config; musl image on alpine 3.24.2 + prebuilt nextest 0.9.148 | landed |
 | G1: `ci.yml` + `scripts/ci.sh <lane>` | landed (rustdoc gate red on other lanes' docs, see requests) |
-| G5: `.config/deny.toml`, cargo-shear, Dependabot | todo |
+| G5: `.config/deny.toml`, cargo-shear, Dependabot | landed (not runnable locally: no cargo-deny/cargo-shear here) |
 | G4: SeaweedFS and AWS S3 lanes | todo |
 | G10: `deep.yml` | todo |
 | G11: `scripts/bump-toolchain.sh`, `toolchain-canary.yml`, toolchain components | todo |
@@ -60,6 +60,13 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
   requests and on all three platforms (`release`, fat LTO) otherwise, uploading
   `bumbledb.<platform>.node` artifacts. Linux addons build in `amazonlinux:2023` (glibc 2.34).
 - Deleted: `scripts/battery.sh`, `scripts/check.sh`, `.github/workflows/bumbledb-log.yml`.
+- `lint` also runs `cargo deny check --config .config/deny.toml` (advisories incl. yanked,
+  permissive licenses only, crates.io as the only source, wildcard versions denied except
+  workspace path deps) and `cargo shear` (unused dependencies fail). Dependabot opens one grouped
+  weekly PR each for actions, cargo, npm (`/ts`, `/examples/notes`) and the musl Dockerfile.
+  Note for the consolidator: this nightly's cargo already warns `cargo::unused_dependencies`
+  (`fearless_simd` in `bumbledb`, `bumbledb` in `bumbledb-query` today); setting
+  `[workspace.lints.cargo] unused_dependencies = "deny"` would let lint drop `cargo shear`.
 
 ## Requests to other lanes
 
