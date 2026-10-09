@@ -175,7 +175,6 @@ fn payload_kind(payload: &TablePayload) -> NativeKind {
             Payload::Draft(_) => NativeKind::Draft,
             Payload::Changes { .. } => NativeKind::Changes,
             Payload::ChangesCursor(_) => NativeKind::ChangesCursor,
-            Payload::Population(_) => NativeKind::Population,
         },
     }
 }

@@ -32,7 +32,6 @@ pub enum NativeKind {
     Draft,
     Changes,
     ChangesCursor,
-    Population,
 }
 
 /// Live / in-use / draining. Busy and closing refuse new work.
@@ -40,7 +39,6 @@ pub enum NativeKind {
 pub enum ResourceState {
     Live,
     Busy,
-    Finalizing,
     Closing,
 }
 
@@ -50,7 +48,7 @@ impl ResourceState {
         match self {
             Self::Live => Ok(()),
             Self::Busy => Err(RuntimeError::HandleBusy),
-            Self::Finalizing | Self::Closing => Err(RuntimeError::ClosedHandle),
+            Self::Closing => Err(RuntimeError::ClosedHandle),
         }
     }
 }
@@ -108,7 +106,6 @@ pub(crate) enum Payload {
         fingerprint: String,
     },
     ChangesCursor(crate::db_wire::ChangesCursorOpened),
-    Population(Option<Box<bumbledb_log::transition::local::Population>>),
 }
 
 struct Route {
@@ -116,7 +113,6 @@ struct Route {
     generation: u64,
     state: ResourceState,
     close: bool,
-    finalizing: bool,
 }
 
 pub(crate) struct NativeRegistry {
@@ -180,7 +176,6 @@ impl NativeRegistry {
                 generation,
                 state: ResourceState::Live,
                 close: false,
-                finalizing: false,
             },
         );
         Ok(Capability {
@@ -214,26 +209,9 @@ impl NativeRegistry {
         }
         Ok(if route.close {
             ResourceState::Closing
-        } else if route.finalizing {
-            ResourceState::Finalizing
         } else {
             route.state
         })
-    }
-
-    /// Stop new call admission while previously dispatched work drains on
-    /// the owning worker. The terminal job then consumes the payload.
-    pub(crate) fn begin_finalization(&self, cap: Capability) -> Result<(), RuntimeError> {
-        self.check(cap)?;
-        let mut routes = self.routes();
-        let route = routes
-            .get_mut(&(cap.kind, cap.id))
-            .ok_or(RuntimeError::ClosedHandle)?;
-        if route.generation != cap.generation || route.close || route.finalizing {
-            return Err(RuntimeError::ClosedHandle);
-        }
-        route.finalizing = true;
-        Ok(())
     }
 
     /// Admits one job against a live resource. Busy/closing refuse.
@@ -381,10 +359,17 @@ pub(crate) mod registry_draft {
 }
 
 /// Reserve-then-install admission. The JS wrapper holds a capability
-/// token only — it does not own the payload.
+/// token only; dropping the admission (including by garbage collection of
+/// the wrapper) requests the resource's close.
 pub(crate) struct RegistryAdmission {
-    pub runtime: Arc<Runtime>,
-    pub cap: Capability,
+    runtime: Arc<Runtime>,
+    cap: Capability,
+}
+
+impl Drop for RegistryAdmission {
+    fn drop(&mut self) {
+        let _ = self.runtime.request_resource_close(self.cap);
+    }
 }
 
 impl RegistryAdmission {

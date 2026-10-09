@@ -45,7 +45,7 @@ pub(crate) use apply::{
     WriteMode, apply_change_set, changes_from_payload, inspect_db, judge_change_set,
 };
 pub use changes::{ChangeRecordWire, ChangesCursorOpened};
-pub(crate) use close::{close_admitted, spawn_teardown};
+pub(crate) use close::close_admitted;
 pub(crate) use codec::{decode_rows_values, encode_rows_bytes, parse_input_rows};
 pub(crate) use delivery::{
     collect_from_payload, is_terminal_backing, publish_from_payload, transfer_from_payload,
@@ -1344,12 +1344,8 @@ pub fn runtime_decode_rows(
     Ok(operation_handle(runtime, operation))
 }
 
-// ---------------------------------------------------------------------------
-// Read-only schema snapshot and binding emission.
-// ---------------------------------------------------------------------------
-
 #[napi]
-pub fn runtime_schema_snapshot(
+pub fn runtime_schema_bindings(
     env: Env,
     handle: &External<RuntimeHandle>,
     spec: Object,
@@ -1379,61 +1375,23 @@ pub fn runtime_schema_snapshot(
                 .clone()
                 .validate()
                 .map_err(|error| schema_error(&error, &descriptor))?;
-            let bytes = bumbledb_log::schema_file::render(&descriptor).into_bytes();
             context.checkpoint()?;
-            Ok(Output::Bytes(QueuedBytes::admit(context, bytes)?))
+            let source =
+                crate::bindings::emit(&descriptor).map_err(|error| RuntimeError::Engine {
+                    kind: crate::tags::error_family::SCHEMA,
+                    message: error.to_string(),
+                    diagnostic: None,
+                })?;
+            Ok(Output::Bytes(QueuedBytes::admit(
+                context,
+                source.into_bytes(),
+            )?))
         }))
     });
     if let Some(error) = marshal_error {
         return Err(error);
     }
     let operation = operation.map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(runtime, operation))
-}
-
-#[napi]
-pub fn runtime_schema_bindings(
-    env: Env,
-    handle: &External<RuntimeHandle>,
-    snapshot: Unknown,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let snapshot = unshared_input(env, snapshot)?;
-    let operation = runtime
-        .submit(WorkContext::new(), notification(callback)?, |context| {
-            context.checkpoint()?;
-            let owned = snapshot.to_vec();
-            Ok(Box::new(move |context| {
-                let input =
-                    std::str::from_utf8(&owned).map_err(|_| RuntimeError::InvalidArgument)?;
-                let descriptor = bumbledb_log::schema_file::parse(input).map_err(|error| {
-                    RuntimeError::Engine {
-                        kind: crate::tags::error_family::SCHEMA,
-                        message: error.to_string(),
-                        diagnostic: None,
-                    }
-                })?;
-                descriptor
-                    .clone()
-                    .validate()
-                    .map_err(|error| schema_error(&error, &descriptor))?;
-                context.checkpoint()?;
-                let source = bumbledb_log::bindings::emit(&descriptor).map_err(|error| {
-                    RuntimeError::Engine {
-                        kind: crate::tags::error_family::SCHEMA,
-                        message: error.to_string(),
-                        diagnostic: None,
-                    }
-                })?;
-                context.checkpoint()?;
-                Ok(Output::Bytes(QueuedBytes::admit(
-                    context,
-                    source.into_bytes(),
-                )?))
-            }))
-        })
-        .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
 

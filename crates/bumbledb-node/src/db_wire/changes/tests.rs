@@ -42,10 +42,8 @@ fn payload(rows: u64, text: &str) -> Payload {
     }
 }
 
-fn admit(runtime: &Arc<Runtime>, payload: Payload, kind: NativeKind) -> Capability {
-    RegistryAdmission::admit(Arc::clone(runtime), kind, payload)
-        .unwrap()
-        .cap()
+fn admit(runtime: &Arc<Runtime>, payload: Payload, kind: NativeKind) -> RegistryAdmission {
+    RegistryAdmission::admit(Arc::clone(runtime), kind, payload).unwrap()
 }
 
 fn submit(
@@ -117,11 +115,12 @@ fn bounded_cursor_retries_cancelled_page_without_advancing() {
         panic!("cursor")
     };
     drop(original);
-    let cap = admit(
+    let held = admit(
         &runtime,
         Payload::ChangesCursor(cursor),
         NativeKind::ChangesCursor,
     );
+    let cap = held.cap();
     runtime.arm_publication_cancel();
     assert!(matches!(
         page(&runtime, cap),
@@ -145,11 +144,12 @@ fn oversized_records_travel_alone_and_independent_cursors_restart() {
         let Output::ChangesCursor(cursor) = cursor_from_payload(&original).unwrap() else {
             panic!("cursor")
         };
-        let cap = admit(
+        let held = admit(
             &runtime,
             Payload::ChangesCursor(cursor),
             NativeKind::ChangesCursor,
         );
+        let cap = held.cap();
         for id in 0..3 {
             let page = page(&runtime, cap).unwrap().unwrap();
             assert_eq!(page.len(), 1);
@@ -164,8 +164,11 @@ fn oversized_records_travel_alone_and_independent_cursors_restart() {
 fn composition_routes_without_blocking_on_one_or_many_workers_and_allows_self() {
     for workers in [1, 2] {
         let runtime = runtime(workers);
-        let left = admit(&runtime, payload(2, "a"), NativeKind::Changes);
-        let right = admit(&runtime, payload(3, "b"), NativeKind::Changes);
+        let held = [
+            admit(&runtime, payload(2, "a"), NativeKind::Changes),
+            admit(&runtime, payload(3, "b"), NativeKind::Changes),
+        ];
+        let (left, right) = (held[0].cap(), held[1].cap());
         if workers == 2 {
             assert_ne!(left.worker, right.worker);
         }
@@ -192,8 +195,11 @@ fn cancellation_between_composition_borrows_releases_the_retained_input() {
 
 fn composition_gap(cancel: bool) {
     let runtime = runtime(2);
-    let left = admit(&runtime, payload(2, "a"), NativeKind::Changes);
-    let right = admit(&runtime, payload(3, "b"), NativeKind::Changes);
+    let held = [
+        admit(&runtime, payload(2, "a"), NativeKind::Changes),
+        admit(&runtime, payload(3, "b"), NativeKind::Changes),
+    ];
+    let (left, right) = (held[0].cap(), held[1].cap());
     assert_ne!(left.worker, right.worker);
     let (entered, waiting) = channel();
     let (release, resume) = channel();

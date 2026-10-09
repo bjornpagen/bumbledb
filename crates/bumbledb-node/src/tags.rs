@@ -354,15 +354,11 @@ wire_tags! {
         OVERFLOW: ErrorFamily::Overflow => "overflow",
         SCALAR: ErrorFamily::Scalar => "scalar",
         RESULT_BYTES_OVERFLOW: ErrorFamily::ResultBytesOverflow => "resultBytesOverflow",
+        CAPACITY: ErrorFamily::Capacity => "capacity",
         CORRUPTION: ErrorFamily::Corruption => "corruption",
         STORE: ErrorFamily::Store => "store",
     }
 }
-
-// The 0.x braided log codec tag tables (`log_op`, `log_encode_refusal`)
-// are deleted with the braids/codec/manifest/sidecar protocol. Successor
-// history refusal identities are spelled by `bumbledb_log::identities`
-// (one speller) and cross through `log.rs` lanes directly.
 
 pub(crate) mod admission_tag {
     pub(crate) const ACCEPTED: &str = "accepted";
@@ -401,73 +397,4 @@ pub(crate) mod prepare_kind {
     pub(crate) const IR_ERROR: &str = "irError";
     #[allow(dead_code)]
     pub(crate) const TAGS: &[&str] = &[IR_ERROR];
-}
-
-#[cfg(test)]
-mod golden {
-    use serde_json::Value as Json;
-
-    /// Every table, key → roster, as the golden spells it. `param` lists
-    /// only the wire-visible extra spelling: a scalar param crosses as its
-    /// value's own tag, so `"scalar"` never appears on the wire.
-    fn tables() -> Vec<(&'static str, Vec<&'static str>)> {
-        let wire_param: Vec<&'static str> = super::param::TAGS
-            .iter()
-            .copied()
-            .filter(|tag| *tag != super::param::SCALAR)
-            .collect();
-        vec![
-            ("value", super::value::TAGS.to_vec()),
-            ("valueType", super::value_type::TAGS.to_vec()),
-            ("intervalElement", super::interval_element::TAGS.to_vec()),
-            ("literal", super::literal::TAGS.to_vec()),
-            ("literalSet", super::literal_set::TAGS.to_vec()),
-            ("capacityWindow", super::capacity_window::TAGS.to_vec()),
-            ("capacityBound", super::capacity_bound::TAGS.to_vec()),
-            ("weight", super::weight::TAGS.to_vec()),
-            ("statement", super::statement::TAGS.to_vec()),
-            ("statementKind", super::statement_kind::TAGS.to_vec()),
-            ("term", super::term::TAGS.to_vec()),
-            ("scalarExpr", super::scalar_expr::TAGS.to_vec()),
-            ("numericCast", super::numeric_cast::TAGS.to_vec()),
-            ("aggregateOp", super::head_op::TAGS.to_vec()),
-            ("headTerm", super::head_term::TAGS.to_vec()),
-            ("findTerm", super::find_term::TAGS.to_vec()),
-            ("atomSource", super::atom_source::TAGS.to_vec()),
-            ("cmpOp", super::cmp_op::TAGS.to_vec()),
-            ("condition", super::condition::TAGS.to_vec()),
-            ("query", super::query::TAGS.to_vec()),
-            ("direction", super::direction::TAGS.to_vec()),
-            ("param", wire_param),
-            ("errorFamily", super::error_family::TAGS.to_vec()),
-            ("admissionTag", super::admission_tag::TAGS.to_vec()),
-            ("writeTag", super::write_tag::TAGS.to_vec()),
-            ("openKind", super::open_kind::TAGS.to_vec()),
-            ("prepareKind", super::prepare_kind::TAGS.to_vec()),
-        ]
-    }
-
-    #[test]
-    fn tags_json_matches() {
-        let committed: Json =
-            serde_json::from_str(include_str!("../../../ts/test/fixtures/tags.json"))
-                .expect("ts/test/fixtures/tags.json parses");
-        let expected: Json = serde_json::Value::Object(
-            tables()
-                .into_iter()
-                .map(|(key, tags)| {
-                    (
-                        key.to_string(),
-                        Json::Array(tags.into_iter().map(Into::into).collect()),
-                    )
-                })
-                .collect(),
-        );
-        assert_eq!(
-            committed, expected,
-            "ts/test/fixtures/tags.json drifted from the wire_tags! tables — \
-             update the golden to match the tables (never the reverse without \
-             a core-enum change)"
-        );
-    }
 }

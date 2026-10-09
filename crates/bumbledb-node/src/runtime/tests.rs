@@ -396,60 +396,6 @@ fn suspended_owner_fences_a_second_acquire() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-// --- C7: control drain and bounded affine lanes (authored; NotRun) --------
-
-#[test]
-fn control_lane_teardown_runs_when_ordinary_queue_is_full() {
-    let runtime = Arc::new(Runtime::start(options()).unwrap());
-    let (release, blocked) = mpsc::channel();
-    let (entered, running) = mpsc::channel();
-    let (_operation, done) = submit(
-        &runtime,
-        Box::new(move |_| {
-            entered.send(()).unwrap();
-            blocked.recv().unwrap();
-            Ok(Output::Ready)
-        }),
-    );
-    running.recv_timeout(Duration::from_secs(2)).unwrap();
-    let queued = (0..options().queue_capacity)
-        .map(|_| {
-            runtime
-                .submit(policy(), Box::new(|| {}), |_| {
-                    Ok(Box::new(|_| Ok(Output::Ready)))
-                })
-                .expect("each queue slot admits")
-        })
-        .collect::<Vec<_>>();
-    assert!(matches!(
-        runtime.submit(policy(), Box::new(|| {}), |_| Ok(Box::new(|_| Ok(
-            Output::Ready
-        )))),
-        Err(RuntimeError::QueueFull)
-    ));
-    let (teardown_tx, teardown_rx) = mpsc::channel();
-    let (report_tx, report_rx) = mpsc::channel();
-    runtime
-        .submit_control(
-            Box::new(move || {
-                teardown_tx.send(()).unwrap();
-            }),
-            Some(Box::new(move |report| {
-                report_tx.send(report).unwrap();
-            })),
-        )
-        .expect("control admits while ordinary queue is saturated");
-    release.send(()).unwrap();
-    done.recv_timeout(Duration::from_secs(2)).unwrap();
-    teardown_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert_eq!(
-        report_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
-        CloseReport::Closed
-    );
-    drop(queued);
-    assert_eq!(close(&runtime), CloseReport::Closed);
-}
-
 #[test]
 fn d18_idle_shutdown_wakes_sleeping_pool_without_reentering_state() {
     // D18: drain an idle pool. lane_send must not re-lock runtime.state
@@ -476,10 +422,20 @@ fn d29_worker_inbox_wakeup_reaches_a_sleeping_pool() {
 }
 
 #[test]
-fn d29_failed_native_admission_does_not_leave_a_route() {
+fn native_capacity_refuses_before_a_route_exists() {
     let runtime = Runtime::start(options()).unwrap();
-    let handles: Vec<_> = (0..runtime.options.native_handle_capacity)
-        .map(|_| runtime.retain_native().unwrap())
+    let admissions: Vec<_> = (0..runtime.options.native_handle_capacity)
+        .map(|_| {
+            super::registry::RegistryAdmission::admit(
+                Arc::clone(&runtime),
+                super::registry::NativeKind::Result,
+                super::registry::Payload::Result {
+                    result: None,
+                    state: super::registry::ResultState::Live,
+                },
+            )
+            .unwrap()
+        })
         .collect();
     assert!(matches!(
         runtime.reserve_native_route(super::registry::NativeKind::Result),
@@ -488,19 +444,7 @@ fn d29_failed_native_admission_does_not_leave_a_route() {
             ..
         })
     ));
-    assert_eq!(runtime.inspect().natives, handles.len());
-    assert_eq!(runtime.registry.route_count(), 0);
-    drop(handles);
-    assert_eq!(runtime.inspect().natives, 0);
+    assert_eq!(runtime.registry.route_count(), admissions.len());
     assert_eq!(close(&runtime), CloseReport::Closed);
-}
-
-#[test]
-fn retained_native_guard_releases_handle_slot_on_drop() {
-    let runtime = Runtime::start(options()).unwrap();
-    let guard = runtime.retain_native().expect("admit native");
-    assert_eq!(runtime.inspect().natives, 1);
-    drop(guard);
     assert_eq!(runtime.inspect().natives, 0);
-    assert_eq!(close(&runtime), CloseReport::Closed);
 }

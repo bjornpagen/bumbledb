@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bumbledb::work::WorkContext;
-use bumbledb_log::store::fence::{DirectoryLock, acquire_directory};
 
+use super::fence::{DirectoryLock, acquire_directory};
 use super::{
     CloseReport, Operation, Output, Phase, Runtime, RuntimeError, State, WaitTarget, Waiter, Work,
     lock,
@@ -307,11 +307,8 @@ impl Runtime {
         })
     }
 
-    /// Reserves one directory-owner slot BEFORE its kernel lock exists (the
-    /// log machine's history opens run the fence acquisition inside their
-    /// own registered job, then install the held lock with
-    /// [`Self::install_owner_lock`] or abandon the slot).
-    pub(crate) fn reserve_owner_slot(&self) -> Result<u64, RuntimeError> {
+    /// Reserves one directory-owner slot before its kernel lock exists.
+    fn reserve_owner_slot(&self) -> Result<u64, RuntimeError> {
         let mut state = lock(&self.state);
         if state.phase != Phase::Open {
             return Err(RuntimeError::ClosedHandle);
@@ -339,112 +336,6 @@ impl Runtime {
             },
         );
         Ok(id)
-    }
-
-    /// Installs a held kernel lock into a reserved owner slot and hands out
-    /// the owner capability. A slot that began closing while the fence was
-    /// being acquired refuses (the lock is dropped by the caller — the
-    /// cleanup path owns nothing it never received).
-    pub(crate) fn install_owner_lock(
-        self: &Arc<Self>,
-        id: u64,
-        held: DirectoryLock,
-    ) -> Result<DirectoryOwner, RuntimeError> {
-        let mut state = lock(&self.state);
-        let Some(entry) = state.owners.get_mut(&id) else {
-            return Err(RuntimeError::ClosedHandle);
-        };
-        entry.opening = false;
-        entry.lock = Some(held);
-        if entry.closing {
-            entry.begin_close(false);
-            self.changed.notify_all();
-            return Err(RuntimeError::ClosedHandle);
-        }
-        drop(state);
-        self.changed.notify_all();
-        Ok(DirectoryOwner {
-            runtime: Arc::clone(self),
-            id,
-        })
-    }
-
-    /// A registered lease on the first managed database whose directory
-    /// owner holds exactly `path` (the admin verbs reuse an already-open
-    /// tenant instead of double-acquiring its kernel fence). `None` when no
-    /// live owner holds that directory.
-    ///
-    /// Held locks record the fence's CANONICAL spelling
-    /// ([`acquire_directory`] canonicalizes the parent), so the requested
-    /// path is normalized the same way before comparison — otherwise a
-    /// symlinked spelling (macOS `/var` → `/private/var`) would silently
-    /// miss the warm tenant and double-acquire its kernel fence.
-    pub(crate) fn lease_database_at(
-        self: &Arc<Self>,
-        path: &std::path::Path,
-    ) -> Result<Option<DbLease>, RuntimeError> {
-        let canonical = canonical_directory(path);
-        let requested: &Path = canonical.as_deref().unwrap_or(path);
-        let target = {
-            let state = lock(&self.state);
-            let mut found = None;
-            for (&owner_id, entry) in &state.owners {
-                if entry.closing || entry.opening {
-                    continue;
-                }
-                let Some(held) = entry.lock.as_ref() else {
-                    continue;
-                };
-                if held.directory() != requested {
-                    continue;
-                }
-                if let Some((&db_id, database)) = entry
-                    .databases
-                    .iter()
-                    .find(|(_, database)| !database.closing && database.inner.is_some())
-                {
-                    let _ = database;
-                    found = Some((owner_id, db_id));
-                    break;
-                }
-            }
-            found
-        };
-        let Some((owner_id, db_id)) = target else {
-            return Ok(None);
-        };
-        let policy = WorkContext::new();
-        let operation = self.begin_external(owner_id, Some(db_id), policy)?;
-        let lease = ExternalLease {
-            runtime: Arc::clone(self),
-            operation,
-        };
-        let state = lock(&self.state);
-        let inner = state
-            .owners
-            .get(&owner_id)
-            .and_then(|entry| entry.databases.get(&db_id))
-            .and_then(|entry| entry.inner.as_ref())
-            .cloned()
-            .ok_or(RuntimeError::ClosedHandle)?;
-        drop(state);
-        Ok(Some(DbLease {
-            inner,
-            operation: lease,
-        }))
-    }
-
-    /// Abandons a reserved owner slot (fence acquisition failed / open
-    /// refused): the slot leaves through the ordinary cleanup lane so its
-    /// owner slot releases and any installed lock drops.
-    pub(crate) fn abandon_owner_slot(&self, id: u64) {
-        let mut state = lock(&self.state);
-        if let Some(entry) = state.owners.get_mut(&id) {
-            entry.opening = false;
-            entry.begin_close(false);
-        }
-        drop(state);
-        self.changed.notify_all();
     }
 
     fn begin_external(
@@ -640,6 +531,7 @@ impl DirectoryOwner {
     pub fn child_path(&self, name: &str) -> Result<std::path::PathBuf, RuntimeError> {
         self.reference().child_path(name)
     }
+    #[cfg(test)]
     pub(crate) fn attach_db(&self, inner: crate::DbInner) -> Result<ManagedDb, RuntimeError> {
         self.reference().attach_db(inner)
     }
@@ -791,18 +683,6 @@ impl Drop for PendingDirectory {
             self.runtime.changed.notify_all();
         }
     }
-}
-
-/// The fence's canonical spelling of a tenant directory: absolute path with
-/// the PARENT canonicalized and the final component kept verbatim — exactly
-/// how [`acquire_directory`] records `DirectoryLock::directory`. `None` when
-/// the path cannot be normalized (comparison then falls back to the raw
-/// spelling, which can only under-match, never cross-match).
-fn canonical_directory(path: &Path) -> Option<std::path::PathBuf> {
-    let absolute = std::path::absolute(path).ok()?;
-    let name = absolute.file_name()?;
-    let parent = std::fs::canonicalize(absolute.parent()?).ok()?;
-    Some(parent.join(name))
 }
 
 pub(crate) fn io_error(error: std::io::Error) -> RuntimeError {

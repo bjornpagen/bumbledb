@@ -159,7 +159,6 @@ pub struct SessionOpened {
     pub sealed: Arc<crate::Sealed>,
     pub generation: u64,
     pub store: String,
-    pub attachment: Option<Vec<u8>>,
 }
 
 struct SessionCore {
@@ -239,10 +238,6 @@ impl SnapshotSession {
         self.core.cap
     }
 
-    pub fn begin_close(&self) {
-        self.core.begin_close();
-    }
-
     pub fn drain(&self, report: super::Report) {
         self.core.drain(report);
     }
@@ -278,22 +273,6 @@ impl Runtime {
         })
     }
 
-    /// Pin on the current worker. Called from an already-running pool job
-    /// (open or L14 authority pin). No `ready_rx`, no second hop onto this pool.
-    pub(crate) fn spawn_read_session_for(
-        self: &Arc<Self>,
-        db: &ManagedDb,
-        lease: DbLease,
-        context: &WorkContext,
-    ) -> Result<Output, RuntimeError> {
-        if !Arc::ptr_eq(self, db.runtime()) {
-            return Err(RuntimeError::ForeignRuntime);
-        }
-        let (owner, database) = db.ids();
-        context.checkpoint()?;
-        self.pin_snapshot(owner, database, lease, context)
-    }
-
     fn pin_snapshot(
         self: &Arc<Self>,
         owner: u64,
@@ -311,11 +290,6 @@ impl Runtime {
             .snapshot(context)
             .map_err(|error| engine_error(&error))?;
         let generation = pinned_read.snapshot().generation().value();
-        let attachment = pinned_read
-            .snapshot()
-            .attachment()
-            .map_err(|error| engine_error(&bumbledb::Error::Store(Box::new(error))))?
-            .map(<[u8]>::to_vec);
         let cap = self.reserve_snapshot_route(owner, database, worker, NativeKind::Snapshot)?;
         let resource = SnapshotResource {
             data: Rc::new(SnapshotData {
@@ -345,7 +319,6 @@ impl Runtime {
             sealed,
             generation,
             store: store_identity,
-            attachment,
         }))
     }
 
@@ -671,59 +644,12 @@ impl Runtime {
         prepare: impl FnOnce(&WorkContext) -> Result<PayloadWork, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
         self.registry.state(cap)?.admit()?;
-        self.submit_payload_inner(cap, None, policy, notify, prepare)
-    }
-
-    /// Finalization revokes new admission immediately, waits behind existing
-    /// worker jobs, and closes every alias even on cancellation or panic.
-    #[cfg(test)]
-    pub(crate) fn finalize_payload(
-        self: &Arc<Self>,
-        cap: Capability,
-        policy: WorkContext,
-        notify: Notify,
-        prepare: impl FnOnce(&WorkContext) -> Result<PayloadWork, RuntimeError>,
-    ) -> Result<Arc<Operation>, RuntimeError> {
-        self.finalize_payload_ordered(cap, None, policy, notify, prepare)
-    }
-
-    pub(crate) fn finalize_payload_ordered(
-        self: &Arc<Self>,
-        cap: Capability,
-        order: Option<super::sequence::PayloadReservation>,
-        policy: WorkContext,
-        notify: Notify,
-        prepare: impl FnOnce(&WorkContext) -> Result<PayloadWork, RuntimeError>,
-    ) -> Result<Arc<Operation>, RuntimeError> {
-        struct Closing {
-            runtime: Arc<Runtime>,
-            cap: Capability,
-        }
-        impl Drop for Closing {
-            fn drop(&mut self) {
-                let _ = self.runtime.request_resource_close(self.cap);
-            }
-        }
-        if order.is_none() {
-            self.registry.begin_finalization(cap)?;
-        }
-        let closing = Closing {
-            runtime: Arc::clone(self),
-            cap,
-        };
-        self.submit_payload_inner(cap, order, policy, notify, |context| {
-            let work = prepare(context)?;
-            Ok(Box::new(move |context, payload, publication| {
-                let _closing = closing;
-                work(context, payload, publication)
-            }))
-        })
+        self.submit_payload_inner(cap, policy, notify, prepare)
     }
 
     fn submit_payload_inner(
         &self,
         cap: Capability,
-        order: Option<super::sequence::PayloadReservation>,
         policy: WorkContext,
         notify: Notify,
         prepare: impl FnOnce(&WorkContext) -> Result<PayloadWork, RuntimeError>,
@@ -772,10 +698,6 @@ impl Runtime {
             }
         };
         drop(state);
-        if let Some(order) = order {
-            order.dispatch(Arc::clone(&operation), work);
-            return Ok(operation);
-        }
         if self
             .send_resource(
                 cap,
@@ -2099,23 +2021,6 @@ mod tests {
         assert_eq!(baseline.natives, 0);
         assert_eq!(runtime.registry.route_count(), 0);
 
-        let handles: Vec<_> = (0..runtime.options.native_handle_capacity)
-            .map(|_| runtime.retain_native().unwrap())
-            .collect();
-        assert!(
-            matches!(
-                runtime.reserve_native_route(NativeKind::Result),
-                Err(RuntimeError::ResourceLimit {
-                    dimension: "nativeHandleCapacity",
-                    ..
-                })
-            ),
-            "handle admission refuses before a route exists"
-        );
-        drop(handles);
-        assert_eq!(runtime.inspect().natives, 0);
-        assert_eq!(runtime.registry.route_count(), 0);
-
         let base = unique_dir("d29-history");
         std::fs::create_dir_all(&base).unwrap();
         let owner = acquire(&runtime, &base.join("tenant"));
@@ -2191,95 +2096,5 @@ mod tests {
         assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
         assert_eq!(drain_session(&session), CloseReport::Closed);
         let _ = std::fs::remove_dir_all(&base);
-    }
-    #[test]
-    fn finalization_revokes_aliases_drains_busy_work_and_consumes_on_cancel() {
-        let runtime = Runtime::start(options()).unwrap();
-        let admission = super::super::registry::RegistryAdmission::admit(
-            Arc::clone(&runtime),
-            NativeKind::Result,
-            super::super::registry::Payload::Result {
-                result: None,
-                state: super::super::registry::ResultState::Live,
-            },
-        )
-        .unwrap();
-        let (entered, running) = channel();
-        let (release, blocked) = channel();
-        let (done, completed) = channel();
-        let first = runtime
-            .submit_payload(
-                admission.cap(),
-                policy(),
-                Box::new(move || {
-                    done.send(()).unwrap();
-                }),
-                |_| {
-                    Ok(Box::new(move |_, _, _| {
-                        entered.send(()).unwrap();
-                        blocked.recv().unwrap();
-                        Ok(Output::Ready)
-                    }))
-                },
-            )
-            .unwrap();
-        running.recv_timeout(Duration::from_secs(5)).unwrap();
-        let (done, finished) = channel();
-        let terminal = runtime
-            .finalize_payload(
-                admission.cap(),
-                policy(),
-                Box::new(move || {
-                    done.send(()).unwrap();
-                }),
-                |_| Ok(Box::new(|_, _, _| Ok(Output::Ready))),
-            )
-            .expect("finalize queues behind the admitted write");
-        assert!(matches!(
-            runtime.submit_payload(admission.cap(), policy(), Box::new(|| {}), |_| panic!(
-                "revoked"
-            )),
-            Err(RuntimeError::ClosedHandle)
-        ));
-        assert!(matches!(
-            runtime.finalize_payload(admission.cap(), policy(), Box::new(|| {}), |_| panic!(
-                "already finalizing"
-            )),
-            Err(RuntimeError::ClosedHandle)
-        ));
-        release.send(()).unwrap();
-        completed.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(matches!(runtime.take(&first), Ok(Output::Ready)));
-        finished.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(matches!(runtime.take(&terminal), Ok(Output::Ready)));
-        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
-        assert_eq!(runtime.inspect().natives, 0);
-
-        let runtime = Runtime::start(options()).unwrap();
-        let admission = super::super::registry::RegistryAdmission::admit(
-            Arc::clone(&runtime),
-            NativeKind::Result,
-            super::super::registry::Payload::Result {
-                result: None,
-                state: super::super::registry::ResultState::Live,
-            },
-        )
-        .unwrap();
-        let stopped = policy();
-        stopped.cancel();
-        assert!(matches!(
-            runtime.finalize_payload(admission.cap(), stopped, Box::new(|| {}), |_| panic!(
-                "cancelled"
-            )),
-            Err(RuntimeError::Work(_))
-        ));
-        assert!(matches!(
-            runtime.submit_payload(admission.cap(), policy(), Box::new(|| {}), |_| panic!(
-                "consumed"
-            )),
-            Err(RuntimeError::ClosedHandle)
-        ));
-        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
-        assert_eq!(runtime.inspect().natives, 0);
     }
 }

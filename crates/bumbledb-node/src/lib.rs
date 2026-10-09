@@ -1,15 +1,8 @@
-//! The dumb-bridge law: no logic beyond marshaling will EVER live in this
-//! crate. Anything smart belongs in the TypeScript SDK or the engine.
-//!
-//! Every database resource is owned by the ONE runtime registry
-//! (`runtime_wire.rs`): databases live behind kernel-held directory
-//! owners, `!Send` engine transactions and prepared queries live inside
-//! worker-affine sessions (`runtime/session.rs`), and every operation is
-//! registered, cancellable and drainable. The historical raw-pointer
-//! `InstanceHandle`/`TxHandle` scoped-borrow surface — a JavaScript
-//! callback executing inside a native transaction frame — is deleted, as
-//! are the libuv `AsyncTask` entrypoints and the fresh/reserve issuance
-//! verbs (the successor has application-owned `Uuid` identity only).
+//! The Node bridge: marshaling between JavaScript and the engine, nothing
+//! smarter. Every native resource is owned by the one runtime registry
+//! (`runtime_wire.rs`); databases live behind kernel-held directory owners,
+//! `!Send` engine state lives in worker-affine tables, and every operation is
+//! registered, cancellable and drainable.
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -20,11 +13,10 @@ use bumbledb::{
 use napi::bindgen_prelude::{Buffer, Env, Object};
 use napi_derive::napi;
 
+mod bindings;
 pub mod db_wire;
 #[cfg(test)]
 mod fingerprint_lock;
-pub mod log;
-pub mod log_wire;
 mod marshal;
 mod runtime;
 pub mod runtime_wire;

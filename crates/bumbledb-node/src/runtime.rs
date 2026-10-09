@@ -19,11 +19,11 @@ static NEXT_RUNTIME: AtomicU64 = AtomicU64::new(1);
 
 use bumbledb::work::{WorkContext, WorkError};
 
+pub mod fence;
 pub mod lanes;
 pub mod owners;
 pub mod publication;
 pub mod registry;
-pub mod sequence;
 pub mod session;
 pub mod table;
 
@@ -218,10 +218,6 @@ pub enum CloseReport {
     Failed,
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "keep completed outputs inline in the operation slot, without another per-operation allocation"
-)]
 pub enum Output {
     Ready,
     Hash([u8; 32]),
@@ -241,9 +237,6 @@ pub enum Output {
         submitted: u64,
         changed: u64,
     },
-    /// A grammar-lane payload (log command/decision framing) computed on
-    /// the executor: owned bytes plus optional owned metadata.
-    Log(crate::log::LogOutput),
     /// A sealed detached schema descriptor.
     Descriptor(crate::marshal::DescriptorWire),
     /// One compiled query with its own worker route and snapshot share.
@@ -267,21 +260,14 @@ pub enum Output {
         cap: Capability,
         work: session::PayloadWork,
     },
-    OrderedPayloadContinuation {
-        reservation: sequence::PayloadReservation,
-        work: session::PayloadWork,
-    },
     /// One immutable final-state apply outcome (chapter 35 `Db.apply`).
     Apply(crate::db_wire::ApplyOutcomeOwned),
     /// A non-committing judgment; cancellation never becomes mutation evidence.
     Judge(crate::db_wire::JudgeOutcomeOwned),
     /// Bounded database diagnostics (measurements, never rows).
     DbReport(crate::db_wire::DbInspectionOwned),
-    /// Owned bounded byte payloads (row codec, schema binding responses).
+    /// Owned bounded byte payloads (row codec responses).
     Bytes(QueuedBytes),
-    /// A log-machine payload (histories, commands, caches, admin — C10's
-    /// `LogNative` roster over the internal Rust machine).
-    Machine(crate::log_wire::MachineOutput),
 }
 
 impl Output {
@@ -291,11 +277,7 @@ impl Output {
     /// mutation outcome into a rollback claim (the certainty model's one
     /// carve-out from post-work cancellation).
     fn mutation_evidence(&self) -> bool {
-        match self {
-            Self::Apply(_) => true,
-            Self::Machine(output) => output.mutation_evidence(),
-            _ => false,
-        }
+        matches!(self, Self::Apply(_))
     }
 
     /// A page/rows owner whose ownership and cursor advance are already
@@ -345,19 +327,10 @@ struct Job {
 enum Action {
     Job(Job),
     Cleanup(owners::Cleanup),
-    /// Teardown and heavy disposal — independent of ordinary queue
-    /// saturation (C7 control drain).
-    Control(ControlJob),
     /// Inbox or close flag arrived while waiting; return to the event loop.
     Recheck,
 }
 
-pub(crate) type ControlWork = Box<dyn FnOnce() + Send>;
-
-struct ControlJob {
-    work: ControlWork,
-    report: Option<Report>,
-}
 struct Waiter {
     target: WaitTarget,
     deadline: Instant,
@@ -378,8 +351,6 @@ struct State {
     workers: usize,
     active: usize,
     queue: VecDeque<Job>,
-    /// Control/teardown lane: bounded separately from `queue_capacity`.
-    control: VecDeque<ControlJob>,
     operations: BTreeMap<u64, Arc<Operation>>,
     owners: BTreeMap<u64, owners::OwnerEntry>,
     waiters: Vec<Waiter>,
@@ -473,7 +444,6 @@ impl Runtime {
                 workers: 0,
                 active: 0,
                 queue: VecDeque::new(),
-                control: VecDeque::new(),
                 operations: BTreeMap::new(),
                 owners: BTreeMap::new(),
                 waiters: Vec::new(),
@@ -798,33 +768,6 @@ impl Runtime {
         }
     }
 
-    /// Schedules heavy teardown on the control lane. Progresses even when
-    /// the ordinary work queue is saturated (C7 independent control drain).
-    pub(crate) fn submit_control(
-        &self,
-        work: ControlWork,
-        report: Option<Report>,
-    ) -> Result<(), RuntimeError> {
-        let mut state = lock(&self.state);
-        if state.phase == Phase::Closed {
-            if let Some(report) = report {
-                drop(state);
-                report(CloseReport::Closed);
-            }
-            return Err(RuntimeError::ClosedHandle);
-        }
-        if state.control.len() >= self.options.cleanup_capacity {
-            if let Some(report) = report {
-                drop(state);
-                report(CloseReport::Failed);
-            }
-            return Err(RuntimeError::QueueFull);
-        }
-        state.control.push_back(ControlJob { work, report });
-        self.changed.notify_all();
-        Ok(())
-    }
-
     fn worker(&self, index: u32, lane_rx: &std::sync::mpsc::Receiver<lanes::WorkerCommand>) {
         table::WorkerContext::attach(index);
         loop {
@@ -834,10 +777,6 @@ impl Runtime {
             self.drain_closing_on_worker(index);
             let action = 'ready: {
                 let mut state = lock(&self.state);
-                if let Some(job) = state.control.pop_front() {
-                    state.active += 1;
-                    break 'ready Action::Control(job);
-                }
                 if let Some(cleanup) = state.cleanup() {
                     state.active += 1;
                     break 'ready Action::Cleanup(cleanup);
@@ -873,19 +812,6 @@ impl Runtime {
             };
             match action {
                 Action::Recheck => {}
-                Action::Control(job) => {
-                    let done = catch_unwind(AssertUnwindSafe(job.work)).is_ok();
-                    if let Some(report) = job.report {
-                        report(if done {
-                            CloseReport::Closed
-                        } else {
-                            CloseReport::Failed
-                        });
-                    }
-                    let mut state = lock(&self.state);
-                    state.active -= 1;
-                    self.changed.notify_all();
-                }
                 Action::Cleanup(cleanup) => {
                     self.run_cleanup(cleanup);
                     let mut state = lock(&self.state);
@@ -1075,9 +1001,6 @@ impl Runtime {
                             self.complete_operation(operation, Err(error));
                         }
                     }
-                    Ok(Some(Output::OrderedPayloadContinuation { reservation, work })) => {
-                        reservation.dispatch(Arc::clone(operation), work);
-                    }
                     Ok(Some(value)) => self.complete_operation(operation, Ok(value)),
                     Err(error) => self.complete_operation(operation, Err(error)),
                 }
@@ -1186,28 +1109,6 @@ impl Runtime {
         self.submit_at(Some(owner), Some(database), policy, notify, prepare)
     }
 
-    /// Admits one retained bridge-owned native resource. The returned guard
-    /// holds its native-handle slot until the resource is actually released.
-    pub(crate) fn retain_native(self: &Arc<Self>) -> Result<RetainedNative, RuntimeError> {
-        let mut state = lock(&self.state);
-        if state.phase != Phase::Open {
-            return Err(RuntimeError::ClosedHandle);
-        }
-        if state.natives >= self.options.native_handle_capacity {
-            return Err(RuntimeError::ResourceLimit {
-                dimension: "nativeHandleCapacity",
-                used: state.natives as u64,
-                requested: 1,
-                limit: self.options.native_handle_capacity as u64,
-            });
-        }
-        state.natives += 1;
-        drop(state);
-        Ok(RetainedNative {
-            runtime: Arc::clone(self),
-        })
-    }
-
     /// Operations currently bound to one managed database (queued, active
     /// or retained) — a bounded diagnostic for `Db.inspect`.
     pub(crate) fn database_operations(&self, owner: u64, database: u64) -> u64 {
@@ -1307,22 +1208,6 @@ impl Runtime {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
             }
         }
-    }
-}
-
-/// The retained-native guard: releases its handle-count slot
-/// when the resource actually leaves the registry —
-/// however it leaves (explicit close, take failure, or GC of the wrapper).
-pub(crate) struct RetainedNative {
-    runtime: Arc<Runtime>,
-}
-
-impl Drop for RetainedNative {
-    fn drop(&mut self) {
-        let mut state = lock(&self.runtime.state);
-        state.natives = state.natives.saturating_sub(1);
-        drop(state);
-        self.runtime.changed.notify_all();
     }
 }
 
