@@ -227,7 +227,6 @@ fn witnessed_rows_do_not_stage_bindings_and_reuse_warm_storage() {
                             }
                         }
                         let after = crate::alloc_counter::snapshot().window;
-                        #[cfg(feature = "alloc-counter")]
                         if warm {
                             assert_eq!(
                                 after, before,

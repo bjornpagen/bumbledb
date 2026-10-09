@@ -58,11 +58,22 @@ fn allocate(field_types: &[ValueType], row_count: usize) -> Result<Frame> {
     allocate_with(field_types, row_count, StridePadder::new())
 }
 
+/// The one resident-capacity check: image positions are `u32`, and
+/// `u32::MAX` is the chunk-list terminator, so an image holds fewer rows.
+fn check_resident(row_count: usize) -> Result<()> {
+    if u32::try_from(row_count).is_ok_and(|rows| rows < u32::MAX) {
+        Ok(())
+    } else {
+        Err(Error::Capacity(crate::error::Capacity::ResidentRows))
+    }
+}
+
 fn allocate_with(
     field_types: &[ValueType],
     row_count: usize,
     mut padder: StridePadder,
 ) -> Result<Frame> {
+    check_resident(row_count)?;
     let spans = column_spans(field_types);
     let byte_cols = spans
         .iter()
@@ -574,6 +585,18 @@ mod capacity_tests {
         }
         assert!(slab_lengths(usize::MAX, 1, 1).is_err());
         assert!(slab_lengths(usize::MAX / 8, 8, 0).is_err());
+    }
+
+    #[test]
+    fn resident_images_refuse_the_chunk_terminator_position_before_allocating() {
+        let limit = usize::try_from(u32::MAX).unwrap();
+        assert!(check_resident(limit - 1).is_ok());
+        for rows in [limit, limit + 1, usize::MAX] {
+            assert!(matches!(
+                allocate(&[ValueType::U64], rows),
+                Err(Error::Capacity(crate::error::Capacity::ResidentRows))
+            ));
+        }
     }
 
     #[test]

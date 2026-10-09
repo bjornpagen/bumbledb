@@ -103,7 +103,6 @@ fn sibling_runs<const K: usize>(width: usize) {
                     for warm in [false, true] {
                         scratch.mask.fill(9);
                         scratch.children[0].fill(sentinel);
-                        #[cfg(feature = "alloc-counter")]
                         let before = crate::alloc_counter::snapshot().window;
                         executor.probe_sibling_batch::<K, _>(
                             &mut scratch,
@@ -117,7 +116,6 @@ fn sibling_runs<const K: usize>(width: usize) {
                             width,
                             &mut NoopCounters,
                         );
-                        #[cfg(feature = "alloc-counter")]
                         if warm {
                             assert_eq!(crate::alloc_counter::snapshot().window, before);
                         }

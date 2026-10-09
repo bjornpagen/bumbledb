@@ -1,6 +1,6 @@
 //! Partial-image coverage: real reverse index, source visit bounds, rotating
 //! selections, whole-image sharing, pinned versions, text generations and
-//! cancellation. The heap and forced cursor paths are independent oracles.
+//! cancellation.
 use super::*;
 use bumbledb_theory::schema::{Side, StatementDescriptor};
 
@@ -50,15 +50,14 @@ fn indexed_store() -> StoreFix {
 fn indexed_image_rotation_is_bucket_shaped_and_never_shared_as_full() {
     let fix = indexed_store();
     let mut prepared = fix.prepare(&by_account_query()).unwrap();
-    let mut cursor = fix.prepare(&by_account_query()).unwrap();
-    cursor.force_cursor_fallback(true);
     for account in [0, 1, 2, 99, 0, 99, 1, 0] {
         let params = [BindValue::U64(account), BindValue::I64(-1)];
         let actual = fix.execute(&mut prepared, &params).unwrap();
-        assert_eq!(
-            answers_of(&actual),
-            answers_of(&fix.execute(&mut cursor, &params).unwrap())
-        );
+        let expected: Vec<(String, i64)> = (0..256i64)
+            .filter(|i| i.cast_unsigned() % 8 == account)
+            .map(|i| ("text".to_owned(), i))
+            .collect();
+        assert_eq!(answers_of(&actual), expected);
         assert!(
             matches!(prepared.last_visits, 0 | 32),
             "one bucket body walk, or a memo hit: {}",
@@ -249,8 +248,7 @@ fn self_join_does_not_clone_a_differently_selected_partial_image() {
         conditions: vec![],
     });
     let mut prepared = fix.prepare(&query).unwrap();
-    let mut cursor = fix.prepare(&query).unwrap();
-    cursor.force_cursor_fallback(true);
+    let amounts = |account: u64| (0..256i64).filter(move |i| i.cast_unsigned() % 8 == account);
     for (a, b) in [(0, 1), (2, 0), (1, 0), (0, 0), (99, 1)] {
         let args = [BindValue::U64(a), BindValue::U64(b)];
         let canonical = |out: Answers| {
@@ -266,9 +264,13 @@ fn self_join_does_not_clone_a_differently_selected_partial_image() {
             rows.sort_unstable();
             rows
         };
+        let mut expected: Vec<(i64, i64)> = amounts(a)
+            .flat_map(|x| amounts(b).map(move |y| (x, y)))
+            .collect();
+        expected.sort_unstable();
         assert_eq!(
             canonical(fix.execute(&mut prepared, &args).unwrap()),
-            canonical(fix.execute(&mut cursor, &args).unwrap())
+            expected
         );
     }
 }

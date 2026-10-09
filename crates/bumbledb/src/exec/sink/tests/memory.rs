@@ -52,7 +52,6 @@ fn release_frees_nested_pack_capacity_after_large_to_small_reuse() {
     assert_eq!(sink.binding_scratch.capacity(), 0);
     assert_eq!(sink.group_counts.capacity(), 0);
     assert!(sink.work.is_none());
-    #[cfg(feature = "alloc-counter")]
     {
         assert_eq!(after.allocs - before.allocs, 0);
         assert!(after.dealloc_bytes - before.dealloc_bytes >= large as u64);

@@ -114,7 +114,7 @@ fn hidden_instrument_key_string_filter_matches_forced_hash_in_order() {
             })
             .collect()
     };
-    for (reverse, fallback) in [(false, false), (true, false), (true, true)] {
+    for reverse in [false, true] {
         let mut rule = base.clone();
         if reverse {
             rule.atoms.reverse();
@@ -132,9 +132,6 @@ fn hidden_instrument_key_string_filter_matches_forced_hash_in_order() {
             rule.slot_count(),
             0,
         ));
-        for prepared in [&mut append, &mut hashed] {
-            prepared.force_cursor_fallback(fallback);
-        }
         for symbol in ["common", "missing", "other", "common"] {
             let params = [BindValue::Str(symbol)];
             let actual = pairs(&fix.execute(&mut append, &params).unwrap());
@@ -153,7 +150,7 @@ fn hidden_instrument_key_string_filter_matches_forced_hash_in_order() {
             sorted.sort_unstable();
             assert_eq!(
                 sorted, expected,
-                "independent join and symbol-filter denotation: reverse={reverse}, fallback={fallback}, symbol={symbol}"
+                "independent join and symbol-filter denotation: reverse={reverse}, symbol={symbol}"
             );
         }
     }
@@ -206,31 +203,26 @@ fn uuid_keyed_join_with_negative_guard_preserves_order_across_sink_tiers() {
         negated: vec![atom(RelationId(2))],
         conditions: vec![],
     });
-    for fallback in [false, true] {
-        let mut append = fix.prepare(&query).unwrap();
-        assert!(elided(&append));
-        let mut hashed = fix.prepare(&query).unwrap();
-        let rule = &hashed.pipeline.main_rules()[0];
-        hashed.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
-            rule.finds(),
-            rule.slot_count(),
-            0,
-        ));
-        for prepared in [&mut append, &mut hashed] {
-            prepared.force_cursor_fallback(fallback);
+    let mut append = fix.prepare(&query).unwrap();
+    assert!(elided(&append));
+    let mut hashed = fix.prepare(&query).unwrap();
+    let rule = &hashed.pipeline.main_rules()[0];
+    hashed.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
+        rule.finds(),
+        rule.slot_count(),
+        0,
+    ));
+    // Reuse both sinks, including after delivery.
+    for _ in 0..2 {
+        let actual = fix.execute(&mut append, &[] as &[BindValue]).unwrap();
+        let control = fix.execute(&mut hashed, &[] as &[BindValue]).unwrap();
+        assert_eq!(actual.len(), 3);
+        assert_eq!(actual.len(), control.len());
+        for row in 0..actual.len() {
+            assert_eq!(actual.get(row, 0), control.get(row, 0));
         }
-        // Reuse both sinks, including after delivery.
-        for _ in 0..2 {
-            let actual = fix.execute(&mut append, &[] as &[BindValue]).unwrap();
-            let control = fix.execute(&mut hashed, &[] as &[BindValue]).unwrap();
-            assert_eq!(actual.len(), 3);
-            assert_eq!(actual.len(), control.len());
-            for row in 0..actual.len() {
-                assert_eq!(actual.get(row, 0), control.get(row, 0));
-            }
-            for id in &ids[..3] {
-                assert!((0..actual.len()).any(|row| actual.get(row, 0) == AnswerValue::Uuid(*id)));
-            }
+        for id in &ids[..3] {
+            assert!((0..actual.len()).any(|row| actual.get(row, 0) == AnswerValue::Uuid(*id)));
         }
     }
 }
@@ -353,21 +345,18 @@ fn keyed_interval_membership_keeps_hashing_for_hidden_points_through_real_normal
         normalized[0].occurrences[0].point_vars,
         vec![(FieldId(1), VarId(1), false)]
     );
-    for fallback in [false, true] {
-        let mut prepared = fix.prepare(&query).unwrap();
-        assert!(
-            !elided(&prepared),
-            "a determined interval does not determine its membership point"
-        );
-        prepared.force_cursor_fallback(fallback);
-        let answers = fix.execute(&mut prepared, &[] as &[BindValue]).unwrap();
-        assert_eq!(
-            answers.len(),
-            1,
-            "both matching points project the same span ID"
-        );
-        assert_eq!(answers.get(0, 0), AnswerValue::U64(7));
-    }
+    let mut prepared = fix.prepare(&query).unwrap();
+    assert!(
+        !elided(&prepared),
+        "a determined interval does not determine its membership point"
+    );
+    let answers = fix.execute(&mut prepared, &[] as &[BindValue]).unwrap();
+    assert_eq!(
+        answers.len(),
+        1,
+        "both matching points project the same span ID"
+    );
+    assert_eq!(answers.get(0, 0), AnswerValue::U64(7));
 }
 
 #[test]

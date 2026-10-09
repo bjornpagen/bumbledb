@@ -23,7 +23,6 @@ mod memory;
 mod pack;
 mod projection;
 mod semantics;
-mod stage_spill;
 
 fn schema() -> Schema {
     SchemaDescriptor {

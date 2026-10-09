@@ -222,24 +222,6 @@ impl TextOwners {
             });
         }
     }
-
-    /// Pin only the string columns of a flat, typed row, without copying payloads.
-    pub(crate) fn pin_row(
-        &mut self,
-        row: &[u64],
-        types: &[bumbledb_theory::schema::ValueType],
-        generation: &crate::work::GenerationHandle,
-    ) -> crate::error::Result<()> {
-        let mut slot = 0;
-        for ty in types {
-            if *ty == bumbledb_theory::schema::ValueType::String {
-                let word = row[slot];
-                self.pin(word, || generation.resolver().owned_text(word))?;
-            }
-            slot += crate::ir::normalize::SlotWidth::of(ty).slots();
-        }
-        Ok(())
-    }
 }
 
 impl RelationImage {

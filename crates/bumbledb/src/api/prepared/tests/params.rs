@@ -41,7 +41,6 @@ fn changing_text_parameters_do_not_retain_their_entire_history() {
         retained < 16 * 1024,
         "retention must not grow with all historical parameters"
     );
-    #[cfg(feature = "alloc-counter")]
     let live_after_short = crate::alloc_counter::snapshot().absolute.live_bytes;
     for turn in 128..4224 {
         let text = format!("obsolete-{turn}-{payload}");
@@ -51,7 +50,6 @@ fn changing_text_parameters_do_not_retain_their_entire_history() {
                 .is_empty()
         );
     }
-    #[cfg(feature = "alloc-counter")]
     {
         let live_after_long = crate::alloc_counter::snapshot().absolute.live_bytes;
         eprintln!(

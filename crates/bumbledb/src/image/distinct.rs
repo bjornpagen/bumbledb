@@ -196,10 +196,8 @@ mod tests {
             let work = unbounded_work();
             let expected = words.iter().collect::<std::collections::HashSet<_>>().len() as u64;
             assert!(image.distincts[0].get().is_none());
-            #[cfg(feature = "alloc-counter")]
             let before = crate::alloc_counter::snapshot();
             assert_eq!(image.distinct_count(0, &work).unwrap(), expected);
-            #[cfg(feature = "alloc-counter")]
             {
                 let after = crate::alloc_counter::snapshot();
                 assert_eq!(
@@ -207,12 +205,10 @@ mod tests {
                     "statistics retain only the scalar, not their working table"
                 );
             }
-            #[cfg(feature = "alloc-counter")]
             let warm = crate::alloc_counter::snapshot().window;
             for _ in 0..32 {
                 assert_eq!(image.distinct_count(0, &work).unwrap(), expected);
             }
-            #[cfg(feature = "alloc-counter")]
             assert_eq!(
                 crate::alloc_counter::snapshot().window,
                 warm,
@@ -248,10 +244,8 @@ mod tests {
         for word in 1..=8 {
             table.insert(word, &mut count).unwrap();
         }
-        #[cfg(feature = "alloc-counter")]
         let before = crate::alloc_counter::snapshot().window;
         table.insert(9, &mut count).unwrap();
-        #[cfg(feature = "alloc-counter")]
         {
             let after = crate::alloc_counter::snapshot().window;
             assert_eq!(after.alloc_bytes - before.alloc_bytes, 32 * 8);
@@ -305,12 +299,10 @@ mod tests {
             table.insert(word, &mut count).unwrap();
         }
         let pointer = table.slots.as_ptr();
-        #[cfg(feature = "alloc-counter")]
         let before = crate::alloc_counter::snapshot().window;
         for word in (0..=8).cycle().take(4096) {
             table.insert(word, &mut count).unwrap();
         }
-        #[cfg(feature = "alloc-counter")]
         assert_eq!(crate::alloc_counter::snapshot().window, before);
         assert_eq!(table.slots.len(), 16);
         assert_eq!(table.slots.as_ptr(), pointer);

@@ -1,6 +1,10 @@
 use bumbledb::Db;
+use bumbledb::alloc_counter::CountingAllocator;
 
 mod common;
+
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator;
 
 bumbledb::schema! {
     pub Ledger;
@@ -494,18 +498,14 @@ fn dynamic_read_owners_outlive_the_read_frame_and_deallocate_independently() {
     assert_eq!(scanned.len(), 1);
     assert_eq!(scanned[0], row);
     drop(work);
-    #[cfg(feature = "alloc-counter")]
     let before = bumbledb::alloc_counter::snapshot().window.dealloc_bytes;
     drop(row);
-    #[cfg(feature = "alloc-counter")]
     assert!(
         bumbledb::alloc_counter::snapshot().window.dealloc_bytes - before >= holder.len() as u64
     );
     assert_eq!(scanned[0].values()[1], Value::String(holder.clone().into()));
-    #[cfg(feature = "alloc-counter")]
     let before = bumbledb::alloc_counter::snapshot().window.dealloc_bytes;
     drop(scanned);
-    #[cfg(feature = "alloc-counter")]
     assert!(
         bumbledb::alloc_counter::snapshot().window.dealloc_bytes - before >= holder.len() as u64
     );

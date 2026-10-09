@@ -349,7 +349,7 @@ fn element_words(
     }))
 }
 
-/// One execution's literal-resolution context, shared by resident and fallback paths.
+/// One execution's literal-resolution context.
 pub(super) struct LiteralResolution<'a, 'generation> {
     pub interner: &'a InternerHandle<'generation>,
     pub work: &'a WorkContext,
@@ -607,7 +607,6 @@ fn forget_resolved_text(rule: &mut super::FreeJoinRule) {
         selections.clear();
     }
     rule.resolution = super::ResolutionState::Pending;
-    rule.fallback.forget_resolved_text();
 }
 
 #[cfg(test)]
@@ -660,7 +659,6 @@ mod scalar_resolution_tests {
             after.allocs - before.allocs,
             after.alloc_bytes - before.alloc_bytes
         );
-        #[cfg(feature = "alloc-counter")]
         assert_eq!(
             after.allocs - before.allocs,
             0,

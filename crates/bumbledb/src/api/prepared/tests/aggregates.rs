@@ -60,7 +60,7 @@ fn scalar_set_folds(set_selection: bool) -> Query {
 }
 
 #[test]
-fn physical_scalar_folds_drop_hidden_fact_multiplicity_but_fallback_keeps_dedup() {
+fn physical_scalar_folds_drop_hidden_fact_multiplicity_across_reexecution() {
     let fix = postings(&[
         (1, 10, "a", 5),
         (2, 10, "b", 5),
@@ -73,8 +73,7 @@ fn physical_scalar_folds_drop_hidden_fact_multiplicity_but_fallback_keeps_dedup(
     };
     assert!(rule.plan.distinct_witness().is_none());
     assert!(rule.plan.scalar_set_traversal().is_some());
-    for fallback in [false, true, false] {
-        prepared.force_cursor_fallback(fallback);
+    for _ in 0..2 {
         let out = fix.execute(&mut prepared, &[] as &[BindValue]).unwrap();
         let mut rows: Vec<_> = (0..out.len())
             .map(|row| {
@@ -92,7 +91,7 @@ fn physical_scalar_folds_drop_hidden_fact_multiplicity_but_fallback_keeps_dedup(
             panic!("aggregate sink")
         };
         assert!(!sink.seen_elided(), "the semantic witness was never forged");
-        assert_eq!(sink.distinct_seen(), Some(if fallback { 3 } else { 0 }));
+        assert_eq!(sink.distinct_seen(), Some(0));
     }
 }
 
@@ -105,8 +104,7 @@ fn physical_scalar_folds_deduplicate_across_set_selection_values_and_rebinds() {
         (4, 20, "b", 7),
     ]);
     let mut prepared = fix.prepare(&scalar_set_folds(true)).unwrap();
-    for fallback in [false, true, false] {
-        prepared.force_cursor_fallback(fallback);
+    for _ in 0..2 {
         for (elements, sum, count) in [
             (vec![Value::U64(10), Value::U64(20), Value::U64(10)], 12, 2),
             (vec![Value::U64(10)], 5, 1),

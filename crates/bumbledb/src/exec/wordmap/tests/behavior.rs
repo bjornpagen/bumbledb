@@ -57,7 +57,6 @@ fn duplicates_at_the_load_boundary_do_not_grow_or_rehash() {
                 map.dense.as_ptr(),
             );
             let dense = map.dense.clone();
-            #[cfg(feature = "alloc-counter")]
             let before = crate::alloc_counter::snapshot().window;
             for _ in 0..3 {
                 for (i, key) in keys[..limit].iter().enumerate() {
@@ -71,7 +70,6 @@ fn duplicates_at_the_load_boundary_do_not_grow_or_rehash() {
                     map.insert_rows(key);
                 }
             }
-            #[cfg(feature = "alloc-counter")]
             {
                 let after = crate::alloc_counter::snapshot().window;
                 eprintln!(

@@ -306,7 +306,6 @@ fn result_value_iterator_borrows_payloads_and_preserves_every_value_kind() {
     }
 }
 
-#[cfg(feature = "alloc-counter")]
 #[test]
 fn borrowing_completed_rows_and_pages_does_not_allocate() {
     let result = sealed(512);
@@ -354,7 +353,6 @@ fn borrowing_completed_rows_and_pages_does_not_allocate() {
     assert_eq!(after.absolute.live_bytes, before.absolute.live_bytes);
 }
 
-#[cfg(feature = "alloc-counter")]
 #[test]
 fn large_result_seals_without_another_copy_or_size_directory() {
     let execute = work();

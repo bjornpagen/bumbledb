@@ -1,9 +1,7 @@
 use crate::error::Result;
-use crate::exec::scratch::{ScratchAppend, ScratchMapId, ScratchRelation};
 use crate::exec::sink::aggregate::{parse_finds, parse_finds_into};
 use crate::exec::sink::{
-    FindSpec, ProjectionSink, ResidentRows, SpillSet, StageRowVisit, encode_stage_row,
-    extend_sources, sources_of,
+    FindSpec, ProjectionSink, ResidentRows, SpillSet, StageRowVisit, extend_sources, sources_of,
 };
 
 impl ProjectionSink {
@@ -95,44 +93,6 @@ impl ProjectionSink {
     /// As [`Self::for_each_answer`].
     pub(crate) fn drain_since(&mut self, since: usize, visit: StageRowVisit<'_>) -> Result<()> {
         self.seen.for_each_since(since, visit)
-    }
-
-    /// Stream answers from `since` through one [`ScratchAppend`] on `dest`,
-    /// one encoded row per append starting at `start_seq`. `dest` must be
-    /// created by the caller — this method
-    /// never `force_spill`s. Tiny outputs stay on dest's RAM tier.
-    /// Failure returns immediately and drops the visitor (no `finish`).
-    /// `retain` transfers any payload ownership before its row is appended.
-    /// Returns the number of rows written.
-    /// # Errors
-    /// Sticky sink failure, stopped work, or a refused scratch append.
-    pub(crate) fn stream_into_scratch(
-        &mut self,
-        dest: &mut ScratchRelation,
-        since: usize,
-        start_seq: u64,
-        mut retain: impl FnMut(&[u64]) -> Result<()>,
-    ) -> Result<u64> {
-        let mut seq = start_seq;
-        let mut encoded = Vec::new();
-        let mut append = ScratchAppend::new(dest);
-        let streamed = self.drain_since(since, &mut |row| {
-            retain(row)?;
-            encode_stage_row(row, &mut encoded);
-            append.append(ScratchMapId::Default, &seq.to_be_bytes(), &encoded)?;
-            seq += 1;
-            Ok(true)
-        });
-        match streamed {
-            Ok(()) => {
-                append.finish()?;
-                Ok(seq - start_seq)
-            }
-            Err(error) => {
-                drop(append);
-                Err(error)
-            }
-        }
     }
 
     /// Install this execution's cancellation context (None for standalone kernels).

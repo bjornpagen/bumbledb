@@ -26,7 +26,6 @@ pub(crate) mod computed;
 pub(crate) mod derived;
 mod either_sink;
 mod execute;
-mod fallback;
 mod finalize;
 mod introspect;
 pub(crate) mod reach;
@@ -262,12 +261,8 @@ pub struct PreparedQuery<S> {
     /// Heap executions count up; each tick is a fresh `ViewEpoch::Heap`,
     /// so no image or view memo can outlive the instance it was read from.
     heap_tick: u64,
-    /// Route every Free Join rule through the cursor fallback: set by the
-    /// test/diagnostic affordance. Production selects it only when the
-    /// source or a derived stage cannot use resident position indices.
-    forced_fallback: bool,
-    /// Text retained by cursor-fed sinks and the recursive accumulator.
-    /// Resident rules already retain their source images in the view memo.
+    /// Text retained by the recursive accumulator. Resident rules retain
+    /// their source images in the view memo.
     execution_texts: crate::image::TextOwners,
     /// Interiors then rec then main, as one pipeline sum: interiors
     /// live inside each arm, never as a sidecar. Dead main is
@@ -453,10 +448,6 @@ pub(crate) enum PreparedRule {
 pub(crate) struct FreeJoinRule {
     plan: ValidatedPlan,
     executor: Executor,
-    /// The sealed cursor-fallback program: the same rule
-    /// over source cursors instead of images — used when forced (Q-FALLBACK)
-    /// or after a resident reservation refusal (one bounded restart).
-    fallback: fallback::FallbackRule,
     /// The rule's head projection: per head position, the output spec
     /// over this rule's binding-slot layout (result types live on the
     /// query — they are the head's, identical across rules).
@@ -603,7 +594,6 @@ impl FreeJoinRule {
             *selections = Vec::new();
         }
         self.resolution = ResolutionState::Pending;
-        self.fallback.release_memory();
     }
 }
 

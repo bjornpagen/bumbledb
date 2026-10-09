@@ -247,31 +247,28 @@ fn completed_results_own_shared_text_across_prepared_reuse() {
         .collect();
     expected.sort();
     let params = [BindValue::U64(7), BindValue::I64(-1)];
-    for fallback in [false, true] {
-        prepared.force_cursor_fallback(fallback);
-        for _ in 0..3 {
-            let complete = fix
-                .db
-                .read(crate::api::db::test_operation(), |instance| {
-                    let context = instance.work();
-                    let source = QuerySource::store(instance.snapshot(), context);
-                    let mut carrier = Answers::new();
-                    prepared.execute_source(&source, &params, &mut carrier)?;
-                    CompleteResult::seal(
-                        carrier,
-                        ResultIdentity {
-                            source: PinnedSource::Store(instance.snapshot().identity()),
-                            generation: Some(instance.snapshot().generation()),
-                        },
-                        context,
-                    )
-                })
-                .unwrap();
-            assert_eq!(complete.len(), 514);
-            prepared.release_memory();
-            let rows = complete.into_answers();
-            assert_eq!(answers_of(&rows), expected, "fallback={fallback}");
-        }
+    for _ in 0..3 {
+        let complete = fix
+            .db
+            .read(crate::api::db::test_operation(), |instance| {
+                let context = instance.work();
+                let source = QuerySource::store(instance.snapshot(), context);
+                let mut carrier = Answers::new();
+                prepared.execute_source(&source, &params, &mut carrier)?;
+                CompleteResult::seal(
+                    carrier,
+                    ResultIdentity {
+                        source: PinnedSource::Store(instance.snapshot().identity()),
+                        generation: Some(instance.snapshot().generation()),
+                    },
+                    context,
+                )
+            })
+            .unwrap();
+        assert_eq!(complete.len(), 514);
+        prepared.release_memory();
+        let rows = complete.into_answers();
+        assert_eq!(answers_of(&rows), expected);
     }
 }
 
@@ -338,7 +335,6 @@ fn finalize_materializes_each_distinct_intern_once() {
 fn text_compare_refusal_fails_the_query() {
     let fix = postings(&[(1, 7, "alpha", 10), (2, 7, "beta", 20)]);
     let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
-    prepared.force_cursor_fallback(true);
     let work = crate::work::WorkContext::new();
     work.cancel();
     let source = crate::api::prepared::source::QuerySource::heap(&fix.instance, 1, work);

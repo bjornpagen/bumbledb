@@ -150,7 +150,6 @@ fn completed_execution_keeps_query_pools_until_explicit_release() {
             prepared.release_memory();
             let after = crate::alloc_counter::snapshot().window;
             assert_eq!(pool_bytes(&prepared), 0);
-            #[cfg(feature = "alloc-counter")]
             assert!(after.dealloc_bytes - before.dealloc_bytes >= retained as u64);
             let _ = (before, after);
             let again = prepared.execute_collect_with_work(instance, &work, &[] as &[BindValue])?;
@@ -161,10 +160,9 @@ fn completed_execution_keeps_query_pools_until_explicit_release() {
     drop(prepared);
 }
 
-/// Aggregate interior → join + bound negation agrees between the resident
-/// executor and the representation fallback; neither requires a quota.
+/// Aggregate interior → join + bound negation over resident stages.
 #[test]
-fn derived_pipeline_matches_cursor_execution_and_retains_resident_stages() {
+fn derived_pipeline_joins_and_negates_resident_stages() {
     let mut owned: Vec<(u64, u64, String, i64)> = (1..=32u64)
         .map(|id| (id, id, "ok".to_owned(), i64::try_from(id).expect("fits")))
         .collect();
@@ -251,20 +249,6 @@ fn derived_pipeline_matches_cursor_execution_and_retains_resident_stages() {
             .published
             .iter()
             .all(super::super::derived::SealedStage::is_resident)
-    );
-    let mut spilled = store.prepare(&query).expect("prepare");
-    spilled.force_cursor_fallback(true);
-    let work_spill = WorkContext::new();
-    let got_spill = store
-        .db
-        .read(crate::api::db::test_operation(), |instance| {
-            spilled.execute_collect_with_work(instance, &work_spill, &[] as &[BindValue])
-        })
-        .expect("cursor derived pipeline");
-    assert_eq!(
-        pairs(&got_spill),
-        expected,
-        "aggregate→join+negation agrees through cursor execution"
     );
 }
 

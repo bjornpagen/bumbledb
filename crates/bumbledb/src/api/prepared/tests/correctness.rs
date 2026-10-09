@@ -17,7 +17,7 @@ fn output_hashing_is_elided(prepared: &PreparedQuery<T>) -> bool {
     }
 }
 
-fn fallback_lookup_schema(lookup_type: ValueType, keyed_lookup: bool) -> SchemaDescriptor {
+fn lookup_schema(lookup_type: ValueType, keyed_lookup: bool) -> SchemaDescriptor {
     use bumbledb_theory::schema::StatementDescriptor;
 
     let mut schema = SchemaDescriptor {
@@ -59,7 +59,7 @@ fn fallback_lookup_schema(lookup_type: ValueType, keyed_lookup: bool) -> SchemaD
     schema
 }
 
-fn fallback_lookup_query(selected_field: FieldId, gate_first: bool) -> Query {
+fn lookup_query(selected_field: FieldId, gate_first: bool) -> Query {
     let variable_field = FieldId(1 - selected_field.0);
     let mut atoms = vec![
         Atom {
@@ -86,7 +86,7 @@ fn fallback_lookup_query(selected_field: FieldId, gate_first: bool) -> Query {
 }
 
 #[test]
-fn keyed_fallback_uses_selection_fields_and_preserves_typed_keys() {
+fn selections_preserve_typed_keys_on_the_selected_field() {
     let cases = [
         (
             ValueType::Bool,
@@ -138,10 +138,7 @@ fn keyed_fallback_uses_selection_fields_and_preserves_typed_keys() {
         // The selection is field 1, while the join variable is field 0.
         // String tokens and inline bytes are not scalar U64 lookup keys.
         for keyed_lookup in [false, true] {
-            let store = StoreFix::store(
-                "fallback-typed-lookup",
-                fallback_lookup_schema(lookup_type, keyed_lookup),
-            );
+            let store = StoreFix::store("typed-lookup", lookup_schema(lookup_type, keyed_lookup));
             store.insert_dyn(
                 RelationId(0),
                 &[
@@ -153,10 +150,7 @@ fn keyed_fallback_uses_selection_fields_and_preserves_typed_keys() {
                 RelationId(1),
                 &[vec![Value::U64(101)], vec![Value::U64(202)]],
             );
-            let mut prepared = store
-                .prepare(&fallback_lookup_query(FieldId(1), false))
-                .unwrap();
-            prepared.force_cursor_fallback(true);
+            let mut prepared = store.prepare(&lookup_query(FieldId(1), false)).unwrap();
             for (index, expected) in [(1, 202), (0, 101), (1, 202)] {
                 let answers = store.execute(&mut prepared, &[params[index]]).unwrap();
                 assert_eq!(answers.len(), 1, "{lookup_type:?}, keyed={keyed_lookup}");
@@ -167,9 +161,9 @@ fn keyed_fallback_uses_selection_fields_and_preserves_typed_keys() {
 }
 
 #[test]
-fn heap_keyed_fallback_does_not_stop_after_a_rejected_first_row() {
+fn heap_selection_continues_past_a_rejected_first_row() {
     let heap = Fix::heap(
-        fallback_lookup_schema(ValueType::U64, false),
+        lookup_schema(ValueType::U64, false),
         &[
             (
                 RelationId(0),
@@ -181,12 +175,8 @@ fn heap_keyed_fallback_does_not_stop_after_a_rejected_first_row() {
             (RelationId(1), vec![vec![Value::U64(20)]]),
         ],
     );
-    // Gate binds the last atom's only variable. A successful callback does
-    // not imply a matched row: the heap key visitor first sees rejected id 1.
-    let mut prepared = heap
-        .prepare(&fallback_lookup_query(FieldId(0), true))
-        .unwrap();
-    prepared.force_cursor_fallback(true);
+    // The gate binds the last atom's only variable; the first row is rejected.
+    let mut prepared = heap.prepare(&lookup_query(FieldId(0), true)).unwrap();
     for (id, expected_len) in [(2, 1), (1, 0), (2, 1)] {
         let answers = heap.execute(&mut prepared, &[BindValue::U64(id)]).unwrap();
         assert_eq!(answers.len(), expected_len);
@@ -236,37 +226,32 @@ fn store_keyed_range_installs_append_and_matches_forced_hash_control() {
         .collect();
     let store = posting_store("prepared-proved-output", &rows);
     let query = keyed_range_query(true);
-    for fallback in [false, true] {
-        let mut append = store.prepare(&query).unwrap();
-        assert!(
-            output_hashing_is_elided(&append),
-            "prove and activate the actual store pipeline"
-        );
-        let mut hashed = store.prepare(&query).unwrap();
-        let rule = &hashed.pipeline.main_rules()[0];
-        hashed.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
-            rule.finds(),
-            rule.slot_count(),
-            0,
-        ));
-        assert!(!output_hashing_is_elided(&hashed));
-        for prepared in [&mut append, &mut hashed] {
-            prepared.force_cursor_fallback(fallback);
-        }
-        for (lower, upper) in [(0u64, 3u64), (4, 8), (9, 11), (0, 11), (0, 3)] {
-            let params = [BindValue::U64(lower), BindValue::U64(upper)];
-            let actual = id_amount_pairs(&store.execute(&mut append, &params).unwrap());
-            let control = id_amount_pairs(&store.execute(&mut hashed, &params).unwrap());
-            assert_eq!(actual, control, "same first-emission order, not just a set");
-            let mut sorted = actual;
-            sorted.sort_unstable();
-            let expected: Vec<_> = rows
-                .iter()
-                .filter(|row| row.1 >= lower && row.1 < upper)
-                .map(|row| (row.0, row.3))
-                .collect();
-            assert_eq!(sorted, expected, "independent literal range denotation");
-        }
+    let mut append = store.prepare(&query).unwrap();
+    assert!(
+        output_hashing_is_elided(&append),
+        "prove and activate the actual store pipeline"
+    );
+    let mut hashed = store.prepare(&query).unwrap();
+    let rule = &hashed.pipeline.main_rules()[0];
+    hashed.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
+        rule.finds(),
+        rule.slot_count(),
+        0,
+    ));
+    assert!(!output_hashing_is_elided(&hashed));
+    for (lower, upper) in [(0u64, 3u64), (4, 8), (9, 11), (0, 11), (0, 3)] {
+        let params = [BindValue::U64(lower), BindValue::U64(upper)];
+        let actual = id_amount_pairs(&store.execute(&mut append, &params).unwrap());
+        let control = id_amount_pairs(&store.execute(&mut hashed, &params).unwrap());
+        assert_eq!(actual, control, "same first-emission order, not just a set");
+        let mut sorted = actual;
+        sorted.sort_unstable();
+        let expected: Vec<_> = rows
+            .iter()
+            .filter(|row| row.1 >= lower && row.1 < upper)
+            .map(|row| (row.0, row.3))
+            .collect();
+        assert_eq!(sorted, expected, "independent literal range denotation");
     }
 }
 
@@ -715,9 +700,7 @@ fn heap_prepared_witnesses_require_the_same_schema_laws() {
 }
 
 #[test]
-fn forced_cursor_fallback_agrees_with_the_resident_path() {
-    // Q-FALLBACK: the complete cursor fallback and the resident Free Join
-    // path produce identical sets and identical param/latch behavior.
+fn rebinding_params_reselects_the_account_and_range() {
     let rows: &[(u64, u64, &str, i64)] = &[
         (1, 3, "a", 10),
         (2, 3, "b", 25),
@@ -725,25 +708,15 @@ fn forced_cursor_fallback_agrees_with_the_resident_path() {
         (4, 7, "d", 40),
         (5, 9, "e", -5),
     ];
-    let store = posting_store("prepared-forced-fallback", rows);
-    let query = by_account_query();
-
-    let mut resident = store.prepare(&query).expect("prepare");
-    let expected = store
-        .execute(&mut resident, &[BindValue::U64(3), BindValue::I64(0)])
-        .expect("resident execute");
-
-    let mut fallback = store.prepare(&query).expect("prepare");
-    fallback.force_cursor_fallback(true);
+    let store = posting_store("prepared-rebind", rows);
+    let mut prepared = store.prepare(&by_account_query()).expect("prepare");
     let got = store
-        .execute(&mut fallback, &[BindValue::U64(3), BindValue::I64(0)])
-        .expect("fallback execute");
-    assert_eq!(answers_of(&expected), answers_of(&got));
-
-    // Re-binding on the fallback path behaves identically too.
+        .execute(&mut prepared, &[BindValue::U64(3), BindValue::I64(0)])
+        .expect("execute");
+    assert_eq!(answers_of(&got), vec![("a".into(), 10), ("b".into(), 25)]);
     let got = store
-        .execute(&mut fallback, &[BindValue::U64(7), BindValue::I64(30)])
-        .expect("fallback execute");
+        .execute(&mut prepared, &[BindValue::U64(7), BindValue::I64(30)])
+        .expect("rebound execute");
     assert_eq!(answers_of(&got), vec![("d".into(), 40)]);
 }
 
@@ -833,17 +806,15 @@ fn execute_complete_seals_only_full_results_and_pages_them() {
     assert_eq!(terminal_pages, 1, "exactly one terminal frame");
 }
 
-/// Selective cursor execution agrees with resident execution; cancellation
-/// is an error, never a reason to restart or fabricate an empty answer.
+/// Selective execution is exact; cancellation is an error, never a reason to
+/// restart or fabricate an empty answer.
 #[test]
-fn selective_cursor_execution_is_exact_and_cancellation_does_not_restart() {
+fn selective_execution_is_exact_and_cancellation_does_not_restart() {
     use bumbledb_theory::schema::{
         FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType,
     };
     const METRIC: RelationId = RelationId(0);
 
-    // A text-free relation: the resident image slab charge scales with
-    // rows, while the fallback's cursor walk interns nothing.
     let descriptor = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
@@ -916,8 +887,7 @@ fn selective_cursor_execution_is_exact_and_cancellation_does_not_restart() {
     );
     assert_eq!(expected.len(), 8, "amounts 2040..=2047");
 
-    let mut cursor = fix.prepare(&query).unwrap();
-    cursor.force_cursor_fallback(true);
+    let mut prepared = fix.prepare(&query).unwrap();
     fix.db.read(crate::work::WorkContext::new(), |instance| {
         let cancelled = crate::work::WorkContext::new();
         cancelled.cancel();
@@ -926,9 +896,9 @@ fn selective_cursor_execution_is_exact_and_cancellation_does_not_restart() {
         let source = super::super::source::QuerySource::store(instance.snapshot(), &active);
         let mut out = Answers::new();
         for _ in 0..2 {
-            cursor.execute_source(&source, &[] as &[BindValue], &mut out)?;
+            prepared.execute_source(&source, &[] as &[BindValue], &mut out)?;
             assert_eq!(render(&out), expected);
-            let result = cursor.execute_source(&stopped, &[] as &[BindValue], &mut out);
+            let result = prepared.execute_source(&stopped, &[] as &[BindValue], &mut out);
             assert!(matches!(result, Err(Error::Store(error))
                 if matches!(*error, crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled))));
             assert!(out.is_empty(), "no stale or partial result");

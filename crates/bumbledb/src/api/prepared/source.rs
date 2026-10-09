@@ -1,18 +1,8 @@
-//! The query lane's one storage seam (C05 consuming C04): every prepare,
-//! statistic, image build, key probe, cursor fallback and result copy reads
-//! committed rows through this enum — an owned coherent LMDB snapshot
-//! ([`OwnedSnapshot`], one real read transaction) or an admitted heap
-//! instance's sorted canonical rows. Closed relations stream from the
-//! schema's sealed extension without requiring a resident image.
-//!
-//! Identity discipline: a prepared query pins its source identity at
-//! prepare. Store sources carry the store+environment identity
-//! ([`StoreIdentity`]); executing against any other environment's snapshot
-//! is `Error::ForeignPreparedQuery` before any work. Heap instances carry
-//! their canonical schema identity, including its laws, but no durable row
-//! identity. A heap-prepared query never memoizes images
-//! across executions (the `ViewEpoch::Heap` tick) — correctness never
-//! rides on an address comparison.
+//! The query's one storage seam: prepare, statistics, image builds, key
+//! probes and result copies read committed rows from an owned LMDB snapshot
+//! or an admitted heap instance. A prepared query pins its source identity;
+//! executing against another environment is `Error::ForeignPreparedQuery`.
+//! Heap sources never memoize images across executions.
 
 use crate::error::{Error, Result};
 use crate::image::ViewEpoch;
@@ -75,11 +65,6 @@ pub(crate) enum PinnedSource {
     Heap(SchemaFingerprint),
 }
 
-/// Resident image positions are `u32`. Crossing this bound on the same
-/// pinned snapshot selects the cursor fallback before COLT/image build
-/// (CORE-010). One clean resident→disk restart is permitted afterward.
-pub(crate) const RESIDENT_ROW_LIMIT: u64 = u32::MAX as u64;
-
 /// One execution's row source.
 pub(crate) enum QuerySource<'a> {
     Store {
@@ -138,12 +123,6 @@ impl<'a> QuerySource<'a> {
                 visits.set(visits.get().saturating_add(n));
             }
         }
-    }
-
-    /// True when a resident image/COLT would overflow the `u32` position
-    /// regime — fallback must be selected before that build.
-    pub(crate) fn exceeds_resident_positions(&self, relation: RelationId) -> Result<bool> {
-        Ok(self.row_count(relation)? >= RESIDENT_ROW_LIMIT)
     }
 
     pub(crate) fn pinned(&self) -> PinnedSource {

@@ -101,34 +101,30 @@ fn node_ids(answers: &Answers) -> Vec<u64> {
 fn cancelled_reach_publishes_no_prefix_and_allows_reuse() {
     let fix = chain_fixture();
     for through_interior in [false, true] {
-        for fallback in [false, true] {
-            let mut prepared = fix.prepare(&source_reach(through_interior)).unwrap();
-            prepared.force_cursor_fallback(fallback);
-            let mut out = Answers::new();
-            for (round, cancelled) in [false, true, false].into_iter().enumerate() {
-                let work = crate::work::WorkContext::new();
-                if cancelled {
-                    work.cancel();
-                }
-                let source =
-                    super::super::source::QuerySource::heap(&fix.instance, round as u64, work);
-                let result = prepared.execute_source(&source, &[BindValue::U64(0)], &mut out);
-                if cancelled {
-                    assert!(matches!(result, Err(Error::Store(error))
-                        if matches!(*error, crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled))));
-                    assert!(out.is_empty(), "no stale or partial closure");
-                } else {
-                    result.unwrap();
-                    assert_eq!(node_ids(&out), [1, 2, 3]);
-                }
-                let PreparedPipeline::Reach { driver, .. } = &mut prepared.pipeline else {
-                    unreachable!()
-                };
-                assert!(
-                    driver.frontier.is_uniquely_owned(),
-                    "release every frontier consumer"
-                );
+        let mut prepared = fix.prepare(&source_reach(through_interior)).unwrap();
+        let mut out = Answers::new();
+        for (round, cancelled) in [false, true, false].into_iter().enumerate() {
+            let work = crate::work::WorkContext::new();
+            if cancelled {
+                work.cancel();
             }
+            let source = super::super::source::QuerySource::heap(&fix.instance, round as u64, work);
+            let result = prepared.execute_source(&source, &[BindValue::U64(0)], &mut out);
+            if cancelled {
+                assert!(matches!(result, Err(Error::Store(error))
+                    if matches!(*error, crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled))));
+                assert!(out.is_empty(), "no stale or partial closure");
+            } else {
+                result.unwrap();
+                assert_eq!(node_ids(&out), [1, 2, 3]);
+            }
+            let PreparedPipeline::Reach { driver, .. } = &mut prepared.pipeline else {
+                unreachable!()
+            };
+            assert!(
+                driver.frontier.is_uniquely_owned(),
+                "release every frontier consumer"
+            );
         }
     }
 }
@@ -145,17 +141,14 @@ fn empty_frontier_finishes_without_allocating_recursive_rows() {
 fn release_preserves_recursive_and_interior_plans_and_owned_answers() {
     let fix = chain_fixture();
     for through_interior in [false, true] {
-        for fallback in [false, true] {
-            let mut prepared = fix.prepare(&source_reach(through_interior)).unwrap();
-            prepared.force_cursor_fallback(fallback);
-            let expected = fix.execute(&mut prepared, &[BindValue::U64(0)]).unwrap();
-            for _ in 0..3 {
-                prepared.release_memory();
-                assert!(prepared.derived.published.is_empty());
-                assert_eq!(node_ids(&expected), [1, 2, 3]);
-                let actual = fix.execute(&mut prepared, &[BindValue::U64(0)]).unwrap();
-                assert_eq!(node_ids(&actual), node_ids(&expected));
-            }
+        let mut prepared = fix.prepare(&source_reach(through_interior)).unwrap();
+        let expected = fix.execute(&mut prepared, &[BindValue::U64(0)]).unwrap();
+        for _ in 0..3 {
+            prepared.release_memory();
+            assert!(prepared.derived.published.is_empty());
+            assert_eq!(node_ids(&expected), [1, 2, 3]);
+            let actual = fix.execute(&mut prepared, &[BindValue::U64(0)]).unwrap();
+            assert_eq!(node_ids(&actual), node_ids(&expected));
         }
     }
 }
@@ -178,23 +171,20 @@ fn recursive_arms_share_one_immutable_frontier_and_one_exact_set() {
         conditions: vec![],
     };
     rec.rec.rest.push(reverse);
-    for fallback in [false, true] {
+    for _ in 0..2 {
+        let mut prepared = fix.prepare(&query).unwrap();
         for _ in 0..2 {
-            let mut prepared = fix.prepare(&query).unwrap();
-            prepared.force_cursor_fallback(fallback);
-            for _ in 0..2 {
-                let answers = fix.execute(&mut prepared, &[BindValue::U64(0)]).unwrap();
-                assert_eq!(node_ids(&answers), [0, 1, 2, 3]);
-                let PreparedPipeline::Reach { driver, .. } = &mut prepared.pipeline else {
-                    unreachable!()
-                };
-                assert_eq!(
-                    driver.rec.len(),
-                    2,
-                    "both different recursive arms survive planning"
-                );
-                assert!(driver.frontier.is_uniquely_owned());
-            }
+            let answers = fix.execute(&mut prepared, &[BindValue::U64(0)]).unwrap();
+            assert_eq!(node_ids(&answers), [0, 1, 2, 3]);
+            let PreparedPipeline::Reach { driver, .. } = &mut prepared.pipeline else {
+                unreachable!()
+            };
+            assert_eq!(
+                driver.rec.len(),
+                2,
+                "both different recursive arms survive planning"
+            );
+            assert!(driver.frontier.is_uniquely_owned());
         }
     }
 }
@@ -291,14 +281,9 @@ fn dead_main_with_live_interiors_still_reports_interior_emits() {
     }
 }
 
-/// G05 (recursive visited/frontier half): a zero sink-RAM allowance moves
-/// the reach driver's seen-set — the recursion's visited state AND the
-/// watermark log its per-round frontier drains from — onto the charged
-/// scratch relation from row one. The transitive closure is unchanged, the
-/// frontier keeps its watermark contract across the tier
-/// change, and the sealed rec table drains from scratch.
+/// Branching edges make rounds derive overlapping pairs the seen-set absorbs.
 #[test]
-fn spilled_rec_seen_and_frontier_state_preserves_the_closure() {
+fn branching_closure_absorbs_overlapping_rounds_and_survives_release() {
     use crate::ir::{NonEmpty, Rec, RecRule, RecStep};
     const EDGE: RelationId = RelationId(0);
 
@@ -319,9 +304,7 @@ fn spilled_rec_seen_and_frontier_state_preserves_the_closure() {
         }],
         statements: vec![],
     };
-    // A chain with branches: 0→1→…→40, plus 7→50 and 50→8 (a shortcut
-    // rejoining the chain), so rounds produce overlapping derivations the
-    // seen-set must absorb in both tiers.
+    // A chain 0→1→…→40 plus the shortcut 7→50→8 rejoining it.
     let mut edges: Vec<Vec<Value>> = (0..40u64)
         .map(|i| vec![Value::U64(i), Value::U64(i + 1)])
         .collect();
@@ -399,27 +382,13 @@ fn spilled_rec_seen_and_frontier_state_preserves_the_closure() {
         "the shortcut rejoins the chain"
     );
 
-    // The cursor executor consumes the same immutable frontier per round.
-    for fallback in [false, true] {
-        let mut spilled = fix.prepare(&closure).expect("prepare");
-        spilled.force_cursor_fallback(fallback);
-        let got = pairs(
-            &fix.execute(&mut spilled, &[] as &[BindValue])
-                .expect("spilled"),
-        );
-        assert_eq!(
-            got, expected,
-            "fallback={fallback}: the spilled closure is the closure"
-        );
-
-        // Repeat after releasing query scratch; the compiled plan survives.
-        spilled.release_memory();
-        let again = pairs(
-            &fix.execute(&mut spilled, &[] as &[BindValue])
-                .expect("re-execute"),
-        );
-        assert_eq!(again, expected, "fallback={fallback}");
-    }
+    // Repeat after releasing query scratch; the compiled plan survives.
+    resident.release_memory();
+    let again = pairs(
+        &fix.execute(&mut resident, &[] as &[BindValue])
+            .expect("re-execute"),
+    );
+    assert_eq!(again, expected);
 
     // An empty base creates no frontier rows.
     let empty = Fix::heap(

@@ -146,23 +146,16 @@ impl<S> PreparedQuery<S> {
         self.finish_sink(images, ran, out)
     }
 
-    /// Route every Free Join rule through the complete cursor fallback —
-    /// the Q-FALLBACK forcing affordance. Answers and errors must agree
-    /// with the resident path.
     #[doc(hidden)]
-    pub fn force_cursor_fallback(&mut self, forced: bool) {
-        self.forced_fallback = forced;
-    }
+    pub fn force_cursor_fallback(&mut self, _forced: bool) {}
 
-    /// Drain the sink into `out` after the shared rule loop. Empty
+    /// Drain the sink into `out` after the shared rule loop.
     pub(super) fn finish_sink(
         &mut self,
         images: &SourceImages<'_>,
         ran: bool,
         out: &mut Answers,
     ) -> Result<()> {
-        // raised before finalize — never a partial result. Executor-side
-
         if !ran {
             return Ok(());
         }
@@ -216,18 +209,13 @@ impl<S> PreparedQuery<S> {
         let slot_count = self.pipeline.main_rules()[rule_idx].slot_count();
         self.bindings.resize(slot_count);
 
+        if let PreparedRule::FreeJoin(rule) = &self.pipeline.main_rules()[rule_idx] {
+            super::reach::check_resident_stages(&rule.plan, &self.derived.published)?;
+        }
         self.fill_main_images(rule_idx);
         let occ_images = std::mem::take(&mut self.derived.occ_images);
         let mut retired = std::mem::take(&mut self.derived.retired);
         let fast_eligible = self.params.is_empty();
-        let fallback = match &self.pipeline.main_rules()[rule_idx] {
-            PreparedRule::FreeJoin(rule) => {
-                self.forced_fallback
-                    || super::reach::rule_uses_scratch_derived(&rule.plan, &self.derived.published)
-                    || resident_positions_overflow(images.source(), &rule.plan)?
-            }
-            PreparedRule::KeyProbe(_) => false,
-        };
         let interner = images.interner();
         let rules = self.pipeline.main_rules_mut();
         let ran = match &mut rules[rule_idx] {
@@ -247,36 +235,71 @@ impl<S> PreparedQuery<S> {
                 true
             }
             PreparedRule::FreeJoin(rule) => {
-                let mut ran_resident = false;
-                if !fallback {
-                    let plan = &rule.plan;
-                    let resolved =
-                        if fast_eligible && rule.resolution == super::ResolutionState::Complete {
-                            true
+                let plan = &rule.plan;
+                let resolved =
+                    if fast_eligible && rule.resolution == super::ResolutionState::Complete {
+                        true
+                    } else {
+                        let complete = LiteralResolution {
+                            interner: &interner,
+                            work: images.source().work(),
+                            params: &self.resolved_params,
+                            missed: &self.missed_params,
+                        }
+                        .filters(
+                            plan,
+                            &mut rule.resolved_filters,
+                            &mut rule.resolved_selections,
+                        )?;
+                        rule.resolution = if complete {
+                            super::ResolutionState::Complete
                         } else {
-                            let complete = LiteralResolution {
-                                interner: &interner,
-                                work: images.source().work(),
-                                params: &self.resolved_params,
-                                missed: &self.missed_params,
-                            }
-                            .filters(
-                                plan,
-                                &mut rule.resolved_filters,
-                                &mut rule.resolved_selections,
-                            )?;
-                            rule.resolution = if complete {
-                                super::ResolutionState::Complete
-                            } else {
-                                super::ResolutionState::Pending
-                            };
-                            complete
+                            super::ResolutionState::Pending
                         };
-                    ran_resident = resolved;
-                    if resolved {
-                        let work = images.source().work();
-                        match &mut self.sink {
-                            super::EitherSink::Computed(s) => run_join(
+                        complete
+                    };
+                if resolved {
+                    let work = images.source().work();
+                    match &mut self.sink {
+                        super::EitherSink::Computed(s) => run_join(
+                            plan,
+                            self.schema.as_ref(),
+                            images,
+                            work,
+                            &mut rule.executor,
+                            &mut self.bindings,
+                            &rule.resolved_filters,
+                            &rule.resolved_selections,
+                            &mut rule.memo,
+                            &occ_images,
+                            &mut retired,
+                            s.as_mut(),
+                            counters,
+                        )?,
+                        super::EitherSink::Projection(s) => run_join(
+                            plan,
+                            self.schema.as_ref(),
+                            images,
+                            work,
+                            &mut rule.executor,
+                            &mut self.bindings,
+                            &rule.resolved_filters,
+                            &rule.resolved_selections,
+                            &mut rule.memo,
+                            &occ_images,
+                            &mut retired,
+                            s,
+                            counters,
+                        )?,
+                        super::EitherSink::Aggregate(s) => {
+                            // The capability belongs to one invocation, not the
+                            // prepared sink: unions still require dedup.
+                            let witness = (rule_count == 1)
+                                .then(|| plan.scalar_set_traversal())
+                                .flatten();
+                            let witness = s.set_physical_distinct(witness);
+                            rule.executor.set_physical_distinct(witness);
+                            let joined = run_join(
                                 plan,
                                 self.schema.as_ref(),
                                 images,
@@ -290,90 +313,15 @@ impl<S> PreparedQuery<S> {
                                 &mut retired,
                                 s.as_mut(),
                                 counters,
-                            )?,
-                            super::EitherSink::Projection(s) => run_join(
-                                plan,
-                                self.schema.as_ref(),
-                                images,
-                                work,
-                                &mut rule.executor,
-                                &mut self.bindings,
-                                &rule.resolved_filters,
-                                &rule.resolved_selections,
-                                &mut rule.memo,
-                                &occ_images,
-                                &mut retired,
-                                s,
-                                counters,
-                            )?,
-                            super::EitherSink::Aggregate(s) => {
-                                // This capability belongs to one resident
-                                // invocation, not the prepared sink: unions
-                                // and every fallback still require dedup.
-                                let witness = (rule_count == 1)
-                                    .then(|| plan.scalar_set_traversal())
-                                    .flatten();
-                                let witness = s.set_physical_distinct(witness);
-                                rule.executor.set_physical_distinct(witness);
-                                let joined = run_join(
-                                    plan,
-                                    self.schema.as_ref(),
-                                    images,
-                                    work,
-                                    &mut rule.executor,
-                                    &mut self.bindings,
-                                    &rule.resolved_filters,
-                                    &rule.resolved_selections,
-                                    &mut rule.memo,
-                                    &occ_images,
-                                    &mut retired,
-                                    s.as_mut(),
-                                    counters,
-                                );
-                                // Restore the invocation-local proof before propagating errors.
-                                rule.executor.set_physical_distinct(None);
-                                let _ = s.set_physical_distinct(None);
-                                joined?;
-                            }
+                            );
+                            // Restore the invocation-local proof before propagating errors.
+                            rule.executor.set_physical_distinct(None);
+                            let _ = s.set_physical_distinct(None);
+                            joined?;
                         }
                     }
                 }
-                if fallback {
-                    let mut ctx = super::fallback::FallbackCtx {
-                        source: images.source(),
-                        schema: self.schema.as_ref(),
-                        interner: &interner,
-                        params: &self.resolved_params,
-                        missed: &self.missed_params,
-                        retained_texts: &mut self.execution_texts,
-                    };
-                    match &mut self.sink {
-                        super::EitherSink::Computed(s) => super::fallback::run_fallback(
-                            &mut rule.fallback,
-                            &mut ctx,
-                            &mut self.derived.published,
-                            &mut self.bindings,
-                            s.as_mut(),
-                        )?,
-                        super::EitherSink::Projection(s) => super::fallback::run_fallback(
-                            &mut rule.fallback,
-                            &mut ctx,
-                            &mut self.derived.published,
-                            &mut self.bindings,
-                            s,
-                        )?,
-                        super::EitherSink::Aggregate(s) => super::fallback::run_fallback(
-                            &mut rule.fallback,
-                            &mut ctx,
-                            &mut self.derived.published,
-                            &mut self.bindings,
-                            s.as_mut(),
-                        )?,
-                    }
-                    true
-                } else {
-                    ran_resident
-                }
+                resolved
             }
         };
 
@@ -441,20 +389,4 @@ impl<S> PreparedQuery<S> {
         }
         Ok(())
     }
-}
-
-/// Select fallback before a resident image/COLT would overflow the `u32`
-/// position regime.
-fn resident_positions_overflow(
-    source: &QuerySource<'_>,
-    plan: &crate::plan::fj::ValidatedPlan,
-) -> Result<bool> {
-    for occurrence in plan.occurrences() {
-        if let crate::plan::fj::OccBind::Edb(relation) = occurrence.bind
-            && source.exceeds_resident_positions(relation)?
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }

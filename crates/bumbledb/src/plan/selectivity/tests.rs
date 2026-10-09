@@ -206,7 +206,6 @@ fn resident_statistics_are_exact_and_cached_without_retained_counting_tables() {
         );
     }
     let after = crate::alloc_counter::snapshot().window;
-    #[cfg(feature = "alloc-counter")]
     assert_eq!(
         after.allocs, before.allocs,
         "cached scalar statistics need no allocation"

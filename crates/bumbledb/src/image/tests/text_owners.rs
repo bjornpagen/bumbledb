@@ -186,7 +186,6 @@ fn unique_large_to_small_refill_releases_obsolete_text_and_reuses_warm_storage()
         assert_eq!(Arc::as_ptr(&small), address);
     }
     let after = crate::alloc_counter::snapshot().window;
-    #[cfg(feature = "alloc-counter")]
     assert_eq!(
         after.allocs - before.allocs,
         0,

@@ -97,9 +97,10 @@ pub struct LeafScan<'a> {
 /// Consumes complete bindings (D3: the executor emits to a sink, never an
 /// `output`).
 pub trait Sink {
-    /// Does the retained output or dedup state depend on this binding slot?
-    /// Cursor sources use this to extend text ownership beyond a borrowed row.
-    /// Unknown consumers conservatively retain all surviving text bindings.
+    #[expect(
+        dead_code,
+        reason = "deleted once the numeric lane's sinks drop their overrides"
+    )]
     fn retains_binding_slot(&self, _slot: usize) -> bool {
         true
     }

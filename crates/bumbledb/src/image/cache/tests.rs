@@ -262,21 +262,18 @@ fn closed_images_release_the_retired_owner_when_the_last_reader_drops() {
     assert!(!current_owner.ptr_eq(old.generation()));
     assert_eq!(old.column_words(0), &[0, 1]);
     assert_eq!(old.column_words(0), current.column_words(0));
-    #[cfg(feature = "alloc-counter")]
     let before = crate::alloc_counter::snapshot().window;
     drop(old);
     assert!(
         old_owner.upgrade().is_some(),
         "the pinned reader keeps its owner"
     );
-    #[cfg(feature = "alloc-counter")]
     assert_eq!(crate::alloc_counter::snapshot().window, before);
     drop(pinned);
     assert!(
         old_owner.upgrade().is_none(),
         "trim detached the old closed cache entry"
     );
-    #[cfg(feature = "alloc-counter")]
     assert!(crate::alloc_counter::snapshot().window.dealloc_bytes > before.dealloc_bytes);
     assert!(Arc::ptr_eq(
         &current,
@@ -308,10 +305,8 @@ fn clear_detaches_cache_entries_without_invalidating_a_held_image() {
             .unwrap_or(false),
         "old tokens still resolve after rotation"
     );
-    #[cfg(feature = "alloc-counter")]
     let before = crate::alloc_counter::snapshot().window;
     drop(image);
-    #[cfg(feature = "alloc-counter")]
     assert!(
         crate::alloc_counter::snapshot().window.dealloc_bytes > before.dealloc_bytes,
         "the last image releases real storage"

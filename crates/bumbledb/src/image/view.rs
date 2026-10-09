@@ -11,8 +11,8 @@ mod eval;
 
 pub use apply::apply;
 pub(crate) use eval::{
-    DENSE_NEG_INF_KEY, ImageRow, Loaded, OperandAddr, Operands, dense_probe_word,
-    element_probe_word, holds, is_prepare_resolvable, render_filter, resolve_filter_into,
+    DENSE_NEG_INF_KEY, Loaded, OperandAddr, Operands, dense_probe_word, element_probe_word, holds,
+    is_prepare_resolvable, render_filter, resolve_filter_into,
 };
 
 #[cfg(test)]

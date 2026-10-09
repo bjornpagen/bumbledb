@@ -28,7 +28,7 @@ fn amounts(out: &Answers) -> Vec<i64> {
 }
 
 #[test]
-fn literal_bytes_survive_trim_and_switches_between_resident_and_fallback() {
+fn literal_bytes_survive_trim_and_cache_clear_across_rebinds() {
     let fix = posting_store(
         "prepared-literal-generation",
         &[(1, 7, "alpha", 10), (2, 7, "beta", 20)],
@@ -39,10 +39,9 @@ fn literal_bytes_survive_trim_and_switches_between_resident_and_fallback() {
         !alpha.no_text_probe && !beta.no_text_probe,
         "Free Join retains eager text generation binding"
     );
-    for fallback in [false, true, false, true] {
-        alpha.force_cursor_fallback(fallback);
+    for round in 0..2 {
         let out = fix.execute(&mut alpha, &[] as &[BindValue]).expect("alpha");
-        assert_eq!(amounts(&out), vec![10], "fallback={fallback}");
+        assert_eq!(amounts(&out), vec![10], "round {round}");
         alpha.release_memory();
         fix.db.clear_cache();
         let out = fix.execute(&mut beta, &[] as &[BindValue]).expect("beta");
@@ -50,7 +49,7 @@ fn literal_bytes_survive_trim_and_switches_between_resident_and_fallback() {
         let out = fix
             .execute(&mut alpha, &[] as &[BindValue])
             .expect("alpha rebound");
-        assert_eq!(amounts(&out), vec![10], "rebound fallback={fallback}");
+        assert_eq!(amounts(&out), vec![10], "rebound round {round}");
     }
 }
 

@@ -88,23 +88,20 @@ fn bucket_amounts(answers: &Answers) -> Vec<(u64, i64)> {
     rows
 }
 
-/// Both representations preserve answers and can be reused after release.
+/// A self-join preserves answers and can be reused after release.
 #[test]
-fn resident_and_cursor_self_joins_preserve_answers_after_memory_release() {
+fn self_joins_preserve_answers_after_memory_release() {
     let fix = metric_store("ordinary-self-join", 640);
     let query = self_join();
     let mut expected: Vec<_> = (0..640i64)
         .map(|id| (u64::try_from(id).unwrap() % 3, id - 64))
         .collect();
     expected.sort_unstable();
-    for fallback in [false, true] {
-        let mut prepared = fix.prepare(&query).unwrap();
-        prepared.force_cursor_fallback(fallback);
-        for _ in 0..3 {
-            let out = fix.execute(&mut prepared, &[] as &[BindValue]).unwrap();
-            prepared.release_memory();
-            assert_eq!(bucket_amounts(&out), expected, "fallback={fallback}");
-        }
+    let mut prepared = fix.prepare(&query).unwrap();
+    for _ in 0..3 {
+        let out = fix.execute(&mut prepared, &[] as &[BindValue]).unwrap();
+        prepared.release_memory();
+        assert_eq!(bucket_amounts(&out), expected);
     }
 }
 
@@ -112,9 +109,9 @@ fn interior_amounts(answers: &Answers) -> Vec<(u64, i64)> {
     bucket_amounts(answers)
 }
 
-/// Projection interiors preserve exact deduplication in both executors.
+/// Projection interiors deduplicate exactly and reset cleanly for reuse.
 #[test]
-fn projection_interior_matches_cursor_execution_and_reuse() {
+fn projection_interior_deduplicates_and_reuses() {
     let rows: &[(u64, u64, &str, i64)] = &[
         (1, 3, "a", 10),
         (2, 3, "b", 10),
@@ -167,25 +164,16 @@ fn projection_interior_matches_cursor_execution_and_reuse() {
     );
     assert_eq!(expected.len(), 4, "distinct (account, amount) pairs");
 
-    let mut cursor = fix.prepare(&query).expect("prepare");
-    cursor.force_cursor_fallback(true);
-    let got = interior_amounts(
-        &fix.execute(&mut cursor, &[] as &[BindValue])
-            .expect("cursor"),
-    );
-    assert_eq!(got, expected, "the cursor interior stage is the stage");
-
-    // Success → success reuse on the same cursor plan (clean reset).
     let again = interior_amounts(
-        &fix.execute(&mut cursor, &[] as &[BindValue])
+        &fix.execute(&mut resident, &[] as &[BindValue])
             .expect("re-execute"),
     );
     assert_eq!(again, expected);
 }
 
-/// Aggregate interiors preserve exact folding in both executors.
+/// Aggregate interiors fold exactly.
 #[test]
-fn aggregate_interior_matches_cursor_execution() {
+fn aggregate_interior_folds_per_group() {
     let rows: &[(u64, u64, &str, i64)] = &[
         (1, 3, "a", 10),
         (2, 3, "b", 25),
@@ -243,14 +231,6 @@ fn aggregate_interior_matches_cursor_execution() {
         vec![(3, 35), (7, 65), (9, 35)],
         "per-account sums"
     );
-
-    let mut cursor = fix.prepare(&query).expect("prepare");
-    cursor.force_cursor_fallback(true);
-    let got = interior_amounts(
-        &fix.execute(&mut cursor, &[] as &[BindValue])
-            .expect("cursor"),
-    );
-    assert_eq!(got, expected, "the cursor aggregate stage is the stage");
 }
 
 /// Borrowed result visits allocate no second Answers carrier. Cancellation
@@ -309,7 +289,6 @@ fn completed_results_support_cancellable_borrowed_delivery_without_copying() {
         .unwrap();
     let after = crate::alloc_counter::snapshot().window;
     assert!(seen.into_iter().all(|visited| visited));
-    #[cfg(feature = "alloc-counter")]
     assert_eq!(
         after.allocs, before.allocs,
         "borrowed delivery allocates no result copy"
@@ -318,7 +297,6 @@ fn completed_results_support_cancellable_borrowed_delivery_without_copying() {
     let before_move = crate::alloc_counter::snapshot().window;
     let answers = complete.into_answers();
     let after_move = crate::alloc_counter::snapshot().window;
-    #[cfg(feature = "alloc-counter")]
     assert_eq!(
         after_move.allocs, before_move.allocs,
         "consuming the owner only moves storage"

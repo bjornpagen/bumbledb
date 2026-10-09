@@ -355,7 +355,6 @@ mod tests {
         let work = WorkContext::new();
         let handle = InternerHandle::new(&generation, &work);
         let live = handle.intern("stable shared payload").unwrap();
-        #[cfg(feature = "alloc-counter")]
         let before = crate::alloc_counter::snapshot().window;
         for _ in 0..128 {
             let next = handle.intern("stable shared payload").unwrap();
@@ -363,7 +362,6 @@ mod tests {
             assert!(Arc::ptr_eq(&live.text, &next.text));
             assert!(handle.text_eq().tokens_equal(live.word, next.word).unwrap());
         }
-        #[cfg(feature = "alloc-counter")]
         assert_eq!(crate::alloc_counter::snapshot().window, before);
         generation.lock_resolver().reclaim_unowned();
         assert_eq!(handle.with_text(live.word, str::len), Some(live.text.len()));
@@ -413,13 +411,11 @@ mod tests {
             assert_eq!(resolver.lookup("live-0"), Some(owners[0].word));
         }
         let visits = generation.lock_resolver().reclaim_visits;
-        #[cfg(feature = "alloc-counter")]
         let before = crate::alloc_counter::snapshot().window;
         for _ in 0..128 {
             let same = handle.intern("live-0").unwrap();
             assert!(Arc::ptr_eq(&same.text, &owners[0].text));
         }
-        #[cfg(feature = "alloc-counter")]
         assert_eq!(crate::alloc_counter::snapshot().window, before);
         assert_eq!(generation.lock_resolver().reclaim_visits, visits);
         drop(owners);

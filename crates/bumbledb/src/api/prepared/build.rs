@@ -267,7 +267,6 @@ fn prepare_witnessed<S>(
         pinned: pinned_source,
         cache,
         heap_tick: 0,
-        forced_fallback: false,
         execution_texts: crate::image::TextOwners::default(),
         pipeline,
         derived: super::reach::DerivedImages::default(),
@@ -720,13 +719,9 @@ fn prepare_rule(
     let occurrence_count = plan.occurrences().len();
 
     let memo = { build_view_memo(&plan) };
-    let fallback = crate::api::prepared::fallback::FallbackRule::seal(normalized, &plan, |var| {
-        *rule.var_type(var)
-    });
     Ok(PreparedRule::FreeJoin(FreeJoinRule {
         plan,
         executor,
-        fallback,
         finds,
 
         dedup_spans: Box::default(),

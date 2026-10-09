@@ -155,7 +155,6 @@ fn repeated_same_shape_executions_reuse_retained_pools_without_allocating() {
     colt.force_root().unwrap();
     let retained = colt.retained_bytes();
     assert!(retained > 0);
-    #[cfg(feature = "alloc-counter")]
     let before = crate::alloc_counter::snapshot().window;
     for round in 0..32 {
         drop(colt.reset(all(&image)));
@@ -163,7 +162,6 @@ fn repeated_same_shape_executions_reuse_retained_pools_without_allocating() {
         colt.force_root().unwrap();
         assert_eq!(colt.retained_bytes(), retained, "capacity at round {round}");
     }
-    #[cfg(feature = "alloc-counter")]
     assert_eq!(
         crate::alloc_counter::snapshot().window,
         before,
@@ -185,7 +183,6 @@ fn forced_probes_preserve_pools_until_reset_requires_construction() {
     assert!(hit.is_some());
     let before = lengths(&colt);
     let retained = colt.retained_bytes();
-    #[cfg(feature = "alloc-counter")]
     let allocation = crate::alloc_counter::snapshot().window;
     {
         let probe = colt.prepare_probe(root, 0).unwrap();
@@ -199,7 +196,6 @@ fn forced_probes_preserve_pools_until_reset_requires_construction() {
             assert!(!probe.contains_prehashed_width::<1>(&[99], hashes[1]));
         }
     }
-    #[cfg(feature = "alloc-counter")]
     assert_eq!(crate::alloc_counter::snapshot().window, allocation);
     assert_eq!(lengths(&colt), before);
     assert_eq!(colt.retained_bytes(), retained);

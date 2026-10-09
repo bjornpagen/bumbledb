@@ -242,7 +242,6 @@ fn physical_terminal_force_observes_cancellation_and_releases_its_pools() {
         let before = crate::alloc_counter::snapshot().window;
         drop(colts);
         let after = crate::alloc_counter::snapshot().window;
-        #[cfg(feature = "alloc-counter")]
         assert!(after.dealloc_bytes - before.dealloc_bytes >= retained as u64);
         let _ = (retained, before, after);
     }
@@ -347,7 +346,6 @@ fn ordinary_allocation_preserves_large_join_answers_and_pool_lifetimes() {
     let before = crate::alloc_counter::snapshot().window;
     drop(colts);
     let after = crate::alloc_counter::snapshot().window;
-    #[cfg(feature = "alloc-counter")]
     assert!(after.dealloc_bytes - before.dealloc_bytes >= retained as u64);
     let _ = (before, after);
 }

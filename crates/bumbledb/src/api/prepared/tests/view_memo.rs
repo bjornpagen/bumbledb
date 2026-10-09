@@ -283,7 +283,6 @@ fn four_draw_memo_activation_preserves_current_work_and_pool_ownership() {
             let before = crate::alloc_counter::snapshot().window;
             drop(memo);
             let after = crate::alloc_counter::snapshot().window;
-            #[cfg(feature = "alloc-counter")]
             assert!(after.dealloc_bytes - before.dealloc_bytes >= retained as u64);
             let _ = (retained, before, after);
         }
