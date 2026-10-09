@@ -27,44 +27,57 @@ E5 (lowering/fold/residual, MIN/MAX), E8, E3 (consume numeric's check), C7 adapt
 | C11: one rule runner, `EitherSink` delegation, one `i64_word`; Program/Bound/Runtime | landed `1818965ee`, `d5fdd0e8e` |
 | C8 adapt: no query file names `StoreError`/`Error::Store` | landed `c4c3e8f2d` |
 | C5 query side: closed images and closed-row filters from sealed rows; `image/decode.rs` deleted | landed `4460daaa8` |
-| C12, C13 | in progress |
-| L, `unreachable_pub` | todo |
+| ValidationError: `AggregateRefusal::InputType`, `ParamRefusal::IdGap` constructed | landed `1eaadfc79`; old variants wait on bridge |
+| C4: `AggregateSink::spill` and the `GroupSpill` stub deleted | landed `30e964374` |
+| C12: `JoinCtx`, `SourceLayout`/`BatchBuffers`, shared batch passes, `SiblingProbe`, `ProbeCtx`/`ProbeBuffers` | landed `4685e0e9c` |
+| C13: kernel range filters for constant residuals; `ImageCache` byte cap with LRU eviction; per-rule key-probe buffers | landed `2ff3619fc`, `8fc9c97cb` (buffers in `4685e0e9c`) |
+| C10 adapt: `distinct_proof.rs` calls `judge_complete` | landed |
+| L, `unreachable_pub` | in progress |
 
 ## Requests to other lanes
 
 ### engine-storage
 
-1. **C5 query side landed (`4460daaa8`).** Nothing in my paths reads `FactLayout`, `FactView`,
-   `SealedRow::fact`, `Relation::layout()` or `encoding::{field_bytes, interval_words, split_halves,
-   decode_values_keyed_into, decode_sealed}` any more; HEAD's lib clippy now reports them dead until
-   you delete them. `canonical::decode_sealed` is the last caller of my
-   `api::prepared::source::work_error`; delete it and I delete `work_error` (it is dead
-   transitively until then).
-2. **C8 stage B unblocked (`c4c3e8f2d`).** My files convert through `Error::from(WorkError)`,
-   `Error::from(RowError)` and `?`, and match `is_cancelled()` / `kind()`. Inside storage callbacks
-   that return `StoreResult` I use `work.checkpoint()?` (`From<WorkError> for StoreError`). The
-   only `crate::store` alias user left is `image/cache/tests.rs` (`use crate::store::RelationVersion`),
-   kept so lib.rs's `#[cfg(test)] use storage::store;` stays used; when you delete that alias, tell
-   me and I switch the import to `crate::storage::store::RelationVersion` in the same window.
-3. **`ParamIdGap`.** `tests/edge.rs` matches `ValidationError::ParamIdGap { param }`. Match
-   `Error::Validation(_)` there (or tell me and I fold it into
-   `Param { param, refusal: ParamRefusal::IdGap }` in the same window you switch).
+1. **C5 and C8 stage B: done on my side.** `work_error` and `store_error` are deleted; no query
+   file names `StoreError`, `Error::Store`, `FactLayout` or `decode_sealed`.
+2. **`crate::store` alias.** The only user of lib.rs's `#[cfg(test)] use storage::store;` is
+   `image/cache/tests.rs` (`use crate::store::RelationVersion`). Delete the alias whenever you like
+   and tell me; I switch that import to `crate::storage::store::RelationVersion` in the same window.
+3. **Image cache cap (optional).** `ImageCache::with_byte_cap(schema, cap)` exists;
+   `ImageCache::new` uses `image::cache::DEFAULT_IMAGE_CACHE_BYTES` (128 MiB). If `Options` should
+   carry the cap, add `image_cache_bytes` and call `with_byte_cap` in `api/db/open.rs`.
+4. **Key-probe allocation (optional).** A membership key probe allocates one `CanonicalRow` per
+   probe (`CanonicalRow::encode`). A `CanonicalRow::encode_into(fields, values, work, &mut
+   Vec<u8>)` (or a borrowed-bytes variant of `contains`) would let the probe reuse one buffer.
 
 ### bridge
 
-- `bumbledb-node/src/query.rs` names `ValidationError::{AggregateInputType, ParamIdGap}`. When I
-  fold them (`Aggregate { refusal: AggregateRefusal::InputType }`, `Param { refusal:
-  ParamRefusal::IdGap }`) the two arms move into the existing `Aggregate`/`Param` arms.
+- `ValidationError::{AggregateInputType, ParamIdGap}` are no longer constructed (`1eaadfc79`):
+  the engine reports `Aggregate { find, refusal: AggregateRefusal::InputType }` and
+  `Param { param, refusal: ParamRefusal::IdGap }`, which your existing `Aggregate`/`Param` arms
+  already map. Delete the `E::AggregateInputType { find }` alternative and the `E::ParamIdGap`
+  arm in `bumbledb-node/src/query.rs` and say so here; I then delete the two variants.
 
 ### consolidator
 
-- `AggregateSink::spill` (my `exec/sink.rs`) and the `spill: None` / `aggregate::spill::GroupSpill`
-  stub (now also mine) go together; I do it with C12.
-- `api/prepared/tests/float_aggregates.rs` is not in my paths; its uncommitted
-  `f64_min_and_max_propagate_nan_through_queries` duplicates
-  `tests/aggregates.rs::f64_min_and_max_propagate_nan_on_leaf_outer_and_ungrouped_inputs`.
+- If the bridge has not dropped those two arms by the end of the wave, delete
+  `ValidationError::{AggregateInputType, ParamIdGap}` (and their `Display` arms in
+  `ir/validate/error.rs`) together with the two bridge arms.
+- `api/prepared/tests/float_aggregates.rs` (not in my paths) and my
+  `tests/aggregates.rs::f64_min_and_max_propagate_nan_on_leaf_outer_and_ungrouped_inputs` overlap;
+  mine also covers the outer (joined) input path.
 
 ## API changes (announcements)
+
+- **C12.** Executor internals only: `exec::run::JoinCtx` (plan, tries, bindings, sink,
+  counters), `SourceLayout`, `BatchBuffers`, `BatchRows` (`LeafRows`, `PendingRows`),
+  `CoverBatch`, `CoverAt`, `SiblingProbe` with `ProbeCursor::{Shared, Carried}`. Key probes:
+  `exec::dispatch::{ProbeCtx, ProbeBuffers}`; `execute_key_probe(plan, ProbeCtx, &mut
+  ProbeBuffers, bindings, sink, counters)`, `key_probe_row(plan, ProbeCtx, &mut ProbeBuffers)`.
+  `PreparedPipeline::PointProbe::rule` is boxed; the prepared runtime's `key_scratch` is gone.
+- **C13.** `WordCmp::{converse, kept_range}`. `ImageCache::with_byte_cap(schema, cap)`,
+  `image::cache::DEFAULT_IMAGE_CACHE_BYTES`; cached ordinary slabs stay under the cap (LRU);
+  `RelationImage::byte_size` is crate-visible.
 
 - **C5 (query side).** `image::synthesize_closed(schema, rel, &generation, &work)` builds through
   `build_from_scan` over `SealedRow::row` bytes (same decoder, same columns as stored rows);

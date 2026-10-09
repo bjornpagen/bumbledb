@@ -489,7 +489,7 @@ fn complete_interval_equality_pins_license_the_pointwise_witness() {
 
 #[test]
 fn pointwise_law_rejects_distinct_rows_with_equal_complete_keys() {
-    use crate::schema::judge::{JudgeBudget, Judgment, MapState, judge_final_state};
+    use crate::schema::judge::{JudgeBudget, Judgment, MapState, judge_complete};
     use crate::{F64, Interval, Value};
 
     for (element, first, adjacent) in [
@@ -521,7 +521,7 @@ fn pointwise_law_rejects_distinct_rows_with_equal_complete_keys() {
             vec![Value::U64(1), Value::U64(20), first.clone()],
         );
         assert!(matches!(
-            judge_final_state(&schema, &equal_keys, &work, JudgeBudget::default()).expect("judge"),
+            judge_complete(&schema, &equal_keys, &work, JudgeBudget::default()).expect("judge"),
             Judgment::Rejected(_)
         ));
         let mut lawful = MapState::new();
@@ -531,7 +531,7 @@ fn pointwise_law_rejects_distinct_rows_with_equal_complete_keys() {
         lawful.insert(RelationId(0), vec![Value::U64(1), Value::U64(20), adjacent]);
         lawful.insert(RelationId(0), vec![Value::U64(2), Value::U64(30), first]);
         assert_eq!(
-            judge_final_state(&schema, &lawful, &work, JudgeBudget::default()).expect("judge"),
+            judge_complete(&schema, &lawful, &work, JudgeBudget::default()).expect("judge"),
             Judgment::Admitted
         );
     }
