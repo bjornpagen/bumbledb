@@ -1,0 +1,277 @@
+use std::path::Path;
+
+use bumbledb::{Db, RelationId, Value};
+
+use crate::harness::{self, Measurement, Protocol};
+use crate::worlds::corpus_gen::{GenConfig, Rng};
+use crate::worlds::writebench::write_protocol;
+
+#[cfg(test)]
+mod tests;
+
+pub mod world {
+    bumbledb::schema! {
+        pub WindowedWorld;
+
+        relation WParent {
+            id: u64 as WParentId,
+            kind: u64,
+        }
+        relation WChild {
+            id: u64 as WChildId,
+            parent: u64 as WParentId,
+            flag: u64,
+        }
+
+        // Declared id keys first (E-NO-RESERVE): the retired fresh
+        // auto-keys are ordinary declared statements now, at the head so
+        // the later declared statement ids keep their historical slots.
+        WParent(id) -> WParent;
+        WChild(id)  -> WChild;
+
+        WChild(parent) <= WParent(id);
+        WParent(id) <={0..64} WChild(parent);
+        WParent(id | kind == 1) <={0} WChild(parent | flag == 1);
+    }
+}
+
+pub mod baseline {
+    bumbledb::schema! {
+        pub UnwindowedWorld;
+
+        relation WParent {
+            id: u64 as WParentId,
+            kind: u64,
+        }
+        relation WChild {
+            id: u64 as WChildId,
+            parent: u64 as WParentId,
+            flag: u64,
+        }
+
+        WParent(id) -> WParent;
+        WChild(id)  -> WChild;
+
+        WChild(parent) <= WParent(id);
+    }
+}
+
+pub mod ids {
+    use bumbledb::RelationId;
+
+    pub const PARENT: RelationId = RelationId(0);
+    pub const CHILD: RelationId = RelationId(1);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mass {
+    pub parents: u64,
+
+    pub children_per_parent: u64,
+}
+
+impl Mass {
+    pub const BENCH: Self = Self {
+        parents: 4_096,
+        children_per_parent: 8,
+    };
+
+    #[must_use]
+    pub const fn unit() -> Self {
+        Self {
+            parents: 16,
+            children_per_parent: 4,
+        }
+    }
+}
+
+pub const PARENTS: u64 = Mass::BENCH.parents;
+
+/// The application-owned child-id mint base for the measured commit
+/// families (E-NO-RESERVE): corpus child ids are dense from 0, below this
+/// base. Each family owns one cursor across warmups and measured samples.
+pub const MINT_BASE: u64 = 1 << 24;
+
+#[must_use]
+pub fn parent_kind(i: u64) -> u64 {
+    u64::from(i.is_multiple_of(8))
+}
+
+pub fn relation_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
+    match rel {
+        ids::PARENT => {
+            Box::new((0..mass.parents).map(|i| vec![Value::U64(i), Value::U64(parent_kind(i))]))
+        }
+        ids::CHILD => Box::new((0..mass.parents * mass.children_per_parent).map(move |i| {
+            vec![
+                Value::U64(i),
+                Value::U64(i / mass.children_per_parent),
+                Value::U64(0),
+            ]
+        })),
+        _ => unreachable!("two windowed relations"),
+    }
+}
+
+/// # Errors
+pub fn load<S>(db: &Db<S>, mass: Mass) -> Result<(), String> {
+    for rel in [ids::PARENT, ids::CHILD] {
+        db.write(crate::harness::bench_work(), |tx| {
+            tx.insert_dyn(rel, relation_rows(mass, rel))
+                .map(bumbledb::MutationReport::changed)
+        })
+        .map_err(|e| format!("windowed load: {e:?}"))?
+        .unwrap();
+    }
+    Ok(())
+}
+
+fn unselected_parent(rng: &mut Rng) -> u64 {
+    loop {
+        let p = rng.range(PARENTS);
+        if parent_kind(p) == 0 {
+            return p;
+        }
+    }
+}
+
+/// # Errors
+/// # Panics
+pub fn commit_window_admission(
+    db: &Db<world::WindowedWorld>,
+    proto: Protocol,
+    mint: &mut u64,
+) -> Result<Measurement, String> {
+    let mut rng = Rng::new(0x0117_0001);
+    harness::measure(proto, || {
+        let parent = world::WParentId(rng.range(PARENTS));
+        let id = world::WChildId(*mint);
+        *mint += 1;
+        db.write(crate::harness::bench_work(), |tx| {
+            tx.insert([&world::WChild {
+                id,
+                parent,
+                flag: 0,
+            }])
+        })
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
+        .map_err(|e| format!("commit_window_admission: {e:?}"))
+    })
+}
+
+/// # Errors
+/// # Panics
+pub fn commit_window_baseline(
+    db: &Db<baseline::UnwindowedWorld>,
+    proto: Protocol,
+    mint: &mut u64,
+) -> Result<Measurement, String> {
+    let mut rng = Rng::new(0x0117_0001);
+    harness::measure(proto, || {
+        let parent = baseline::WParentId(rng.range(PARENTS));
+        let id = baseline::WChildId(*mint);
+        *mint += 1;
+        db.write(crate::harness::bench_work(), |tx| {
+            tx.insert([&baseline::WChild {
+                id,
+                parent,
+                flag: 0,
+            }])
+        })
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
+        .map_err(|e| format!("commit_window_baseline: {e:?}"))
+    })
+}
+
+/// # Errors
+/// # Panics
+pub fn commit_window_exclusion(
+    db: &Db<world::WindowedWorld>,
+    proto: Protocol,
+    mint: &mut u64,
+) -> Result<Measurement, String> {
+    let mut rng = Rng::new(0x0117_0002);
+    harness::measure(proto, || {
+        let parent = world::WParentId(unselected_parent(&mut rng));
+        let id = world::WChildId(*mint);
+        *mint += 1;
+        db.write(crate::harness::bench_work(), |tx| {
+            tx.insert([&world::WChild {
+                id,
+                parent,
+                flag: 1,
+            }])
+        })
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
+        .map_err(|e| format!("commit_window_exclusion: {e:?}"))
+    })
+}
+
+/// # Errors
+pub fn write_families(
+    _cfg: GenConfig,
+    scratch: &Path,
+    selected: &dyn Fn(&str) -> bool,
+) -> Result<Vec<crate::harness::report::WriteFamilyReport>, String> {
+    let names = [
+        "commit_window_admission",
+        "commit_window_baseline",
+        "commit_window_exclusion",
+    ];
+    if !names.iter().any(|name| selected(name)) {
+        return Ok(Vec::new());
+    }
+
+    std::fs::create_dir_all(scratch).map_err(|e| format!("windowed scratch: {e}"))?;
+    eprintln!("bench: loading the windowed twin worlds");
+    let windowed = crate::harness::create_db(&scratch.join("windowed"), world::WindowedWorld)?;
+    load(&windowed, Mass::BENCH)?;
+    let unwindowed =
+        crate::harness::create_db(&scratch.join("baseline"), baseline::UnwindowedWorld)?;
+    load(&unwindowed, Mass::BENCH)?;
+
+    let mut out = Vec::new();
+    let mut push = |name: &str,
+                    run: &mut dyn FnMut(Protocol) -> Result<Measurement, String>|
+     -> Result<(), String> {
+        if !selected(name) {
+            return Ok(());
+        }
+        eprintln!("bench: {name}");
+        let ours = run(write_protocol(name))?;
+
+        out.push(crate::harness::report::WriteFamilyReport {
+            name: name.to_owned(),
+            ours: ours.stats,
+            theirs: None,
+            facts_per_sec: None,
+        });
+        Ok(())
+    };
+    // Baseline first, before the judged commits' fsync-heavy windows.
+    // One persistent mint per family: admission and exclusion share the
+    // windowed store, so their bases are disjoint blocks. Every invocation
+    // inserts new rows rather than degenerating into duplicate commits.
+    let mut baseline_mint = MINT_BASE;
+    let mut admission_mint = MINT_BASE;
+    let mut exclusion_mint = MINT_BASE + (1 << 20);
+    push("commit_window_baseline", &mut |proto| {
+        commit_window_baseline(&unwindowed, proto, &mut baseline_mint)
+    })?;
+    push("commit_window_admission", &mut |proto| {
+        commit_window_admission(&windowed, proto, &mut admission_mint)
+    })?;
+    push("commit_window_exclusion", &mut |proto| {
+        commit_window_exclusion(&windowed, proto, &mut exclusion_mint)
+    })?;
+    Ok(out)
+}

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::corpus_gen::Scale;
-use crate::verify::DEFAULT_RANDOM_CASES;
+use crate::oracle::sqlite::verify::DEFAULT_RANDOM_CASES;
+use crate::worlds::corpus_gen::Scale;
 
 use super::{
     AppPerfArgs, BenchArgs, Cmd, CorpusArgs, CurvesArgs, HeapArgs, ProfileArgs, ScenarioArgs,
@@ -329,7 +329,7 @@ fn parse_app_perf(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
                     tokens
                         .value(&flag)?
                         .split(',')
-                        .map(crate::appperf::Regime::parse)
+                        .map(crate::harness::appperf::Regime::parse)
                         .collect::<Result<_, _>>()?,
                 );
             }

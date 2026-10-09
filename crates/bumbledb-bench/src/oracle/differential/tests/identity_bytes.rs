@@ -1,0 +1,319 @@
+use bumbledb::schema::{
+    FieldId, RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor, ValueType,
+};
+use bumbledb::{
+    Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, FoldOp, Query, RelationId, Rule, Term,
+    Value, VarId,
+};
+
+use crate::fixture::{TempDir, field, var};
+use crate::oracle::differential::{Op, run};
+use crate::oracle::naive::{Delta, NaiveDb};
+
+const BLOB: RelationId = RelationId(0);
+const REF: RelationId = RelationId(1);
+
+fn schema() -> SchemaDescriptor {
+    let digest = |name: &str, len: u16| field(name, ValueType::FixedBytes { len });
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Blob".into(),
+                fields: vec![
+                    digest("hash", 32),
+                    digest("d8", 8),
+                    digest("d16", 16),
+                    digest("d64", 64),
+                    digest("d7", 7),
+                    digest("d9", 9),
+                    digest("d63", 63),
+                    field("weight", ValueType::U64),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Ref".into(),
+                fields: vec![digest("hash", 32)],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: BLOB,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Containment {
+                source: Side {
+                    relation: REF,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+                target: Side {
+                    relation: BLOB,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+            },
+        ],
+    }
+}
+
+fn digest(len: usize, k: u64) -> Value {
+    let mut raw = vec![0u8; len];
+    let tail = k.to_be_bytes();
+    let n = len.min(8);
+    raw[len - n..].copy_from_slice(&tail[8 - n..]);
+    Value::FixedBytes(raw.into())
+}
+
+fn blob(k: u64) -> Vec<Value> {
+    vec![
+        digest(32, k),
+        digest(8, k % 3),
+        digest(16, k % 5),
+        digest(64, k % 7),
+        digest(7, k % 2),
+        digest(9, k % 4),
+        digest(63, k % 6),
+        Value::U64(k * 10),
+    ]
+}
+
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+fn write_ops(rng: &mut Rng) -> Vec<Delta> {
+    let mut mirror = NaiveDb::new(&schema());
+    let mut deltas = Vec::new();
+    for _ in 0..160 {
+        let delta = match rng.below(10) {
+            0..=3 => {
+                let k = rng.below(24);
+                Delta {
+                    deletes: vec![],
+                    inserts: vec![(BLOB, blob(k))],
+                }
+            }
+
+            4 => {
+                let k = rng.below(24);
+                let mut other = blob(k);
+                other[7] = Value::U64(9_999);
+                Delta {
+                    deletes: vec![],
+                    inserts: vec![(BLOB, blob(k)), (BLOB, other)],
+                }
+            }
+
+            5 | 6 => {
+                let k = rng.below(24);
+                Delta {
+                    deletes: vec![],
+                    inserts: vec![(BLOB, blob(k)), (REF, vec![digest(32, k)])],
+                }
+            }
+
+            7 => Delta {
+                deletes: vec![],
+                inserts: vec![(REF, vec![digest(32, rng.below(24))])],
+            },
+
+            8 => {
+                let k = rng.below(24);
+                Delta {
+                    deletes: vec![(BLOB, blob(k))],
+                    inserts: vec![],
+                }
+            }
+
+            _ => {
+                let k = rng.below(24);
+                Delta {
+                    deletes: vec![(REF, vec![digest(32, k)]), (BLOB, blob(k))],
+                    inserts: vec![],
+                }
+            }
+        };
+        let _ = mirror.apply(&delta);
+        deltas.push(delta);
+    }
+    deltas
+}
+
+fn blob_atom(bindings: Vec<(u16, Term)>) -> Atom {
+    Atom {
+        source: bumbledb::AtomSource::Edb(BLOB),
+        bindings: bindings
+            .into_iter()
+            .map(|(field, term)| (FieldId(field), term))
+            .collect(),
+    }
+}
+
+fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>, conditions: Vec<ConditionTree>) -> Query {
+    Query::single(Rule {
+        finds,
+        atoms,
+        negated: vec![],
+        conditions,
+    })
+}
+
+/// The query block, replayed after every writes-prefix: round-trip projections
+/// of every width (7/8/9/16/32/63/64 — the pad boundaries), bytes<32> Eq hits
+/// and adversarial misses, a membership set, a bytes<32> join (Ref ⋈ Blob on
+/// hash), and the criteria pair — group-by over bytes<N> and Max(weight) at
+/// widths 8/16/32/64.
+fn queries() -> Vec<Op> {
+    let mut ops = Vec::new();
+
+    ops.push(Op::Query {
+        query: plain(
+            (0..8).map(|v| FindTerm::Var(VarId(v))).collect(),
+            vec![blob_atom((0..8u16).map(|f| (f, var(f))).collect())],
+            vec![],
+        ),
+        params: vec![],
+    });
+
+    for key in [digest(32, 3), digest(32, 0), {
+        let Value::FixedBytes(mut raw) = digest(32, 3) else {
+            unreachable!()
+        };
+        raw[0] = 0xA5;
+        Value::FixedBytes(raw)
+    }] {
+        ops.push(Op::Query {
+            query: plain(
+                vec![FindTerm::Var(VarId(0))],
+                vec![blob_atom(vec![(0, Term::Literal(key)), (7, var(0))])],
+                vec![],
+            ),
+            params: vec![],
+        });
+    }
+
+    ops.push(Op::Query {
+        query: plain(
+            vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            vec![blob_atom(vec![(2, var(0)), (7, var(1))])],
+            vec![ConditionTree::Leaf(Comparison {
+                op: CmpOp::Ne,
+                lhs: var(0),
+                rhs: Term::Literal(digest(16, 1)),
+            })],
+        ),
+        params: vec![],
+    });
+    ops.push(Op::Query {
+        query: plain(
+            vec![FindTerm::Var(VarId(0))],
+            vec![blob_atom(vec![(2, var(0)), (7, var(1))])],
+            vec![ConditionTree::Leaf(Comparison {
+                op: CmpOp::Eq,
+                lhs: var(0),
+                rhs: Term::ParamSet(bumbledb::ParamId(0)),
+            })],
+        ),
+        params: vec![crate::oracle::naive::query::ParamValue::Set(vec![
+            digest(16, 0),
+            digest(16, 2),
+            digest(16, 4),
+        ])],
+    });
+
+    ops.push(Op::Query {
+        query: plain(
+            vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            vec![
+                Atom {
+                    source: bumbledb::AtomSource::Edb(REF),
+                    bindings: vec![(FieldId(0), var(0))],
+                },
+                blob_atom(vec![(0, var(0)), (7, var(1))]),
+            ],
+            vec![],
+        ),
+        params: vec![],
+    });
+
+    for field in [1u16, 2, 0, 3] {
+        ops.push(Op::Query {
+            query: plain(
+                vec![FindTerm::Var(VarId(0)), FindTerm::Count],
+                vec![blob_atom(vec![(field, var(0)), (7, var(1))])],
+                vec![],
+            ),
+            params: vec![],
+        });
+        ops.push(Op::Query {
+            query: plain(
+                vec![FindTerm::Aggregate {
+                    op: FoldOp::Max,
+                    over: VarId(1),
+                }],
+                vec![blob_atom(vec![(field, var(0)), (7, var(1))])],
+                vec![],
+            ),
+            params: vec![],
+        });
+
+        if field != 1 {
+            ops.push(Op::Query {
+                query: plain(
+                    vec![
+                        FindTerm::Var(VarId(2)),
+                        FindTerm::Aggregate {
+                            op: FoldOp::Max,
+                            over: VarId(1),
+                        },
+                    ],
+                    vec![blob_atom(vec![(field, var(0)), (1, var(2)), (7, var(1))])],
+                    vec![],
+                ),
+                params: vec![],
+            });
+        }
+    }
+    ops
+}
+
+#[test]
+fn identity_bytes_agree_with_the_naive_model() {
+    let dir = TempDir::new("differential");
+    let descriptor = schema();
+    let db = Db::create(dir.path(), descriptor, crate::harness::bench_work())
+        .expect("create")
+        .expect("accepted");
+    let mut naive = NaiveDb::new(&schema());
+
+    let mut rng = Rng(0x1D_B17E5);
+    let writes = write_ops(&mut rng);
+    let mut ops: Vec<Op> = Vec::new();
+    for chunk in writes.chunks(40) {
+        ops.extend(chunk.iter().cloned().map(Op::Write));
+        ops.extend(queries());
+    }
+
+    let summary = match run(&db, &mut naive, &ops) {
+        Ok(summary) => summary,
+        Err(divergence) => panic!("divergence: {divergence:?}"),
+    };
+
+    assert!(summary.commits >= 20, "commits: {}", summary.commits);
+    assert!(summary.aborts >= 20, "aborts: {}", summary.aborts);
+    assert!(summary.queries >= 60, "queries: {}", summary.queries);
+}

@@ -103,9 +103,13 @@ fn cold_touches_before_every_sample_and_bumps_generations() {
 
     let dir = std::env::temp_dir().join("bumbledb-bench-harness-cold");
     let _ = std::fs::remove_dir_all(&dir);
-    let db = bumbledb::Db::create(&dir, crate::schema::Ledger, crate::harness::bench_work())
-        .expect("create")
-        .expect("accepted");
+    let db = bumbledb::Db::create(
+        &dir,
+        crate::worlds::ledger::Ledger,
+        crate::harness::bench_work(),
+    )
+    .expect("create")
+    .expect("accepted");
     let generations = RefCell::new(Vec::new());
     measure_cold(proto, org_touch(&db), || {
         let generation = db

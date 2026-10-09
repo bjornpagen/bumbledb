@@ -1,0 +1,1330 @@
+//! A scale curve is data, not a script: `CURVE_FAMILIES` is a `point` from
+//! [`crate::worlds::families`] (point is the crud/point-regime key probe), `busy_scan`
+//! from [`crate::worlds::calendar::families`], and ([`crate::oracle::compare::multisets`])
+//! before anything reaches a timer. The REGION (one gate pass or one whole
+//! timing protocol block); a capped [`crate::harness::sqlite_run::FairnessCheck`]
+//! asserted before timing gated exactly like the canonical before it is timed.
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use bumbledb::schema::ValueType;
+use bumbledb::{Answers, Db, ParamId, Query, RelationId, Value};
+
+use crate::harness::report::{self, Provenance};
+use crate::harness::sqlite_run::{self, FairnessCheck, PreparedFamily, open_for_bench};
+use crate::harness::{self, Protocol, Rotation, Stats};
+use crate::oracle::compare;
+use crate::oracle::sqlite::translate::{ParamSlot, Translated, translate};
+use crate::worlds::calendar::corpus_gen::CalSizes;
+use crate::worlds::closure::{self, ClosSizes};
+use crate::worlds::corpus_gen::{GenConfig, Scale, Sizes};
+use crate::worlds::families::{Draw, param_args, scalar_draw, set_bindings};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CurvesReport {
+    pub provenance: Provenance,
+    pub seed: u64,
+    pub samples: u32,
+    pub cap_ms: u64,
+    pub families: Vec<FamilyCurve>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FamilyCurve {
+    pub name: &'static str,
+    pub world: &'static str,
+    pub rows: Vec<CurvePoint>,
+    pub warmth: Option<Warmth>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CurvePoint {
+    pub scale: &'static str,
+    pub facts: u64,
+    /// Mean answer rows per measured call, including zero-row draws.
+    pub answers: f64,
+    pub ours: Option<Stats>,
+    pub theirs: Option<Stats>,
+    pub theirs_hand: Option<Stats>,
+    pub cap: Option<CapEvent>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapEvent {
+    pub at: &'static str,
+}
+
+/// The cold/warm/memoized panel, both engines.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Warmth {
+    pub ours_cold: Stats,
+    pub ours_warm: Stats,
+    pub ours_memoized: Stats,
+    pub theirs_cold: Stats,
+    pub theirs_warm: Stats,
+    pub theirs_memoized: Stats,
+}
+
+fn push_point(out: &mut String, point: &CurvePoint) {
+    let _ = write!(
+        out,
+        "{{\"scale\":\"{}\",\"facts\":{},\"answers\":{},\"ours\":",
+        point.scale, point.facts, point.answers
+    );
+    super::push_opt_stats(out, point.ours.as_ref());
+    out.push_str(",\"theirs\":");
+    super::push_opt_stats(out, point.theirs.as_ref());
+    out.push_str(",\"theirs_hand\":");
+    super::push_opt_stats(out, point.theirs_hand.as_ref());
+    out.push_str(",\"cap\":");
+    match point.cap {
+        Some(cap) => {
+            let _ = write!(out, "{{\"at\":\"{}\"}}", cap.at);
+        }
+        None => out.push_str("null"),
+    }
+    out.push('}');
+}
+
+fn push_warmth(out: &mut String, warmth: Option<&Warmth>) {
+    out.push_str(",\"warmth\":");
+    let Some(w) = warmth else {
+        out.push_str("null");
+        return;
+    };
+    out.push_str("{\"ours_cold\":");
+    super::push_stats(out, &w.ours_cold);
+    out.push_str(",\"ours_warm\":");
+    super::push_stats(out, &w.ours_warm);
+    out.push_str(",\"ours_memoized\":");
+    super::push_stats(out, &w.ours_memoized);
+    out.push_str(",\"theirs_cold\":");
+    super::push_stats(out, &w.theirs_cold);
+    out.push_str(",\"theirs_warm\":");
+    super::push_stats(out, &w.theirs_warm);
+    out.push_str(",\"theirs_memoized\":");
+    super::push_stats(out, &w.theirs_memoized);
+    out.push('}');
+}
+
+#[must_use]
+pub fn to_json(report: &CurvesReport) -> String {
+    let mut out = String::new();
+    out.push_str("{\"provenance\":");
+    super::push_provenance(&mut out, &report.provenance);
+    let _ = write!(
+        out,
+        ",\"seed\":{},\"samples\":{},\"cap_ms\":{},\"families\":[",
+        report.seed, report.samples, report.cap_ms
+    );
+    for (index, family) in report.families.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let _ = write!(
+            out,
+            "{{\"name\":\"{}\",\"world\":\"{}\",\"rows\":[",
+            family.name, family.world
+        );
+        for (row_index, point) in family.rows.iter().enumerate() {
+            if row_index > 0 {
+                out.push(',');
+            }
+            push_point(&mut out, point);
+        }
+        out.push(']');
+        push_warmth(&mut out, family.warmth.as_ref());
+        out.push('}');
+    }
+    out.push_str("]}");
+    out
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum World {
+    Ledger,
+    Calendar,
+    Closure,
+}
+
+impl World {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Ledger => "ledger",
+            Self::Calendar => "calendar",
+            Self::Closure => "closure",
+        }
+    }
+}
+
+struct CurveFamily {
+    name: &'static str,
+    world: World,
+}
+
+const CURVE_FAMILIES: [CurveFamily; 4] = [
+    CurveFamily {
+        name: "triangle",
+        world: World::Ledger,
+    },
+    CurveFamily {
+        name: "point",
+        world: World::Ledger,
+    },
+    CurveFamily {
+        name: "busy_scan",
+        world: World::Calendar,
+    },
+    CurveFamily {
+        name: "closure_fanout",
+        world: World::Closure,
+    },
+];
+
+fn select(names: Option<&[String]>) -> Result<Vec<&'static CurveFamily>, String> {
+    let Some(names) = names else {
+        return Ok(CURVE_FAMILIES.iter().collect());
+    };
+    for name in names {
+        if !CURVE_FAMILIES.iter().any(|family| family.name == name) {
+            return Err(format!(
+                "curves: unknown family {name} — the lane's four are \
+                 triangle, point, busy_scan, closure_fanout"
+            ));
+        }
+    }
+    Ok(CURVE_FAMILIES
+        .iter()
+        .filter(|family| names.iter().any(|name| name == family.name))
+        .collect())
+}
+
+fn curve_sizes(scale: Scale) -> ClosSizes {
+    match scale {
+        Scale::Tiny => ClosSizes {
+            chain: 64,
+            fanout: 4,
+            depth: 3,
+        },
+        Scale::S => ClosSizes {
+            chain: 4_096,
+            fanout: 8,
+            depth: 4,
+        },
+        Scale::M => ClosSizes {
+            chain: 40_960,
+            fanout: 8,
+            depth: 5,
+        },
+        Scale::L => ClosSizes {
+            chain: 409_600,
+            fanout: 8,
+            depth: 6,
+        },
+    }
+}
+
+fn closure_curve_params(sizes: &ClosSizes) -> Vec<Draw> {
+    let base = sizes.tree_base();
+    vec![
+        scalar_draw(vec![Value::U64(base)]),
+        scalar_draw(vec![Value::U64(base + 1)]),
+        scalar_draw(vec![Value::U64(sizes.nodes() - 1)]),
+        scalar_draw(vec![Value::U64(sizes.nodes() + 1_000_000)]),
+    ]
+}
+
+const CAP_GRANULARITY_OPS: std::ffi::c_int = 4_096;
+
+#[derive(Debug, Clone, Copy)]
+struct DnfCap {
+    cap: Duration,
+}
+
+impl DnfCap {
+    /// Runs one region (one gate pass or one whole timing protocol
+    /// deadline captured at entry, ALWAYS clears it before returning,
+    /// observed after the region completed keeps its finished result;
+    /// first op — excluded before entry.
+    fn guarded<T>(
+        self,
+        conn: &rusqlite::Connection,
+        f: impl FnOnce() -> Result<T, String>,
+    ) -> Result<Option<T>, String> {
+        if self.cap.is_zero() {
+            return Ok(None);
+        }
+        let deadline = Instant::now() + self.cap;
+        let tripped = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&tripped);
+        conn.progress_handler(
+            CAP_GRANULARITY_OPS,
+            Some(move || {
+                if Instant::now() >= deadline {
+                    flag.store(true, Ordering::Relaxed);
+                    true
+                } else {
+                    false
+                }
+            }),
+        );
+        let result = f();
+        conn.progress_handler(0, None::<fn() -> bool>);
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(_) if tripped.load(Ordering::Relaxed) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Gated exactly like the canonical before it is ever timed; both are reported
+/// — we never flatter ourselves.
+const BUSY_SCAN_HAND: &str = "SELECT DISTINCT t0.\"person\", t0.\"span_start\", t0.\"span_end\" FROM \"Claim\" AS t0 WHERE t0.\"arm\" = 0 AND t0.\"span_start\" < ?2 AND ?1 < t0.\"span_end\"";
+
+const BUSY_SCAN_HAND_SLOTS: [ParamSlot; 2] =
+    [ParamSlot::Start(ParamId(0)), ParamSlot::End(ParamId(0))];
+
+fn closure_translated() -> Translated {
+    Translated {
+        sql: closure::CLOSURE_SQL.to_owned(),
+        params: vec![ParamSlot::Whole(ParamId(0))],
+    }
+}
+
+struct Bundle {
+    query: Query,
+    draws: Vec<Draw>,
+    canonical: Translated,
+    hand: Option<Translated>,
+    facts: u64,
+}
+
+fn ledger_facts(scale: Scale) -> u64 {
+    let sizes = Sizes::of(scale);
+    (0..crate::worlds::ledger::ids::RELATIONS)
+        .map(|rel| sizes.rows(RelationId(rel)))
+        .sum()
+}
+
+fn calendar_facts(scale: Scale) -> u64 {
+    let sizes = CalSizes::of(scale);
+    (0..crate::worlds::calendar::ids::RELATIONS)
+        .map(|rel| sizes.rows(RelationId(rel)))
+        .sum()
+}
+
+fn ledger_bundle(name: &str, cfg: &GenConfig) -> Result<Bundle, String> {
+    let family = crate::worlds::families::all()
+        .iter()
+        .find(|family| family.name == name)
+        .ok_or_else(|| format!("curves: {name} is not a ledger family"))?;
+    let query = (family.query)();
+    let draws = (family.params)(cfg);
+    let canonical = translate(
+        &query,
+        crate::worlds::ledger::schema(),
+        &set_bindings(&draws[0]),
+    )
+    .map_err(|e| format!("{name}: translate: {e}"))?;
+    Ok(Bundle {
+        query,
+        draws,
+        canonical,
+        hand: None,
+        facts: ledger_facts(cfg.scale),
+    })
+}
+
+fn calendar_bundle(name: &str, cfg: &GenConfig) -> Result<Bundle, String> {
+    let family = crate::worlds::calendar::families::all()
+        .iter()
+        .find(|family| family.name == name)
+        .ok_or_else(|| format!("curves: {name} is not a calendar family"))?;
+    let query = (family.query)();
+    let draws = (family.params)(cfg);
+    let canonical = family.sql_for(&query, &draws[0])?;
+    let hand = (name == "busy_scan").then(|| Translated {
+        sql: BUSY_SCAN_HAND.to_owned(),
+        params: BUSY_SCAN_HAND_SLOTS.to_vec(),
+    });
+    Ok(Bundle {
+        query,
+        draws,
+        canonical,
+        hand,
+        facts: calendar_facts(cfg.scale),
+    })
+}
+
+fn closure_bundle(scale: Scale) -> Bundle {
+    let sizes = curve_sizes(scale);
+    Bundle {
+        query: closure::closure_query(),
+        draws: closure_curve_params(&sizes),
+        canonical: closure_translated(),
+        hand: None,
+        facts: sizes.nodes() + sizes.edges(),
+    }
+}
+
+fn bundle_for(family: &CurveFamily, cfg: &GenConfig) -> Result<Bundle, String> {
+    match family.world {
+        World::Ledger => ledger_bundle(family.name, cfg),
+        World::Calendar => calendar_bundle(family.name, cfg),
+        World::Closure => Ok(closure_bundle(cfg.scale)),
+    }
+}
+
+fn gate_lane(
+    conn: &rusqlite::Connection,
+    label: &str,
+    translated: &Translated,
+    draws: &[Draw],
+    ours: &[Vec<compare::Answer>],
+    types: &[ValueType],
+) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(&translated.sql)
+        .map_err(|e| format!("{label}: oracle prepare: {e}"))?;
+    for (index, draw) in draws.iter().enumerate() {
+        let theirs = compare::from_sqlite(&mut stmt, &translated.params, draw, types)
+            .map_err(|e| format!("{label}: oracle execute: {e}"))?;
+        compare::multisets(ours[index].clone(), theirs).map_err(|mismatch| {
+            format!(
+                "{label} draw {index}: ENGINES DISAGREE — not timing a wrong answer\n{mismatch}"
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// Times one `SQLite` lane under the cap: the whole protocol block is one
+/// capped region (statement prepared once, draws rotated); a trip anywhere
+/// reports the block as capped — `Ok(None)`.
+fn time_lane(
+    conn: &rusqlite::Connection,
+    cap: DnfCap,
+    translated: &Translated,
+    draws: &[Draw],
+    types: &[ValueType],
+    proto: Protocol,
+) -> Result<Option<Stats>, String> {
+    cap.guarded(conn, || {
+        let mut family = PreparedFamily::new(conn, translated, types.to_vec())?;
+        let mut rotation = Rotation::new((0..draws.len()).collect::<Vec<_>>());
+        let measured = harness::measure(proto, || {
+            let index = rotation.next_index();
+            sqlite_run::sample_args(&mut family, &draws[index])
+        })?;
+        Ok(measured.stats)
+    })
+}
+
+fn curve_point<S>(
+    name: &str,
+    scale_label: &'static str,
+    db: &Db<S>,
+    conn: &rusqlite::Connection,
+    bundle: &Bundle,
+    proto: Protocol,
+    cap: DnfCap,
+) -> Result<CurvePoint, String> {
+    eprintln!("curves: {name} at {scale_label}");
+    let mut prepared = db
+        .prepare(&bundle.query, crate::harness::bench_work())
+        .map_err(|e| format!("{name}: prepare: {e:?}"))?;
+    let types: Vec<ValueType> = prepared
+        .signature()
+        .columns
+        .iter()
+        .map(|column| *column.ty())
+        .collect();
+
+    let mut buffer = Answers::new();
+    let mut ours_answers = Vec::with_capacity(bundle.draws.len());
+    for draw in &bundle.draws {
+        let args = param_args(draw);
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("{name}: execute: {e:?}"))?;
+        ours_answers.push(compare::from_answers(&buffer, &types));
+    }
+
+    let gate = cap.guarded(conn, || {
+        gate_lane(
+            conn,
+            name,
+            &bundle.canonical,
+            &bundle.draws,
+            &ours_answers,
+            &types,
+        )
+    })?;
+    if gate.is_none() {
+        return Ok(CurvePoint {
+            scale: scale_label,
+            facts: bundle.facts,
+            answers: 0.0,
+            ours: None,
+            theirs: None,
+            theirs_hand: None,
+            cap: Some(CapEvent { at: "gate" }),
+        });
+    }
+
+    let mut rotation = Rotation::new(bundle.draws.clone());
+    let ours = harness::measure(proto, || {
+        let args = param_args(rotation.next_set());
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("execute: {e:?}"))?;
+        Ok(buffer.len() as u64)
+    })?;
+    let answers = ours.work as f64 / f64::from(proto.samples.max(1));
+
+    let theirs = time_lane(conn, cap, &bundle.canonical, &bundle.draws, &types, proto)?;
+    let mut cap_event = theirs.is_none().then_some(CapEvent { at: "timing" });
+
+    // The hand-written SQL is gated like the canonical translation before it
+    // is timed; a cap here leaves the canonical results standing.
+    let mut theirs_hand = None;
+    if let Some(hand) = &bundle.hand {
+        let hand_label = format!("{name}[hand]");
+        let hand_gate = cap.guarded(conn, || {
+            gate_lane(
+                conn,
+                &hand_label,
+                hand,
+                &bundle.draws,
+                &ours_answers,
+                &types,
+            )
+        })?;
+        if hand_gate.is_some() {
+            theirs_hand = time_lane(conn, cap, hand, &bundle.draws, &types, proto)?;
+        }
+        if theirs_hand.is_none() {
+            cap_event = cap_event.or(Some(CapEvent { at: "hand" }));
+        }
+    }
+
+    Ok(CurvePoint {
+        scale: scale_label,
+        facts: bundle.facts,
+        answers,
+        ours: Some(ours.stats),
+        theirs,
+        theirs_hand,
+        cap: cap_event,
+    })
+}
+
+/// Reopen-cold rounds discarded before recording begins.
+const WARMTH_DISCARDED: usize = 2;
+/// Reopen-cold rounds recorded.
+const WARMTH_ROUNDS: usize = 16;
+/// The memoized point's protocol.
+const MEMO_PROTOCOL: Protocol = Protocol {
+    warmups: 8,
+    samples: 64,
+};
+
+fn elapsed_ns(start: Instant) -> u64 {
+    u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
+
+/// Per reopen-cold round: drop and reopen the store, prepare (excluded from the
+/// timed region — the timed-region law), time exactly the first execution
+/// (`cold`), then the second execution of the same prepared statement (`warm`);
+/// `memoized` is one open + one prepare under [`MEMO_PROTOCOL`].
+fn warmth_panel<S: bumbledb::Theory + Copy>(
+    theory: S,
+    db_path: &Path,
+    oracle_path: &Path,
+    bundle: &Bundle,
+) -> Result<Warmth, String> {
+    let open_db =
+        || crate::harness::open_db(db_path, theory).map_err(|e| format!("warmth reopen: {e}"));
+    let types: Vec<ValueType> = {
+        let db = open_db()?;
+        let prepared = db
+            .prepare(&bundle.query, crate::harness::bench_work())
+            .map_err(|e| format!("warmth prepare: {e:?}"))?;
+        prepared
+            .signature()
+            .columns
+            .iter()
+            .map(|column| *column.ty())
+            .collect()
+    };
+
+    // Ours, reopen-cold rounds: exec1 = cold, exec2 = warm.
+    let mut cold = Vec::with_capacity(WARMTH_ROUNDS);
+    let mut warm = Vec::with_capacity(WARMTH_ROUNDS);
+    for round in 0..(WARMTH_DISCARDED + WARMTH_ROUNDS) {
+        let draw = &bundle.draws[round % bundle.draws.len()];
+        let args = param_args(draw);
+        let db = open_db()?;
+        let mut prepared = db
+            .prepare(&bundle.query, crate::harness::bench_work())
+            .map_err(|e| format!("warmth prepare: {e:?}"))?;
+        let mut buffer = Answers::new();
+        let start = Instant::now();
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("warmth execute: {e:?}"))?;
+        let first = elapsed_ns(start);
+        std::hint::black_box(buffer.len());
+        let start = Instant::now();
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("warmth execute: {e:?}"))?;
+        let second = elapsed_ns(start);
+        std::hint::black_box(buffer.len());
+        if round >= WARMTH_DISCARDED {
+            cold.push(first);
+            warm.push(second);
+        }
+    }
+    let ours_cold = harness::stats(&mut cold);
+    let ours_warm = harness::stats(&mut warm);
+
+    // Ours, memoized: one open + one prepare, the measured protocol.
+    let ours_memoized = {
+        let db = open_db()?;
+        let mut prepared = db
+            .prepare(&bundle.query, crate::harness::bench_work())
+            .map_err(|e| format!("warmth prepare: {e:?}"))?;
+        let mut rotation = Rotation::new(bundle.draws.clone());
+        let mut buffer = Answers::new();
+        let measured = harness::measure(MEMO_PROTOCOL, || {
+            let args = param_args(rotation.next_set());
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute(&mut prepared, &args, &mut buffer)
+            })
+            .map_err(|e| format!("execute: {e:?}"))?;
+            Ok(buffer.len() as u64)
+        })?;
+        measured.stats
+    };
+
+    // Theirs, symmetric: per round drop the connection, reopen, prepare
+
+    let mut cold = Vec::with_capacity(WARMTH_ROUNDS);
+    let mut warm = Vec::with_capacity(WARMTH_ROUNDS);
+    for round in 0..(WARMTH_DISCARDED + WARMTH_ROUNDS) {
+        let draw = &bundle.draws[round % bundle.draws.len()];
+        let conn = open_for_bench(oracle_path).map_err(|e| format!("warmth oracle open: {e}"))?;
+        let mut family = PreparedFamily::new(&conn, &bundle.canonical, types.clone())?;
+        let start = Instant::now();
+        sqlite_run::sample_args(&mut family, draw)?;
+        let first = elapsed_ns(start);
+        let start = Instant::now();
+        sqlite_run::sample_args(&mut family, draw)?;
+        let second = elapsed_ns(start);
+        if round >= WARMTH_DISCARDED {
+            cold.push(first);
+            warm.push(second);
+        }
+    }
+    let theirs_cold = harness::stats(&mut cold);
+    let theirs_warm = harness::stats(&mut warm);
+
+    // Theirs, memoized: one reused statement under the same protocol.
+    let theirs_memoized = {
+        let conn = open_for_bench(oracle_path).map_err(|e| format!("warmth oracle open: {e}"))?;
+        let mut family = PreparedFamily::new(&conn, &bundle.canonical, types)?;
+        let mut rotation = Rotation::new((0..bundle.draws.len()).collect::<Vec<_>>());
+        let measured = harness::measure(MEMO_PROTOCOL, || {
+            let index = rotation.next_index();
+            sqlite_run::sample_args(&mut family, &bundle.draws[index])
+        })?;
+        measured.stats
+    };
+
+    Ok(Warmth {
+        ours_cold,
+        ours_warm,
+        ours_memoized,
+        theirs_cold,
+        theirs_warm,
+        theirs_memoized,
+    })
+}
+
+struct WorldStores<S> {
+    db: Db<S>,
+    conn: rusqlite::Connection,
+    db_path: PathBuf,
+    oracle_path: PathBuf,
+}
+
+impl<S> WorldStores<S> {
+    /// reopen rounds need the store CLOSED first (one LMDB environment
+    fn into_paths(self) -> (PathBuf, PathBuf) {
+        let Self {
+            db,
+            conn,
+            db_path,
+            oracle_path,
+        } = self;
+        drop(db);
+        drop(conn);
+        (db_path, oracle_path)
+    }
+}
+
+struct LaneCtx<'a> {
+    args: &'a crate::cli::CurvesArgs,
+    selected: Vec<&'static CurveFamily>,
+    proto: Protocol,
+    cap: DnfCap,
+    scratch: PathBuf,
+}
+
+/// One scale pass: open exactly the worlds the selected families need (the
+/// ledger/calendar pair from the digest-keyed cache, read-only, fairness
+/// asserted before timing; the closure world into scratch through the sized
+/// loader), then gate-and-time every selected family, then — at the first scale
+/// under `--warmth` — drop the live handles and run the panel on the
+/// already-gated stores.
+fn run_scale(
+    ctx: &LaneCtx<'_>,
+    curves: &mut [FamilyCurve],
+    scale: Scale,
+    first: bool,
+) -> Result<(), String> {
+    let cfg = GenConfig {
+        seed: ctx.args.seed,
+        scale,
+    };
+    let bundles: Vec<Bundle> = ctx
+        .selected
+        .iter()
+        .map(|family| bundle_for(family, &cfg))
+        .collect::<Result<_, _>>()?;
+
+    let needs = |world: World| ctx.selected.iter().any(|family| family.world == world);
+    let paths = if needs(World::Ledger) || needs(World::Calendar) {
+        Some(crate::harness::driver::ensure_corpus(&ctx.args.dir, cfg)?)
+    } else {
+        None
+    };
+
+    let ledger = if needs(World::Ledger) {
+        let paths = paths.as_ref().expect("corpus ensured above");
+        let db = crate::harness::open_db(&paths.db, crate::worlds::ledger::Ledger)
+            .map_err(|e| format!("open ledger store: {e}"))?;
+        let conn = open_for_bench(&paths.oracle).map_err(|e| format!("open ledger oracle: {e}"))?;
+        FairnessCheck::run(&conn)?;
+        Some(WorldStores {
+            db,
+            conn,
+            db_path: paths.db.clone(),
+            oracle_path: paths.oracle.clone(),
+        })
+    } else {
+        None
+    };
+
+    let calendar = if needs(World::Calendar) {
+        let paths = paths.as_ref().expect("corpus ensured above");
+        let db = crate::harness::open_db(&paths.cal_db, crate::worlds::calendar::Scheduling)
+            .map_err(|e| format!("open calendar store: {e}"))?;
+        let conn =
+            open_for_bench(&paths.cal_oracle).map_err(|e| format!("open calendar oracle: {e}"))?;
+        FairnessCheck::run_calendar(&conn)?;
+        Some(WorldStores {
+            db,
+            conn,
+            db_path: paths.cal_db.clone(),
+            oracle_path: paths.cal_oracle.clone(),
+        })
+    } else {
+        None
+    };
+
+    let closure_world = if needs(World::Closure) {
+        let dir = ctx.scratch.join(format!("closure-{}", scale.label()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("closure scratch: {e}"))?;
+        eprintln!("curves: loading the closure world at {}", scale.label());
+        let (db, conn) = closure::load_stores_sized(&dir, curve_sizes(scale))?;
+        Some(WorldStores {
+            db,
+            conn,
+            db_path: dir.join("db"),
+            oracle_path: dir.join("oracle.sqlite"),
+        })
+    } else {
+        None
+    };
+
+    for ((family, bundle), curve) in ctx.selected.iter().zip(&bundles).zip(curves.iter_mut()) {
+        let point = match family.world {
+            World::Ledger => {
+                let world = ledger.as_ref().expect("ledger world open");
+                curve_point(
+                    family.name,
+                    scale.label(),
+                    &world.db,
+                    &world.conn,
+                    bundle,
+                    ctx.proto,
+                    ctx.cap,
+                )?
+            }
+            World::Calendar => {
+                let world = calendar.as_ref().expect("calendar world open");
+                curve_point(
+                    family.name,
+                    scale.label(),
+                    &world.db,
+                    &world.conn,
+                    bundle,
+                    ctx.proto,
+                    ctx.cap,
+                )?
+            }
+            World::Closure => {
+                let world = closure_world.as_ref().expect("closure world open");
+                curve_point(
+                    family.name,
+                    scale.label(),
+                    &world.db,
+                    &world.conn,
+                    bundle,
+                    ctx.proto,
+                    ctx.cap,
+                )?
+            }
+        };
+        curve.rows.push(point);
+    }
+
+    if first && ctx.args.warmth {
+        let ledger = ledger.map(WorldStores::into_paths);
+        let calendar = calendar.map(WorldStores::into_paths);
+        let closure_paths = closure_world.map(WorldStores::into_paths);
+        for ((family, bundle), curve) in ctx.selected.iter().zip(&bundles).zip(curves.iter_mut()) {
+            if curve.rows.last().is_none_or(|point| point.ours.is_none()) {
+                continue;
+            }
+            let warmth = match family.world {
+                World::Ledger => {
+                    let (db_path, oracle_path) = ledger.as_ref().expect("ledger world open");
+                    warmth_panel(crate::worlds::ledger::Ledger, db_path, oracle_path, bundle)?
+                }
+                World::Calendar => {
+                    let (db_path, oracle_path) = calendar.as_ref().expect("calendar world open");
+                    warmth_panel(
+                        crate::worlds::calendar::Scheduling,
+                        db_path,
+                        oracle_path,
+                        bundle,
+                    )?
+                }
+                World::Closure => {
+                    let (db_path, oracle_path) =
+                        closure_paths.as_ref().expect("closure world open");
+                    warmth_panel(closure::Reachability, db_path, oracle_path, bundle)?
+                }
+            };
+            curve.warmth = Some(warmth);
+        }
+    }
+    Ok(())
+}
+
+fn opt_p50(stats: Option<&Stats>) -> String {
+    stats.map_or_else(|| "—".to_owned(), |s| s.p50.to_string())
+}
+
+fn render(report: &CurvesReport) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "# Curves report\n");
+    let _ = writeln!(
+        out,
+        "Scale curves, report-class. Every point is oracle-gated inline \
+         (value-identical multiset agreement against `SQLite`) before either \
+         engine is timed; a capped `SQLite` region is excluded-and-counted \
+         (`cap` names where it fired). `busy_scan` carries the hand-tuned \
+         twin beside the canonical OR-chain — both reported. p50 in ns; \
+         seed {}, {} samples per point, cap {} ms per region.\n",
+        report.seed, report.samples, report.cap_ms
+    );
+    let _ = writeln!(
+        out,
+        "| family | world | scale | facts | mean rows/call | ours p50 | sqlite p50 | hand p50 | cap |"
+    );
+    let _ = writeln!(out, "|---|---|---|---:|---:|---:|---:|---:|---|");
+    let mut capped = 0usize;
+    for family in &report.families {
+        for point in &family.rows {
+            if point.cap.is_some() {
+                capped += 1;
+            }
+            let _ = writeln!(
+                out,
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                family.name,
+                family.world,
+                point.scale,
+                point.facts,
+                point.answers,
+                opt_p50(point.ours.as_ref()),
+                opt_p50(point.theirs.as_ref()),
+                opt_p50(point.theirs_hand.as_ref()),
+                point.cap.map_or("—", |cap| cap.at),
+            );
+        }
+    }
+    let _ = writeln!(out, "\ncapped points: {capped} (excluded-and-counted)");
+    if report.families.iter().any(|family| family.warmth.is_some()) {
+        let _ = writeln!(
+            out,
+            "\n## Warmth panel (cold/warm/memoized, p50 ns)\n\n\
+             This panel uses the first requested scale (the first row of each \
+             family). Reopen-cold creates a fresh database handle and prepared \
+             query in the same process, with a warm OS page cache. Open and \
+             prepare are outside the timed first execution. The engine side \
+             prices the relation-image cache and resolved-filter view slots.\n"
+        );
+        let _ = writeln!(
+            out,
+            "| family | engine | cold | warm | memoized |\n|---|---|---:|---:|---:|"
+        );
+        for family in &report.families {
+            if let Some(w) = &family.warmth {
+                let _ = writeln!(
+                    out,
+                    "| {} | bumbledb | {} | {} | {} |",
+                    family.name, w.ours_cold.p50, w.ours_warm.p50, w.ours_memoized.p50
+                );
+                let _ = writeln!(
+                    out,
+                    "| {} | sqlite | {} | {} | {} |",
+                    family.name, w.theirs_cold.p50, w.theirs_warm.p50, w.theirs_memoized.p50
+                );
+            }
+        }
+    }
+    out
+}
+
+/// # Errors
+pub fn run(args: &crate::cli::CurvesArgs) -> Result<i32, String> {
+    let selected = select(args.families.as_deref())?;
+    if args.scales.is_empty() {
+        return Err("curves: --scales named no scale".to_owned());
+    }
+    let proto = Protocol {
+        warmups: 8,
+        samples: args.samples.unwrap_or(64),
+    };
+    let out_dir = args.out.clone().unwrap_or_else(|| {
+        PathBuf::from("bench-out").join(format!(
+            "{}-curves",
+            report::timestamp_iso8601().replace(':', "-")
+        ))
+    });
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("out {}: {e}", out_dir.display()))?;
+    let ctx = LaneCtx {
+        args,
+        selected,
+        proto,
+        cap: DnfCap {
+            cap: Duration::from_millis(args.cap_ms),
+        },
+        scratch: out_dir.join("scratch"),
+    };
+
+    let mut curves: Vec<FamilyCurve> = ctx
+        .selected
+        .iter()
+        .map(|family| FamilyCurve {
+            name: family.name,
+            world: family.world.label(),
+            rows: Vec::new(),
+            warmth: None,
+        })
+        .collect();
+
+    for (index, scale) in args.scales.iter().enumerate() {
+        run_scale(&ctx, &mut curves, *scale, index == 0)?;
+    }
+
+    let report = CurvesReport {
+        provenance: report::provenance(Path::new(".")),
+        seed: args.seed,
+        samples: proto.samples,
+        cap_ms: args.cap_ms,
+        families: curves,
+    };
+    std::fs::write(out_dir.join("curves-report.json"), to_json(&report))
+        .map_err(|e| format!("artifact: {e}"))?;
+    let markdown = render(&report);
+    std::fs::write(out_dir.join("curves-report.md"), &markdown)
+        .map_err(|e| format!("artifact: {e}"))?;
+    print!("{markdown}");
+    println!("artifacts: {}", out_dir.display());
+    if ctx.scratch.exists() {
+        std::fs::remove_dir_all(&ctx.scratch).map_err(|e| format!("scratch cleanup: {e}"))?;
+    }
+    Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::json::Value as Json;
+
+    fn provenance() -> Provenance {
+        Provenance {
+            crate_version: "0.0.0-test".to_owned(),
+            git_rev: "deadbeef".to_owned(),
+            timestamp: "2026-07-19T00:00:00Z".to_owned(),
+            host: "test-host".to_owned(),
+            shared: None,
+            parallel_jobs: None,
+        }
+    }
+
+    fn stats(base: u64) -> Stats {
+        Stats {
+            min: base,
+            p50: base + 1,
+            p90: base + 2,
+            p95: base + 3,
+            p99: base + 4,
+            max: base + 5,
+            mean_ns: base + 2,
+        }
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("bumbledb-bench-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn tiny_args(dir: &Path, out: &Path) -> crate::cli::CurvesArgs {
+        crate::cli::CurvesArgs {
+            scales: vec![Scale::Tiny],
+            families: None,
+            seed: 1,
+            dir: dir.to_path_buf(),
+            samples: Some(4),
+            cap_ms: 30_000,
+            warmth: false,
+            out: Some(out.to_path_buf()),
+        }
+    }
+
+    #[test]
+    fn report_json_shape_is_pinned() {
+        let report = CurvesReport {
+            provenance: provenance(),
+            seed: 3,
+            samples: 16,
+            cap_ms: 5000,
+            families: vec![FamilyCurve {
+                name: "triangle",
+                world: "graph",
+                rows: vec![
+                    CurvePoint {
+                        scale: "S",
+                        facts: 100_000,
+                        answers: 42.75,
+                        ours: Some(stats(100)),
+                        theirs: Some(stats(200)),
+                        theirs_hand: None,
+                        cap: None,
+                    },
+                    CurvePoint {
+                        scale: "M",
+                        facts: 1_000_000,
+                        answers: 420.0,
+                        ours: Some(stats(300)),
+                        theirs: None,
+                        theirs_hand: None,
+                        cap: Some(CapEvent { at: "timing" }),
+                    },
+                ],
+                warmth: Some(Warmth {
+                    ours_cold: stats(10),
+                    ours_warm: stats(20),
+                    ours_memoized: stats(30),
+                    theirs_cold: stats(40),
+                    theirs_warm: stats(50),
+                    theirs_memoized: stats(60),
+                }),
+            }],
+        };
+        let parsed = crate::json::parse(&to_json(&report)).expect("valid JSON");
+        let provenance = parsed.get("provenance").expect("provenance");
+        assert_eq!(
+            provenance.get("timestamp").and_then(Json::as_str),
+            Some("2026-07-19T00:00:00Z")
+        );
+
+        assert!(provenance.get("shared_machine").is_none());
+        assert_eq!(parsed.get("seed").and_then(Json::as_f64), Some(3.0));
+        assert_eq!(parsed.get("samples").and_then(Json::as_f64), Some(16.0));
+        assert_eq!(parsed.get("cap_ms").and_then(Json::as_f64), Some(5000.0));
+        let families = parsed
+            .get("families")
+            .and_then(Json::as_arr)
+            .expect("families");
+        assert_eq!(families.len(), 1);
+        assert_eq!(
+            families[0].get("name").and_then(Json::as_str),
+            Some("triangle")
+        );
+        assert_eq!(
+            families[0].get("world").and_then(Json::as_str),
+            Some("graph")
+        );
+        let rows = families[0]
+            .get("rows")
+            .and_then(Json::as_arr)
+            .expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get("scale").and_then(Json::as_str), Some("S"));
+        assert_eq!(rows[0].get("facts").and_then(Json::as_f64), Some(100_000.0));
+        assert_eq!(rows[0].get("answers").and_then(Json::as_f64), Some(42.75));
+        let ours = rows[0].get("ours").expect("ours");
+        assert_eq!(ours.get("p50").and_then(Json::as_f64), Some(101.0));
+        let theirs = rows[0].get("theirs").expect("theirs");
+        assert_eq!(theirs.get("max").and_then(Json::as_f64), Some(205.0));
+        assert_eq!(rows[0].get("theirs_hand"), Some(&Json::Null));
+        assert_eq!(rows[0].get("cap"), Some(&Json::Null));
+
+        assert_eq!(rows[1].get("theirs"), Some(&Json::Null));
+        assert_eq!(
+            rows[1]
+                .get("cap")
+                .and_then(|c| c.get("at"))
+                .and_then(Json::as_str),
+            Some("timing")
+        );
+        let warmth = families[0].get("warmth").expect("warmth");
+        assert_eq!(
+            warmth
+                .get("ours_cold")
+                .and_then(|s| s.get("min"))
+                .and_then(Json::as_f64),
+            Some(10.0)
+        );
+        assert_eq!(
+            warmth
+                .get("theirs_memoized")
+                .and_then(|s| s.get("mean_ns"))
+                .and_then(Json::as_f64),
+            Some(62.0)
+        );
+    }
+
+    #[test]
+    fn tiny_scale_gates_then_reports() {
+        let dir = scratch("curves-tiny-e2e");
+        let out = dir.join("out");
+        let code = run(&tiny_args(&dir, &out)).expect("the lane runs");
+        assert_eq!(code, 0);
+        let text = std::fs::read_to_string(out.join("curves-report.json")).expect("json artifact");
+        let parsed = crate::json::parse(&text).expect("valid JSON");
+        let families = parsed
+            .get("families")
+            .and_then(Json::as_arr)
+            .expect("families");
+        assert_eq!(families.len(), 4, "the full roster");
+        for family in families {
+            let name = family.get("name").and_then(Json::as_str).expect("name");
+            let rows = family.get("rows").and_then(Json::as_arr).expect("rows");
+            assert_eq!(rows.len(), 1, "{name}: one scale, one point");
+            let row = &rows[0];
+            assert_eq!(row.get("scale").and_then(Json::as_str), Some("Tiny"));
+            assert!(
+                row.get("ours")
+                    .and_then(|s| s.get("p50"))
+                    .and_then(Json::as_f64)
+                    .is_some(),
+                "{name}: ours timed"
+            );
+            assert!(
+                row.get("theirs")
+                    .and_then(|s| s.get("p50"))
+                    .and_then(Json::as_f64)
+                    .is_some(),
+                "{name}: theirs timed"
+            );
+            assert_eq!(row.get("cap"), Some(&Json::Null), "{name}: no cap event");
+            if name == "point" {
+                assert_eq!(
+                    row.get("answers").and_then(Json::as_f64),
+                    Some(0.75),
+                    "three hits and one miss must not be truncated to zero rows"
+                );
+            }
+            if name == "busy_scan" {
+                assert!(
+                    row.get("theirs_hand")
+                        .and_then(|s| s.get("p50"))
+                        .and_then(Json::as_f64)
+                        .is_some(),
+                    "the hand twin gated and timed at Tiny"
+                );
+            }
+        }
+        assert!(!out.join("scratch").exists(), "scratch removed");
+        assert!(out.join("curves-report.md").exists(), "markdown artifact");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// excluded before entry, and an unverified point is never timed
+    #[test]
+    fn zero_cap_reports_exceeded_and_skips_timing() {
+        let dir = scratch("curves-zero-cap");
+        let out = dir.join("out");
+        let mut args = tiny_args(&dir, &out);
+        args.families = Some(vec!["busy_scan".to_owned()]);
+        args.cap_ms = 0;
+        let code = run(&args).expect("the lane runs");
+        assert_eq!(code, 0);
+        let text = std::fs::read_to_string(out.join("curves-report.json")).expect("json artifact");
+        let parsed = crate::json::parse(&text).expect("valid JSON");
+        let families = parsed
+            .get("families")
+            .and_then(Json::as_arr)
+            .expect("families");
+        assert_eq!(families.len(), 1);
+        let row = &families[0]
+            .get("rows")
+            .and_then(Json::as_arr)
+            .expect("rows")[0];
+        assert_eq!(
+            row.get("cap")
+                .and_then(|c| c.get("at"))
+                .and_then(Json::as_str),
+            Some("gate"),
+            "the cap fired at the gate"
+        );
+        assert_eq!(row.get("ours"), Some(&Json::Null), "never timed unverified");
+        assert_eq!(
+            row.get("theirs"),
+            Some(&Json::Null),
+            "never timed unverified"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn warmth_panel_reports_cold_warm_memoized() {
+        let dir = scratch("curves-warmth");
+        let out = dir.join("out");
+        let mut args = tiny_args(&dir, &out);
+        args.families = Some(vec!["point".to_owned()]);
+        args.warmth = true;
+        let code = run(&args).expect("the lane runs");
+        assert_eq!(code, 0);
+        let text = std::fs::read_to_string(out.join("curves-report.json")).expect("json artifact");
+        let parsed = crate::json::parse(&text).expect("valid JSON");
+        let families = parsed
+            .get("families")
+            .and_then(Json::as_arr)
+            .expect("families");
+        assert_eq!(families.len(), 1);
+        let warmth = families[0].get("warmth").expect("warmth present");
+        assert_ne!(warmth, &Json::Null, "warmth object present");
+        for field in [
+            "ours_cold",
+            "ours_warm",
+            "ours_memoized",
+            "theirs_cold",
+            "theirs_warm",
+            "theirs_memoized",
+        ] {
+            let min = warmth
+                .get(field)
+                .and_then(|s| s.get("min"))
+                .and_then(Json::as_f64)
+                .expect(field);
+            assert!(min > 0.0, "{field}: min must be positive, got {min}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn closure_curve_sizes_grow_tenfold_ish() {
+        assert_eq!(curve_sizes(Scale::Tiny), ClosSizes::of(Scale::Tiny));
+        let s = curve_sizes(Scale::S).edges();
+        let m = curve_sizes(Scale::M).edges();
+        let l = curve_sizes(Scale::L).edges();
+        assert!(m / s >= 8, "S→M edges grew {m}/{s}");
+        assert!(l / m >= 8, "M→L edges grew {l}/{m}");
+    }
+
+    /// refusal, proving the hand twin cannot reach a timer unverified.
+    #[test]
+    fn hand_twin_is_gated_before_timing() {
+        let dir = scratch("curves-hand-gate");
+        let cfg = GenConfig {
+            seed: 1,
+            scale: Scale::Tiny,
+        };
+        let paths = crate::harness::driver::ensure_corpus(&dir, cfg).expect("corpus");
+        let db = crate::harness::open_db(&paths.cal_db, crate::worlds::calendar::Scheduling)
+            .expect("open cal store");
+        let conn = open_for_bench(&paths.cal_oracle).expect("open cal oracle");
+        let bundle = calendar_bundle("busy_scan", &cfg).expect("bundle");
+        let mut prepared = db
+            .prepare(&bundle.query, crate::harness::bench_work())
+            .expect("prepare");
+        let types: Vec<ValueType> = prepared
+            .signature()
+            .columns
+            .iter()
+            .map(|column| *column.ty())
+            .collect();
+        let mut buffer = Answers::new();
+        let mut ours = Vec::new();
+        for draw in &bundle.draws {
+            let args = param_args(draw);
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute(&mut prepared, &args, &mut buffer)
+            })
+            .map_err(|e| format!("{e:?}"))
+            .expect("execute");
+            ours.push(compare::from_answers(&buffer, &types));
+        }
+        let wrong = Translated {
+            sql: "SELECT DISTINCT t0.\"person\", t0.\"span_start\", t0.\"span_end\" \
+                  FROM \"Claim\" AS t0 WHERE ?1 = ?1 AND ?2 = ?2"
+                .to_owned(),
+            params: BUSY_SCAN_HAND_SLOTS.to_vec(),
+        };
+        let err = gate_lane(
+            &conn,
+            "busy_scan[hand]",
+            &wrong,
+            &bundle.draws,
+            &ours,
+            &types,
+        )
+        .expect_err("the wrong twin must be refused");
+        assert!(err.contains("ENGINES DISAGREE"), "{err}");
+
+        let hand = bundle.hand.as_ref().expect("busy_scan carries the twin");
+        gate_lane(&conn, "busy_scan[hand]", hand, &bundle.draws, &ours, &types)
+            .expect("the real twin agrees");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

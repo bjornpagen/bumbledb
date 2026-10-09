@@ -1,0 +1,77 @@
+use bumbledb::{CmpOp, ConditionTree, Query};
+
+use crate::oracle::differential::engine_query;
+use crate::oracle::querygen::{self, target};
+use crate::oracle::sqlite::verify::{MAX_BUNDLES, Run, VerifyConfig};
+use crate::worlds::corpus_gen::Rng;
+
+use super::run::positional;
+
+const CONVERSE_CASES: u32 = 100;
+
+fn converse_twin(query: &Query) -> Option<Query> {
+    let mut twin = query.clone();
+    let mut any = false;
+    let _ = crate::oracle::walk::every_rule_mut(&mut twin, |rule| {
+        for tree in &mut rule.conditions {
+            let ConditionTree::Leaf(comparison) = tree else {
+                continue;
+            };
+            if let CmpOp::Allen { mask } = comparison.op {
+                comparison.op = CmpOp::Allen {
+                    mask: mask.converse(),
+                };
+                std::mem::swap(&mut comparison.lhs, &mut comparison.rhs);
+                any = true;
+            }
+        }
+        true
+    });
+    any.then_some(twin)
+}
+
+pub(super) fn converse_lane(run: &mut Run<'_, target::Target>, cfg: &VerifyConfig) {
+    let mut rng = Rng::new(cfg.corpus_gen.seed ^ 0x0115_C09E);
+    let mut compared = 0u32;
+
+    for _ in 0..CONVERSE_CASES * 20 {
+        if compared >= CONVERSE_CASES || run.bundles.len() >= MAX_BUNDLES {
+            break;
+        }
+        let query = querygen::random_query(&mut rng, cfg.corpus_gen);
+        let Some(twin) = converse_twin(&query) else {
+            continue;
+        };
+        let Some(draw) = querygen::params_for(&query, &mut rng, cfg.corpus_gen)
+            .into_iter()
+            .next()
+        else {
+            continue;
+        };
+        let params = positional(&draw);
+        let original = engine_query(run.db, &query, &params);
+        let conversed = engine_query(run.db, &twin, &params);
+        run.cases += 1;
+        compared += 1;
+        if original != conversed {
+            let bundle = run.out_dir.join(format!("mismatch-{}", run.bundles.len()));
+            std::fs::create_dir_all(&bundle).expect("bundle dir");
+            std::fs::write(
+                bundle.join("mismatch.txt"),
+                format!(
+                    "converse property violated: swapping Allen operands and \
+                     conversing the mask changed the result\n\
+                     original:\n{query:#?}\ntwin:\n{twin:#?}\n\
+                     original result:\n{original:#?}\ntwin result:\n{conversed:#?}\n"
+                ),
+            )
+            .expect("bundle");
+            eprintln!("verify: CONVERSE MISMATCH -> {}", bundle.display());
+            run.bundles.push(bundle);
+        }
+    }
+    assert!(
+        compared >= CONVERSE_CASES / 2,
+        "the converse lane must actually run (compared {compared})"
+    );
+}

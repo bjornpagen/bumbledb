@@ -1,9 +1,15 @@
 //! Benchmark timing, parameter rotation, and fresh benchmark stores.
 use bumbledb::Value;
 
+pub mod appperf;
+pub mod boost;
 mod cold;
+pub mod driver;
+pub mod lanes;
 mod measure;
+pub mod report;
 mod rotation;
+pub mod sqlite_run;
 mod stats;
 #[cfg(test)]
 mod tests;

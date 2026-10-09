@@ -1,6 +1,8 @@
 //! Exit codes: 0 ok / gates won; 1 verify mismatch or gate loss; 2 usage or
 //! refusal (each refusal names the remedy).
-use bumbledb_bench::{cli, driver, families, lanes};
+use bumbledb_bench::cli;
+use bumbledb_bench::harness::{appperf, boost, driver, lanes};
+use bumbledb_bench::worlds::families;
 
 fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
     match cmd {
@@ -24,7 +26,7 @@ fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
         cli::Cmd::Writes(args) => lanes::writes::run(args),
         cli::Cmd::Curves(args) => lanes::curves::run(args),
         cli::Cmd::Heap(args) => lanes::heap::run(args),
-        cli::Cmd::AppPerf(args) => bumbledb_bench::appperf::run(args),
+        cli::Cmd::AppPerf(args) => appperf::run(args),
     }
 }
 
@@ -39,7 +41,7 @@ fn main() {
         }
     };
     if cmd.runs_measurements()
-        && let Err(message) = bumbledb_bench::boost::engage_from_env()
+        && let Err(message) = boost::engage_from_env()
     {
         eprintln!("error: {message}");
         std::process::exit(2);

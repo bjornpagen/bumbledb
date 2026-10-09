@@ -1,4 +1,4 @@
-use crate::verify::DEFAULT_RANDOM_CASES;
+use crate::oracle::sqlite::verify::DEFAULT_RANDOM_CASES;
 
 const COMMANDS: &str = "COMMANDS:\n\
     \x20 gen      generate + load both stores into the digest-keyed dir\n\

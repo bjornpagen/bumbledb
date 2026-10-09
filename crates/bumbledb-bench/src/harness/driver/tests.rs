@@ -1,0 +1,167 @@
+use super::bench::stamp_refusal;
+use super::*;
+use crate::cli::{BenchArgs, CorpusArgs};
+use crate::worlds::corpus_gen::Scale;
+
+fn scratch(tag: &str) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "bumbledb-bench-driver-{tag}-{}-{nanos}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+const CFG: GenConfig = GenConfig {
+    seed: 1,
+    scale: Scale::Tiny,
+};
+
+#[test]
+fn the_digest_directory_is_reused() {
+    let dir = scratch("reuse");
+    let mut loads = 0;
+    let mut loader = |paths: &CorpusPaths| {
+        loads += 1;
+        std::fs::create_dir_all(&paths.db).map_err(|e| e.to_string())
+    };
+    let first = ensure_corpus_with(&dir, CFG, &mut loader).expect("first");
+    let second = ensure_corpus_with(&dir, CFG, &mut loader).expect("second");
+    assert_eq!(first, second);
+    assert_eq!(loads, 1, "the marker short-circuits regeneration");
+
+    let other = corpus_paths(
+        &dir,
+        GenConfig {
+            seed: 2,
+            scale: CFG.scale,
+        },
+    );
+    assert_ne!(first.root, other.root);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_refusal_messages_substitute_the_flags() {
+    let corpus = CorpusArgs {
+        scale: Scale::M,
+        seed: 9,
+        dir: PathBuf::from("/tmp/corpora"),
+    };
+    assert_eq!(
+        stamp_refusal(&corpus),
+        "no fresh verify stamp for this corpus.\n\
+         run first: bumbledb-bench verify --scale M --seed 9 --dir /tmp/corpora"
+    );
+}
+
+#[test]
+fn bench_refuses_without_a_stamp() {
+    let dir = scratch("refuse");
+    let args = BenchArgs {
+        corpus: CorpusArgs {
+            scale: CFG.scale,
+            seed: 1,
+            dir: dir.clone(),
+        },
+        families: Some(vec!["point".to_owned()]),
+        samples: Some(8),
+        read_batch: None,
+        out: Some(dir.join("out")),
+        i_am_lying: false,
+    };
+    let err = cmd_bench(&args).unwrap_err();
+    assert!(err.contains("bumbledb-bench verify"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn verify_store_exits_zero_on_a_clean_corpus() {
+    let dir = scratch("verify-store-clean");
+    let corpus = CorpusArgs {
+        scale: CFG.scale,
+        seed: 1,
+        dir: dir.clone(),
+    };
+    cmd_gen(&corpus).expect("gen");
+    assert_eq!(cmd_verify_store(&corpus).expect("verify-store"), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn verify_store_refusal_names_gen() {
+    let dir = scratch("verify-store-missing");
+    let corpus = CorpusArgs {
+        scale: CFG.scale,
+        seed: 1,
+        dir: dir.clone(),
+    };
+    let err = cmd_verify_store(&corpus).unwrap_err();
+    assert!(err.contains("bumbledb-bench gen"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_full_sequence_runs_at_tiny() {
+    let dir = scratch("e2e");
+    let corpus = CorpusArgs {
+        scale: CFG.scale,
+        seed: 1,
+        dir: dir.clone(),
+    };
+    cmd_gen(&corpus).expect("gen");
+    let paths = corpus_paths(&dir, CFG);
+    assert!(paths.db.join("data.mdb").exists(), "compacted store");
+    assert!(
+        !paths.root.join("db-load").exists(),
+        "no load-scratch residue"
+    );
+    assert_eq!(cmd_verify(&corpus, 25).expect("verify"), 0);
+
+    let out = dir.join("out");
+    let args = BenchArgs {
+        corpus: corpus.clone(),
+        families: Some(vec!["point".to_owned()]),
+        samples: Some(8),
+        read_batch: None,
+        out: Some(out.clone()),
+        i_am_lying: false,
+    };
+    let code = cmd_bench(&args).expect("bench");
+    assert!(code == 0 || code == 1, "a gate verdict, not a refusal");
+    let mut names: Vec<String> = std::fs::read_dir(&out)
+        .expect("read out")
+        .map(|e| e.expect("entry").file_name().into_string().expect("utf-8"))
+        .filter(|name| {
+            std::path::Path::new(name)
+                .extension()
+                .is_some_and(|ext| ext == "md" || ext == "json")
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names, ["QUERIES.md", "report.json", "report.md"]);
+    let md = std::fs::read_to_string(out.join("report.md")).expect("read");
+    assert!(md.contains("PARTIAL — filtered run"), "{md}");
+    assert!(!md.contains("UNVERIFIED"), "verified run");
+    assert!(
+        md.contains("(families + 25 randomized cases)"),
+        "the provenance shows how much evidence earned the stamp: {md}"
+    );
+
+    let lying = BenchArgs {
+        families: Some(vec!["point".to_owned()]),
+        out: Some(dir.join("lying-out")),
+        i_am_lying: true,
+        ..args.clone()
+    };
+
+    std::fs::write(paths.root.join(super::CASES_FILE), "26").expect("tamper");
+    cmd_bench(&lying).expect("bench --i-am-lying");
+    let md = std::fs::read_to_string(dir.join("lying-out").join("report.md")).expect("read");
+    assert!(md.contains("UNVERIFIED"), "{md}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

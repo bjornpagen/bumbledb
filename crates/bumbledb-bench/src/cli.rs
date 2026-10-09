@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::corpus_gen::Scale;
+use crate::worlds::corpus_gen::Scale;
 
 mod help;
 mod parse;
@@ -216,7 +216,7 @@ pub struct AppPerfArgs {
     pub seed: u64,
 
     /// Regime filter; default all.
-    pub regimes: Option<Vec<crate::appperf::Regime>>,
+    pub regimes: Option<Vec<crate::harness::appperf::Regime>>,
 
     pub samples: Option<u32>,
 

@@ -1,0 +1,272 @@
+use std::path::Path;
+
+use bumbledb::schema::{
+    FieldId, RelationDescriptor, SchemaDescriptor, StatementDescriptor, ValueType,
+};
+use bumbledb::{Atom, Db, FindTerm, FoldOp, Query, RelationId, Rule, Term, Value, VarId};
+
+use crate::fixture::{TempDir, atom, field, side, var};
+use crate::oracle::differential::{Answers, engine_query};
+use crate::oracle::naive::{Delta, NaiveDb};
+
+fn stores(
+    dir: &Path,
+    descriptor: &SchemaDescriptor,
+    inserts: Vec<(RelationId, Vec<Value>)>,
+) -> (Db<SchemaDescriptor>, NaiveDb) {
+    let db = Db::create(dir, descriptor.clone(), crate::harness::bench_work())
+        .expect("create engine store")
+        .expect("accepted");
+    let mut naive = NaiveDb::new(descriptor);
+    let delta = Delta {
+        deletes: vec![],
+        inserts,
+    };
+    naive.apply(&delta).expect("the fixture data commits");
+    db.write(crate::harness::bench_work(), |tx| {
+        for (rel, fact) in &delta.inserts {
+            tx.insert_dyn(*rel, [fact])?;
+        }
+        Ok(())
+    })
+    .expect("the fixture data commits")
+    .unwrap();
+    (db, naive)
+}
+
+/// The grounded engine plan against the independent model; `fallen` names the
+/// atom the grounding drops.
+fn agrees(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: &str) {
+    let engine = engine_query(db, query, &[]);
+    let model = Answers::Ok(naive.query(query, &[]).expect("the model executes"));
+    assert_eq!(engine, model, "engine and model disagree ({fallen})");
+    let Answers::Ok(rows) = &engine else {
+        unreachable!("fixture queries never overflow")
+    };
+    assert!(!rows.is_empty(), "the fixture produces rows ({fallen})");
+}
+
+/// Posting(id u64, account u64, amount i64); Account(id u64, holder u64) with
+/// declared id keys, then Posting(account) <= Account(id) as statement 2.
+fn walk_descriptor() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Posting".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("account", ValueType::U64),
+                    field("amount", ValueType::I64),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Account".into(),
+                fields: vec![field("id", ValueType::U64), field("holder", ValueType::U64)],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Containment {
+                source: side(RelationId(0), &[1], &[]),
+                target: side(RelationId(1), &[0], &[]),
+            },
+        ],
+    }
+}
+
+fn walk_inserts() -> Vec<(RelationId, Vec<Value>)> {
+    let mut inserts: Vec<(RelationId, Vec<Value>)> = (1u64..=3)
+        .map(|id| (RelationId(1), vec![Value::U64(id), Value::U64(id * 7)]))
+        .collect();
+    for (id, account, amount) in [
+        (1u64, 1u64, 10i64),
+        (2, 1, 10),
+        (3, 1, -5),
+        (4, 2, 40),
+        (5, 2, 25),
+        (6, 3, 7),
+    ] {
+        inserts.push((
+            RelationId(0),
+            vec![Value::U64(id), Value::U64(account), Value::I64(amount)],
+        ));
+    }
+    inserts
+}
+
+#[test]
+fn the_existence_walk_agrees_with_the_model_on_both_sinks() {
+    let dir = TempDir::new("walk");
+    let descriptor = walk_descriptor();
+    let (db, naive) = stores(dir.path(), &descriptor, walk_inserts());
+    let atoms = vec![
+        atom(RelationId(0), &[(0, var(0)), (1, var(1)), (2, var(2))]),
+        atom(RelationId(1), &[(0, var(1))]),
+    ];
+    let projection = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+        atoms: atoms.clone(),
+        negated: vec![],
+        conditions: vec![],
+    });
+    let aggregate = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(1)),
+            FindTerm::Aggregate {
+                op: FoldOp::Sum,
+                over: VarId(2),
+            },
+        ],
+        atoms,
+        negated: vec![],
+        conditions: vec![],
+    });
+    agrees(&db, &naive, &projection, "Account");
+    agrees(&db, &naive, &aggregate, "Account");
+}
+
+/// Grading(id u64 — application-owned, declared key; kind u64 — 0 = Det,
+/// 1 = Custom); Det(grading u64, rate i64) with the declared key
+/// Det(grading) -> Det and the pair `Grading(id | kind == Det) ==
+/// Det(grading)` as its two containments — statements 1, 2, 3 after
+/// Grading's declared id key, preserving the historical numbering.
+fn du_descriptor() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Grading".into(),
+                fields: vec![field("id", ValueType::U64), field("kind", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Det".into(),
+                fields: vec![
+                    field("grading", ValueType::U64),
+                    field("rate", ValueType::I64),
+                ],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Containment {
+                source: side(RelationId(0), &[0], &[(1, Value::U64(0))]),
+                target: side(RelationId(1), &[0], &[]),
+            },
+            StatementDescriptor::Containment {
+                source: side(RelationId(1), &[0], &[]),
+                target: side(RelationId(0), &[0], &[(1, Value::U64(0))]),
+            },
+        ],
+    }
+}
+
+fn du_inserts() -> Vec<(RelationId, Vec<Value>)> {
+    vec![
+        (RelationId(0), vec![Value::U64(1), Value::U64(0)]),
+        (RelationId(0), vec![Value::U64(2), Value::U64(0)]),
+        (RelationId(0), vec![Value::U64(3), Value::U64(1)]),
+        (RelationId(1), vec![Value::U64(1), Value::I64(25)]),
+        (RelationId(1), vec![Value::U64(2), Value::I64(40)]),
+    ]
+}
+
+fn du_atoms() -> (Atom, Atom) {
+    (
+        atom(
+            RelationId(0),
+            &[(0, var(0)), (1, Term::Literal(Value::U64(0)))],
+        ),
+        atom(RelationId(1), &[(0, var(0)), (1, var(1))]),
+    )
+}
+
+#[test]
+fn the_du_header_direction_agrees_with_the_model_on_both_sinks() {
+    let dir = TempDir::new("du-header");
+    let descriptor = du_descriptor();
+    let (db, naive) = stores(dir.path(), &descriptor, du_inserts());
+    let (header, child) = du_atoms();
+    let atoms = vec![child, header];
+    let projection = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: atoms.clone(),
+        negated: vec![],
+        conditions: vec![],
+    });
+    let aggregate = Query::single(Rule {
+        finds: vec![FindTerm::Aggregate {
+            op: FoldOp::Sum,
+            over: VarId(1),
+        }],
+        atoms,
+        negated: vec![],
+        conditions: vec![],
+    });
+    agrees(&db, &naive, &projection, "Grading");
+    agrees(&db, &naive, &aggregate, "Grading");
+}
+
+/// The DU one-sided walk, child direction, both sinks: `Q(g):- Grading(id = g,
+/// kind == Det), Det(grading = g)` and the grouped count — the child falls (its
+/// `rate` stays unread; the statement scan order fells the child before the
+/// header's turn, and support acyclicity keeps the header standing).
+#[test]
+fn the_du_child_direction_agrees_with_the_model_on_both_sinks() {
+    let dir = TempDir::new("du-child");
+    let descriptor = du_descriptor();
+    let (db, naive) = stores(dir.path(), &descriptor, du_inserts());
+    let (header, child) = du_atoms();
+    let atoms = vec![header, child];
+    let projection = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: atoms.clone(),
+        negated: vec![],
+        conditions: vec![],
+    });
+    let aggregate = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],
+        atoms,
+        negated: vec![],
+        conditions: vec![],
+    });
+    agrees(&db, &naive, &projection, "Det");
+    agrees(&db, &naive, &aggregate, "Det");
+}
+
+/// The missing-φ near-miss refuses on the real pipeline, and the unrewritten
+/// plan still agrees with the model — the refusal's own differential.
+#[test]
+fn the_missing_phi_near_miss_refuses_and_still_agrees() {
+    let dir = TempDir::new("du-missing-phi");
+    let descriptor = du_descriptor();
+    let (db, naive) = stores(dir.path(), &descriptor, du_inserts());
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+        atoms: vec![
+            atom(RelationId(0), &[(0, var(0)), (1, var(2))]),
+            atom(RelationId(1), &[(0, var(0)), (1, var(1))]),
+        ],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let engine = engine_query(&db, &query, &[]);
+    let model = Answers::Ok(naive.query(&query, &[]).expect("the model executes"));
+    assert_eq!(engine, model, "engine and model disagree on the near-miss");
+}

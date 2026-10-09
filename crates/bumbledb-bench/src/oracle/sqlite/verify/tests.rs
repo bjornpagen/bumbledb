@@ -1,0 +1,175 @@
+use super::stamp_value::stamp_value_with;
+use super::*;
+use crate::fixture::TempDir;
+use crate::worlds::corpus_gen::Scale;
+
+fn cfg(tag: &str) -> (VerifyConfig, TempDir) {
+    let scratch = TempDir::new(&format!("verify-{tag}"));
+    let config = VerifyConfig {
+        corpus_gen: GenConfig {
+            seed: 1,
+            // Exercise the complete verifier on a small real corpus; scale
+            // qualification belongs to the benchmark commands.
+            scale: Scale::Tiny,
+        },
+
+        random_cases: 25,
+        out_dir: scratch.path().to_path_buf(),
+    };
+    (config, scratch)
+}
+
+#[test]
+fn verification_attempts_own_disjoint_scratch_even_with_the_same_label() {
+    let (left, left_owner) = cfg("same-label");
+    let (right, _right_owner) = cfg("same-label");
+    assert_ne!(left.out_dir, right.out_dir);
+    std::fs::create_dir_all(&left.out_dir).unwrap();
+    std::fs::create_dir_all(&right.out_dir).unwrap();
+    std::fs::write(left.out_dir.join("evidence"), "left").unwrap();
+    std::fs::write(right.out_dir.join("evidence"), "right").unwrap();
+    drop(left_owner);
+    assert!(!left.out_dir.exists());
+    assert_eq!(
+        std::fs::read_to_string(right.out_dir.join("evidence")).unwrap(),
+        "right"
+    );
+}
+
+#[test]
+fn the_stamp_tracks_every_ingredient() {
+    let (base, _scratch) = cfg("stamp");
+    let baseline = stamp_value(&base);
+    assert_eq!(baseline, stamp_value(&base), "deterministic");
+    let mut seed = base.clone();
+    seed.corpus_gen.seed = 2;
+    assert_ne!(stamp_value(&seed), baseline, "seed is an ingredient");
+    let mut cases = base.clone();
+    cases.random_cases = 51;
+    assert_ne!(stamp_value(&cases), baseline, "case count is an ingredient");
+}
+
+#[test]
+fn the_stamp_is_bound_to_the_binary() {
+    let (base, _scratch) = cfg("stamp-binary");
+
+    let exe = std::env::current_exe().expect("exe");
+    let bytes = std::fs::read(exe).expect("read");
+    let mut digest = bumbledb::digest::Digest::new();
+    digest.update(&bytes);
+    assert_eq!(binary_fingerprint(), digest.finalize());
+
+    let mut foreign = binary_fingerprint();
+    foreign[0] ^= 0xFF;
+    let foreign_stamp = stamp_value_with(&base, &foreign);
+    assert_ne!(foreign_stamp, stamp_value(&base));
+
+    std::fs::create_dir_all(&base.out_dir).expect("dir");
+    let path = base.out_dir.join("verify.stamp");
+    std::fs::write(&path, &foreign_stamp).expect("write");
+    assert!(!stamp_matches(&base, &path));
+    std::fs::write(&path, stamp_value(&base)).expect("write");
+    assert!(stamp_matches(&base, &path), "this binary's stamp accepts");
+}
+
+#[test]
+fn divergence_by_error_is_a_bundle_not_a_panic() {
+    let (mut config, _scratch) = cfg("error-divergence");
+    config.random_cases = 0;
+    let failure = run_with_sql_override(&config, |family| {
+        (family == "point").then(|| "SELECT this is not sql".to_owned())
+    })
+    .expect_err("must fail");
+    assert!(!failure.bundles.is_empty());
+    let theirs = std::fs::read_to_string(failure.bundles[0].join("theirs.txt")).expect("artifact");
+    assert!(theirs.starts_with("ERROR:"), "{theirs}");
+    let ours = std::fs::read_to_string(failure.bundles[0].join("ours.txt")).expect("artifact");
+    assert!(
+        ours.contains("answer(s)"),
+        "the engine's answers render: {ours}"
+    );
+    let mismatch =
+        std::fs::read_to_string(failure.bundles[0].join("mismatch.txt")).expect("artifact");
+    assert!(mismatch.contains("divergence by error"), "{mismatch}");
+    assert!(
+        !config.out_dir.join("verify.stamp").exists(),
+        "no stamp on failure"
+    );
+}
+
+#[test]
+fn stamp_matches_accepts_and_rejects() {
+    let (base, _scratch) = cfg("stamp-match");
+    std::fs::create_dir_all(&base.out_dir).expect("dir");
+    let path = base.out_dir.join("verify.stamp");
+    assert!(!stamp_matches(&base, &path), "missing file rejects");
+    std::fs::write(&path, stamp_value(&base)).expect("write");
+    assert!(stamp_matches(&base, &path));
+    std::fs::write(&path, "not a stamp").expect("write");
+    assert!(!stamp_matches(&base, &path));
+}
+
+#[test]
+fn a_wrong_oracle_fails_with_a_bundle() {
+    let (mut config, _scratch) = cfg("mismatch");
+    config.random_cases = 0;
+    let failure = run_with_sql_override(&config, |family| {
+        (family == "point").then(|| {
+            "SELECT DISTINCT t0.\"amount\", t0.\"at\" FROM \"Posting\" AS t0 \
+             WHERE t0.\"id\" = ?1 + 1"
+                .to_owned()
+        })
+    })
+    .expect_err("must fail");
+    assert!(!failure.bundles.is_empty());
+    assert!(failure.to_string().contains("mismatch"));
+    for name in [
+        "query.txt",
+        "query.sql",
+        "params.txt",
+        "mismatch.txt",
+        "golden.sql",
+    ] {
+        let content = std::fs::read_to_string(failure.bundles[0].join(name)).expect("artifact");
+        assert!(!content.is_empty(), "{name} must have content");
+    }
+    assert!(
+        !config.out_dir.join("verify.stamp").exists(),
+        "no stamp on failure"
+    );
+}
+
+#[test]
+fn a_full_verify_at_tiny_succeeds_and_records_a_stamp() {
+    let (config, _scratch) = cfg("full");
+    let report = run(&config).expect("verify succeeds");
+
+    assert!(
+        report.cases > 0,
+        "tiny-scale verification must exercise a nonempty oracle workload"
+    );
+    let stamp_path = config.out_dir.join("verify.stamp");
+    assert!(stamp_matches(&config, &stamp_path));
+    let mut other = config.clone();
+    other.random_cases += 1;
+    assert!(!stamp_matches(&other, &stamp_path));
+}
+
+#[test]
+fn the_default_randomized_batch_draws_an_interiors_or_rec_query() {
+    let cfg = GenConfig {
+        seed: 1,
+        scale: Scale::S,
+    };
+    let mut rng = crate::worlds::corpus_gen::Rng::new(cfg.seed ^ 0x0112_0001);
+    let derived = (0..DEFAULT_RANDOM_CASES)
+        .filter(|_| {
+            let query = crate::oracle::querygen::random_query(&mut rng, cfg);
+            !query.interiors().is_empty() || query.rec().is_some()
+        })
+        .count();
+    assert!(
+        derived > 0,
+        "DEFAULT_RANDOM_CASES mixed random_query draws must include interiors/rec (got {derived})"
+    );
+}

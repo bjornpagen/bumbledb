@@ -484,8 +484,8 @@ fn app_perf_parses_regimes_and_refuses_unknown_ones() {
         Cmd::AppPerf(AppPerfArgs {
             scale: Scale::M,
             regimes: Some(vec![
-                crate::appperf::Regime::Warm,
-                crate::appperf::Regime::PostWrite
+                crate::harness::appperf::Regime::Warm,
+                crate::harness::appperf::Regime::PostWrite
             ]),
             tenants: 4,
             ..AppPerfArgs::default()

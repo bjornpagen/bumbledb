@@ -1,0 +1,196 @@
+use bumbledb::schema::{
+    FieldId, LiteralSet, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+    StatementDescriptor,
+};
+use bumbledb::{Db, Value};
+
+use crate::fixture::{TempDir, field, side};
+use crate::oracle::differential::{Op, run};
+use crate::oracle::naive::{Delta, NaiveDb};
+
+const HOLDER: RelationId = RelationId(0);
+const ACCOUNT: RelationId = RelationId(1);
+
+fn schema() -> SchemaDescriptor {
+    let u64_field = |name: &str| field(name, bumbledb::schema::ValueType::U64);
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Holder".into(),
+                fields: vec![u64_field("id"), u64_field("tag")],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Account".into(),
+                fields: vec![u64_field("holder"), u64_field("kind"), u64_field("num")],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: HOLDER,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Capacity {
+                target: side(HOLDER, &[0], &[]),
+                weight: bumbledb::schema::Weight::Unit,
+                lo: 1,
+                hi: Some(bumbledb::schema::Bound::Lit(2)),
+                source: Side {
+                    relation: ACCOUNT,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([(FieldId(1), LiteralSet::One(Value::U64(1)))]),
+                },
+            },
+        ],
+    }
+}
+
+fn holder(id: u64) -> (RelationId, Vec<Value>) {
+    (HOLDER, vec![Value::U64(id), Value::U64(0)])
+}
+
+fn account(holder: u64, kind: u64, num: u64) -> (RelationId, Vec<Value>) {
+    (
+        ACCOUNT,
+        vec![Value::U64(holder), Value::U64(kind), Value::U64(num)],
+    )
+}
+
+fn write(deletes: Vec<(RelationId, Vec<Value>)>, inserts: Vec<(RelationId, Vec<Value>)>) -> Op {
+    Op::Write(Delta { deletes, inserts })
+}
+
+fn exact_schema() -> SchemaDescriptor {
+    let u64_field = |name: &str| field(name, bumbledb::schema::ValueType::U64);
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Holder".into(),
+                fields: vec![u64_field("id"), u64_field("tag")],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Account".into(),
+                fields: vec![u64_field("holder"), u64_field("kind"), u64_field("num")],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: HOLDER,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Capacity {
+                target: side(HOLDER, &[0], &[]),
+                weight: bumbledb::schema::Weight::Unit,
+                lo: 2,
+                hi: Some(bumbledb::schema::Bound::Lit(2)),
+                source: Side {
+                    relation: ACCOUNT,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([(FieldId(1), LiteralSet::One(Value::U64(1)))]),
+                },
+            },
+            StatementDescriptor::Capacity {
+                target: side(HOLDER, &[0], &[]),
+                weight: bumbledb::schema::Weight::Unit,
+                lo: 0,
+                hi: Some(bumbledb::schema::Bound::Lit(0)),
+                source: Side {
+                    relation: ACCOUNT,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([(FieldId(1), LiteralSet::One(Value::U64(9)))]),
+                },
+            },
+        ],
+    }
+}
+
+#[test]
+fn capacity_verdicts_agree_with_the_model() {
+    let dir = TempDir::new("differential-marks");
+    let decl = schema();
+    let db = Db::create(dir.path(), decl.clone(), crate::harness::bench_work())
+        .expect("create marks store")
+        .expect("accepted");
+    let mut naive = NaiveDb::new(&decl);
+    let ops = vec![
+        write(vec![], vec![holder(7), account(7, 1, 0)]),
+        write(vec![], vec![holder(8)]),
+        write(vec![], vec![account(7, 1, 1), account(7, 1, 2)]),
+        write(
+            vec![],
+            vec![
+                (HOLDER, vec![Value::U64(9), Value::U64(0)]),
+                (HOLDER, vec![Value::U64(9), Value::U64(1)]),
+            ],
+        ),
+        write(vec![], vec![account(7, 1, 1)]),
+        write(vec![holder(7), account(7, 1, 0), account(7, 1, 1)], vec![]),
+    ];
+    let summary = run(&db, &mut naive, &ops).unwrap_or_else(|divergence| {
+        panic!("engine and model disagreed: {divergence:?}");
+    });
+    assert_eq!(
+        (summary.commits, summary.aborts),
+        (3, 3),
+        "the stream exercises both verdicts"
+    );
+}
+
+#[test]
+fn violating_deltas_against_a_zero_fact_store_agree_with_the_model() {
+    let dir = TempDir::new("differential-marks-empty");
+    let decl = schema();
+    let db = Db::create(dir.path(), decl.clone(), crate::harness::bench_work())
+        .expect("create empty marks store")
+        .expect("accepted");
+    let mut naive = NaiveDb::new(&decl);
+    let ops = vec![
+        write(vec![], vec![holder(7)]),
+        write(vec![], vec![holder(7), account(7, 1, 0)]),
+    ];
+    let summary = run(&db, &mut naive, &ops).unwrap_or_else(|divergence| {
+        panic!("engine and model disagreed: {divergence:?}");
+    });
+    assert_eq!(
+        (summary.commits, summary.aborts),
+        (1, 1),
+        "every conviction judged the zero-fact store; the green tail committed"
+    );
+}
+
+/// Compare capacity boundary cases through both oracles: exactness,
+/// exclusion, absent parents, and delete/reinsert pairs. A delta that nets
+/// to nothing still rejudges its touched groups.
+#[test]
+fn capacity_boundary_and_reinsert_verdicts_agree_with_the_model() {
+    let dir = TempDir::new("differential-marks-exact");
+    let decl = exact_schema();
+    let db = Db::create(dir.path(), decl.clone(), crate::harness::bench_work())
+        .expect("create exactness store")
+        .expect("accepted");
+    let mut naive = NaiveDb::new(&decl);
+    let ops = vec![
+        write(vec![], vec![holder(1), account(1, 1, 0), account(1, 1, 1)]),
+        write(vec![account(1, 1, 1)], vec![]),
+        write(vec![], vec![account(1, 1, 2)]),
+        write(vec![], vec![account(1, 9, 0)]),
+        write(vec![], vec![account(1, 5, 0), account(1, 6, 1)]),
+        write(vec![], vec![account(3, 1, 0)]),
+        write(vec![account(1, 1, 1)], vec![account(1, 1, 1)]),
+        write(
+            vec![account(1, 1, 0), account(1, 1, 1)],
+            vec![account(1, 1, 0)],
+        ),
+    ];
+    let summary = run(&db, &mut naive, &ops).unwrap_or_else(|divergence| {
+        panic!("engine and model disagreed: {divergence:?}");
+    });
+    assert_eq!(
+        (summary.commits, summary.aborts),
+        (4, 4),
+        "the stream exercises both verdicts"
+    );
+}

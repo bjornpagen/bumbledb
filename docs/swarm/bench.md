@@ -11,12 +11,22 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 |---|---|
 | G8 cuts: hashprobe (+aegis), largefix, corpus-float, storemode, duralane (`--lanes`), devhonesty, clockproxy (`--proxy-per-rep`, every `ghz*` report field), `merge`, history_model, correspondence, tripwires, stress, appperf scorecard/hosted | landed |
 | G8 layout census (`space/`, `storage --profile home-costs`); `--alloc` pass and the bench `alloc-counter` feature (G2); grounding-off dual runs and the unlawful-store pin (no engine test features needed) | landed |
-| G8 restructure into `oracle/`, `worlds/`, `harness/` | todo |
+| G8 restructure into `oracle/`, `worlds/`, `harness/` | landed |
 | G8 seeded conformance generated in-test from seeds, digests checked in | todo |
 | H4 rusqlite 0.40 | todo |
 | Provenance from `rustc -vV` at build time | todo |
 | E2 `micro --levels all`, `float_stats` read family | todo (needs numeric's kernel seam) |
 | Adapt: `testing` feature, C7, C8, C9, C3/C4 | as they land |
+
+## Layout (crate `bumbledb_bench`)
+
+- `oracle::{naive (+ admission, staged), differential, querygen, conformance, compare, poststate,
+  binary64, binary64_interval, sqlite::{sqlmap, translate, verify}}`. `binary64` is the
+  independent IEEE binary64 bit/rational model (was `verify::f64_oracle`).
+- `worlds::{ledger (was `schema`), corpus, corpus_gen, families, calendar, closure, displaced,
+  capacity, windowed, crud, lawful, scenarios, writebench}`.
+- `harness::{appperf, boost, driver, lanes, report, sqlite_run}` beside the timing primitives.
+- Root: `cli`, `json`.
 
 ## CLI changes (bench binary)
 

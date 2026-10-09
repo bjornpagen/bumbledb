@@ -33,7 +33,7 @@ where
 /// rows at closure creation (Org corpora are tiny — the probe is setup, never
 /// timed) and advances locally per touch.
 pub fn org_touch(
-    db: &bumbledb::Db<crate::schema::Ledger>,
+    db: &bumbledb::Db<crate::worlds::ledger::Ledger>,
 ) -> impl FnMut() -> Result<(), String> + '_ {
     let mut next: Option<u64> = None;
     move || {
@@ -43,7 +43,7 @@ pub fn org_touch(
             let probed = db
                 .read(crate::harness::bench_work(), |snap| {
                     let mut max: Option<u64> = None;
-                    for fact in snap.scan(crate::schema::ids::ORG)? {
+                    for fact in snap.scan(crate::worlds::ledger::ids::ORG)? {
                         let row = fact?;
                         if let Some(bumbledb::Value::U64(id)) = row.first() {
                             max = Some(max.map_or(*id, |seen| seen.max(*id)));
@@ -56,8 +56,8 @@ pub fn org_touch(
             probed
         };
         db.write(crate::harness::bench_work(), |tx| {
-            tx.insert([&crate::schema::Org {
-                id: crate::schema::OrgId(id),
+            tx.insert([&crate::worlds::ledger::Org {
+                id: crate::worlds::ledger::OrgId(id),
                 name: &format!("__touch_{id}"),
             }])
         })
