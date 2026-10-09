@@ -8,14 +8,18 @@ Owns: `crates/bumbledb-log/**`, `docs/swarm/log-core.md`.
 |---|---|
 | Delete the old log machine, its tests, conformance fixtures, bins, the bench dev-dependency, object_store/tokio/futures/once_cell_try | done |
 | Core types, one frame codec, `Command`, `Entry`, `Receipt`, `Head`, `fold` | landed |
-| Sans-IO `Machine` (U11) + seeded fault-injection simulation over a reference replica | landed |
+| Sans-IO `Machine` (U11) + seeded fault-injection simulations (commands; migrations racing old code) | landed |
 | LMDB `Cache` (the product `Replica`) over the engine | landed on today's `bumbledb::integration`; moves to `bumbledb::host` when it lands |
 | Checkpoints (policy, images, cold open, pruning, digest-verified install) | landed |
 | Migrations (D6/D7): ledger, four-way comparison, Freeze/Migration/Thaw, population, sticky rejection, `SchemaAdvanced` | landed |
 | D20 `bdb` names: frames `bdb.<kind>.v1`, images `*.bdb`, cache generations `<n>.bdb` | landed |
 
-The bridge and the swarm gate: the engine at HEAD currently warns in `exec/scratch.rs`
-(engine-query), so this lane lints with `cargo clippy -p bumbledb-log --no-deps`.
+**Ready for the bridge:** `Machine<Cache>` is the product: open a `Cache` on the database's
+cache directory with the app's `Bundle`, wrap it in a `Machine`, and drive `step`.
+
+Gate: `cargo clippy -p bumbledb-log --all-targets -- -D warnings` and `cargo nextest run -p
+bumbledb-log` (38 tests: hostile-bytes codec sweeps, scripted protocol paths, seeded fault-injection
+simulations over a reference replica, the real LMDB cache against that reference, migrations).
 
 ## Public API (`bumbledb_log::*`, Rust)
 
@@ -218,8 +222,12 @@ The log needs, beyond the planned `host` surface:
   then seal host records + head and install or compact. The existing `UnreadyStore` staging path is
   close; please keep a public route to it under `host`.
 
-Until these land the cache uses today's `bumbledb::integration` writer (one candidate per entry,
-over the ordered composition of the entry's change sets).
+Until these land the cache uses today's `bumbledb::integration` writer: judging prepares the
+ordered composition of the accepted change sets plus the next one and aborts; applying prepares
+the composition of an entry's committed sets (so apply still judges until R-E2), seals receipts and
+the head, and commits; per-set deltas come from snapshot membership lookups. Images are verified
+by a BLAKE3 digest of the image file until `content_digest()` (C16) lands. The cache commits
+durably until R-E3.
 
 ### to bridge
 
