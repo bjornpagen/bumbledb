@@ -275,7 +275,8 @@ pub(crate) struct Colt {
 
     select_positions: Vec<u32>,
 
-    /// present only after a vacuous or completed select.
+    /// The execution's start cursor: a selected cursor exists only after a
+    /// vacuous or completed select.
     start: Start,
 
     schema_columns: Vec<Vec<usize>>,
@@ -298,7 +299,8 @@ pub(crate) struct Colt {
 
     stage_positions: Vec<u32>,
 
-    /// 56–62: a token that crosses a [`Colt::reset`] is refused loudly
+    /// Stamped into bits 56 and up of every batch token, so a token that
+    /// crosses a [`Colt::reset`] is refused.
     epoch: u8,
 
     /// Cancellation context for construction and cold pool growth.

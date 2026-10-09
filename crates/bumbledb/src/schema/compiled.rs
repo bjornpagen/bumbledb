@@ -137,12 +137,6 @@ impl ProjectionBinding {
         permute_by_fields(logical, &self.logical_scalars, &self.intern_scalars)
     }
 
-    /// Translate interned index scalars into logical group order.
-    #[must_use]
-    pub fn from_index(&self, intern: &[Value]) -> Option<Vec<Value>> {
-        permute_by_fields(intern, &self.intern_scalars, &self.logical_scalars)
-    }
-
     /// Reorder statement-side projected values into intern order.
     #[must_use]
     pub fn physical_values(&self, caller: &[Value]) -> Option<Vec<Value>> {
@@ -259,14 +253,6 @@ impl CompiledProjection {
         self.interval_position
             .map(|position| self.projection[position])
     }
-
-    /// Conservative physical key bound using the widest projection ordinal.
-    /// Actual store widths come from `store::PhysicalKeyWidths`; validation
-    /// must remain safe before the final projection count is known.
-    #[must_use]
-    pub fn complete_key_width(&self) -> usize {
-        DETERMINANT_KEY_OVERHEAD + self.encoding.routing_width()
-    }
 }
 
 #[derive(Debug)]
@@ -291,20 +277,10 @@ pub struct CompiledTheory {
     witnesses: Box<[DistinctnessWitness]>,
     /// Full-row field descriptors per relation id.
     fields: Box<[Box<[FieldDescriptor]>]>,
-    /// Maximum complete physical determinant key width (prefix + routing +
-    /// row ordinal), for schema validation.
-    pub max_determinant_key_width: usize,
 }
 
-/// LMDB's key limit for the pinned build. One place — not
-/// scattered 400/496/511 axioms.
-pub const LMDB_KEY_LIMIT: usize = 511;
-
-/// Prefix + projection id + row ordinal, excluding scalar routing.
-const DETERMINANT_KEY_OVERHEAD: usize = 1 + 2 + 8;
-
 /// Maximum encoded scalar bytes for the exact-bounded crossover.
-pub const MAX_EXACT_SCALAR_BYTES: usize = 16;
+pub(crate) const MAX_EXACT_SCALAR_BYTES: usize = 16;
 
 impl CompiledTheory {
     /// Compile the sealed schema into one reusable projection/law table.
@@ -326,7 +302,6 @@ impl CompiledTheory {
             by_relation: BTreeMap::new(),
             key_by_relation: BTreeMap::new(),
             witnesses: Vec::new(),
-            max_key: 0,
         };
         let mut by_statement = BTreeMap::new();
 
@@ -349,7 +324,6 @@ impl CompiledTheory {
             by_relation,
             key_by_relation,
             witnesses,
-            max_key,
             ..
         } = intern;
         Ok(Self {
@@ -359,7 +333,6 @@ impl CompiledTheory {
             key_by_relation,
             witnesses: witnesses.into_boxed_slice(),
             fields: fields.into_boxed_slice(),
-            max_determinant_key_width: max_key,
         })
     }
 
@@ -558,7 +531,6 @@ struct Interning<'a> {
     by_relation: BTreeMap<RelationId, Vec<ProjectionId>>,
     key_by_relation: BTreeMap<RelationId, Vec<ProjectionId>>,
     witnesses: Vec<DistinctnessWitness>,
-    max_key: usize,
 }
 
 impl Interning<'_> {
@@ -586,7 +558,6 @@ impl Interning<'_> {
         let id = assign_projection_id(self.projections.len())?;
         let mut compiled = compiled;
         compiled.id = id;
-        self.max_key = self.max_key.max(compiled.complete_key_width());
         self.by_relation.entry(relation).or_default().push(id);
         if as_key {
             remember_key(&mut self.key_by_relation, relation, id);
@@ -953,15 +924,6 @@ fn compile_projection(
     }
 }
 
-/// Routing-byte width for schema validation (exact scalar or fingerprint).
-#[must_use]
-pub fn select_key_encoding_width(scalar_fields: &[FieldDescriptor]) -> usize {
-    match select_encoding(scalar_fields) {
-        KeyEncoding::ExactBounded { scalar_width } => scalar_width as usize,
-        KeyEncoding::FingerprintBucket => crate::storage::store::fingerprint::FP_LEN,
-    }
-}
-
 pub(crate) fn select_encoding(scalar_fields: &[FieldDescriptor]) -> KeyEncoding {
     let mut width = 0usize;
     for field in scalar_fields {
@@ -972,10 +934,6 @@ pub(crate) fn select_encoding(scalar_fields: &[FieldDescriptor]) -> KeyEncoding 
         if width > MAX_EXACT_SCALAR_BYTES {
             return KeyEncoding::FingerprintBucket;
         }
-    }
-    let complete = DETERMINANT_KEY_OVERHEAD.saturating_add(width);
-    if complete > LMDB_KEY_LIMIT {
-        return KeyEncoding::FingerprintBucket;
     }
     KeyEncoding::ExactBounded {
         scalar_width: u8::try_from(width).unwrap_or(255),
@@ -994,23 +952,25 @@ pub(crate) fn exact_scalar_width(value_type: &ValueType) -> Option<usize> {
     }
 }
 
-/// Encode scalar determinant values as compact order-preserving bytes
-/// (chapter 40). Used for exact-bounded index routing and exact confirmation.
-/// Schema types are already known: no per-field tags are written.
-#[must_use]
-pub fn encode_scalar_group(values: &[Value], fields: &[FieldDescriptor]) -> Option<Vec<u8>> {
+/// Scalar determinant values as compact order-preserving bytes, without
+/// per-field tags (the schema types them).
+#[cfg(test)]
+pub(crate) fn encode_scalar_group(values: &[Value], fields: &[FieldDescriptor]) -> Option<Vec<u8>> {
     if values.len() != fields.len() {
         return None;
     }
     let mut out = Vec::new();
     for (value, field) in values.iter().zip(fields) {
-        append_exact_scalar(value, &field.value_type, &mut out)?;
+        with_exact_scalar_bytes(value.into(), &field.value_type, |bytes| {
+            out.extend_from_slice(bytes);
+            Some(())
+        })?;
     }
     Some(out)
 }
 
-/// Encode already-projected scalar values into caller-owned storage using
-/// the same order-preserving scalar codec as the allocating group encoder.
+/// Encodes already-projected scalar values into caller-owned storage with
+/// the order-preserving scalar codec.
 pub(crate) fn encode_scalar_group_into<'a>(
     values: &[Value],
     fields: &[FieldDescriptor],
@@ -1029,13 +989,6 @@ pub(crate) fn encode_scalar_group_into<'a>(
         })?;
     }
     Some(&out[..written])
-}
-
-fn append_exact_scalar(value: &Value, value_type: &ValueType, out: &mut Vec<u8>) -> Option<()> {
-    with_exact_scalar_bytes(value.into(), value_type, |bytes| {
-        out.extend_from_slice(bytes);
-        Some(())
-    })
 }
 
 /// The scalar codec can also consume a checked borrowed byte field without
@@ -1549,7 +1502,6 @@ mod tests {
         ));
         assert_eq!(key.interval_position, Some(1));
         assert_eq!(key.interval_type, Some(iv));
-        assert_eq!(key.complete_key_width(), DETERMINANT_KEY_OVERHEAD + 8);
         assert_eq!(
             theory.distinctness_witness(key.id),
             Some(DistinctnessWitness::IntervalKeyUnique { projection: key.id }),
@@ -1564,7 +1516,6 @@ mod tests {
             .expect("coverage source");
         assert_eq!(source.interval_position, Some(1));
         assert_eq!(source.interval_type, Some(iv));
-        assert_eq!(source.complete_key_width(), DETERMINANT_KEY_OVERHEAD + 8);
     }
 
     #[test]

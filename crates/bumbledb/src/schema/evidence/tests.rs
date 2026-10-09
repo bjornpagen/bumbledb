@@ -19,6 +19,9 @@ use crate::schema::{
 };
 use crate::work::WorkContext;
 
+/// The family's length: the header's layout, kind and count follow it.
+const H: usize = FAMILY.len();
+
 fn work() -> WorkContext {
     WorkContext::new()
 }
@@ -208,11 +211,11 @@ fn deterministic_bytes_and_pinned_header() {
     let second = encode_judged(&schema, &judged, BUDGET, &work()).expect("encodes");
     assert_eq!(first, second);
 
-    assert_eq!(&first[..21], FAMILY);
-    assert_eq!(first[21..23], LAYOUT.to_be_bytes());
-    assert_eq!(first[23], 1, "the evidence frame kind");
-    assert_eq!(first[24..28], 3u32.to_be_bytes(), "three violations");
-    assert_eq!(FAMILY, b"bumbledb.evidence.v1\0");
+    assert_eq!(&first[..FAMILY.len()], FAMILY);
+    assert_eq!(first[H..H + 2], LAYOUT.to_be_bytes());
+    assert_eq!(first[H + 2], 1, "the evidence frame kind");
+    assert_eq!(first[H + 3..H + 7], 3u32.to_be_bytes(), "three violations");
+    assert_eq!(FAMILY, b"bdb.evidence.v1\0");
 }
 
 /// Under a byte budget the codec drops EXAMPLES deterministically (uniform
@@ -357,7 +360,7 @@ fn skeleton_overflow_refuses_before_deciding() {
 
     // With exactly the skeleton budget, encoding succeeds with zero
     // examples, every flag labeled truncated where facts existed.
-    let skeleton = 28 + (2 + 1 + 1 + 4) /* key */ + (2 + 1 + 1 + 1 + 4) /* containment */
+    let skeleton = H + 7 + (2 + 1 + 1 + 4) /* key */ + (2 + 1 + 1 + 1 + 4) /* containment */
         + (2 + 1 + 16 + 1 + 4) /* capacity */;
     let bytes = encode_judged(&schema, &judged, skeleton, &work()).expect("skeleton fits");
     assert_eq!(bytes.len(), skeleton);
@@ -392,7 +395,7 @@ fn strict_decode_refuses_foreign_and_malformed_frames() {
 
     // Future layout.
     let mut forged = bytes.clone();
-    forged[22] = 2;
+    forged[H + 1] = 2;
     assert_eq!(
         decode(&forged, BUDGET),
         Err(EvidenceDecodeError::Layout { got: 2 })
@@ -400,14 +403,14 @@ fn strict_decode_refuses_foreign_and_malformed_frames() {
 
     // Wrong frame kind.
     let mut forged = bytes.clone();
-    forged[23] = 9;
+    forged[H + 2] = 9;
     assert_eq!(
         decode(&forged, BUDGET),
         Err(EvidenceDecodeError::Kind { got: 9 })
     );
 
     // Truncated buffer refuses at every prefix length.
-    for cut in [10, 27, 30, bytes.len() - 1] {
+    for cut in [10, H + 6, H + 9, bytes.len() - 1] {
         assert!(
             matches!(
                 decode(&bytes[..cut], BUDGET),
@@ -427,7 +430,7 @@ fn strict_decode_refuses_foreign_and_malformed_frames() {
 
     // Zero violations are unrepresentable.
     let mut forged = bytes.clone();
-    forged[24..28].copy_from_slice(&0u32.to_be_bytes());
+    forged[H + 3..H + 7].copy_from_slice(&0u32.to_be_bytes());
     assert_eq!(
         decode(&forged, BUDGET),
         Err(EvidenceDecodeError::InvalidCount)
@@ -436,7 +439,7 @@ fn strict_decode_refuses_foreign_and_malformed_frames() {
     // A count claiming more violations than the bytes could hold refuses
     // before any allocation of that size.
     let mut forged = bytes.clone();
-    forged[24..28].copy_from_slice(&u32::MAX.to_be_bytes());
+    forged[H + 3..H + 7].copy_from_slice(&u32::MAX.to_be_bytes());
     assert_eq!(
         decode(&forged, BUDGET),
         Err(EvidenceDecodeError::InvalidCount)
@@ -444,8 +447,8 @@ fn strict_decode_refuses_foreign_and_malformed_frames() {
 
     // Unsorted statement ids: duplicate the first violation's id into the
     // second slot by rewriting the second statement id to the first's.
-    // Layout: header(28) + violation 0 (statement u16 at 28).
-    let first_id = [bytes[28], bytes[29]];
+    // The header, then violation 0's statement u16.
+    let first_id = [bytes[H + 7], bytes[H + 8]];
     // Find the second violation's statement offset by re-walking: the
     // first violation is a key with 4 examples? Walk structurally instead:
     // decode and re-encode a hand-built unsorted frame.
@@ -467,7 +470,7 @@ fn strict_decode_refuses_foreign_and_malformed_frames() {
 
     // A bad statement-kind tag refuses.
     let mut forged = bytes.clone();
-    forged[30] = 7; // the first violation's kind tag
+    forged[H + 9] = 7; // the first violation's kind tag
     assert!(matches!(
         decode(&forged, BUDGET),
         Err(EvidenceDecodeError::Tag { got: 7, .. })
@@ -475,7 +478,7 @@ fn strict_decode_refuses_foreign_and_malformed_frames() {
 
     // A non-boolean truncation flag refuses.
     let mut forged = bytes.clone();
-    forged[31] = 2; // first violation: key → truncated flag follows the kind
+    forged[H + 10] = 2; // first violation: key → truncated flag follows the kind
     assert!(matches!(
         decode(&forged, BUDGET),
         Err(EvidenceDecodeError::Tag { got: 2, .. })

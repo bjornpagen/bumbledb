@@ -51,7 +51,7 @@ use super::{RelationId, Schema, StatementId, StatementKind, StatementRef, Statem
 
 /// The evidence frame's family magic. Unique to this codec — no command,
 /// decision, receipt, head, checkpoint or canonical-row frame shares it.
-pub const FAMILY: &[u8] = b"bumbledb.evidence.v1\0";
+pub const FAMILY: &[u8] = b"bdb.evidence.v1\0";
 
 /// The frame layout counter; strict decode refuses any other value.
 pub const LAYOUT: u16 = 1;
@@ -67,7 +67,7 @@ const DIRECTION_SOURCE: u8 = 0;
 const DIRECTION_TARGET: u8 = 1;
 
 /// `family ‖ layout(u16) ‖ kind(u8) ‖ violation count(u32)`.
-const HEADER_LEN: usize = 21 + 2 + 1 + 4;
+const HEADER_LEN: usize = FAMILY.len() + 2 + 1 + 4;
 /// `statement(u16) ‖ kind(u8) ‖ truncated(u8) ‖ example count(u32)`.
 const VIOLATION_FIXED_LEN: usize = 2 + 1 + 1 + 4;
 /// `relation(u32) ‖ fact length(u32)` before the fact bytes.

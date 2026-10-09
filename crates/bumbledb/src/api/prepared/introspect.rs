@@ -4,7 +4,6 @@ use crate::api::db::ReadInstance;
 use crate::error::Result;
 
 impl<S> PreparedQuery<S> {
-    /// # Errors
     pub(crate) fn introspect(
         &mut self,
         instance: &ReadInstance<'_, S>,

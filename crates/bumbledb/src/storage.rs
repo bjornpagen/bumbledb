@@ -1,10 +1,8 @@
-//! Physical storage: exactly one engine — the successor store
-//! ([`store`]). The transitional dictionary/delta/commit/env machinery is
-//! deleted; live tuple text is owned inline by canonical rows, membership
-//! is exact-checked 16-byte fingerprint buckets, and every commit is one
-//! durable LMDB transaction (facts + generation + host adjunct together).
+//! Physical storage: one LMDB environment ([`store`]). Rows are canonical
+//! rows keyed by home, and every commit is one durable LMDB transaction
+//! holding the rows, the generation and the host records together.
 
-pub mod store;
+pub(crate) mod store;
 
 /// The persisted storage transaction id: the generation a snapshot
 /// witnessed and a state-changing commit advances. This is not a

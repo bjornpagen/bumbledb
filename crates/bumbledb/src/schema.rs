@@ -3,7 +3,7 @@
 //! Validation seals declarations; [`compiled`] derives the access paths used
 //! by storage, judgment, and query planning.
 
-pub mod compiled;
+pub(crate) mod compiled;
 /// The canonical bounded rejection-evidence codec: the one byte
 /// spelling of a complete violated-statement set with labeled examples and
 /// truncation evidence. The log frames these bytes verbatim into decisions
@@ -36,10 +36,10 @@ pub use bumbledb_theory::schema::{
     MemberSet, SealedBound, SealedWeight, ValueMismatch, value_matches,
 };
 
-pub use compiled::{
-    CompileError, CompiledProjection, CompiledTheory, DistinctnessWitness, KeyEncoding,
-    LMDB_KEY_LIMIT, MAX_EXACT_SCALAR_BYTES, ProjectionBinding, ProjectionId, ProjectionInternKey,
-    VisitControl, VisitOutcome, encode_scalar_group,
+pub use compiled::CompileError;
+pub(crate) use compiled::{
+    CompiledProjection, CompiledTheory, DistinctnessWitness, KeyEncoding, MAX_EXACT_SCALAR_BYTES,
+    ProjectionId, VisitControl, VisitOutcome,
 };
 pub use manifest::{
     FieldManifest, Manifest, ManifestDescriptor, RelationManifest, RowManifest, StatementManifest,

@@ -454,8 +454,8 @@ impl Context {
     }
 
     /// # Panics
-    /// On a programmer-invariant violation: an unknown `VarId` (every
-    /// comparison variable was checked atom-bound before the typed
+    /// If `var` is not atom-bound (every comparison variable is checked
+    /// before typing).
     pub(super) fn resolved_var_type(&self, var: VarId) -> &ValueType {
         &self.var_types[&var]
     }
@@ -627,8 +627,6 @@ impl Context {
         let shaped = self.comparison_shapes(rule)?;
         self.propagate_comparison_anchors(rule)?;
         self.resolve_bivalents();
-
-        // after every rule contributed (params are query-global;
 
         self.classify_comparisons(&shaped)
     }
@@ -821,7 +819,8 @@ impl Context {
         }
     }
 
-    /// CONSUMED into [`Context::var_types`], so nothing after this line
+    /// Resolves every variable slot to its final type: `var_slots` is
+    /// consumed into [`Context::var_types`].
     fn resolve_bivalents(&mut self) {
         self.var_types = std::mem::take(&mut self.var_slots)
             .into_iter()

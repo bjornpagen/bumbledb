@@ -9,19 +9,7 @@
 use crate::error::{CorruptionError, Error, Result};
 use bumbledb_theory::{F64, Interval, Uuid};
 
-/// Field tags of the canonical codec.
-mod tag {
-    pub const BOOL: u8 = 0;
-    pub const U64: u8 = 1;
-    pub const I64: u8 = 2;
-    pub const F64: u8 = 3;
-    pub const STRING: u8 = 4;
-    pub const FIXED_BYTES: u8 = 5;
-    pub const INTERVAL_U64: u8 = 6;
-    pub const INTERVAL_I64: u8 = 7;
-    pub const UUID: u8 = 8;
-    pub const INTERVAL_F64: u8 = 9;
-}
+use crate::canonical::tag;
 
 /// Sequential field reader over one canonical row's bytes.
 #[derive(Debug, Clone, Copy)]

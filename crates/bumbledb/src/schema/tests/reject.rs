@@ -447,8 +447,8 @@ fn rejects_permuted_duplicate_functionality() {
 
 #[test]
 fn wide_scalar_keys_compile_to_fingerprint_routing() {
-    // 63 u64 fields exceed the 16-byte exact crossover; the store uses a
-    // 16-byte fingerprint and the complete physical key still fits LMDB.
+    // 63 u64 fields exceed the 16-byte exact crossover: the key routes by
+    // its 16-byte fingerprint.
     let count = 63usize;
     let fields: Vec<FieldDescriptor> = (0..count)
         .map(|i| field(&format!("f{i}"), ValueType::U64))
@@ -460,10 +460,10 @@ fn wide_scalar_keys_compile_to_fingerprint_routing() {
     decl.statements.push(fd(RelationId(0), &projection));
     let schema = decl.validate().expect("wide key uses fingerprint bucket");
     let theory = crate::schema::CompiledTheory::compile(&schema).expect("compiled schema");
-    assert!(
-        theory.max_determinant_key_width <= crate::schema::LMDB_KEY_LIMIT,
-        "physical determinant keys must fit LMDB"
-    );
+    let key = theory
+        .projection_of_statement(StatementId(0))
+        .expect("the key compiles");
+    assert_eq!(key.encoding, crate::schema::KeyEncoding::FingerprintBucket);
 }
 
 #[test]

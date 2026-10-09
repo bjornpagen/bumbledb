@@ -101,11 +101,7 @@ fn a_directory_without_this_format_refuses_and_is_left_untouched() {
 
 #[test]
 fn any_other_format_entry_refuses() {
-    for format in [
-        &FORMAT[..11],
-        b"bumbledb\0\0\0\x02".as_slice(),
-        b"".as_slice(),
-    ] {
+    for format in [&FORMAT[..11], b"bdb.store.v2".as_slice(), b"".as_slice()] {
         let (_dir, path) = store_dir("store-format");
         {
             let store = create_default(&path);

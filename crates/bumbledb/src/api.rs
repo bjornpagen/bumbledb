@@ -1,3 +1,3 @@
 //! The embedding surface: prepared queries, results, Db.
-pub mod db;
-pub mod prepared;
+pub(crate) mod db;
+pub(crate) mod prepared;

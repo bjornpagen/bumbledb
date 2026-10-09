@@ -1,19 +1,26 @@
-//! Portable logical rows, independent of LMDB keys, dictionary IDs, and hosts.
-//!
-//! The enclosing schema supplies field types; every field also has an explicit
-//! scalar tag. Integers, lengths, and canonical F64 payloads use big endian.
-//! There is no padding. Fixed integer intervals use their logical endpoints,
-//! not the storage-only start compression. This is the core codec imported by
-//! history, not another log-owned value vocabulary.
+//! The stored-row codec: portable logical rows, independent of LMDB keys and
+//! hosts. The schema supplies field types; every field also carries a tag
+//! ([`tag`]). Integers, lengths and canonical F64 payloads are big endian;
+//! there is no padding.
 use crate::schema::compiled::{ExactScalarRef, exact_scalar_width, with_exact_scalar_bytes};
 use crate::schema::{FieldDescriptor, ValueType, value_matches};
 use crate::{F64, Uuid, Value, WorkContext, WorkError};
 
-/// The canonical bounded named-scalar record — the core codec the log's
-/// declared `CommandResult` slot frames verbatim.
-pub mod result;
-
 pub(crate) mod field;
+
+/// Field tags of the stored-row codec.
+pub(crate) mod tag {
+    pub(crate) const BOOL: u8 = 0;
+    pub(crate) const U64: u8 = 1;
+    pub(crate) const I64: u8 = 2;
+    pub(crate) const F64: u8 = 3;
+    pub(crate) const STRING: u8 = 4;
+    pub(crate) const FIXED_BYTES: u8 = 5;
+    pub(crate) const INTERVAL_U64: u8 = 6;
+    pub(crate) const INTERVAL_I64: u8 = 7;
+    pub(crate) const UUID: u8 = 8;
+    pub(crate) const INTERVAL_F64: u8 = 9;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowError {
@@ -150,45 +157,45 @@ impl std::ops::Deref for CanonicalRow {
 /// Appends one value's canonical encoding: its tag, then its payload.
 pub(crate) fn append_value(bytes: &mut Vec<u8>, value: &Value) {
     match value {
-        Value::Bool(v) => bytes.extend_from_slice(&[0, u8::from(*v)]),
+        Value::Bool(v) => bytes.extend_from_slice(&[tag::BOOL, u8::from(*v)]),
         Value::U64(v) => {
-            bytes.push(1);
+            bytes.push(tag::U64);
             bytes.extend_from_slice(&v.to_be_bytes());
         }
         Value::I64(v) => {
-            bytes.push(2);
+            bytes.push(tag::I64);
             bytes.extend_from_slice(&v.to_be_bytes());
         }
         Value::F64(v) => {
-            bytes.push(3);
+            bytes.push(tag::F64);
             bytes.extend_from_slice(&v.to_be_bytes());
         }
         Value::String(v) => {
-            bytes.push(4);
+            bytes.push(tag::STRING);
             append_bytes(bytes, v.as_bytes());
         }
         Value::FixedBytes(v) => {
-            bytes.push(5);
+            bytes.push(tag::FIXED_BYTES);
             append_bytes(bytes, v);
         }
         Value::IntervalU64(v) => {
-            bytes.push(6);
+            bytes.push(tag::INTERVAL_U64);
             bytes.extend_from_slice(&v.start().to_be_bytes());
             bytes.extend_from_slice(&v.end().to_be_bytes());
         }
         Value::IntervalI64(v) => {
-            bytes.push(7);
+            bytes.push(tag::INTERVAL_I64);
             bytes.extend_from_slice(&v.start().to_be_bytes());
             bytes.extend_from_slice(&v.end().to_be_bytes());
         }
         Value::Uuid(v) => {
-            bytes.push(8);
+            bytes.push(tag::UUID);
             bytes.extend_from_slice(v.as_bytes());
         }
         Value::IntervalF64(v) => {
             // Wire endpoints are the canonical binary64 payload bits, big
             // endian, never the index order keys.
-            bytes.push(9);
+            bytes.push(tag::INTERVAL_F64);
             bytes.extend_from_slice(&v.start().to_be_bytes());
             bytes.extend_from_slice(&v.end().to_be_bytes());
         }
@@ -461,20 +468,20 @@ fn walk_payload<'a>(
     mut visit_scalar: impl FnMut(usize, ExactScalarRef<'_>) -> Result<(), RowError>,
 ) -> Result<(), RowError> {
     for (field, descriptor) in fields.enumerate() {
-        let tag = reader.word::<1>()?[0];
-        let value = match tag {
-            0 => match reader.word::<1>()?[0] {
+        let field_tag = reader.word::<1>()?[0];
+        let value = match field_tag {
+            tag::BOOL => match reader.word::<1>()?[0] {
                 0 => Value::Bool(false),
                 1 => Value::Bool(true),
                 _ => return Err(RowError::InvalidBool { field }),
             },
-            1 => Value::U64(u64::from_be_bytes(reader.word()?)),
-            2 => Value::I64(i64::from_be_bytes(reader.word()?)),
-            3 => Value::F64(
+            tag::U64 => Value::U64(u64::from_be_bytes(reader.word()?)),
+            tag::I64 => Value::I64(i64::from_be_bytes(reader.word()?)),
+            tag::F64 => Value::F64(
                 F64::from_canonical_be_bytes(reader.word()?)
                     .map_err(|_| RowError::NonCanonicalFloat { field })?,
             ),
-            4 => {
+            tag::STRING => {
                 let blob = reader.blob()?;
                 if descriptor.value_type != ValueType::String {
                     return Err(RowError::Type { field });
@@ -485,7 +492,7 @@ fn walk_payload<'a>(
                 }
                 continue;
             }
-            5 => {
+            tag::FIXED_BYTES => {
                 let blob = reader.blob()?;
                 if !matches!(descriptor.value_type, ValueType::FixedBytes {len} if usize::from(len) == blob.len())
                 {
@@ -502,20 +509,20 @@ fn walk_payload<'a>(
                 }
                 continue;
             }
-            6 => field::decode_interval_u64(
+            tag::INTERVAL_U64 => field::decode_interval_u64(
                 u64::from_be_bytes(reader.word()?),
                 u64::from_be_bytes(reader.word()?),
                 descriptor,
                 field,
             )?,
-            7 => field::decode_interval_i64(
+            tag::INTERVAL_I64 => field::decode_interval_i64(
                 i64::from_be_bytes(reader.word()?),
                 i64::from_be_bytes(reader.word()?),
                 descriptor,
                 field,
             )?,
-            8 => Value::Uuid(Uuid::from_bytes(reader.word()?)),
-            9 => field::decode_interval_f64(
+            tag::UUID => Value::Uuid(Uuid::from_bytes(reader.word()?)),
+            tag::INTERVAL_F64 => field::decode_interval_f64(
                 F64::from_canonical_be_bytes(reader.word()?)
                     .map_err(|_| RowError::NonCanonicalFloat { field })?,
                 F64::from_canonical_be_bytes(reader.word()?)
@@ -525,7 +532,10 @@ fn walk_payload<'a>(
             )?,
             _ => return Err(RowError::InvalidTag { field }),
         };
-        if !matches!(tag, 6 | 7 | 9) {
+        if !matches!(
+            field_tag,
+            tag::INTERVAL_U64 | tag::INTERVAL_I64 | tag::INTERVAL_F64
+        ) {
             value_matches(&value, &descriptor.value_type).map_err(|_| RowError::Type { field })?;
         }
         visit_scalar(field, (&value).into())?;

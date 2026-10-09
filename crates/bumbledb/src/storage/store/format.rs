@@ -1,7 +1,7 @@
 //! The persisted format: three named databases and the `meta` keys.
 //!
-//! A directory is a bumbledb store exactly when its `meta` `format` entry
-//! equals [`FORMAT`]; anything else is refused before any write. Every
+//! A directory is a store exactly when its `meta` `format` entry equals
+//! [`FORMAT`]; anything else is refused before any write. Every
 //! other meta entry is read only after that check.
 
 use heed::RoTxn;
@@ -15,16 +15,8 @@ use bumbledb_theory::schema::RelationId;
 /// The on-disk layout this build reads and writes.
 pub(crate) const LAYOUT: u32 = 1;
 
-/// Magic plus layout, stored under [`K_FORMAT`].
-pub(crate) const FORMAT: [u8; 12] = {
-    let mut format = *b"bumbledb\0\0\0\0";
-    let layout = LAYOUT.to_be_bytes();
-    format[8] = layout[0];
-    format[9] = layout[1];
-    format[10] = layout[2];
-    format[11] = layout[3];
-    format
-};
+/// The format tag of layout [`LAYOUT`], stored under [`K_FORMAT`].
+pub(crate) const FORMAT: [u8; 12] = *b"bdb.store.v1";
 
 pub(crate) const META_DB: &str = "meta";
 pub(crate) const ROWS_DB: &str = "rows";
@@ -53,7 +45,7 @@ impl DatabaseId {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NONCE: AtomicU64 = AtomicU64::new(0);
         let mut digest = crate::digest::Digest::new();
-        digest.update(b"bumbledb/database-id");
+        digest.update(b"bdb.database-id.v1");
         digest.update(&std::process::id().to_be_bytes());
         digest.update(&NONCE.fetch_add(1, Ordering::Relaxed).to_be_bytes());
         let now = std::time::SystemTime::now()

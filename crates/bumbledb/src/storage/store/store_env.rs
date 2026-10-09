@@ -28,13 +28,13 @@ use crate::schema::fingerprint::{SchemaFingerprint, fingerprint};
 use crate::storage::GenerationId;
 use crate::work::WorkContext;
 
-const LOCK_FILE: &str = "bumbledb.lock";
+const LOCK_FILE: &str = "bdb.lock";
 pub(crate) const DATA_FILE: &str = "data.mdb";
 const MAX_READERS: u32 = 1024;
 const WAIT_QUANTUM: Duration = Duration::from_millis(1);
 
 /// The default virtual map ceiling: 1 TiB of address space.
-pub const DEFAULT_MAP_CEILING: u64 = 1 << 40;
+pub(crate) const DEFAULT_MAP_CEILING: u64 = 1 << 40;
 
 /// Whether a commit survives a crash or power loss on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

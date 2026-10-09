@@ -8,8 +8,8 @@ use crate::schema::ProjectionId;
 
 pub(crate) const FP_LEN: usize = 16;
 
-const ROW_DOMAIN: &[u8] = b"bumbledb/1/row-fp";
-const DETERMINANT_DOMAIN: &[u8] = b"bumbledb/1/det-fp";
+const ROW_DOMAIN: &[u8] = b"bdb.row-fp.v1";
+const DETERMINANT_DOMAIN: &[u8] = b"bdb.det-fp.v1";
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Fingerprinter {

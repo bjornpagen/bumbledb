@@ -6,9 +6,9 @@ mod encode;
 mod tests;
 
 #[cfg(test)]
-pub use decode::decode_u64;
-pub use decode::{decode_f64, decode_i64};
-pub use encode::{encode_bool, encode_f64, encode_i64, encode_u64};
+pub(crate) use decode::decode_u64;
+pub(crate) use decode::{decode_f64, decode_i64};
+pub(crate) use encode::{encode_bool, encode_f64, encode_i64, encode_u64};
 
 /// A query-image text token: the dense id a prepared query's process-scoped
 /// interner mints per distinct text; stored rows own their text inline. Ids
@@ -37,18 +37,18 @@ impl InternId {
 }
 
 /// The widest `bytes<N>` field, in bytes.
-pub const MAX_FIXED_BYTES: usize = bumbledb_theory::schema::MAX_FIXED_BYTES as usize;
+pub(crate) const MAX_FIXED_BYTES: usize = bumbledb_theory::schema::MAX_FIXED_BYTES as usize;
 
 /// The word count of a `bytes<len>` value's padded encoding: `⌈len/8⌉`.
 #[must_use]
-pub const fn fixed_bytes_words(len: u16) -> usize {
+pub(crate) const fn fixed_bytes_words(len: u16) -> usize {
     (len as usize).div_ceil(8)
 }
 
 /// One `bytes<N>` value: the raw bytes inline in a fixed 64-byte buffer
 /// (`Copy`, borrow-free), zero-padded to whole words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FixedBytesValue {
+pub(crate) struct FixedBytesValue {
     bytes: [u8; MAX_FIXED_BYTES],
     len: u8,
 }
@@ -57,7 +57,7 @@ impl FixedBytesValue {
     /// # Panics
     /// On a width outside `1..=64`.
     #[must_use]
-    pub fn new(raw: &[u8]) -> Self {
+    pub(crate) fn new(raw: &[u8]) -> Self {
         assert!(
             !raw.is_empty() && raw.len() <= MAX_FIXED_BYTES,
             "bytes<N> widths are 1..=64"
@@ -71,7 +71,7 @@ impl FixedBytesValue {
     }
 
     #[must_use]
-    pub fn padded(&self) -> &[u8] {
+    pub(crate) fn padded(&self) -> &[u8] {
         &self.bytes[..fixed_bytes_words(u16::from(self.len)) * 8]
     }
 }

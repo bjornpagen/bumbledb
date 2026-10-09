@@ -329,7 +329,8 @@ fn emit(
     for (field, (summary, constituents)) in ranges {
         let pinned = matches!(eqs.get(field), Some(Const::Word(_)));
         if pinned {
-            // and the bounds are implied: drop every constituent.
+            // An Eq pin implies every bound it satisfies: drop the range's
+            // constituents.
             replacements.insert(*field, Vec::new());
         } else if *constituents >= 2 {
             let mut emitted = Vec::with_capacity(2);

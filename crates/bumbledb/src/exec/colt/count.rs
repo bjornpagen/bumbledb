@@ -62,8 +62,7 @@ impl Colt {
 
     #[inline(always)]
     pub(super) fn position_matches(&self, level: usize, position: u32, key: &[u64]) -> bool {
-        // arities agree, so the invariant is asserted where the
-
+        // Callers pass a key of this level's arity.
         debug_assert_eq!(key.len(), self.schema_columns[level].len());
         self.schema_columns[level]
             .iter()

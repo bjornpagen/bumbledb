@@ -26,8 +26,7 @@ mod open;
 mod owned;
 /// `schema!` expansion plumbing: the generated `Fact` impls call these.
 /// Not API — no stability promises.
-#[doc(hidden)]
-pub mod plumbing;
+pub(crate) mod plumbing;
 mod read;
 mod read_instance;
 mod row_reader;

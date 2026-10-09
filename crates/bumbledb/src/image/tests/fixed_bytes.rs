@@ -56,7 +56,8 @@ fn fixed_bytes_fields_decode_into_padded_word_columns() {
     let source = populated(&schema);
     let (_cache, image) = source.image_with_cache(D);
 
-    // shift accordingly (the field→column map, never raw field indices).
+    // Wide fields span several word columns, so later columns shift: read
+    // them through the field→column map, never raw field indices.
     let head = image.span(bumbledb_theory::schema::FieldId(1));
     assert_eq!(head.width, ColumnWidth::Words { count: 2 });
     let hash = image.span(bumbledb_theory::schema::FieldId(2));
