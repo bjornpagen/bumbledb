@@ -222,6 +222,21 @@ The log needs, beyond the planned `host` surface:
   then seal host records + head and install or compact. The existing `UnreadyStore` staging path is
   close; please keep a public route to it under `host`.
 
+- R-E5 **what the cache uses today that C7 hides**, so `host` keeps a route for each:
+  - `Db::integration_writer` + `prepare` (judged candidate, abort) — the planned `host_writer` + `decide`;
+  - `Db::integration_store().writer().prepare(changes, &UnindexedRows, &AdmitAll)` (unjudged apply)
+    — the planned `apply_decided`;
+  - `OwnedRead::snapshot().contains(relation, row, work)` (net delta of a change set against a
+    state with earlier sets overlaid) — unneeded once R-E1/R-E2 report per-set `Applied`;
+  - `OwnedRead::snapshot().rows(relation)` (copy a relation into a migration; compare states in
+    tests) — the planned `export`;
+  - `ReadFrame::integration_host_{record,scan,attachment}` — the planned `host_record`,
+    `host_scan`, `head`;
+  - `bumbledb::canonical::decode` + `ChangeSet::records()` / `changes::ChangeKind` (compose an
+    entry's sets in order; re-key copied rows to the new schema) — please keep them public, or add
+    `ChangeSet::then(&self, later: &ChangeSet, work)` (per row the later action wins);
+  - `bumbledb::schema::evidence::encode_violations` (rejection evidence bytes).
+
 Until these land the cache uses today's `bumbledb::integration` writer: judging prepares the
 ordered composition of the accepted change sets plus the next one and aborts; applying prepares
 the composition of an entry's committed sets through `store::WriteOwner::prepare` with an
