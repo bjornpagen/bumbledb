@@ -1,10 +1,12 @@
-//! Shared column reductions for leaf scans and batches. Output aliases select
-//! from one partial per input/kernel, so Min and Max of the same column
-//! share its gather and comparisons. The persisted group state is unchanged.
+//! Column reductions shared by leaf scans and constant-group batches: one
+//! partial per input column and kernel, so Min and Max of a column share
+//! its comparisons and Sum and Mean of an F64 column share one exact total.
 
 use crate::exec::colt::SuffixRun;
 use crate::exec::kernel;
-use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, FoldSource, SinkSpec};
+use crate::exec::kernel::numeric::ExactF64Accumulator;
+use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, FoldSource, GroupState, SinkSpec};
+use bumbledb_theory::F64;
 
 #[derive(Debug)]
 pub(in crate::exec::sink) struct FoldInput {
@@ -12,10 +14,15 @@ pub(in crate::exec::sink) struct FoldInput {
     pub partial: Partial,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one partial per input column, reused across runs without allocating"
+)]
 pub(in crate::exec::sink) enum Partial {
     Sum(u128),
     Extrema { min: u64, max: u64 },
+    Float(ExactF64Accumulator),
 }
 
 impl Partial {
@@ -31,12 +38,13 @@ impl Partial {
                 min: u64::MAX,
                 max: u64::MIN,
             },
-            _ => unreachable!("only integer sums and word-order extrema use column scans"),
+            AggSpec::Float { .. } => Self::Float(ExactF64Accumulator::default()),
+            _ => unreachable!("only sums, extrema and exact float totals reduce columns"),
         }
     }
 
-    pub fn same_kernel(self, other: Self) -> bool {
-        std::mem::discriminant(&self) == std::mem::discriminant(&other)
+    pub fn same_kernel(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 
     pub fn reset(&mut self) {
@@ -46,19 +54,13 @@ impl Partial {
                 min: u64::MAX,
                 max: u64::MIN,
             },
+            Self::Float(_) => Self::Float(ExactF64Accumulator::default()),
         };
     }
 
-    pub fn repeated(self, word: u64, count: u64) -> Self {
-        match self {
-            Self::Sum(_) => Self::Sum(u128::from(word) * u128::from(count)),
-            Self::Extrema { .. } => Self::Extrema {
-                min: word,
-                max: word,
-            },
-        }
-    }
-
+    /// Folds the run's words of `column` (`stride` words per row, input at
+    /// `word`). Callers bound the run by a checked binding count, so a float
+    /// total cannot overflow its cardinality.
     pub fn fold(&mut self, column: &[u64], stride: usize, word: usize, run: SuffixRun<'_>) {
         match self {
             Self::Sum(total) => {
@@ -81,10 +83,39 @@ impl Partial {
                 *min = (*min).min(lo);
                 *max = (*max).max(hi);
             }
+            Self::Float(total) => {
+                if run.is_empty() {
+                    return;
+                }
+                let pushed = match run {
+                    SuffixRun::Identity { start, len } => total.push_keys(
+                        column[start * stride + word..]
+                            .iter()
+                            .step_by(stride)
+                            .take(len)
+                            .copied(),
+                    ),
+                    SuffixRun::Positions(p) => {
+                        total.push_keys(p.iter().map(|&i| column[i as usize * stride + word]))
+                    }
+                };
+                pushed.expect("a checked binding count bounds every run");
+            }
         }
     }
 
-    pub fn output(self, spec: AggSpec, count: u64) -> Acc {
+    fn repeated(&self, word: u64, count: u64) -> Self {
+        match self {
+            Self::Sum(_) => Self::Sum(u128::from(word) * u128::from(count)),
+            Self::Extrema { .. } => Self::Extrema {
+                min: word,
+                max: word,
+            },
+            Self::Float(_) => unreachable!("outer float constants push into the group bank"),
+        }
+    }
+
+    fn output(&self, spec: AggSpec, count: u64) -> Acc {
         match (self, spec) {
             (
                 Self::Sum(total),
@@ -107,19 +138,19 @@ impl Partial {
                     signed: false,
                     ..
                 },
-            ) => Acc::SumUnsigned(total),
+            ) => Acc::SumUnsigned(*total),
             (
                 Self::Extrema { min, .. },
                 AggSpec::Fold {
                     op: FoldOp::Min, ..
                 },
-            ) => Acc::Min(min),
+            ) => Acc::Min(*min),
             (
                 Self::Extrema { max, .. },
                 AggSpec::Fold {
                     op: FoldOp::Max, ..
                 },
-            ) => Acc::Max(max),
+            ) => Acc::Max(*max),
             _ => unreachable!("output operator matches its compiled scan kernel"),
         }
     }
@@ -130,7 +161,9 @@ impl AggregateSink {
         self.fold_sources.clear();
         self.fold_inputs.clear();
         for find in &self.finds {
-            let SinkSpec::Agg(spec @ AggSpec::Fold { slot, .. }) = find else {
+            let SinkSpec::Agg(spec @ (AggSpec::Fold { slot, .. } | AggSpec::Float { slot, .. })) =
+                find
+            else {
                 continue;
             };
             let source = match self.cached_leaf_words[*slot] {
@@ -140,7 +173,7 @@ impl AggregateSink {
                     let input = self
                         .fold_inputs
                         .iter()
-                        .position(|input| input.word == word && input.partial.same_kernel(partial))
+                        .position(|input| input.word == word && input.partial.same_kernel(&partial))
                         .unwrap_or_else(|| {
                             let index = self.fold_inputs.len();
                             self.fold_inputs.push(FoldInput { word, partial });
@@ -151,6 +184,75 @@ impl AggregateSink {
                 None => FoldSource::Outer,
             };
             self.fold_sources.push(source);
+        }
+    }
+
+    /// Merges this run's partials into group `group_idx`'s accumulators;
+    /// outer-sourced inputs contribute `outer(slot)` `count` times. Records
+    /// a cardinality overflow instead of merging past it.
+    pub(super) fn merge_partials(
+        &mut self,
+        group_idx: usize,
+        count: u64,
+        outer: impl Fn(usize) -> u64,
+    ) {
+        let GroupState::Folds { accs, n_aggs } = &mut self.group_state else {
+            unreachable!("partials merge into fold groups");
+        };
+        let mut accumulators = accs[group_idx * *n_aggs..(group_idx + 1) * *n_aggs].iter_mut();
+        let mut sources = self.fold_sources.iter();
+        for find in &self.finds {
+            let SinkSpec::Agg(spec) = find else {
+                continue;
+            };
+            let acc = accumulators.next().expect("one accumulator per aggregate");
+            match spec {
+                AggSpec::Count => {
+                    let Acc::Count(n) = acc else {
+                        unreachable!("accumulators are seeded per op");
+                    };
+                    *n = n.saturating_add(count);
+                }
+                AggSpec::Fold { slot, .. } => {
+                    let source = sources.next().expect("one source per fold");
+                    let output = match source {
+                        FoldSource::Column(input) => {
+                            self.fold_inputs[*input].partial.output(*spec, count)
+                        }
+                        FoldSource::Outer => Partial::seed(*spec)
+                            .repeated(outer(*slot), count)
+                            .output(*spec, count),
+                    };
+                    merge(acc, output);
+                }
+                AggSpec::Float { slot, .. } => {
+                    let source = sources.next().expect("one source per fold");
+                    let Acc::Float { index, primary } = acc else {
+                        unreachable!("float accumulator handle")
+                    };
+                    if !*primary {
+                        continue;
+                    }
+                    let bank = &mut self.float_accs[*index];
+                    let merged = match source {
+                        FoldSource::Column(input) => {
+                            let Partial::Float(partial) = &self.fold_inputs[*input].partial else {
+                                unreachable!("float inputs reduce exact totals")
+                            };
+                            bank.merge(partial)
+                        }
+                        FoldSource::Outer => bank.push_repeated(
+                            F64::from_order_key(outer(*slot))
+                                .expect("validated canonical F64 binding"),
+                            count,
+                        ),
+                    };
+                    if merged.is_err() {
+                        self.cardinality_overflow = true;
+                        return;
+                    }
+                }
+            }
         }
     }
 }
@@ -233,6 +335,52 @@ mod tests {
                 };
                 assert_eq!(actual, i128::from(value) * i128::from(count));
             }
+        }
+    }
+
+    #[test]
+    fn float_partials_equal_pushing_each_selected_value() {
+        let spec = AggSpec::Float {
+            op: FoldOp::Sum,
+            slot: 0,
+        };
+        let values = [
+            1e16,
+            1.0,
+            -1e16,
+            0.5,
+            f64::MAX,
+            -f64::MAX,
+            3.25,
+            -0.0,
+            5e-324,
+        ];
+        let words: Vec<u64> = values
+            .iter()
+            .flat_map(|&v| [7, F64::from(v).to_order_key()])
+            .collect();
+        let positions: Vec<u32> = vec![8, 0, 3, 3, 5, 1];
+        for run in [
+            SuffixRun::Identity {
+                start: 1,
+                len: values.len() - 1,
+            },
+            SuffixRun::Positions(&positions),
+        ] {
+            let mut partial = Partial::seed(spec);
+            partial.fold(&words, 2, 1, run);
+            let indices: Vec<usize> = match run {
+                SuffixRun::Identity { start, len } => (start..start + len).collect(),
+                SuffixRun::Positions(p) => p.iter().map(|&i| i as usize).collect(),
+            };
+            let mut expected = ExactF64Accumulator::default();
+            for i in indices {
+                expected.push(F64::from(values[i])).unwrap();
+            }
+            let Partial::Float(total) = partial else {
+                panic!("float partial")
+            };
+            assert_eq!(total, expected);
         }
     }
 }

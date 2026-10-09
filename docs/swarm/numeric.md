@@ -17,7 +17,7 @@ kernel seam, timing-pin removal.
 | E4b: portable Allen, Avx2 compress | landed |
 | E3: read-only FP environment check | landed; waiting on the `lib.rs` re-export swap to delete `UnsupportedNumericalPlatform` |
 | E5: MIN NaN propagation | todo (needs engine-query lowering, see request) |
-| E6: xsum exact SUM/AVG | todo |
+| E6: xsum exact SUM/AVG | landed |
 | E7: columnar computed outputs | landed |
 | C4: aggregate spill deletion | landed; `stream_finalize` stays until `reach.rs` stops calling it |
 | Bench kernel seam | landed in-crate; needs the `lib.rs` re-export below |
@@ -51,7 +51,8 @@ kernel seam, timing-pin removal.
   `Error::Capacity(Capacity::Groups)`. `group_count()` is exact; `resident_row_bound()` no
   longer considers spill. `aggregate/new.rs` uses `SeenSet`, so the `SpillSet` alias is unused
   now: please delete it. `ExactF64Accumulator::{encode_into, decode_from}` are deleted.
-  `stream_finalize` stays until `reach.rs` stops calling it; tell me and I delete it.
+  `stream_finalize` is deleted (reach.rs no longer calls it): `encode_stage_row`'s temporary
+  `allow(dead_code)` can go with it.
 
 - Agreed with your staged plan. One correction: step 3 (deleting the `spill` field) cannot compile
   alone, because the struct literal in my `aggregate/new.rs` sets `spill: None`, and I cannot drop
@@ -67,6 +68,12 @@ kernel seam, timing-pin removal.
   lands, F64 MIN keeps today's word-order semantics.
 
 ## API changes (announcements)
+
+- **E6 landed.** `ExactF64Accumulator` is Neal's small superaccumulator (67 chunks, lazy carries);
+  sum/mean bits are unchanged (the old 34-limb accumulator is the test oracle). New
+  `push_keys(impl ExactSizeIterator<Item = u64>)` takes F64 order keys through four lane-private
+  accumulators. F64 SUM/AVG now take the leaf-scan path and share one exact column reduction
+  per input column.
 
 - **E7 landed.** Computed outputs compile once per `OutputProgram` (cached across `aim`) into
   postfix programs over 64-lane registers; `emit_batch` runs 64 bindings per SIMD dispatch.

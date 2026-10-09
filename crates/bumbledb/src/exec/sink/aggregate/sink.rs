@@ -1,10 +1,7 @@
 use crate::exec::colt::SuffixRun;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, ScanOffer, Sink};
-use crate::exec::sink::{Acc, AggSpec, AggregateSink, DedupState, GroupState, SinkSpec};
+use crate::exec::sink::{AggregateSink, DedupState, GroupState};
 use crate::image::ColumnView;
-
-use super::super::FoldSource;
-use super::reduce::{Partial, merge};
 
 impl Sink for AggregateSink {
     #[inline]
@@ -32,15 +29,6 @@ impl Sink for AggregateSink {
         }
 
         if matches!(self.group_state, GroupState::Pack { .. }) {
-            return ScanOffer::Declined;
-        }
-        // Exact floating folds use the constant-group batch path, which
-        // already preserves shared Sum/Mean lanes and binding distinctness.
-        if self
-            .finds
-            .iter()
-            .any(|find| matches!(find, SinkSpec::Agg(AggSpec::Float { .. })))
-        {
             return ScanOffer::Declined;
         }
 
@@ -94,39 +82,10 @@ impl Sink for AggregateSink {
             return 0;
         }
 
-        let GroupState::Folds { accs, n_aggs } = &mut self.group_state else {
-            unreachable!("scan merge is the Folds arm");
-        };
-        let range = group_idx * *n_aggs..(group_idx + 1) * *n_aggs;
-        let mut accumulators = accs[range].iter_mut();
-        let mut fold_i = 0;
-        for find in &self.finds {
-            let SinkSpec::Agg(spec) = find else {
-                continue;
-            };
-            let acc = accumulators.next().expect("one accumulator per aggregate");
-            match spec {
-                AggSpec::Float { .. } => unreachable!("float scans use the batch path"),
-                AggSpec::Count => {
-                    let Acc::Count(n) = acc else {
-                        unreachable!("accumulators are seeded per op");
-                    };
-                    *n = n.saturating_add(count);
-                }
-                AggSpec::Fold { slot, .. } => {
-                    let source = self.fold_sources[fold_i];
-                    fold_i += 1;
-                    let partial = match source {
-                        FoldSource::Column(input) => self.fold_inputs[input].partial,
-                        FoldSource::Outer => {
-                            Partial::seed(*spec).repeated(scan.bindings.get(*slot), count)
-                        }
-                    };
-                    merge(acc, partial.output(*spec, count));
-                }
-            }
+        self.merge_partials(group_idx, count, |slot| scan.bindings.get(slot));
+        if self.cardinality_overflow {
+            return 0;
         }
-
         count
     }
 

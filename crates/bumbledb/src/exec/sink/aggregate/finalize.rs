@@ -1,9 +1,6 @@
 use crate::error::{Error, FindIndex, OverflowKind, Result};
 use crate::exec::kernel::numeric::ExactF64Accumulator;
-use crate::exec::scratch::{ScratchAppend, ScratchMapId, ScratchRelation};
-use crate::exec::sink::{
-    Acc, AggregateSink, GroupState, GroupTable, SinkSpec, encode_stage_row, i64_to_word,
-};
+use crate::exec::sink::{Acc, AggregateSink, GroupState, GroupTable, SinkSpec, i64_to_word};
 use crate::interval::sweep::{Continuation, sweep};
 
 impl AggregateSink {
@@ -32,45 +29,6 @@ impl AggregateSink {
         })?;
         self.finished = true;
         Ok(())
-    }
-
-    /// One fallible finalize stream: each published group/segment is
-    /// appended onto `dest` through [`ScratchAppend`]. `dest` must be
-    /// created by the caller; this method does not choose or switch its
-    /// storage representation. Producer finalize errors return immediately
-    /// (drop, no `finish`).
-    /// `retain` transfers any payload ownership before its row is appended.
-    /// # Errors
-    /// As [`Self::finalize_into`], or a refused scratch append.
-    pub(crate) fn stream_finalize(
-        &mut self,
-        dest: &mut ScratchRelation,
-        answer_scratch: &mut Vec<u64>,
-        mut retain: impl FnMut(&[u64]) -> Result<()>,
-    ) -> Result<u64> {
-        let mut count = 0u64;
-        let mut encoded = Vec::new();
-        let mut append = ScratchAppend::new(dest);
-        let streamed = self.finalize_into(answer_scratch, |row| {
-            retain(row)?;
-            encode_stage_row(row, &mut encoded);
-            append.append(ScratchMapId::Default, &count.to_be_bytes(), &encoded)?;
-            count += 1;
-            Ok(())
-        });
-        match streamed {
-            Ok(()) => match append.finish() {
-                Ok(()) => Ok(count),
-                Err(error) => {
-                    self.finished = false;
-                    Err(error)
-                }
-            },
-            Err(error) => {
-                drop(append);
-                Err(error)
-            }
-        }
     }
 
     fn emit_group(

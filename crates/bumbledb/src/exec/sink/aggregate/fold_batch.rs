@@ -1,9 +1,7 @@
 use crate::exec::colt::SuffixRun;
 use crate::exec::run::{Bindings, LeafBatch};
-use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldSource, GroupState, SinkSpec};
+use crate::exec::sink::{AggSpec, AggregateSink, SinkSpec};
 use std::num::NonZeroU32;
-
-use super::reduce::{Partial, merge};
 
 impl AggregateSink {
     pub(super) fn fold_batch_rows(&mut self, batch: &LeafBatch<'_>) {
@@ -108,66 +106,7 @@ impl AggregateSink {
                 input.partial.fold(batch.keys, batch.arity, input.word, run);
             }
         }
-        let GroupState::Folds { accs, n_aggs } = &mut self.group_state else {
-            unreachable!("constant-group fold is the Folds arm");
-        };
-        let range = group_idx * *n_aggs..(group_idx + 1) * *n_aggs;
-        let mut accumulators = accs[range].iter_mut();
-        let mut fold_i = 0;
-        for find in &self.finds {
-            let SinkSpec::Agg(spec) = find else {
-                continue;
-            };
-            let acc = accumulators.next().expect("one accumulator per aggregate");
-            match spec {
-                AggSpec::Float { slot, .. } => {
-                    let Acc::Float { index, primary } = acc else {
-                        unreachable!("float accumulator handle")
-                    };
-                    if !*primary {
-                        continue;
-                    }
-                    let accumulator = &mut self.float_accs[*index];
-                    let result = match self.cached_leaf_words[*slot] {
-                        None => accumulator.push_repeated(
-                            bumbledb_theory::F64::from_order_key(batch.bindings.get(*slot))
-                                .expect("validated canonical F64 binding"),
-                            count,
-                        ),
-                        Some(word) => {
-                            let word = word.get() as usize - 1;
-                            debug_assert!(!survivors.is_empty(), "count-only folds never gather");
-                            survivors.iter().try_for_each(|&entry| {
-                                accumulator.push(
-                                    bumbledb_theory::F64::from_order_key(batch.key(entry, word))
-                                        .expect("validated canonical F64 binding"),
-                                )
-                            })
-                        }
-                    };
-                    if result.is_err() {
-                        self.cardinality_overflow = true;
-                        return;
-                    }
-                }
-                AggSpec::Count => {
-                    let Acc::Count(n) = acc else {
-                        unreachable!("accumulators are seeded per op");
-                    };
-                    *n = n.saturating_add(count);
-                }
-                AggSpec::Fold { slot, .. } => {
-                    let partial = match self.fold_sources[fold_i] {
-                        FoldSource::Column(input) => self.fold_inputs[input].partial,
-                        FoldSource::Outer => {
-                            Partial::seed(*spec).repeated(batch.bindings.get(*slot), count)
-                        }
-                    };
-                    fold_i += 1;
-                    merge(acc, partial.output(*spec, count));
-                }
-            }
-        }
+        self.merge_partials(group_idx, count, |slot| batch.bindings.get(slot));
     }
 }
 
