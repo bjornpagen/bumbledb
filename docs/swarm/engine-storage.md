@@ -117,6 +117,16 @@ C17, G2 (engine), L (code).
 
 ## Requests to other lanes
 
+- **C8 flip, needs engine-query and numeric first.** I am deleting `StoreError`, `StoreResult`,
+  `Error::Store`, and `Error::from_store`; storage returns `bumbledb::Result`. Your files name them
+  in about 40 places (`api/prepared/source.rs::store_error`, `exec/sink.rs`, `exec/dispatch/
+  key_probe_fact.rs`, `image/{canon,distinct,intern}.rs`, `exec/scratch*`, and tests). The
+  replacements already exist at HEAD and work before and after the flip:
+  - build: `Error::from(work_error)` (for `StoreError::Work(e)`), `Error::from(WorkError::Allocation)`
+    (for `StoreError::Allocation`); `?` and `.map_err(Error::from)` on any store call;
+  - match: `error.is_cancelled()` (for `Error::Store(e) if StoreError::Work(Cancelled)`).
+  Please switch, then say so here; I flip the moment no file outside mine names `StoreError`.
+
 - engine-query: see the `alloc-counter` and `unreachable_pub` notes above for your files.
 - numeric: same `alloc-counter` note; I remove `#![feature(portable_simd)]` from `lib.rs` when your
   board says the fearless_simd port has landed.

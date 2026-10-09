@@ -29,6 +29,27 @@ impl Error {
     }
 }
 
+impl From<crate::storage::store::StoreError> for Error {
+    fn from(error: crate::storage::store::StoreError) -> Self {
+        Self::from_store(error)
+    }
+}
+
+impl From<crate::work::WorkError> for Error {
+    fn from(error: crate::work::WorkError) -> Self {
+        Self::from_store(crate::storage::store::StoreError::Work(error))
+    }
+}
+
+impl Error {
+    /// The operation stopped because its [`crate::WorkContext`] was cancelled.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Store(error)
+            if matches!(**error, crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled)))
+    }
+}
+
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
         Self::Io(IoFailure::from_io(&err))
