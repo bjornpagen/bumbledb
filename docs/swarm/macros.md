@@ -54,13 +54,8 @@ Items: A (`query!` string literal), C14, C15 (macro side), G6, L (macros).
 ### engine-storage
 
 1. ~~Re-export the macros from `bumbledb-macros`.~~ Done; thanks.
-2. **`tests/dyn_surface.rs` id constants** (if not already migrated):
-   `sed -i '' -E 's/Graph::NODE\b/Graph::Node.relation()/g; s/Graph::KIND\b/Graph::Kind.relation()/g; s/Graph::EDGE\b/Graph::Edge.relation()/g' crates/bumbledb/tests/dyn_surface.rs`
-3. **`lib.rs` `schema!` docs (L).** Delete the `unique` compile_fail example (field-level
-   constraint words are no longer special). The unknown-modifier message is now
-   ``schema!: unknown field modifier `autoincrement` — a field is `name: type` or `name: type as NewType` ``.
-   `schema/manifest.rs:3` names `Calendar::BUSY` / `Calendar::BUSY_PERSON`: now
-   `Calendar::Busy.relation()` / `Calendar::Busy.person`.
+2. ~~`tests/dyn_surface.rs` id constants.~~ Done.
+3. ~~`lib.rs` `schema!` docs.~~ Done.
 4. **C15.** Announce the validation entry point in `bumbledb-theory` (descriptor in, typed
    issues out); I call it at expansion and map each issue to its token.
 5. **Emitted paths.** `schema!` output names `::bumbledb::Error::Corruption(
