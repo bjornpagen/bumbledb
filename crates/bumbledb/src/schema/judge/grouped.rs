@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::ops::Bound;
 
-use crate::canonical::{DecodeScratch, RowError};
+use crate::canonical::{DecodeScratch, RowError, append_value};
 use crate::ir::Value;
 use crate::schema::{FieldDescriptor, FieldId};
 use crate::work::WorkContext;
@@ -47,7 +47,7 @@ impl ScalarKeyScratch {
     pub(super) fn encode(&mut self) -> &[u8] {
         self.encoded.clear();
         for value in &self.values {
-            encode_value(value, &mut self.encoded);
+            append_value(&mut self.encoded, value);
         }
         &self.encoded
     }
@@ -56,7 +56,7 @@ impl ScalarKeyScratch {
     pub(super) fn encode_projection(&mut self, row: &[Value], fields: &[FieldId]) -> &[u8] {
         self.encoded.clear();
         for field in fields {
-            encode_value(&row[usize::from(field.0)], &mut self.encoded);
+            append_value(&mut self.encoded, &row[usize::from(field.0)]);
         }
         &self.encoded
     }
@@ -178,54 +178,4 @@ impl GroupedMap {
 
 fn word(value: &[u8]) -> u64 {
     u64::from_be_bytes(value.try_into().expect("8-byte grouped word"))
-}
-
-/// Append one value's exact, injective, prefix-free byte image: the
-/// canonical row payload rules, so byte equality of two encoded tuples is
-/// canonical value equality.
-pub(super) fn encode_value(value: &Value, out: &mut Vec<u8>) {
-    match value {
-        Value::Bool(v) => out.extend_from_slice(&[0, u8::from(*v)]),
-        Value::U64(v) => {
-            out.push(1);
-            out.extend_from_slice(&v.to_be_bytes());
-        }
-        Value::I64(v) => {
-            out.push(2);
-            out.extend_from_slice(&v.to_be_bytes());
-        }
-        Value::F64(v) => {
-            out.push(3);
-            out.extend_from_slice(&v.to_be_bytes());
-        }
-        Value::String(v) => {
-            out.push(4);
-            out.extend_from_slice(&(v.len() as u64).to_be_bytes());
-            out.extend_from_slice(v.as_bytes());
-        }
-        Value::FixedBytes(v) => {
-            out.push(5);
-            out.extend_from_slice(&(v.len() as u64).to_be_bytes());
-            out.extend_from_slice(v);
-        }
-        Value::IntervalU64(v) => {
-            out.push(6);
-            out.extend_from_slice(&v.start().to_be_bytes());
-            out.extend_from_slice(&v.end().to_be_bytes());
-        }
-        Value::IntervalI64(v) => {
-            out.push(7);
-            out.extend_from_slice(&v.start().to_be_bytes());
-            out.extend_from_slice(&v.end().to_be_bytes());
-        }
-        Value::Uuid(v) => {
-            out.push(8);
-            out.extend_from_slice(v.as_bytes());
-        }
-        Value::IntervalF64(v) => {
-            out.push(9);
-            out.extend_from_slice(&v.start().to_be_bytes());
-            out.extend_from_slice(&v.end().to_be_bytes());
-        }
-    }
 }

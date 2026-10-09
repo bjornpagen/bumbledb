@@ -183,8 +183,7 @@ fn element_tag(element: IntervalElement) -> u8 {
 
 /// A literal in the stored-row value codec: its tag, then its payload.
 fn put_literal(out: &mut Vec<u8>, literal: &Value) {
-    crate::canonical::append_value(out, literal, &crate::WorkContext::new())
-        .expect("a fresh work context is never cancelled");
+    crate::canonical::append_value(out, literal);
 }
 
 #[cfg(test)]

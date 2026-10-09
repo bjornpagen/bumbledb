@@ -60,9 +60,9 @@ fn scalar_routes_borrow_payloads_and_preserve_nonleading_and_composite_order() {
             element: IntervalElement::U64,
         },
     ]);
-    let mut text = "a".repeat(COPY_QUANTUM - 1);
+    let mut text = "a".repeat(4096 - 1);
     text.push('🦀');
-    text.push_str(&"é".repeat(COPY_QUANTUM));
+    text.push_str(&"é".repeat(4096));
     let values = [
         Value::String(text.into()),
         Value::Bool(true),
@@ -256,10 +256,7 @@ fn scalar_route_checks_cancellation_including_empty_projections() {
     let projection = exact_projection(&fields, &[0]);
     let row = CanonicalRow::encode(
         &fields,
-        &[
-            Value::U64(7),
-            Value::String("x".repeat(COPY_QUANTUM + 1).into()),
-        ],
+        &[Value::U64(7), Value::String("x".repeat(4096 + 1).into())],
         &work(),
     )
     .unwrap();
@@ -436,15 +433,8 @@ fn decode_scratch_remains_reusable_after_visitor_unwinds() {
 }
 
 #[test]
-fn field_batches_preserve_wire_roundtrips() {
-    for width in [
-        0,
-        1,
-        FIELD_QUANTUM - 1,
-        FIELD_QUANTUM,
-        FIELD_QUANTUM + 1,
-        129,
-    ] {
+fn wide_rows_roundtrip_through_encode_parse_and_decode() {
+    for width in [0, 1, 64 - 1, 64, 64 + 1, 129] {
         let fields = fields(&vec![ValueType::U64; width]);
         let values: Vec<_> = (0..width).map(|value| Value::U64(value as u64)).collect();
         let ctx = work();
@@ -460,12 +450,12 @@ fn field_batches_preserve_wire_roundtrips() {
 }
 
 #[test]
-fn field_batches_keep_variable_width_roundtrips() {
-    let mut types = vec![ValueType::U64; FIELD_QUANTUM];
+fn wide_rows_with_long_text_roundtrip() {
+    let mut types = vec![ValueType::U64; 64];
     types.push(ValueType::String);
     let fields = fields(&types);
-    let mut values = vec![Value::U64(1); FIELD_QUANTUM];
-    values.push(Value::String("x".repeat(COPY_QUANTUM + 1).into_boxed_str()));
+    let mut values = vec![Value::U64(1); 64];
+    values.push(Value::String("x".repeat(4096 + 1).into_boxed_str()));
     let ctx = work();
     let row = CanonicalRow::encode(&fields, &values, &ctx).unwrap();
     let ctx = work();
@@ -474,30 +464,24 @@ fn field_batches_keep_variable_width_roundtrips() {
 }
 
 #[test]
-fn field_batches_preserve_global_error_indices_and_cancellation() {
-    let fields = fields(&vec![ValueType::U64; FIELD_QUANTUM + 1]);
+fn wide_row_errors_name_their_field_and_cancellation_refuses() {
+    let fields = fields(&vec![ValueType::U64; 64 + 1]);
     let mut values = vec![Value::U64(1); fields.len()];
     let row = CanonicalRow::encode(&fields, &values, &work()).unwrap();
     let mut malformed = row.as_bytes().to_vec();
-    malformed[2 + 9 * FIELD_QUANTUM] = 255;
+    malformed[2 + 9 * 64] = 255;
     assert_eq!(
         validate(&fields, &malformed, &work()),
-        Err(RowError::InvalidTag {
-            field: FIELD_QUANTUM
-        })
+        Err(RowError::InvalidTag { field: 64 })
     );
     assert!(matches!(
         decode(&fields, &malformed, &work()),
-        Err(RowError::InvalidTag {
-            field: FIELD_QUANTUM
-        })
+        Err(RowError::InvalidTag { field: 64 })
     ));
-    values[FIELD_QUANTUM] = Value::Bool(true);
+    values[64] = Value::Bool(true);
     assert!(matches!(
         CanonicalRow::encode(&fields, &values, &work()),
-        Err(RowError::Type {
-            field: FIELD_QUANTUM
-        })
+        Err(RowError::Type { field: 64 })
     ));
     let context = work();
     context.cancel();
@@ -715,17 +699,17 @@ fn malformed_bool_float_interval_width_and_utf8_refuse() {
 }
 
 #[test]
-fn utf8_crossing_poll_boundaries_is_checked_without_full_copy() {
-    let mut text = "a".repeat(COPY_QUANTUM - 1);
+fn invalid_utf8_deep_in_a_long_string_refuses() {
+    let mut text = "a".repeat(4096 - 1);
     text.push_str("🦀é");
-    text.push_str(&"z".repeat(COPY_QUANTUM));
+    text.push_str(&"z".repeat(4096));
     let ctx = work();
     let fields = fields(&[ValueType::String]);
     let row = CanonicalRow::encode(&fields, &[Value::String(text.into())], &ctx).unwrap();
     let parsed = CanonicalRow::parse(&fields, row.as_bytes(), &ctx).unwrap();
     assert_eq!(parsed.as_bytes(), row.as_bytes());
     let mut invalid = row.as_bytes().to_vec();
-    invalid[11 + COPY_QUANTUM] = 0xff;
+    invalid[11 + 4096] = 0xff;
     assert!(matches!(
         CanonicalRow::parse(&fields, &invalid, &ctx),
         Err(RowError::InvalidUtf8 { field: 0 })

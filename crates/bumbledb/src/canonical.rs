@@ -65,52 +65,24 @@ impl CanonicalRow {
             return Err(RowError::Arity);
         }
         let mut size = 2usize;
-        for (chunk, (descriptors, values)) in fields
-            .chunks(FIELD_QUANTUM)
-            .zip(values.chunks(FIELD_QUANTUM))
-            .enumerate()
-        {
-            work.checkpoint()?;
-            for (offset, (descriptor, value)) in descriptors.iter().zip(values).enumerate() {
-                let field = chunk * FIELD_QUANTUM + offset;
-                let payload = match value {
-                    Value::Bool(_) => 1,
-                    Value::U64(_) | Value::I64(_) | Value::F64(_) => 8,
-                    Value::Uuid(_) => 16,
-                    Value::String(text) => {
-                        text.len().checked_add(8).ok_or(RowError::LengthOverflow)?
-                    }
-                    Value::FixedBytes(bytes) => {
-                        bytes.len().checked_add(8).ok_or(RowError::LengthOverflow)?
-                    }
-                    Value::IntervalU64(v) => {
-                        if v.start() >= v.end() {
-                            return Err(RowError::InvalidInterval { field });
-                        }
-                        16
-                    }
-                    Value::IntervalI64(v) => {
-                        if v.start() >= v.end() {
-                            return Err(RowError::InvalidInterval { field });
-                        }
-                        16
-                    }
-                    Value::IntervalF64(v) => {
-                        if v.start().is_nan() || v.end().is_nan() || v.start() >= v.end() {
-                            return Err(RowError::InvalidInterval { field });
-                        }
-                        16
-                    }
-                };
-                value_matches(value, &descriptor.value_type)
-                    .map_err(|_| RowError::Type { field })?;
-                size = size
-                    .checked_add(1)
-                    .and_then(|n| n.checked_add(payload))
-                    .ok_or(RowError::LengthOverflow)?;
-            }
+        for (field, (descriptor, value)) in fields.iter().zip(values).enumerate() {
+            let payload = match value {
+                Value::Bool(_) => 1,
+                Value::U64(_) | Value::I64(_) | Value::F64(_) => 8,
+                Value::Uuid(_)
+                | Value::IntervalU64(_)
+                | Value::IntervalI64(_)
+                | Value::IntervalF64(_) => 16,
+                Value::String(text) => text.len().checked_add(8).ok_or(RowError::LengthOverflow)?,
+                Value::FixedBytes(bytes) => {
+                    bytes.len().checked_add(8).ok_or(RowError::LengthOverflow)?
+                }
+            };
+            value_matches(value, &descriptor.value_type).map_err(|_| RowError::Type { field })?;
+            size = size
+                .checked_add(1 + payload)
+                .ok_or(RowError::LengthOverflow)?;
         }
-        work.checkpoint()?;
         let mut bytes = Vec::new();
         bytes
             .try_reserve_exact(size)
@@ -120,11 +92,8 @@ impl CanonicalRow {
                 .map_err(|_| RowError::Arity)?
                 .to_be_bytes(),
         );
-        for values in values.chunks(FIELD_QUANTUM) {
-            work.checkpoint()?;
-            for value in values {
-                append_value(&mut bytes, value, work)?;
-            }
+        for value in values {
+            append_value(&mut bytes, value);
         }
         debug_assert_eq!(bytes.len(), size);
         Ok(Self {
@@ -147,10 +116,7 @@ impl CanonicalRow {
         owned
             .try_reserve_exact(bytes.len())
             .map_err(|_| RowError::Allocation)?;
-        for chunk in bytes.chunks(COPY_QUANTUM) {
-            work.checkpoint()?;
-            owned.extend_from_slice(chunk);
-        }
+        owned.extend_from_slice(bytes);
         Ok(Self {
             bytes: owned.into_boxed_slice(),
         })
@@ -181,20 +147,8 @@ impl std::ops::Deref for CanonicalRow {
     }
 }
 
-// Work polling granularity, not a database/row-size limit. At most this many
-// bytes are copied/UTF-8 checked without checking cancellation.
-const COPY_QUANTUM: usize = 4096;
-
-// Poll once per bounded scalar batch; variable-width values retain their own
-// COPY_QUANTUM polling inside a batch.
-const FIELD_QUANTUM: usize = 64;
-
 /// Appends one value's canonical encoding: its tag, then its payload.
-pub(crate) fn append_value(
-    bytes: &mut Vec<u8>,
-    value: &Value,
-    work: &WorkContext,
-) -> Result<(), RowError> {
+pub(crate) fn append_value(bytes: &mut Vec<u8>, value: &Value) {
     match value {
         Value::Bool(v) => bytes.extend_from_slice(&[0, u8::from(*v)]),
         Value::U64(v) => {
@@ -211,11 +165,11 @@ pub(crate) fn append_value(
         }
         Value::String(v) => {
             bytes.push(4);
-            append_bytes(bytes, v.as_bytes(), work)?;
+            append_bytes(bytes, v.as_bytes());
         }
         Value::FixedBytes(v) => {
             bytes.push(5);
-            append_bytes(bytes, v, work)?;
+            append_bytes(bytes, v);
         }
         Value::IntervalU64(v) => {
             bytes.push(6);
@@ -239,16 +193,11 @@ pub(crate) fn append_value(
             bytes.extend_from_slice(&v.end().to_be_bytes());
         }
     }
-    Ok(())
 }
 
-fn append_bytes(out: &mut Vec<u8>, input: &[u8], work: &WorkContext) -> Result<(), RowError> {
+fn append_bytes(out: &mut Vec<u8>, input: &[u8]) {
     out.extend_from_slice(&(input.len() as u64).to_be_bytes());
-    for chunk in input.chunks(COPY_QUANTUM) {
-        work.checkpoint()?;
-        out.extend_from_slice(chunk);
-    }
-    Ok(())
+    out.extend_from_slice(input);
 }
 
 struct Reader<'a> {
@@ -446,13 +395,9 @@ impl<'work> DecodeScratch<'work> {
         visit: impl FnOnce(&[Value]) -> Result<T, E>,
     ) -> Result<T, E> {
         self.prepare(fields.len()).map_err(E::from)?;
-        let result = walk_payload(
-            fields,
-            Reader { bytes },
-            self.work,
-            Some(&mut self.values),
-            |_, _| Ok(()),
-        )
+        let result = walk_payload(fields, Reader { bytes }, Some(&mut self.values), |_, _| {
+            Ok(())
+        })
         .map_err(E::from)
         .and_then(|()| visit(&self.values));
         self.clear_decoded();
@@ -504,99 +449,88 @@ fn walk(
     if usize::from(u16::from_be_bytes(reader.word()?)) != fields.len() {
         return Err(RowError::Arity);
     }
-    walk_payload(fields.iter(), reader, work, output, visit_scalar)
+    walk_payload(fields.iter(), reader, output, visit_scalar)
 }
 
 /// The single typed payload parser shared by framed canonical rows and
 /// exact headerless scratch tuples. Field iteration preserves logical order.
 fn walk_payload<'a>(
-    mut fields: impl ExactSizeIterator<Item = &'a FieldDescriptor>,
+    fields: impl ExactSizeIterator<Item = &'a FieldDescriptor>,
     mut reader: Reader<'_>,
-    work: &WorkContext,
     mut output: Option<&mut Vec<Value>>,
     mut visit_scalar: impl FnMut(usize, ExactScalarRef<'_>) -> Result<(), RowError>,
 ) -> Result<(), RowError> {
-    let count = fields.len();
-    for first in (0..count).step_by(FIELD_QUANTUM) {
-        let chunk = FIELD_QUANTUM.min(count - first);
-        work.checkpoint()?;
-        for field in first..first + chunk {
-            let descriptor = fields.next().expect("exact descriptor iterator");
-            let tag = reader.word::<1>()?[0];
-            let value = match tag {
-                0 => match reader.word::<1>()?[0] {
-                    0 => Value::Bool(false),
-                    1 => Value::Bool(true),
-                    _ => return Err(RowError::InvalidBool { field }),
-                },
-                1 => Value::U64(u64::from_be_bytes(reader.word()?)),
-                2 => Value::I64(i64::from_be_bytes(reader.word()?)),
-                3 => Value::F64(
-                    F64::from_canonical_be_bytes(reader.word()?)
-                        .map_err(|_| RowError::NonCanonicalFloat { field })?,
-                ),
-                4 => {
-                    let blob = reader.blob()?;
-                    if descriptor.value_type != ValueType::String {
-                        return Err(RowError::Type { field });
-                    }
-                    let owned = utf8(blob, field, work, output.is_some())?;
-                    if let (Some(output), Some(text)) = (&mut output, owned) {
-                        output.push(Value::String(text.into_boxed_str()));
-                    }
-                    continue;
+    for (field, descriptor) in fields.enumerate() {
+        let tag = reader.word::<1>()?[0];
+        let value = match tag {
+            0 => match reader.word::<1>()?[0] {
+                0 => Value::Bool(false),
+                1 => Value::Bool(true),
+                _ => return Err(RowError::InvalidBool { field }),
+            },
+            1 => Value::U64(u64::from_be_bytes(reader.word()?)),
+            2 => Value::I64(i64::from_be_bytes(reader.word()?)),
+            3 => Value::F64(
+                F64::from_canonical_be_bytes(reader.word()?)
+                    .map_err(|_| RowError::NonCanonicalFloat { field })?,
+            ),
+            4 => {
+                let blob = reader.blob()?;
+                if descriptor.value_type != ValueType::String {
+                    return Err(RowError::Type { field });
                 }
-                5 => {
-                    let blob = reader.blob()?;
-                    if !matches!(descriptor.value_type, ValueType::FixedBytes {len} if usize::from(len) == blob.len())
-                    {
-                        return Err(RowError::Type { field });
-                    }
-                    visit_scalar(field, ExactScalarRef::FixedBytes(blob))?;
-                    if let Some(output) = &mut output {
-                        let mut owned = Vec::new();
-                        owned
-                            .try_reserve_exact(blob.len())
-                            .map_err(|_| RowError::Allocation)?;
-                        for chunk in blob.chunks(COPY_QUANTUM) {
-                            work.checkpoint()?;
-                            owned.extend_from_slice(chunk);
-                        }
-                        output.push(Value::FixedBytes(owned.into_boxed_slice()));
-                    }
-                    continue;
+                let owned = utf8(blob, field, output.is_some())?;
+                if let (Some(output), Some(text)) = (&mut output, owned) {
+                    output.push(Value::String(text.into_boxed_str()));
                 }
-                6 => field::decode_interval_u64(
-                    u64::from_be_bytes(reader.word()?),
-                    u64::from_be_bytes(reader.word()?),
-                    descriptor,
-                    field,
-                )?,
-                7 => field::decode_interval_i64(
-                    i64::from_be_bytes(reader.word()?),
-                    i64::from_be_bytes(reader.word()?),
-                    descriptor,
-                    field,
-                )?,
-                8 => Value::Uuid(Uuid::from_bytes(reader.word()?)),
-                9 => field::decode_interval_f64(
-                    F64::from_canonical_be_bytes(reader.word()?)
-                        .map_err(|_| RowError::NonCanonicalFloat { field })?,
-                    F64::from_canonical_be_bytes(reader.word()?)
-                        .map_err(|_| RowError::NonCanonicalFloat { field })?,
-                    descriptor,
-                    field,
-                )?,
-                _ => return Err(RowError::InvalidTag { field }),
-            };
-            if !matches!(tag, 6 | 7 | 9) {
-                value_matches(&value, &descriptor.value_type)
-                    .map_err(|_| RowError::Type { field })?;
+                continue;
             }
-            visit_scalar(field, (&value).into())?;
-            if let Some(output) = &mut output {
-                output.push(value);
+            5 => {
+                let blob = reader.blob()?;
+                if !matches!(descriptor.value_type, ValueType::FixedBytes {len} if usize::from(len) == blob.len())
+                {
+                    return Err(RowError::Type { field });
+                }
+                visit_scalar(field, ExactScalarRef::FixedBytes(blob))?;
+                if let Some(output) = &mut output {
+                    let mut owned = Vec::new();
+                    owned
+                        .try_reserve_exact(blob.len())
+                        .map_err(|_| RowError::Allocation)?;
+                    owned.extend_from_slice(blob);
+                    output.push(Value::FixedBytes(owned.into_boxed_slice()));
+                }
+                continue;
             }
+            6 => field::decode_interval_u64(
+                u64::from_be_bytes(reader.word()?),
+                u64::from_be_bytes(reader.word()?),
+                descriptor,
+                field,
+            )?,
+            7 => field::decode_interval_i64(
+                i64::from_be_bytes(reader.word()?),
+                i64::from_be_bytes(reader.word()?),
+                descriptor,
+                field,
+            )?,
+            8 => Value::Uuid(Uuid::from_bytes(reader.word()?)),
+            9 => field::decode_interval_f64(
+                F64::from_canonical_be_bytes(reader.word()?)
+                    .map_err(|_| RowError::NonCanonicalFloat { field })?,
+                F64::from_canonical_be_bytes(reader.word()?)
+                    .map_err(|_| RowError::NonCanonicalFloat { field })?,
+                descriptor,
+                field,
+            )?,
+            _ => return Err(RowError::InvalidTag { field }),
+        };
+        if !matches!(tag, 6 | 7 | 9) {
+            value_matches(&value, &descriptor.value_type).map_err(|_| RowError::Type { field })?;
+        }
+        visit_scalar(field, (&value).into())?;
+        if let Some(output) = &mut output {
+            output.push(value);
         }
     }
     if !reader.bytes.is_empty() {
@@ -605,44 +539,18 @@ fn walk_payload<'a>(
     Ok(())
 }
 
-// Validate UTF-8 in bounded chunks; only at most three trailing code-point
-// bytes cross a polling boundary. Materialization uses those same checked
-// chunks, with no second unbounded scan or unsafe string constructor.
-fn utf8(
-    mut remaining: &[u8],
-    field: usize,
-    work: &WorkContext,
-    own: bool,
-) -> Result<Option<String>, RowError> {
-    let mut owned = if own {
-        let mut text = String::new();
-        text.try_reserve_exact(remaining.len())
-            .map_err(|_| RowError::Allocation)?;
-        Some(text)
-    } else {
-        None
-    };
-    while !remaining.is_empty() {
-        let end = remaining.len().min(COPY_QUANTUM);
-        work.checkpoint()?;
-        let (text, consumed) = match std::str::from_utf8(&remaining[..end]) {
-            Ok(text) => (text, end),
-            Err(error) if error.error_len().is_none() && end < remaining.len() => {
-                let valid = error.valid_up_to();
-                (
-                    std::str::from_utf8(&remaining[..valid])
-                        .map_err(|_| RowError::InvalidUtf8 { field })?,
-                    valid,
-                )
-            }
-            Err(_) => return Err(RowError::InvalidUtf8 { field }),
-        };
-        if let Some(owned) = &mut owned {
-            owned.push_str(text);
-        }
-        remaining = &remaining[consumed..];
+/// Checked UTF-8, owned only when the caller decodes values.
+fn utf8(bytes: &[u8], field: usize, own: bool) -> Result<Option<String>, RowError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| RowError::InvalidUtf8 { field })?;
+    if !own {
+        return Ok(None);
     }
-    Ok(owned)
+    let mut owned = String::new();
+    owned
+        .try_reserve_exact(text.len())
+        .map_err(|_| RowError::Allocation)?;
+    owned.push_str(text);
+    Ok(Some(owned))
 }
 
 /// Canonical row owner for stable logical fact ordering (C4). Independent

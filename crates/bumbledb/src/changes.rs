@@ -10,7 +10,6 @@ const MAGIC: &[u8; 8] = b"BDBCSET\0";
 const VERSION: u16 = 1;
 const HEADER: usize = 8 + 2 + 32 + 8;
 const RECORD: usize = 1 + 4 + 8;
-const BYTE_QUANTUM: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeKind {
@@ -182,7 +181,7 @@ impl ChangeSet {
         owned
             .try_reserve_exact(bytes.len())
             .map_err(|_| ChangeError::Allocation)?;
-        copy(&mut owned, bytes, work)?;
+        owned.extend_from_slice(bytes);
         Ok(Self(Arc::new(Payload {
             bytes: owned,
             schema: identity,
@@ -246,15 +245,8 @@ fn validate_bytes(
             .map_err(|_| ChangeError::LengthOverflow)?;
         let row = take(&mut rest, len)?;
         crate::canonical::validate(writable_fields(schema, relation)?, row, work)?;
-        if let Some((prior_relation, prior_row)) = previous {
-            let order = if prior_relation == relation {
-                compare_bytes(prior_row, row, work)?
-            } else {
-                prior_relation.cmp(&relation)
-            };
-            if order != Ordering::Less {
-                return Err(ChangeError::NonCanonicalOrder);
-            }
+        if previous.is_some_and(|prior| prior >= (relation, row)) {
+            return Err(ChangeError::NonCanonicalOrder);
         }
         previous = Some((relation, row));
     }
@@ -355,12 +347,7 @@ fn merge_records<'a>(
             let (Some(a), Some(b)) = (left.peek(), right.peek()) else {
                 return Ok(left.next().or_else(|| right.next()));
             };
-            let order = if a.relation == b.relation {
-                compare_bytes(a.row, b.row, work)?
-            } else {
-                a.relation.cmp(&b.relation)
-            };
-            Ok(match order {
+            Ok(match (a.relation, a.row).cmp(&(b.relation, b.row)) {
                 Ordering::Less => left.next(),
                 Ordering::Greater => right.next(),
                 Ordering::Equal => {
@@ -451,19 +438,15 @@ impl ChangeSetBuilder<'_> {
     pub fn finish(self) -> Result<ChangeSet, ChangeError> {
         self.work.checkpoint()?;
         let mut pending = self.pending?;
-        sort(&mut pending, &self.work)?;
-        let mut unique = 0;
-        for read in 0..pending.len() {
-            self.work.checkpoint()?;
-            let duplicate = unique > 0
-                && compare_fact(&pending[unique - 1], &pending[read], &self.work)?
-                    == Ordering::Equal;
-            if !duplicate {
-                pending.swap(unique, read);
-                unique += 1;
-            }
-        }
-        pending.truncate(unique);
+        // Facts ascending; for one fact the add sorts first and survives.
+        pending.sort_unstable_by(|a, b| {
+            fact(a)
+                .cmp(&fact(b))
+                .then_with(|| (a.kind == ChangeKind::Remove).cmp(&(b.kind == ChangeKind::Remove)))
+        });
+        pending.dedup_by(|next, kept| fact(next) == fact(kept));
+        self.work.checkpoint()?;
+        let unique = pending.len();
         let size = pending.iter().try_fold(HEADER, |size, entry| {
             size.checked_add(RECORD)
                 .and_then(|n| n.checked_add(entry.row.as_bytes().len()))
@@ -511,7 +494,7 @@ fn seal_records<'a>(
         bytes.push(u8::from(record.kind == ChangeKind::Add));
         bytes.extend_from_slice(&record.relation.0.to_be_bytes());
         bytes.extend_from_slice(&(record.row.len() as u64).to_be_bytes());
-        copy(&mut bytes, record.row, work)?;
+        bytes.extend_from_slice(record.row);
     }
     debug_assert_eq!(bytes.len(), size);
     Ok(ChangeSet(Arc::new(Payload {
@@ -538,62 +521,9 @@ fn take<'a>(rest: &mut &'a [u8], len: usize) -> Result<&'a [u8], ChangeError> {
     *rest = tail;
     Ok(head)
 }
-fn copy(out: &mut Vec<u8>, bytes: &[u8], work: &WorkContext) -> Result<(), ChangeError> {
-    for chunk in bytes.chunks(BYTE_QUANTUM) {
-        work.checkpoint()?;
-        out.extend_from_slice(chunk);
-    }
-    Ok(())
-}
-fn compare_bytes(left: &[u8], right: &[u8], work: &WorkContext) -> Result<Ordering, ChangeError> {
-    for (a, b) in left.chunks(BYTE_QUANTUM).zip(right.chunks(BYTE_QUANTUM)) {
-        work.checkpoint()?;
-        let order = a.cmp(b);
-        if order != Ordering::Equal {
-            return Ok(order);
-        }
-    }
-    Ok(left.len().cmp(&right.len()))
-}
-fn compare_fact(a: &Pending, b: &Pending, work: &WorkContext) -> Result<Ordering, ChangeError> {
-    let relation = a.relation.cmp(&b.relation);
-    if relation != Ordering::Equal {
-        work.checkpoint()?;
-        return Ok(relation);
-    }
-    compare_bytes(a.row.as_bytes(), b.row.as_bytes(), work)
-}
-
-// In-place heapsort permits fallible comparisons and bounded polling. An
-// infallible std sort callback cannot propagate cancellation without unwinding.
-fn sort(rows: &mut [Pending], work: &WorkContext) -> Result<(), ChangeError> {
-    fn greater(a: &Pending, b: &Pending, work: &WorkContext) -> Result<bool, ChangeError> {
-        Ok(compare_fact(a, b, work)?.then_with(|| {
-            u8::from(a.kind == ChangeKind::Remove).cmp(&u8::from(b.kind == ChangeKind::Remove))
-        }) == Ordering::Greater)
-    }
-    fn sift(rows: &mut [Pending], mut root: usize, work: &WorkContext) -> Result<(), ChangeError> {
-        while root < rows.len() / 2 {
-            let mut child = 2 * root + 1;
-            if child + 1 < rows.len() && greater(&rows[child + 1], &rows[child], work)? {
-                child += 1;
-            }
-            if !greater(&rows[child], &rows[root], work)? {
-                break;
-            }
-            rows.swap(root, child);
-            root = child;
-        }
-        Ok(())
-    }
-    for root in (0..rows.len() / 2).rev() {
-        sift(rows, root, work)?;
-    }
-    for end in (1..rows.len()).rev() {
-        rows.swap(0, end);
-        sift(&mut rows[..end], 0, work)?;
-    }
-    Ok(())
+/// A pending change's identity: its relation, then its canonical row.
+fn fact(pending: &Pending) -> (RelationId, &[u8]) {
+    (pending.relation, pending.row.as_bytes())
 }
 
 #[cfg(test)]

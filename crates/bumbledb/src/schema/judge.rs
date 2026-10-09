@@ -33,8 +33,9 @@ use crate::{Value, WorkContext, WorkError};
 mod citation;
 mod grouped;
 
+use crate::canonical::append_value;
 use citation::CitationTopK;
-use grouped::{FLAG_OVERFLOW, FLAG_RAY, GroupedMap, ScalarKeyScratch, encode_value};
+use grouped::{FLAG_OVERFLOW, FLAG_RAY, GroupedMap, ScalarKeyScratch};
 
 /// Borrowed row visitation; false stops the walk without becoming an error.
 pub type RowVisitor<'a, E> = &'a mut (dyn FnMut(&[Value]) -> Result<bool, E> + 'a);
@@ -655,7 +656,7 @@ impl<E> Judge<'_, '_, E> {
                 }
                 det.clear();
                 for &idx in &scalar_fields {
-                    encode_value(&row[idx], &mut det);
+                    append_value(&mut det, &row[idx]);
                 }
                 if seen.insert_if_absent(&det) {
                     groups.push(scalar_fields.iter().map(|&idx| row[idx].clone()).collect());
@@ -919,7 +920,7 @@ impl<E> Judge<'_, '_, E> {
         self.for_each_row(state, relation, |_judge, _seq, row| {
             det.clear();
             for &idx in scalar_fields {
-                encode_value(&row[idx], &mut det);
+                append_value(&mut det, &row[idx]);
             }
             if !seen.insert_if_absent(&det) {
                 offending.put(&det, &[]);
@@ -933,7 +934,7 @@ impl<E> Judge<'_, '_, E> {
         self.for_each_row(state, relation, |judge, _seq, row| {
             det.clear();
             for &idx in scalar_fields {
-                encode_value(&row[idx], &mut det);
+                append_value(&mut det, &row[idx]);
             }
             if offending.contains(&det) {
                 judge.offer(pending, relation, row)?;
@@ -960,7 +961,7 @@ impl<E> Judge<'_, '_, E> {
         self.for_each_row(state, relation, |_judge, seq, row| {
             det.clear();
             for &idx in scalar_fields {
-                encode_value(&row[idx], &mut det);
+                append_value(&mut det, &row[idx]);
             }
             let token = tokens.token_of(&det);
             let (start, end) = interval_order_words(&row[tail])
@@ -2216,13 +2217,13 @@ fn encode_projection(side: &Side, row: &[Value], skip: Option<usize>, out: &mut 
         if Some(index) == skip {
             continue;
         }
-        encode_value(&row[usize::from(field.0)], out);
+        append_value(out, &row[usize::from(field.0)]);
     }
 }
 
 fn encode_values(values: &[Value], out: &mut Vec<u8>) {
     for value in values {
-        encode_value(value, out);
+        append_value(out, value);
     }
 }
 
