@@ -84,6 +84,10 @@ pub enum Cmd {
     /// The heap-arm ladder: frozen-vs-LMDB point reads and admission
     Heap(HeapArgs),
 
+    /// Kernels at every SIMD level against their scalar twins, and the
+    /// `float_stats` families.
+    Micro(crate::harness::micro::MicroArgs),
+
     /// The APP-* regime lane over the ledger corpus (report-class; F3 only).
     AppPerf(AppPerfArgs),
 }
@@ -101,6 +105,7 @@ impl Cmd {
             | Self::Writes(_)
             | Self::Curves(_)
             | Self::Heap(_)
+            | Self::Micro(_)
             | Self::AppPerf(_) => true,
             Self::Help
             | Self::Queries

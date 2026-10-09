@@ -15,7 +15,7 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 | G8 seeded conformance generated in-test from seeds (deterministic `StepBudget` in the naive evaluator), `seeded.digests`/`reach-seeded.digests` checked in, 220 JSON files gone (22 MB → 1.6 MB); `BUMBLEDB_BLESS=1` replaces the four ignored regenerators; the structural-algebra engine check (deleted with the old log tests) lives in `oracle::conformance::structural` | landed |
 | H4 rusqlite 0.32 → 0.40.2 (u64 counts read as `i64`, `progress_handler` results propagated) | landed |
 | Provenance from `rustc -vV` at build time (`build.rs`; `provenance.toolchain` in every report) | landed |
-| E2 `micro --levels all`, `float_stats` read family | todo (needs numeric's kernel seam) |
+| E2 `micro --levels all|a,b` (every kernel at every level vs its scalar twin via `bumbledb::kernels`, outputs checked bit-identical before timing) and the `float_stats` world (8-field `Reading`, 1% NaN; global and grouped SUM/AVG/MIN/MAX at 10k groups and one group per row, `v > c`, `qty * price`, `(a - b) / c`), gated against the naive evaluator | landed |
 | Adapt: `testing` feature, C7, C8, C9, C3/C4 | as they land |
 
 ## Layout (crate `bumbledb_bench`)
@@ -30,6 +30,11 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 
 ## CLI changes (bench binary)
 
+- New: `micro [--levels all|a,b] [--elements N] [--float-rows N] [--samples N] [--seed N]
+  [--dir PATH] [--out PATH]`. `--out` is the JSON path (e.g.
+  `docs/perf/runs/2.0.0/micro.json`); `micro.md` lands beside it. JSON:
+  `{provenance, seed, elements, float_rows, samples, kernels: [{kernel, level, level_p50_ns,
+  twin_p50_ns, speedup}], float_stats: [{family, about, answers, ours}]}`. Non-asserting.
 - Deleted commands: `merge`, `corpus-float`, `hash-probe`.
 - Deleted flags: `bench --proxy-per-rep`, `bench --alloc`, `scenarios --alloc`, `writes --lanes`,
   `app-perf --plan`, `app-perf --dir`, `storage --profile/--rows/--samples` (home-costs).

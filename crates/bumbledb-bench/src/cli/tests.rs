@@ -422,6 +422,7 @@ fn the_boost_seam_membership_is_pinned() {
         vec!["writes"],
         vec!["curves"],
         vec!["heap"],
+        vec!["micro"],
         vec!["app-perf"],
     ] {
         let cmd = parse(&argv(&tokens)).expect("parses");
@@ -495,4 +496,49 @@ fn app_perf_parses_regimes_and_refuses_unknown_ones() {
     assert!(err.contains("hosted-contention"), "{err}");
     let err = parse(&argv(&["app-perf", "--tenants", "1"])).unwrap_err();
     assert!(err.contains("at least 2"), "{err}");
+}
+
+#[test]
+fn micro_parses_levels_and_sizes() {
+    use crate::harness::micro::{Levels, MicroArgs};
+    assert_eq!(
+        parse(&argv(&["micro"])),
+        Ok(Cmd::Micro(MicroArgs::default()))
+    );
+    let cmd = parse(&argv(&[
+        "micro",
+        "--levels",
+        "neon,avx2",
+        "--elements",
+        "4096",
+        "--float-rows",
+        "1000",
+        "--samples",
+        "8",
+        "--out",
+        "docs/perf/runs/2.0.0/micro.json",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        cmd,
+        Cmd::Micro(MicroArgs {
+            levels: Levels::Named(vec!["neon".to_owned(), "avx2".to_owned()]),
+            elements: 4096,
+            float_rows: 1000,
+            samples: 8,
+            out: Some(PathBuf::from("docs/perf/runs/2.0.0/micro.json")),
+            ..MicroArgs::default()
+        })
+    );
+    for flags in [
+        vec!["--levels", ""],
+        vec!["--elements", "0"],
+        vec!["--float-rows", "0"],
+        vec!["--samples", "0"],
+        vec!["--nope"],
+    ] {
+        let mut args = vec!["micro"];
+        args.extend(flags);
+        assert!(parse(&argv(&args)).is_err(), "accepted {args:?}");
+    }
 }

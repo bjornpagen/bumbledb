@@ -349,6 +349,47 @@ fn parse_app_perf(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::AppPerf(args))
 }
 
+fn parse_micro(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    use crate::harness::micro::{Levels, MicroArgs};
+    let mut args = MicroArgs::default();
+    while let Some(flag) = tokens.next() {
+        let flag = flag.to_owned();
+        match flag.as_str() {
+            "--levels" => {
+                args.levels = match tokens.value(&flag)? {
+                    "all" => Levels::All,
+                    "" => return Err(format!("`{flag}` needs `all` or level names")),
+                    names => Levels::Named(names.split(',').map(str::to_owned).collect()),
+                };
+            }
+            "--elements" => {
+                let n = parse_u64(&flag, tokens.value(&flag)?)?;
+                args.elements = usize::try_from(n)
+                    .ok()
+                    .filter(|n| (1..=1 << 24).contains(n))
+                    .ok_or_else(|| format!("`{flag}` must be between 1 and 16777216"))?;
+            }
+            "--float-rows" => {
+                args.float_rows = parse_u64(&flag, tokens.value(&flag)?)?;
+                if args.float_rows == 0 {
+                    return Err(format!("`{flag}` rejects 0 — the folds need rows"));
+                }
+            }
+            "--samples" => {
+                args.samples = parse_u32(&flag, tokens.value(&flag)?)?;
+                if args.samples == 0 {
+                    return Err(format!("`{flag}` rejects 0"));
+                }
+            }
+            "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
+            "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
+            _ => return Err(unknown("micro", &flag)),
+        }
+    }
+    Ok(Cmd::Micro(args))
+}
+
 /// # Errors
 pub fn parse(args: &[String]) -> Result<Cmd, String> {
     let mut tokens = Tokens { args, index: 0 };
@@ -376,6 +417,7 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "writes" => parse_writes(&mut tokens),
         "curves" => parse_curves(&mut tokens),
         "heap" => parse_heap(&mut tokens),
+        "micro" => parse_micro(&mut tokens),
         "app-perf" => parse_app_perf(&mut tokens),
         other => Err(format!("unknown command `{other}`")),
     }

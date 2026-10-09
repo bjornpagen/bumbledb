@@ -20,6 +20,8 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20          (report-class)\n\
     \x20 heap     heap-arm ladder: frozen-vs-LMDB point reads, admission\n\
     \x20          A/I/R/F/J prefixes (report-class)\n\
+    \x20 micro    every kernel at every SIMD level vs its scalar twin, and\n\
+    \x20          the float_stats families (report-class)\n\
     \x20 app-perf regime lane: cold-open, warm, post-write first read,\n\
     \x20          large-result, tenant churn\n\
     \x20 queries  print the versioned query list (QUERIES.md)\n\
@@ -102,6 +104,16 @@ pub fn help() -> String {
          \x20 --prefixes a,b  posting-count admit prefixes\n\
          \x20                 (default 256,1024,4096,16384)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-heap)\n\
+         \n\
+         MICRO:\n\
+         \x20 --levels all|a,b  SIMD levels by name     (default all)\n\
+         \x20 --elements N   kernel input length      (default 65536)\n\
+         \x20 --float-rows N float_stats rows         (default 1000000)\n\
+         \x20 --samples N    measured samples per cell (default 64)\n\
+         \x20 --seed N       input seed               (default 1)\n\
+         \x20 --dir PATH     scratch root             (default bench-data)\n\
+         \x20 --out PATH     JSON report path; micro.md lands beside it\n\
+         \x20                (default bench-out/<timestamp>-micro/micro.json)\n\
          \n\
          APP-PERF:\n\
          \x20 --scale S|M|L   corpus scale             (default S)\n\

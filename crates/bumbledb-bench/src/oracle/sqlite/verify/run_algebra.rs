@@ -503,13 +503,19 @@ pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
             Expected::EmptyMask => {
                 matches!(
                     verdict,
-                    bumbledb::error::ValidationError::EmptyAllenMask { .. }
+                    bumbledb::error::ValidationError::Comparison {
+                        refusal: bumbledb::ir::validate::error::ComparisonRefusal::EmptyAllenMask,
+                        ..
+                    }
                 )
             }
             Expected::FullMask => {
                 matches!(
                     verdict,
-                    bumbledb::error::ValidationError::FullAllenMask { .. }
+                    bumbledb::error::ValidationError::Comparison {
+                        refusal: bumbledb::ir::validate::error::ComparisonRefusal::FullAllenMask,
+                        ..
+                    }
                 )
             }
             Expected::CountAcrossRules { rules } => matches!(

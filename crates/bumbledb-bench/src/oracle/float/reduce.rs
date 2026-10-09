@@ -65,9 +65,11 @@ pub(crate) fn reduce(values: impl Iterator<Item = F64>, mean: bool) -> F64 {
     let mut positive = vec![0; DIGITS];
     let mut negative = vec![0; DIGITS];
     let mut count = 0u64;
+    let mut first = F64::NAN;
     let (mut nan, mut plus_inf, mut minus_inf) = (false, false, false);
     for value in values {
         count = count.checked_add(1).expect("oracle fixture cardinality");
+        first = value;
         let bits = value.to_bits();
         let magnitude = bits & !(1 << 63);
         match magnitude.cmp(&0x7ff0_0000_0000_0000) {
@@ -90,6 +92,10 @@ pub(crate) fn reduce(values: impl Iterator<Item = F64>, mean: bool) -> F64 {
         }
     }
     assert_ne!(count, 0, "no aggregate output for an empty group");
+    // The sum and the mean of one canonical value are that value exactly.
+    if count == 1 {
+        return first;
+    }
     if nan || (plus_inf && minus_inf) {
         return F64::NAN;
     }

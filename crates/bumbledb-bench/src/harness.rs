@@ -7,6 +7,7 @@ mod cold;
 pub mod driver;
 pub mod lanes;
 mod measure;
+pub mod micro;
 pub mod report;
 mod rotation;
 pub mod sqlite_run;

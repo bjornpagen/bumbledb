@@ -1,7 +1,7 @@
 //! Exit codes: 0 ok / gates won; 1 verify mismatch or gate loss; 2 usage or
 //! refusal (each refusal names the remedy).
 use bumbledb_bench::cli;
-use bumbledb_bench::harness::{appperf, boost, driver, lanes};
+use bumbledb_bench::harness::{appperf, boost, driver, lanes, micro};
 use bumbledb_bench::worlds::families;
 
 fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
@@ -26,6 +26,7 @@ fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
         cli::Cmd::Writes(args) => lanes::writes::run(args),
         cli::Cmd::Curves(args) => lanes::curves::run(args),
         cli::Cmd::Heap(args) => lanes::heap::run(args),
+        cli::Cmd::Micro(args) => micro::run(args),
         cli::Cmd::AppPerf(args) => appperf::run(args),
     }
 }
