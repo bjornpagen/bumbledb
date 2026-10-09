@@ -269,9 +269,10 @@ fn codes_into(
 ) {
     #[cfg(target_arch = "aarch64")]
     if let Some(neon) = level.as_neon()
-        && codes.len() >= super::neon::CODE_LANES
+        && let Some(streams) =
+            super::neon::PairStreams::new(a_starts, a_ends, b_starts, b_ends, codes)
     {
-        super::neon::allen_code_batch_neon(neon, a_starts, a_ends, b_starts, b_ends, codes);
+        super::neon::allen_code_batch_neon(neon, streams);
         return;
     }
     dispatch!(level, simd => portable_codes(
@@ -302,9 +303,9 @@ fn codes_into_const(
 ) {
     #[cfg(target_arch = "aarch64")]
     if let Some(neon) = level.as_neon()
-        && codes.len() >= super::neon::CODE_LANES
+        && let Some(streams) = super::neon::ConstPairStreams::new(starts, ends, codes)
     {
-        super::neon::allen_code_batch_const_neon(neon, starts, ends, b_start, b_end, codes);
+        super::neon::allen_code_batch_const_neon(neon, streams, b_start, b_end);
         return;
     }
     dispatch!(level, simd => portable_codes(
@@ -327,9 +328,9 @@ fn codes_into_const(
 fn keep_into(level: Level, codes: &[u8], mask: AllenMask, keep: &mut [u8]) {
     #[cfg(target_arch = "aarch64")]
     if let Some(neon) = level.as_neon()
-        && codes.len() >= super::neon::FILTER_LANES
+        && let Some(streams) = super::neon::KeepStreams::new(codes, keep)
     {
-        super::neon::allen_filter_batch_neon(neon, codes, mask.bits(), keep);
+        super::neon::allen_filter_batch_neon(neon, streams, mask.bits());
         return;
     }
     dispatch!(level, simd => portable_keep(simd, codes, mask.bits(), keep));

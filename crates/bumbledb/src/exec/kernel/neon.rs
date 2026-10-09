@@ -17,6 +17,77 @@ pub(super) const CODE_LANES: usize = 8;
 /// Codes per keep window; shorter batches take the portable path.
 pub(super) const FILTER_LANES: usize = 16;
 
+/// Four endpoint streams and their code output, proven at construction to
+/// share one length of at least [`CODE_LANES`], so the kernel symbol carries
+/// no length check.
+pub(super) struct PairStreams<'a> {
+    a_starts: &'a [u64],
+    a_ends: &'a [u64],
+    b_starts: &'a [u64],
+    b_ends: &'a [u64],
+    codes: &'a mut [u8],
+}
+
+impl<'a> PairStreams<'a> {
+    #[inline]
+    pub(super) fn new(
+        a_starts: &'a [u64],
+        a_ends: &'a [u64],
+        b_starts: &'a [u64],
+        b_ends: &'a [u64],
+        codes: &'a mut [u8],
+    ) -> Option<Self> {
+        let n = codes.len();
+        (n >= CODE_LANES
+            && a_starts.len() == n
+            && a_ends.len() == n
+            && b_starts.len() == n
+            && b_ends.len() == n)
+            .then_some(Self {
+                a_starts,
+                a_ends,
+                b_starts,
+                b_ends,
+                codes,
+            })
+    }
+}
+
+/// Two endpoint streams and their code output, proven at construction to
+/// share one length of at least [`CODE_LANES`].
+pub(super) struct ConstPairStreams<'a> {
+    starts: &'a [u64],
+    ends: &'a [u64],
+    codes: &'a mut [u8],
+}
+
+impl<'a> ConstPairStreams<'a> {
+    #[inline]
+    pub(super) fn new(starts: &'a [u64], ends: &'a [u64], codes: &'a mut [u8]) -> Option<Self> {
+        let n = codes.len();
+        (n >= CODE_LANES && starts.len() == n && ends.len() == n).then_some(Self {
+            starts,
+            ends,
+            codes,
+        })
+    }
+}
+
+/// Codes and their keep bytes, proven at construction to share one length of
+/// at least [`FILTER_LANES`].
+pub(super) struct KeepStreams<'a> {
+    codes: &'a [u8],
+    keep: &'a mut [u8],
+}
+
+impl<'a> KeepStreams<'a> {
+    #[inline]
+    pub(super) fn new(codes: &'a [u8], keep: &'a mut [u8]) -> Option<Self> {
+        let n = codes.len();
+        (n >= FILTER_LANES && keep.len() == n).then_some(Self { codes, keep })
+    }
+}
+
 #[expect(
     clippy::inline_always,
     reason = "measured kernel inlining is machine-checked and load-bearing"
@@ -87,29 +158,18 @@ unsafe fn allen_table() -> std::arch::aarch64::uint8x16x4_t {
 }
 
 #[inline(never)]
-pub(super) fn allen_code_batch_neon(
-    _neon: Neon,
-    a_starts: &[u64],
-    a_ends: &[u64],
-    b_starts: &[u64],
-    b_ends: &[u64],
-    codes: &mut [u8],
-) {
-    let n = codes.len();
-    assert!(n >= CODE_LANES, "the dispatch owns short batches");
-    assert!(
-        a_starts.len() == n && a_ends.len() == n && b_starts.len() == n && b_ends.len() == n,
-        "four equal-length endpoint streams"
-    );
+pub(super) fn allen_code_batch_neon(_neon: Neon, streams: PairStreams<'_>) {
+    let n = streams.codes.len();
     // SAFETY: NEON is the aarch64 baseline (and `_neon` proves it). Window
     // `base` reads words `base..base + 8` of each stream and writes codes
     // `base..base + 8`: the loop runs `(n - 1) / 8` windows with
     // `base + 8 <= n - 1`, and the final window starts at `n - 8 >= 0`, so
-    // every access lies inside the four asserted n-length streams and `codes`.
+    // every access lies inside the four n-length streams and `codes`, whose
+    // lengths `PairStreams::new` proved.
     unsafe {
-        let (a_s, a_e) = (a_starts.as_ptr(), a_ends.as_ptr());
-        let (b_s, b_e) = (b_starts.as_ptr(), b_ends.as_ptr());
-        let out = codes.as_mut_ptr();
+        let (a_s, a_e) = (streams.a_starts.as_ptr(), streams.a_ends.as_ptr());
+        let (b_s, b_e) = (streams.b_starts.as_ptr(), streams.b_ends.as_ptr());
+        let out = streams.codes.as_mut_ptr();
         let table = allen_table();
         let mut left = (n - 1) / 8;
         let mut base = 0usize;
@@ -155,22 +215,16 @@ pub(super) fn allen_code_batch_neon(
 #[inline(never)]
 pub(super) fn allen_code_batch_const_neon(
     _neon: Neon,
-    starts: &[u64],
-    ends: &[u64],
+    streams: ConstPairStreams<'_>,
     b_start: u64,
     b_end: u64,
-    codes: &mut [u8],
 ) {
-    let n = codes.len();
-    assert!(n >= CODE_LANES, "the dispatch owns short batches");
-    assert!(
-        starts.len() == n && ends.len() == n,
-        "two equal-length endpoint streams"
-    );
-    // SAFETY: as `allen_code_batch_neon`, with the b side broadcast.
+    let n = streams.codes.len();
+    // SAFETY: as `allen_code_batch_neon`, with the b side broadcast and the
+    // lengths proved by `ConstPairStreams::new`.
     unsafe {
-        let (a_s, a_e) = (starts.as_ptr(), ends.as_ptr());
-        let out = codes.as_mut_ptr();
+        let (a_s, a_e) = (streams.starts.as_ptr(), streams.ends.as_ptr());
+        let out = streams.codes.as_mut_ptr();
         let table = allen_table();
         let (b_s, b_e) = (vdupq_n_u64(b_start), vdupq_n_u64(b_end));
         let mut left = (n - 1) / 8;
@@ -205,10 +259,8 @@ pub(super) fn allen_code_batch_const_neon(
 }
 
 #[inline(never)]
-pub(super) fn allen_filter_batch_neon(_neon: Neon, codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
-    let n = codes.len();
-    assert!(n >= FILTER_LANES, "the dispatch owns short batches");
-    assert_eq!(keep.len(), n, "one keep byte per code");
+pub(super) fn allen_filter_batch_neon(_neon: Neon, streams: KeepStreams<'_>, mask_bits: u16) {
+    let n = streams.codes.len();
 
     let mut table = [0u8; 16];
     let mut code = 0usize;
@@ -219,12 +271,12 @@ pub(super) fn allen_filter_batch_neon(_neon: Neon, codes: &[u8], mask_bits: u16,
     // SAFETY: NEON is the aarch64 baseline. Window `base` reads codes and
     // writes keep bytes `base..base + 16`: the loop's windows end at most at
     // `n - 1` and the final window starts at `n - 16 >= 0`, all inside the two
-    // asserted n-length slices.
+    // n-length slices whose lengths `KeepStreams::new` proved.
     unsafe {
         use std::arch::aarch64::vqtbl1q_u8;
         let mask_table = vld1q_u8(table.as_ptr());
-        let src = codes.as_ptr();
-        let dst = keep.as_mut_ptr();
+        let src = streams.codes.as_ptr();
+        let dst = streams.keep.as_mut_ptr();
         let mut left = (n - 1) / 16;
         let mut base = 0usize;
         while left != 0 {
