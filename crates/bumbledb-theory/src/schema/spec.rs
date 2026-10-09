@@ -328,11 +328,6 @@ pub enum SpecIssue {
 }
 
 impl std::fmt::Display for SpecIssue {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm per issue, each a paste-back instruction — \
-                  clearer kept together (the `descriptor` precedent)"
-    )]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownRelation {
@@ -781,11 +776,6 @@ impl SchemaSpec {
     /// Only on one programmer-invariant violation: more than 2³²
     /// relations — unreachable (the spec's own relations vector exceeds
     /// memory first; the engine's `validate` states the same bound).
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the one lowering pass — one arm per statement form, \
-                  clearer kept together (the `validate` precedent)"
-    )]
     pub fn descriptor(&self) -> Result<SchemaDescriptor, SchemaSpecError> {
         let mut resolver = Resolver {
             spec: self,

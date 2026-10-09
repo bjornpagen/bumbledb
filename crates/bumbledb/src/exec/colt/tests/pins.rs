@@ -201,10 +201,6 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
         let root = Colt::root();
         colt.ensure_forced(root, 0).expect("force");
         let m = colt.maps[0];
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "reporting accepts lossy integer-to-float conversion"
-        )]
         let slab_mb = (m.nbuckets * m.stride() * 8) as f64 / 1e6;
 
         let mut keys = Vec::new();
@@ -228,10 +224,6 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
                     };
                     let nanos = start.elapsed().as_nanos();
                     std::hint::black_box(hits);
-                    #[expect(
-                        clippy::cast_precision_loss,
-                        reason = "reporting accepts lossy integer-to-float conversion"
-                    )]
                     {
                         ns[usize::from(!shipped_arm)] = nanos as f64 / PROBES as f64;
                     }
@@ -342,10 +334,6 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
     }
     let bucket_ns = u64::try_from(bucket_best.as_nanos()).expect("fits");
     let linear_ns = u64::try_from(linear_best.as_nanos()).expect("fits");
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "reporting accepts lossy integer-to-float conversion"
-    )]
     let ratio = linear_ns as f64 / bucket_ns as f64;
     println!("force build: bucket {bucket_ns} ns, linear-ref {linear_ns} ns, ratio {ratio:.2}");
     assert!(
@@ -392,10 +380,6 @@ fn force_and_iterate(colt: &mut Colt) -> u64 {
 
 #[test]
 #[ignore = "timing evidence, run by hand on the reference host"]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
 fn chunk_geometry_force_iterate_ab() {
     use crate::image::TransientImage;
     use bumbledb_theory::schema::ValueType;

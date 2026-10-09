@@ -33,10 +33,6 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20 help     print this text\n";
 
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one linear usage block — splitting the flag sections would scatter the help"
-)]
 pub fn help() -> String {
     format!(
         "bumbledb-bench {}\n\

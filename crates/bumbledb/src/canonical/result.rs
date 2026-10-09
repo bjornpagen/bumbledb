@@ -287,7 +287,6 @@ impl<'a> Reader<'a> {
 /// Every grammar refusal in [`ResultError`]; wire input is never
 /// normalized — unsorted names, duplicate names, noncanonical float
 /// payloads and trailing bytes all refuse.
-#[expect(clippy::too_many_lines, reason = "one linear canonical result grammar")]
 pub fn decode_result(
     bytes: &[u8],
     max_bytes: usize,

@@ -563,7 +563,6 @@ pub enum CancelOutcome {
 /// # Errors
 /// Backend failures and frame refusals; an unresolved create returns
 /// `CasExhausted` rather than a claim.
-#[expect(clippy::too_many_arguments, reason = "one bounded cancel transition")]
 pub fn cancel_target_before_genesis<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
@@ -679,7 +678,6 @@ where
 ///
 /// # Errors
 /// Capacity refusals never discard another root; duplicate IDs refuse.
-#[expect(clippy::too_many_arguments, reason = "one bounded root registration")]
 pub fn add_named_root_hosted<B: ReceivingStore>(
     backend: &B,
     prefix: &str,

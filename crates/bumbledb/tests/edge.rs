@@ -353,10 +353,6 @@ fn mixed_params_query() -> Query {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
     let dir = common::TempDir::new("edge-bind-matrix");
     let db = Db::create(dir.path(), Ledger, common::work())

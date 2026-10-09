@@ -575,10 +575,6 @@ fn hosted_catch_up_walks_authenticated_parent_locators_only() {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "One regression keeps setup, fault injection, and post-state assertions together"
-)]
 fn checkpoint_only_and_suffix_walk_never_fetch_older_than_base() {
     struct Count(usize);
     impl ChainVisitor for Count {

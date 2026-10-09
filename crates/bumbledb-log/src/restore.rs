@@ -215,7 +215,6 @@ const RECEIPT_CLEANUP_BATCH_BYTES: usize = 16 * 1024;
 /// # Errors
 /// Rewind attempts, schema disagreement and every collection/admission
 /// refusal; a failure leaves only owned scratch, never a half-restore.
-#[expect(clippy::too_many_arguments, reason = "one bounded restore pipeline")]
 pub fn restore_writable<S, E, B>(
     directory: &Path,
     schema: S,
@@ -339,7 +338,6 @@ where
 /// # Errors
 /// Rewind attempts, tip disagreement, replay verification and admission
 /// refusals; a failure before publication leaves only owned scratch.
-#[expect(clippy::too_many_arguments, reason = "one bounded restore pipeline")]
 pub fn restore_writable_with_tail<S, E, T, B>(
     directory: &Path,
     schema: S,
@@ -425,7 +423,6 @@ where
 /// Rewind attempts, a non-genesis base, tip disagreement, replay
 /// verification and admission refusals; a failure before publication leaves
 /// only owned scratch.
-#[expect(clippy::too_many_arguments, reason = "one bounded restore pipeline")]
 pub fn restore_writable_genesis<S, E, T>(
     directory: &Path,
     schema: S,
@@ -495,7 +492,6 @@ where
 /// new-incarnation genesis on the unpublished owner; then one complete
 /// install. A tip or metadata refusal drops the sibling and never publishes.
 /// A rename that settles poorly keeps the destination (`SettlementFailed`).
-#[expect(clippy::too_many_arguments, reason = "one bounded restore seal")]
 fn seal_new_incarnation<S>(
     staged: StagedPopulation,
     schema: S,

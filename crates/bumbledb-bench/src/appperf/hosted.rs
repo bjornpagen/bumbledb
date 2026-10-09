@@ -71,7 +71,6 @@ pub struct OutcomeCost {
 
 impl OutcomeCost {
     #[must_use]
-    #[expect(clippy::cast_precision_loss, reason = "reporting arithmetic")]
     pub fn requests_per_command(&self) -> f64 {
         if self.commands == 0 {
             0.0
@@ -81,7 +80,6 @@ impl OutcomeCost {
     }
 
     #[must_use]
-    #[expect(clippy::cast_precision_loss, reason = "reporting arithmetic")]
     pub fn bytes_per_command(&self) -> f64 {
         if self.commands == 0 {
             0.0

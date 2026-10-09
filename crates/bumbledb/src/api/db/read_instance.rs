@@ -371,10 +371,6 @@ impl<S> PreparedQuery<S> {
 
 // Typed facts borrow canonical row owners, never the operation's work or
 // a temporary frame. Both public read surfaces share this exact lookup.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the public read surfaces consume a key value; only its encoded fields are used"
-)]
 fn get_fact<'row, K: Key<'row>>(
     snapshot: &'row OwnedSnapshot,
     schema: &Schema,

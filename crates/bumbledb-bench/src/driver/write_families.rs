@@ -9,10 +9,6 @@ use crate::{clockproxy, corpus, families, harness, report, sqlite_run, writebenc
 
 /// `pub(crate)` (not `pub(super)`) so the device-honesty lock test can point it
 /// at a live ram disk and assert the refusal.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one lane list, ordered by the fsync-shadow rule — splitting would hide the order"
-)]
 pub(crate) fn write_families(
     cfg: GenConfig,
     scratch: &Path,

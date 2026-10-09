@@ -5,14 +5,6 @@ use crate::image::ImageBind;
 use crate::image::ViewEpoch;
 use crate::image::view::apply;
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the split borrows and execution context are clearer unpacked"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the bind-then-probe-then-join protocol reads as one pass"
-)]
 pub(super) fn run_join<S, C, I>(
     plan: &crate::plan::fj::ValidatedPlan,
     schema: &Schema,

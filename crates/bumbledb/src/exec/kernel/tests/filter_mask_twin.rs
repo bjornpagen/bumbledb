@@ -165,10 +165,6 @@ const ARMS: [&str; 5] = [
 
 #[test]
 #[ignore = "measured decider: run release through scripts/measure.sh"]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "nanosecond spans and row counts sit far below 2^52"
-)]
 fn filter_mask_twin_shipped_vs_masked() {
     const TIERS: [(&str, usize); 2] = [("l2", 262_144), ("dram", 13_107_200)];
 

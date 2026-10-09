@@ -22,7 +22,7 @@ fn checked_in_identity_golden_matches_a_fresh_emission() {
 
 #[test]
 fn the_ts_crate_twin_is_byte_identical_to_the_same_emission() {
-    let twin = manifest_dir().join("../../ts/crate/log-identities.json");
+    let twin = manifest_dir().join("../bumbledb-node/log-identities.json");
     let checked_in = std::fs::read_to_string(&twin).expect("ts/crate/log-identities.json exists");
     assert_eq!(
         checked_in,

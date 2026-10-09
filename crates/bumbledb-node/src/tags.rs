@@ -449,8 +449,9 @@ mod golden {
 
     #[test]
     fn tags_json_matches() {
-        let committed: Json = serde_json::from_str(include_str!("../../test/fixtures/tags.json"))
-            .expect("ts/test/fixtures/tags.json parses");
+        let committed: Json =
+            serde_json::from_str(include_str!("../../../ts/test/fixtures/tags.json"))
+                .expect("ts/test/fixtures/tags.json parses");
         let expected: Json = serde_json::Value::Object(
             tables()
                 .into_iter()

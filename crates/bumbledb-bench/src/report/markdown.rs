@@ -2,10 +2,6 @@ use std::fmt::Write as _;
 
 use super::{GhzReport, RunReport, Verdict};
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
 fn us(ns: u64) -> f64 {
     ns as f64 / 1000.0
 }

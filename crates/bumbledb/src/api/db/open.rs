@@ -71,10 +71,6 @@ impl<S: Theory> Db<S> {
 }
 
 impl<S> Db<S> {
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "Database operations accept owned call-scoped work and key values consistently"
-    )]
     pub(super) fn assemble(store: Store, schema: Schema, work: WorkContext) -> Result<Self> {
         work.checkpoint()
             .map_err(|error| Error::from_store(crate::storage::store::StoreError::Work(error)))?;

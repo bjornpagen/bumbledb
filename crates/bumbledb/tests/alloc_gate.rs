@@ -21,10 +21,6 @@ use bumbledb::{
 
 mod common;
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the one fixture schema — a linear declaration table"
-)]
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -961,11 +957,6 @@ fn escalation_gate(
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one test function by the binary's invariant — every gate \
-              scenario lives inside it"
-)]
 fn zero_warm_allocation_gate() {
     let dir = common::TempDir::new("alloc-gate");
     let db = Db::create(dir.path(), schema(), common::work())

@@ -275,13 +275,13 @@ fn outcome_in(obj: &Object, ctx: &str) -> napi::Result<OwnedOutcome> {
             Ok(OwnedOutcome::Committed {
                 added,
                 removed,
-                result: result.map(|bytes| bytes.to_vec()).unwrap_or_default(),
+                result: result.map_or_default(|bytes| bytes.to_vec()),
             })
         }
         "noChange" => {
             let result: Option<Uint8Array> = obj.get("result")?;
             Ok(OwnedOutcome::NoChange {
-                result: result.map(|bytes| bytes.to_vec()).unwrap_or_default(),
+                result: result.map_or_default(|bytes| bytes.to_vec()),
             })
         }
         "preconditionFailed" => Ok(OwnedOutcome::PreconditionFailed {
@@ -469,7 +469,6 @@ pub struct LogSchemaHandle {
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_schema(env: Env, spec: Object) -> napi::Result<External<LogSchemaHandle>> {
     let (descriptor, _attrs) = match crate::descriptor_of(&spec)? {
         Ok(parsed) => parsed,
@@ -508,7 +507,6 @@ pub fn log_schema_fingerprint(handle: &External<LogSchemaHandle>) -> String {
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_receipt_key(id: Object) -> napi::Result<Buffer> {
     let id = command_id_in(&id, "receipt key")?;
     Ok(Buffer::from(receipt_key(id).to_vec()))
@@ -518,7 +516,6 @@ pub fn log_receipt_key(id: Object) -> napi::Result<Buffer> {
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_receipt_encode(receipt: Object, limits: Object) -> napi::Result<LogOutcome<Buffer>> {
     let ctx = "receipt row";
     let limits = limits_in(&limits)?;
@@ -588,7 +585,6 @@ impl napi::bindgen_prelude::ToNapiValue for ReceiptWire {
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_receipt_decode(
     expected: Object,
     bytes: Uint8Array,
@@ -621,7 +617,6 @@ pub fn log_receipt_decode(
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_receipt_decode_at(
     id: Object,
     bytes: Uint8Array,
@@ -669,7 +664,6 @@ fn access_in(obj: &Object, ctx: &str) -> napi::Result<Access> {
     }
 }
 
-#[allow(clippy::too_many_lines)]
 fn authority_in(obj: &Object) -> napi::Result<HeadAuthority> {
     let ctx = "head authority";
     let lifecycle_obj: Object = marshal::req(obj, "lifecycle", ctx)?;
@@ -878,7 +872,6 @@ fn authority_out<'env>(env: &'env Env, authority: &HeadAuthority) -> napi::Resul
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_control_encode(authority: Object, cap: BigInt) -> napi::Result<LogOutcome<Buffer>> {
     let authority = authority_in(&authority)?;
     let cap = usize::try_from(marshal::u64_in(&cap, "control cap")?)
@@ -912,7 +905,6 @@ impl napi::bindgen_prelude::ToNapiValue for AuthorityWire {
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_control_decode(
     bytes: Uint8Array,
     cap: BigInt,
@@ -980,7 +972,6 @@ fn genesis_in(obj: &Object) -> napi::Result<GenesisRecord> {
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_genesis_encode(record: Object, cap: BigInt) -> napi::Result<LogOutcome<Buffer>> {
     let record = genesis_in(&record)?;
     let cap = usize::try_from(marshal::u64_in(&cap, "genesis cap")?)
@@ -1043,7 +1034,6 @@ impl napi::bindgen_prelude::ToNapiValue for GenesisWire {
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_genesis_decode(bytes: Uint8Array, cap: BigInt) -> napi::Result<LogOutcome<GenesisWire>> {
     let cap = usize::try_from(marshal::u64_in(&cap, "genesis cap")?)
         .map_err(|_| marshal::err("bumbledb-log marshal: genesis cap exceeds usize".into()))?;
@@ -1076,7 +1066,6 @@ impl napi::bindgen_prelude::ToNapiValue for StampWire {
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_genesis_stamp(record: Object, cap: BigInt) -> napi::Result<LogOutcome<StampWire>> {
     let record = genesis_in(&record)?;
     let cap = usize::try_from(marshal::u64_in(&cap, "genesis cap")?)
@@ -1239,7 +1228,6 @@ fn seal_command(
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 pub fn runtime_log_command_seal(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -1260,7 +1248,7 @@ pub fn runtime_log_command_seal(
         .submit(WorkContext::new(), notification(callback)?, |context| {
             context.checkpoint()?;
             let changes = changes.to_vec();
-            let result = result.map(|bytes| bytes.to_vec()).unwrap_or_default();
+            let result = result.map_or_default(|bytes| bytes.to_vec());
             Ok(Box::new(move |context| {
                 context.checkpoint()?;
                 seal_command(&schema, metadata, &changes, result, limits, context)
@@ -1275,7 +1263,6 @@ pub fn runtime_log_command_seal(
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_log_command_parse(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -1369,7 +1356,6 @@ fn decode_owned_decision(bytes: &[u8], limits: Limits) -> Result<Output, Runtime
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_log_decision_decode(
     env: Env,
     handle: &External<RuntimeHandle>,

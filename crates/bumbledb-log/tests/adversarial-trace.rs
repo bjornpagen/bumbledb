@@ -126,11 +126,6 @@ fn model_command(
 /// PROTO-08/09) executed against BOTH machines, merged into one trace: the
 /// checker convicts any outcome divergence under the shared command ids.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one merged adversarial schedule; the trace must stay a single \
-              linear script for the divergence checker"
-)]
 fn the_witnessed_and_aba_schedule_agrees_with_the_independent_model() {
     let db = fresh_db("trace-witness");
     let identity = test_identity(&db);

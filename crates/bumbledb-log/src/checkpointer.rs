@@ -469,10 +469,6 @@ pub enum CheckpointKind {
 /// # Errors
 /// Typed backend/frame/storage refusals; `RebaseExhausted` under unbounded
 /// contention; `Unresolved` when a dispatched CAS could not be proven.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one bounded publish pipeline: capture, stage, CAS, rebase"
-)]
 pub fn publish_checkpoint<S, B: ReceivingStore>(
     db: &Db<S>,
     backend: &B,

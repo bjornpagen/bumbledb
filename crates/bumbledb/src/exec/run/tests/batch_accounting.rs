@@ -3,7 +3,6 @@ use crate::ir::normalize::OccBind;
 use bumbledb_theory::schema::ValueType;
 
 #[test]
-#[allow(clippy::too_many_lines)]
 fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
     let schema = SchemaDescriptor {
         relations: vec![

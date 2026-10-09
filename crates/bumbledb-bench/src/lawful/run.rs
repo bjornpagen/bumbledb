@@ -81,18 +81,10 @@ fn proto_of(family: &LawFamily, samples: Option<u32>) -> Protocol {
     }
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
 fn ratio(ours: u64, theirs: u64) -> f64 {
     ours as f64 / theirs.max(1) as f64
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one match arm per registered family: the registry IS the run order"
-)]
 fn run_lane(
     lane: DurabilityLane,
     dir: &Path,

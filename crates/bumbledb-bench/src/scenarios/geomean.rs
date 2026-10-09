@@ -1,10 +1,6 @@
 use super::{LaneOutcome, QueryReport};
 
 #[must_use]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
 pub fn geomean(reports: &[&QueryReport]) -> f64 {
     let ratios: Vec<f64> = reports.iter().filter_map(|r| r.primary_ratio()).collect();
     if ratios.is_empty() {

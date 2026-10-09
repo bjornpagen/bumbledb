@@ -627,10 +627,6 @@ fn mandate_overlap_params(cfg: &GenConfig) -> Vec<Draw> {
 }
 
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 pub fn all() -> &'static [Family] {
     &[
         Family {

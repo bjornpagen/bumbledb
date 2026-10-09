@@ -30,7 +30,7 @@ function build(): void {
 	if (admitted.status !== 0)
 		throw new ScriptError({ message: "use pnpm run build to select an isolated package-family source" })
 	const distDir = path.join(packageRoot, "dist")
-	const crateManifest = path.join(packageRoot, "crate", "Cargo.toml")
+	const crateManifest = path.join(packageRoot, "..", "crates", "bumbledb-node", "Cargo.toml")
 	const shapePackageDir = path.join(packageRoot, "npm", PUBLISH_PLATFORMS[0])
 	const localPackageDir = path.join(packageRoot, "npm", LOCAL_PLATFORM)
 
@@ -67,7 +67,7 @@ function build(): void {
 	}
 
 	ensureLocalPlatformPackage(shapePackageDir, localPackageDir)
-	const targetDir = process.env.CARGO_TARGET_DIR ?? path.join(packageRoot, "crate", "target")
+	const targetDir = process.env.CARGO_TARGET_DIR ?? path.join(packageRoot, "..", "target")
 	const artifact = path.join(targetDir, "release", nativeArtifactName(process.platform))
 	const nodeBinary = path.join(localPackageDir, "bumbledb.node")
 	installNativeArtifact(artifact, nodeBinary)

@@ -208,10 +208,6 @@ impl fmt::Display for FactShapeError {
 }
 
 impl fmt::Display for CorruptionError {
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one Display arm per CorruptionError variant; splitting would hide the roster"
-    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NonCanonicalF64(bytes) => {
@@ -461,10 +457,6 @@ impl fmt::Display for SchemaError {
 }
 
 impl fmt::Display for StatementErrorKind {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownRelation { relation: r } => write!(f, "unknown relation {}", r.0),
@@ -680,10 +672,6 @@ impl fmt::Display for StatementErrorKind {
 }
 
 impl fmt::Display for ValidationError {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyRuleSet => write!(f, "the rule set is empty — the empty union is no query"),
@@ -910,10 +898,6 @@ impl fmt::Display for ValidationError {
 }
 
 impl fmt::Display for Error {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::FormatMismatch { mismatch } => {

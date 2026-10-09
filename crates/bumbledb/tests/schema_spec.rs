@@ -80,10 +80,6 @@ fn side_selected(relation: &str, projection: &[&str], field: &str, handle: &str)
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one construct-complete theory, clearer kept together"
-)]
 fn everything_spec() -> SchemaSpec {
     let interval_u64 = ValueType::Interval {
         element: IntervalElement::U64,
@@ -372,10 +368,6 @@ fn side_valued(relation: &str, projection: &[&str], field: &str, literal: Value)
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one construct-complete theory, clearer kept together"
-)]
 fn seam_spec() -> SchemaSpec {
     let contain = |source: SideSpec| StatementSpec::Containment {
         source,

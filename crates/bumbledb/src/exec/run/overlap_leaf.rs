@@ -19,10 +19,6 @@ fn touches() -> crate::allen::AllenMask {
 }
 
 impl Executor {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the split borrows and execution context are clearer unpacked"
-    )]
     pub(super) fn overlap_enumerate(
         &mut self,
         plan: &ValidatedPlan,

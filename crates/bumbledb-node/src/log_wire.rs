@@ -1463,8 +1463,6 @@ fn finish_local_existing(
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_lines)]
 fn open_hosted(
     runtime: &Arc<Runtime>,
     owner_id: u64,
@@ -1911,7 +1909,6 @@ fn open_spec_in(env: Env, request: &Object) -> napi::Result<OpenSpec> {
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_history_open(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -2134,7 +2131,6 @@ fn history_verb_in(request: &Object) -> napi::Result<HistoryVerb> {
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_history_call(
     env: Env,
     handle: &External<LogHistoryHandle>,
@@ -2785,7 +2781,6 @@ fn health_wire<'e>(env: &'e Env, health: &LocalHealth) -> napi::Result<Object<'e
 }
 
 #[napi]
-#[allow(clippy::too_many_lines)]
 pub fn log_history_result(
     env: Env,
     handle: &External<OperationHandle>,
@@ -2953,7 +2948,6 @@ fn precondition_in(obj: &Object, ctx: &str) -> napi::Result<Condition> {
 /// the change handle (chapter 35: seal "retains the change's captured
 /// runtime, never loads a second one").
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_command_seal(
     env: Env,
     change: &External<crate::db_wire::ChangesHandle>,
@@ -3062,7 +3056,6 @@ fn fail_of_command(error: bumbledb_log::history::command::CommandError) -> LogFa
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_command_decode(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -3169,7 +3162,6 @@ pub fn log_command_take(env: Env, handle: &External<OperationHandle>) -> napi::R
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_command_encode(
     env: Env,
     handle: &External<LogCommandHandle>,
@@ -3268,7 +3260,6 @@ fn cache_shared(handle: &LogCacheHandle) -> Result<&Arc<CacheShared>, RuntimeErr
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_cache_make(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -3352,7 +3343,6 @@ fn tenant_binding_of(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_cache_acquire(
     env: Env,
     handle: &External<LogCacheHandle>,
@@ -3383,7 +3373,6 @@ pub fn log_cache_acquire(
     Ok(operation_handle(&runtime, operation))
 }
 
-#[allow(clippy::too_many_lines)]
 fn acquire_borrow(
     shared: &Arc<CacheShared>,
     directory: &str,
@@ -3590,7 +3579,6 @@ pub fn log_borrow_take(env: Env, handle: &External<OperationHandle>) -> napi::Re
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_cache_inspect(
     env: Env,
     handle: &External<LogCacheHandle>,
@@ -3657,7 +3645,6 @@ pub fn log_cache_inspect_take(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_cache_evict(
     env: Env,
     handle: &External<LogCacheHandle>,
@@ -3845,7 +3832,6 @@ pub fn log_cache_close(
 // ---------------------------------------------------------------------------
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_admin(
     env: Env,
     handle: &External<RuntimeHandle>,

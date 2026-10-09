@@ -9,7 +9,7 @@ alloc-counter = ["bumbledb/alloc-counter"]
 
 [dependencies]
 aegis = "=0.9.15"
-blake3 = "1"
+blake3 = "1.8.7"
 bumbledb = { path = "../bumbledb", features = ["collision-probe"] }
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 

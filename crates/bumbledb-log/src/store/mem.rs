@@ -375,9 +375,7 @@ impl ConditionalStore for MemStore {
         if Self::take_fault(&mut state, Op::ListObjects).is_some() {
             return Err(MemFault::injected(Op::ListObjects, prefix));
         }
-        let resume = after
-            .map(|token| String::from_utf8_lossy(token).into_owned())
-            .unwrap_or_default();
+        let resume = after.map_or_default(|token| String::from_utf8_lossy(token).into_owned());
         let keys: Vec<String> = state
             .objects
             .keys()

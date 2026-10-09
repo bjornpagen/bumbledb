@@ -107,10 +107,6 @@ fn d06_two_installers_never_overwrite() {
 /// email commits, a duplicate email is `InvariantRejected`, and the
 /// owned pin still sees only the admitted rows. Verification `NotRun`.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "One regression keeps setup, fault injection, and post-state assertions together"
-)]
 fn apply_after_admit_install_rejects_conflict_and_pins() {
     let dir = common::TempDir::new("gate-apply-after-admit");
     let dest = dir.path().join("store");

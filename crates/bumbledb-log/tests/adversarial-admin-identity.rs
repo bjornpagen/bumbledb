@@ -102,7 +102,7 @@ where
         .expect("bounded head receive")
     {
         ReceivedHead::Present { body, .. } => {
-            let bytes = body.as_slice().to_vec();
+            let bytes = body.clone();
             drop(body);
             bytes
         }
@@ -125,7 +125,7 @@ where
     for key in keys {
         let body = match store.receive_object(&key, ctx) {
             Ok(bytes) => {
-                let copied = bytes.as_slice().to_vec();
+                let copied = bytes.clone();
                 drop(bytes);
                 copied
             }

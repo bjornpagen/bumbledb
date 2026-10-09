@@ -36,11 +36,6 @@ impl ValidateDescriptor for SchemaDescriptor {
     /// # Panics
     /// If a relation index exceeds u32. Statement count is checked before
     /// any u16 statement id is minted.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the one materialized-order sealing pass — one arm per \
-                  statement form, clearer kept together"
-    )]
     fn validate(self) -> Result<Schema, SchemaError> {
         for (rel_idx, decl) in self.relations.iter().enumerate() {
             let columns = derived_columns(decl);
@@ -678,12 +673,6 @@ struct SealedCapacity {
 /// Group projections are scalar identities; interval values enter through
 /// the duration measure. Reject inverted literal windows; equivalent or
 /// vacuous windows retain their ordinary grouped-measure meaning.
-#[expect(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    reason = "the descriptor's own field roster, threaded once — the one \
-              acceptance arm per statement form (the `validate` precedent)"
-)]
 fn validate_capacity(
     id: StatementId,
     target: &Side,

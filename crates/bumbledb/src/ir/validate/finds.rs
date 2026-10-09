@@ -87,7 +87,6 @@ impl AggKind {
 }
 
 impl Context {
-    #[expect(clippy::too_many_lines, reason = "one exhaustive find grammar check")]
     pub(super) fn check_finds(
         &self,
         rule: &LoweredRule,

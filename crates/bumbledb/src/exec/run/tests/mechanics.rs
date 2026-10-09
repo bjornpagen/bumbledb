@@ -97,10 +97,6 @@ fn scalar_set_traversal_deduplicates_middle_terminals_and_never_scans_raw_leaves
 use crate::ir::WordCmp;
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one differential scenario switches covers with live and dead children"
-)]
 fn reused_executor_follows_reordered_dynamic_covers() {
     for pipeline in [false, true] {
         let neg_id = 2 + u16::from(pipeline);
@@ -593,10 +589,6 @@ fn cover_choice_is_magnitude_first() {
 /// BEFORE its sibling hash probes, so every residual-killed element is a bucket
 /// load never issued.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "both twins pinned in one scenario — clearer kept together"
-)]
 fn residuals_compact_survivors_before_the_sibling_probes() {
     #[derive(Default)]
     struct Order {

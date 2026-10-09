@@ -120,10 +120,6 @@ impl AggregateSink {
         )
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the per-find accumulator selection is one linear table"
-    )]
     fn build(
         finds: &[FindSpec],
         slot_count: usize,

@@ -271,10 +271,6 @@ impl From<BackupError> for LocalBackupError {
 /// # Errors
 /// Failed capture leaves no completion manifest. A conflicting identity,
 /// corrupt completed artifact, or failed destination verification refuses.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one bounded local backup pipeline"
-)]
 pub fn backup_local<S, Dst>(
     db: &Db<S>,
     destination: &Dst,
@@ -443,11 +439,6 @@ where
 /// Copy/verify refusals leave an incomplete, unlisted operation. A lost
 /// completion response resolves on retry by operation identity and manifest
 /// digest; a foreign manifest at the operation's key refuses.
-#[expect(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    reason = "one bounded backup pipeline"
-)]
 pub fn backup_root<Src, Dst>(
     source: &Src,
     source_prefix: &str,
@@ -649,10 +640,6 @@ pub struct PinnedBackupReport {
 /// # Errors
 /// Pin registration (capacity refusals discard nothing), copy/verify and
 /// release refusals; an incomplete operation is never listed as a backup.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one bounded pin-copy-verify-release pipeline"
-)]
 pub fn backup_pinned_hosted<Src, Dst>(
     source: &Src,
     source_prefix: &str,

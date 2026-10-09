@@ -496,7 +496,6 @@ mod tests {
                 expected,
                 "oracle {input}"
             );
-            #[expect(clippy::cast_precision_loss, reason = "the host is a subject here")]
             let host = input as f64;
             assert_eq!(host.to_bits(), expected, "host {input}");
         }
@@ -513,7 +512,6 @@ mod tests {
                 expected,
                 "oracle {input}"
             );
-            #[expect(clippy::cast_precision_loss, reason = "the host is a subject here")]
             let host = input as f64;
             assert_eq!(host.to_bits(), expected, "host {input}");
         }
@@ -528,13 +526,11 @@ mod tests {
         let mut state = 17;
         for _ in 0..16_384 {
             let raw = splitmix(&mut state);
-            #[expect(clippy::cast_precision_loss, reason = "the host is a subject")]
             let host_u = F64::from(raw as f64);
             let oracle_u = F64::from_bits(cast_oracle::from_u64_bits(raw));
             assert_eq!(F64::from_u64(raw), host_u, "u64 host {raw}");
             assert_eq!(F64::from_u64(raw), oracle_u, "u64 oracle {raw}");
             let signed = raw.cast_signed();
-            #[expect(clippy::cast_precision_loss, reason = "the host is a subject")]
             let host_i = F64::from(signed as f64);
             let oracle_i = F64::from_bits(cast_oracle::from_i64_bits(signed));
             assert_eq!(F64::from_i64(signed), host_i, "i64 host {signed}");

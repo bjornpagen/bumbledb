@@ -67,7 +67,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: log-al2023-arm64-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'ts/crate/Cargo.lock') }}
+          key: log-al2023-arm64-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           restore-keys: |
             log-al2023-arm64-cargo-
       - name: Activate the pinned pnpm
@@ -173,7 +173,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: log-al2023-x64-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'ts/crate/Cargo.lock') }}
+          key: log-al2023-x64-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           restore-keys: |
             log-al2023-x64-cargo-
       - name: Activate the pinned pnpm
@@ -253,7 +253,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: log-darwin-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'ts/crate/Cargo.lock') }}
+          key: log-darwin-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           restore-keys: |
             log-darwin-cargo-
       - name: Resolve the pnpm store path

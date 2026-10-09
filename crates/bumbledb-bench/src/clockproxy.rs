@@ -55,15 +55,7 @@ pub fn effective_ghz() -> f64 {
     let start = Instant::now();
     std::hint::black_box(chain(0x1234_5678, PROXY_ITERS));
     let ns = start.elapsed().as_nanos().max(1);
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "reporting accepts lossy integer-to-float conversion"
-    )]
     let cycles = (PROXY_ITERS * CHAIN_MULS * MUL_LATENCY_CYCLES) as f64;
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "reporting accepts lossy integer-to-float conversion"
-    )]
     let ns = ns as f64;
     cycles / ns
 }

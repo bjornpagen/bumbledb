@@ -776,10 +776,6 @@ impl Context {
             .collect()
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
     fn classify(
         &mut self,
         index: usize,

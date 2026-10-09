@@ -144,7 +144,7 @@ function checkCSurface(files: readonly string[], findings: string[]): void {
 	}
 	// No crate manifest may emit a public C ABI artifact.
 	for (const file of files) {
-		if (!file.startsWith("crates/") || path.basename(file) !== "Cargo.toml") {
+		if (!file.startsWith("crates/") || file.startsWith("crates/bumbledb-node/") || path.basename(file) !== "Cargo.toml") {
 			continue
 		}
 		const text = readText(file)

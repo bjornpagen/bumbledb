@@ -1179,10 +1179,6 @@ fn parse_derived_name(tokens: &mut Tokens, kind: RuleKind, kw_span: Span) -> Par
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one rule is one grammar production; splitting hides the keyword/head/body sequence"
-)]
 fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
     let intro = match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
@@ -2091,10 +2087,6 @@ enum Phase {
     Main,
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "phase machine plus exhaustive compile errors for this cut live in one walk"
-)]
 fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
     let mut interiors: Vec<InteriorGroup> = Vec::new();
     let mut rec: Option<RecGroup> = None;

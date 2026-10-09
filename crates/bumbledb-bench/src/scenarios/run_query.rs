@@ -258,10 +258,6 @@ pub(super) fn run_query(
         None
     };
 
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "reporting accepts lossy integer-to-float conversion"
-    )]
     let ratio = |theirs_p50: u64| ours.stats.p50 as f64 / theirs_p50.max(1) as f64;
 
     let mut lane_reports = Vec::with_capacity(lanes.len());

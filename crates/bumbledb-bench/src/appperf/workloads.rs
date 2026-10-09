@@ -92,7 +92,6 @@ fn cell(
 /// Frozen compact matrix. Structure tests refuse missing families/gates
 /// and refuse a cartesian explosion (one cell per needed regime only).
 #[must_use]
-#[expect(clippy::too_many_lines, reason = "One declarative benchmark roster")]
 pub fn scorecard() -> Vec<Cell> {
     vec![
         cell(

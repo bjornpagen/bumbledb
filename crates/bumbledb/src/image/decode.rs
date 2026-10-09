@@ -163,10 +163,6 @@ pub(super) fn decode_plan(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
 )]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the per-type decode arms are one linear wire table"
-)]
 pub(super) fn decode_fact(
     rel: RelationId,
     plan: &[Decode],

@@ -380,10 +380,7 @@ pub fn verify_family(
 /// runs between passes on BOTH arms (the mirror is displaced exactly like the
 /// engine), report-only rows beside the read families.
 /// # Errors
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)] // one lane's full protocol, linear
+// one lane's full protocol, linear
 pub fn bench_families(
     cfg: GenConfig,
     scratch: &Path,
@@ -495,10 +492,6 @@ pub fn bench_families(
             )
         })?;
 
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "reporting accepts lossy integer-to-float conversion"
-        )]
         let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
         let alloc_report = ours.alloc.map(report::AllocReport::from);
         let merged = ghz_ours.merge(ghz_theirs);

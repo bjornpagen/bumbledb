@@ -1,20 +1,4 @@
-# One toolchain, dated. Pinned 2026-08-15 to nightly-2026-08-15 at
-# Bjorn's request (the previous pin was nightly-2026-07-12). The pin
-# moves DELIBERATELY, never implicitly: moving it is a PRD-sized action
-# that carries the #[ignore]d microbench re-earn session with it
-# (codegen changes invalidate every pinned margin).
-#
-# Nightly features adopted (each a dividend — it deletes code or guards,
-# never adopted because it exists):
-#   - try_blocks (crates/bumbledb): kills the immediately-invoked-closure
-#     error idiom — a fallible region is a block, not a fake call.
-#   - portable_simd (crates/bumbledb): the predicate-scan, dense-fold,
-#     and index-gather kernels are one `std::simd` body per shape on
-#     every target — measured at or above the retired hand-NEON twins,
-#     deleting the intrinsic dual and most of the kernel layer's
-#     `unsafe`; the Allen configuration kernel alone stays intrinsic per
-#     the crucible packet's measured verdict matrix (git ecec1dc3).
 [toolchain]
-channel = "nightly-2026-08-15"
+channel = "nightly-2026-10-09"
 components = ["miri", "llvm-tools", "rustfmt", "clippy", "rust-src"]
 targets = ["x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]

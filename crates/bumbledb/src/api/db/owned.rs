@@ -222,10 +222,6 @@ impl<S> OwnedInstance<S> {
 
     /// # Errors
     /// Shape refusals.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "the public get takes Key by value to match ReadInstance::get"
-    )]
     pub fn get<'a, K: Key<'a, Schema = S>>(
         &'a self,
         key: K,

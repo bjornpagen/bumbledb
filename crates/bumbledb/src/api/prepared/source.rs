@@ -343,10 +343,6 @@ impl<'a> QuerySource<'a> {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-    )]
     fn visit_store_projection(
         &self,
         snapshot: &OwnedSnapshot,

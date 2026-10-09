@@ -167,10 +167,6 @@ fn rebuild_memo_window(
 /// The operation context belongs to the active execution slot, whereas
 /// cached contents and retained pools travel through the LRU.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one table-driven activation protocol checks all context and ownership outcomes"
-)]
 fn four_draw_memo_activation_preserves_current_work_and_pool_ownership() {
     use crate::image::view::View;
     use crate::schema::ValidateDescriptor as _;

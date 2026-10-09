@@ -222,10 +222,6 @@ fn booking_atom() -> Atom {
     atom(BOOKING, &[(0, var(0)), (1, var(1)), (2, var(2))])
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 fn queries() -> Vec<(Query, Vec<ParamValue>)> {
     let v = |id: u16| FindTerm::Var(VarId(id));
     let fold = |op: FoldOp, over: u16| FindTerm::Aggregate {

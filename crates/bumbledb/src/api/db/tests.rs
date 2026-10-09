@@ -492,10 +492,6 @@ fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one snapshot-borrow lifetime across collision lookup, replacement, and reader reuse"
-)]
 fn keyed_reads_retain_snapshot_bytes_across_collisions_repeated_reads_and_replacement() {
     use crate::Theory as _;
     use crate::schema::FieldId;

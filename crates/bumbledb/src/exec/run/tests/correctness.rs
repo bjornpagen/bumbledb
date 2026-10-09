@@ -233,10 +233,6 @@ fn residuals_filter_across_atoms() {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one differential harness, generator to oracle — clearer kept together"
-)]
 fn randomized_differential_against_the_nested_loop_oracle() {
     let mut state = 0x1234_5678_9ABC_DEF0_u64;
     let mut next = move || {

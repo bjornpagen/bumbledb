@@ -28,10 +28,6 @@ pub const UUID_V4_RANDOM_BITS: u32 = 122;
 /// whole 128 bits.
 pub const UUID_RANDOM_BITS: u32 = 128;
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "sizing math is approximate by construction; ulp loss on n is irrelevant next to the model error"
-)]
 fn pair_count(n: u128) -> f64 {
     // n(n-1) as f64; exact for every population the table uses (<= 1e12,
     // whose square is far below f64's 1e308 range — precision loss is fine).
@@ -84,10 +80,6 @@ pub fn required_bytes(n: u128, epsilon: f64) -> Option<u32> {
 /// `domains * p` (for small `p`), **not** the probability of one shared
 /// domain holding the union of all rows. Saturates at 1.
 #[must_use]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "sizing math; domain counts far below 2^53 in every intended use"
-)]
 pub fn fleet_probability(domains: u64, per_domain: f64) -> f64 {
     (domains as f64 * per_domain).min(1.0)
 }

@@ -1847,10 +1847,6 @@ fn r24_closure_idiom_reaches_the_exact_set() {
 /// one `Sum` over the accumulated ∈-set; the hand-computed subtree
 /// rollup over a three-level hierarchy with postings.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "One regression keeps setup, fault injection, and post-state assertions together"
-)]
 fn r25_subtree_rollup_matches_the_hand_computed_sum() {
     use r25::{Account, AccountId, AccountParent, Accounts, Posting, PostingId};
     let dir = TempDir::new("r25-accounts");
@@ -2111,10 +2107,6 @@ fn r27_maintenance_rederives_after_generation_movement() {
 /// `applies` dimension), loads containment targets first, then proves
 /// the three laws: identity, application-owned ids, judgment under v2.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 fn r28_migration_is_etl() {
     // The transform's one decision: v1 amounts are in force since the
     // migration epoch — a ray.

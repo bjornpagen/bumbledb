@@ -737,11 +737,6 @@ struct ParseError {
     message: String,
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one arm per operator spelling — clearer kept together \
-              (the `descriptor` precedent)"
-)]
 fn parse_statement(
     relation: String,
     relation_span: Span,
@@ -1816,11 +1811,6 @@ fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
 /// verbatim, each naming the canonical form (the ban table's law). The
 /// containment-respelled window composes the paste-back containment from
 /// the spec's own statement.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one arm per issue, each a teaching message — \
-              clearer kept together (the `descriptor` precedent)"
-)]
 fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
     match issue {
         SpecIssue::UnknownRelation { relation, .. } => {

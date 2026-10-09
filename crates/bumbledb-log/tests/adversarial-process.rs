@@ -236,10 +236,6 @@ fn completed<T: std::fmt::Debug>(outcome: bumbledb_log::certainty::AdminCertaint
 /// Driver for the parent tests; each mode exercises a real crash schedule.
 #[test]
 #[ignore = "subprocess entrypoint invoked by the parent crash tests"]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one flat child-mode dispatch; each arm is a distinct crash script"
-)]
 fn child_process_entry() {
     let mode = std::env::var(CHILD_ENV).expect("parent selects the child mode");
     let dir = PathBuf::from(std::env::var(DIR_ENV).expect("child dir"));
@@ -728,11 +724,6 @@ fn open_converged(tenant: &Path, store: &FsStore) -> Vec<u64> {
 /// (REP-003 retained-roots neighbor, GC-03 pin/release shape, REC-04's
 /// staging-invisibility carried across the revocation).
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one adversarial scenario told end to end; splitting would hide \
-              the revocation ordering under test"
-)]
 fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
     let root = fresh_root("holdrevoke");
     let store = FsStore::new(root.join("store"));

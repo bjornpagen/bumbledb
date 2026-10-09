@@ -141,10 +141,6 @@ fn active_literal_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
     Value::IntervalI64(bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"))
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     if !rng.chance(DRESS_PCT, 100) {
         return;

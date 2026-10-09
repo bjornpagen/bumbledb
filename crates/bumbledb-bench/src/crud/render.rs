@@ -6,10 +6,6 @@ use crate::scenarios::json_out::push_stats;
 
 use super::run::CrudRow;
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
 fn us(ns: u64) -> f64 {
     ns as f64 / 1000.0
 }

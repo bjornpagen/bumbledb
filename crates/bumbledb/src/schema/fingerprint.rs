@@ -631,10 +631,6 @@ mod tests {
         assert_eq!(bytes, expected);
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one byte-golden, every weight/bound kind pinned in read order — clearer kept together"
-    )]
     #[test]
     fn golden_bytes_pin_the_capacity_encoding() {
         use crate::schema::tests::{capacity, capacity_weighted};

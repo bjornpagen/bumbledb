@@ -17,10 +17,6 @@ impl<S> Db<S> {
     /// transaction — a crash leaves `dest` absent, empty-staged, or complete.
     /// # Errors
     /// `DestinationExists`, storage failure, or stopped work.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "Database operations accept owned call-scoped work and key values consistently"
-    )]
     pub fn compact(&self, dest: &Path, work: WorkContext) -> Result<()> {
         let snapshot = self.store.snapshot(&work).map_err(Error::from_store)?;
         let policy = MapPolicy::default();
@@ -37,10 +33,6 @@ impl<S> Db<S> {
     /// memory — see the C04 map report for the distinct quantities).
     /// # Errors
     /// Storage failure or stopped work.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "Database operations accept owned call-scoped work and key values consistently"
-    )]
     pub fn disk_size(&self, work: WorkContext) -> Result<u64> {
         let report = self.store.map_report(&work).map_err(Error::from_store)?;
         Ok(report.populated_file_bytes)
@@ -49,10 +41,6 @@ impl<S> Db<S> {
     /// The committed generation.
     /// # Errors
     /// Storage failure or stopped work.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "Database operations accept owned call-scoped work and key values consistently"
-    )]
     pub fn generation(&self, work: WorkContext) -> Result<GenerationId> {
         self.store
             .committed_generation(&work)

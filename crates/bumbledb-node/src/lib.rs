@@ -54,7 +54,6 @@ pub fn engine_version() -> String {
 /// is for small identity-sized inputs only.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 #[must_use]
 pub fn blake3_hash(data: Buffer) -> Buffer {
     let mut digest = bumbledb::digest::Digest::new();
@@ -67,7 +66,6 @@ pub fn blake3_hash(data: Buffer) -> Buffer {
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]
-#[allow(clippy::needless_pass_by_value)]
 pub fn descriptor(env: Env, spec: Object) -> napi::Result<DescriptorWire> {
     use bumbledb::schema::ValidateDescriptor as _;
     let (descriptor, attrs) = match descriptor_of(&spec)? {

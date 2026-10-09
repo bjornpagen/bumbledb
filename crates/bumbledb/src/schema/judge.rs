@@ -1546,10 +1546,6 @@ impl<E> Judge<'_, '_, E> {
         Ok(())
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-    )]
     fn containment_scalar_compiled<S: DeltaFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -1650,10 +1646,6 @@ impl<E> Judge<'_, '_, E> {
         Ok(available)
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-    )]
     fn containment_pointwise_compiled<S: DeltaFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -1831,10 +1823,6 @@ impl<E> Judge<'_, '_, E> {
         })
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-    )]
     fn containment_pointwise_affected<S: DeltaFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -1964,11 +1952,6 @@ impl<E> Judge<'_, '_, E> {
         Ok(())
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        clippy::too_many_lines,
-        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-    )]
     fn capacity_compiled<S: DeltaFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -2301,10 +2284,6 @@ impl<E> Judge<'_, '_, E> {
         })
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-    )]
     fn mark_delta_groups<S: DeltaFacts<Error = E>>(
         &self,
         state: &S,

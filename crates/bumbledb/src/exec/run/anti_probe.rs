@@ -7,14 +7,6 @@ use super::{
 };
 use crate::work::WorkError;
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the split borrows and execution context are clearer unpacked"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 pub(super) fn anti_probe_pass<C: Counters>(
     specs: &[AntiProbeSpec],
     node_idx: usize,

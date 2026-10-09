@@ -74,7 +74,6 @@ pub enum StepKind {
 /// Compact default night. Overlapping curves/heap/adversarial
 /// timing jobs are not in this table.
 #[must_use]
-#[expect(clippy::too_many_lines, reason = "One declarative benchmark roster")]
 pub fn script_steps() -> &'static [ScriptStep] {
     &[
         ScriptStep {

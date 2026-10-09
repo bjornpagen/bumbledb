@@ -540,10 +540,6 @@ impl HeadAuthority {
 /// component. [`FAMILY`] and [`LAYOUT`] identify this persisted grammar.
 /// # Errors
 /// Refuses oversized frames and allocation failure.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one bounded encoder over the frozen control grammar"
-)]
 pub fn encode_control(authority: &HeadAuthority, cap: usize) -> Result<Vec<u8>, FrameError> {
     let lifecycle_len = match &authority.lifecycle {
         Lifecycle::Live(live) => {

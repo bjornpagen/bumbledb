@@ -472,10 +472,6 @@ pub struct SweepReport {
 /// # Errors
 /// Stale collectors get `CollectionMoved`; failed deletions return
 /// `DeleteFailed` with resumable durable progress retained.
-#[expect(
-    clippy::too_many_lines,
-    reason = "Keep the ordered execution and cleanup transitions together"
-)]
 pub fn sweep<B: ReceivingStore>(
     backend: &B,
     prefix: &str,

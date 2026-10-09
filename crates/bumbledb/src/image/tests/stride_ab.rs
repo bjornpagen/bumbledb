@@ -150,10 +150,6 @@ fn scan(
     (dt, view.recycle())
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "nanosecond spans and row counts sit far below 2^52"
-)]
 fn ns_per_row(d: Duration, rows: usize) -> f64 {
     d.as_nanos() as f64 / rows as f64
 }
@@ -168,10 +164,6 @@ const PAIRS_PER_BLOCK: u64 = 3;
 
 #[test]
 #[ignore = "measured falsifier: run release through scripts/measure.sh"]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the falsifier reads as one protocol: trace, warm, alternate, report"
-)]
 fn stride_band_ab_falsifier() {
     let field_types = vec![ValueType::U64; COLS];
 

@@ -562,10 +562,6 @@ fn interval_columns(image: &RelationImage, field: OperandAddr) -> (&[u64], &[u64
 
 /// Attempts the kernel fast path for one predicate. Returns whether the
 /// scan ran; `false` falls back to the scalar [`row_holds`] loop.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 pub(crate) fn kernel_scan(
     image: &RelationImage,
     predicate: &FilterPredicate,
@@ -713,10 +709,6 @@ pub(crate) fn kernel_scan(
 
 /// Substitutes one filter's symbolic constants into its resolved slot,
 /// in place. `false` is the positive-occurrence `Eq` short-circuit.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 pub(crate) fn resolve_filter_into(
     interner: &InternerHandle<'_>,
     template: &FilterPredicate,
@@ -931,10 +923,6 @@ fn write_words_value(dst: &mut FilterPredicate, words: &[u64]) {
 
 /// One prepare-resolved filter's picture (unresolvable shapes never
 /// reach a folded occurrence's list).
-#[expect(
-    clippy::too_many_lines,
-    reason = "the per-predicate rendering arms are one linear table"
-)]
 pub(crate) fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate) {
     use crate::ir::normalize::{decoded_interval, render_const, render_scalar};
     use crate::ir::render::{literal, mask_names};

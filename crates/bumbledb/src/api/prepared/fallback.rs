@@ -620,10 +620,6 @@ impl Search<'_, '_> {
         Ok(())
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the anti-probe's bound/deferred arms read as one walk"
-    )]
     fn negated_hit(
         &mut self,
         occ_idx: usize,

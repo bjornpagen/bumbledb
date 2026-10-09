@@ -27,10 +27,6 @@ impl Executor {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the split borrows and execution context are clearer unpacked"
-    )]
     fn run_leaf_pinned<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,

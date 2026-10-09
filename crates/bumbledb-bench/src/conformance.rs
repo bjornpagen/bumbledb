@@ -1231,10 +1231,6 @@ fn pack(over: u16) -> FindTerm {
     FindTerm::Pack { over: VarId(over) }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one flat case roster, data not logic"
-)]
 fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
     use target::ids;
     let domains = target::Domains::of(cfg.scale);
@@ -1612,7 +1608,6 @@ fn replay_case(worlds: &mut BTreeMap<u64, World>, name: &str, text: &str) -> Str
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
     reason = "provenance integers are small; exactness is asserted right below"
 )]
 fn read_u64(value: &crate::json::Value, key: &str) -> u64 {

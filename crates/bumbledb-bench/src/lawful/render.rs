@@ -6,10 +6,6 @@ use crate::json::push_str_lit;
 use super::enforcement;
 use super::run::LawRow;
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
 fn us(ns: u64) -> String {
     format!("{:.3}", ns as f64 / 1000.0)
 }

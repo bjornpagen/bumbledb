@@ -264,7 +264,6 @@ fn gather_folds_pin_carries_tails_and_word_order_extrema() {
 /// regime; recorded as a lead, not landed.
 #[test]
 #[ignore = "timing evidence, run by hand on the reference host"]
-#[expect(clippy::too_many_lines, reason = "a self-contained measurement rig")]
 fn gather_fold_scalar_addressed_twin() {
     use std::fmt::Write as _;
     use std::simd::prelude::*;
@@ -613,10 +612,6 @@ fn gather_fold_scalar_addressed_twin() {
                 let run = |k: usize, ns: &mut Vec<Vec<f64>>, rng: &mut Lcg| {
                     let sets = fresh_sets(rng);
                     let (t, n) = span(arms[k].1, &sets);
-                    #[expect(
-                        clippy::cast_precision_loss,
-                        reason = "index counts are far below 2^52"
-                    )]
                     ns[k].push(t / n as f64 * 1e9);
                 };
                 if pair % 2 == 0 {
@@ -666,10 +661,6 @@ fn fold_throughput_contiguous_sum() {
             sink += f();
         }
         let elapsed = start.elapsed();
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "reporting accepts lossy integer-to-float conversion"
-        )]
         let rate = (values.len() as u64 * reps) as f64
             / u64::try_from(elapsed.as_nanos().max(1)).expect("short run") as f64;
         println!("{label}: {rate:.2} rows/ns (sink {sink})");
@@ -771,10 +762,6 @@ mod ab_baseline {
 
 #[test]
 #[ignore = "timing evidence, run by hand on the reference host"]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
 fn filter_ab_predicate_scan_reshape() {
     let mut rng = Lcg(0xAB_2026);
 
@@ -1227,10 +1214,6 @@ fn compaction_keeps_exactly_the_masked_items_in_order() {
 #[cfg(target_arch = "aarch64")]
 #[test]
 #[ignore = "timing evidence, run by hand on the reference host"]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
 fn allen_filter_counter_spill_ab() {
     const N: usize = 8192;
     const BUFS: usize = 4;
@@ -1367,10 +1350,7 @@ fn compact_throughput_interleaved_ab() {
             }
             let elapsed = start.elapsed();
             std::hint::black_box(sink);
-            #[expect(clippy::cast_precision_loss, reason = "reporting")]
-            {
-                elapsed.as_nanos() as f64 / (N * REPS_PER_SPAN) as f64
-            }
+            elapsed.as_nanos() as f64 / (N * REPS_PER_SPAN) as f64
         };
     let refill_only = |items: &mut Vec<u32>| {
         let start = std::time::Instant::now();
@@ -1379,10 +1359,7 @@ fn compact_throughput_interleaved_ab() {
             items.extend_from_slice(&source);
             std::hint::black_box(items.len());
         }
-        #[expect(clippy::cast_precision_loss, reason = "reporting")]
-        {
-            start.elapsed().as_nanos() as f64 / (N * REPS_PER_SPAN) as f64
-        }
+        start.elapsed().as_nanos() as f64 / (N * REPS_PER_SPAN) as f64
     };
     println!("sel%  A ns/item  B ns/item  A/B (refill-subtracted, medians of {PAIRS} pairs)");
     for percent in [1u64, 25, 50, 75, 99] {

@@ -136,11 +136,6 @@ enum PreparedReach {
 /// The pipeline after interiors and rec are prepared — normalize → ground →
 /// per-rule prepare → sink and binding artifacts, over an already-sealed
 /// witness.
-#[expect(
-    clippy::too_many_lines,
-    clippy::too_many_arguments,
-    reason = "the prepare pipeline reads as one protocol: normalize, ground, per-rule prepare, probes, artifacts"
-)]
 fn prepare_witnessed<S>(
     pinned_source: PinnedSource,
     images: &SourceImages<'_>,
@@ -873,8 +868,7 @@ fn seal_dnf_spans(rules: &mut [PreparedRule]) {
         rules.iter().map(inventory).collect();
     let shared: Vec<crate::ir::VarId> = inventories
         .first()
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+        .map_or_default(Vec::as_slice)
         .iter()
         .map(|(var, ..)| *var)
         .filter(|var| {

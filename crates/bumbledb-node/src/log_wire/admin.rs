@@ -262,7 +262,6 @@ enum AdminVerb {
     },
 }
 
-#[allow(clippy::too_many_lines)]
 fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
     let ctx = "admin request";
     let verb: String = marshal::req(request, "verb", ctx)?;
@@ -374,7 +373,6 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
 // The registered admin operation.
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn admin_verb(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -625,7 +623,6 @@ macro_rules! with_store {
     };
 }
 
-#[allow(clippy::too_many_lines)]
 fn run_admin(
     runtime: &Arc<Runtime>,
     verb: AdminVerb,
@@ -1136,7 +1133,6 @@ impl AdminOwned {
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
 fn fail_of_admin(error: bumbledb_log::admin::AdminError) -> LogFail {
     use bumbledb_log::admin::AdminError;
     match &error {
@@ -1239,7 +1235,6 @@ fn fail_of_identity(mismatch: &bumbledb_log::admin::IdentityMismatch) -> LogFail
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
 fn fail_of_local_root(error: bumbledb_log::local_roots::LocalRootError) -> LogFail {
     use bumbledb_log::local_roots::LocalRootError;
     match &error {
@@ -1254,7 +1249,6 @@ fn fail_of_local_root(error: bumbledb_log::local_roots::LocalRootError) -> LogFa
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
 /// One owned checkpoint chunk at a time. Restore borrows via `AsRef<[u8]>`
 /// and drops the owner as it consumes the iterator.
 pub(crate) fn verified_checkpoint_chunks<'a, B>(
@@ -1282,7 +1276,6 @@ where
     })
 }
 
-#[allow(clippy::too_many_lines)]
 fn run_restore(
     runtime: &Arc<Runtime>,
     source: &DestinationSpec,
@@ -1447,7 +1440,6 @@ fn run_restore(
 // Rendering the certainty envelope.
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::too_many_lines)]
 // The returned object's brand lifetime is deliberately NOT tied to the
 // `&Env` borrow: napi3's `Object::new(&Env)` leaves the brand free, and the
 // take verbs pass a borrow of their own by-value `Env` (tying would be

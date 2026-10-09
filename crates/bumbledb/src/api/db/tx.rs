@@ -535,12 +535,6 @@ impl<'a, S> WriteTx<'a, S> {
     /// transaction (pending rows) or the parent snapshot.
     /// # Errors
     /// Shape refusals or storage failure.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "a key value is the read's input, spelled `tx.get(id)`: \
-                  generated key structs are small — by-value keeps every \
-                  call site free of `&` noise"
-    )]
     pub fn get<'tx, K: Key<'tx, Schema = S>>(&'tx self, key: K) -> Result<Option<K::Fact>> {
         self.refuse_poisoned()?;
         let relation = <K::Fact as Fact<'tx>>::RELATION;
@@ -570,10 +564,6 @@ impl<'a, S> WriteTx<'a, S> {
     /// (native/E seam).
     /// # Errors
     /// Shape refusals or storage failure.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "Database operations accept owned call-scoped work and key values consistently"
-    )]
     pub fn get_with_work<'tx, K: Key<'tx, Schema = S>>(
         &'tx self,
         key: K,
@@ -605,10 +595,6 @@ impl<'a, S> WriteTx<'a, S> {
 
     /// # Errors
     /// Shape refusals or storage failure.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "Database operations accept owned call-scoped work and key values consistently"
-    )]
     pub fn get_dyn_with_work(
         &self,
         relation: RelationId,

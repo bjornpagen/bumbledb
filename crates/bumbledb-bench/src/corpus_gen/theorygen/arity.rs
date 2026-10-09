@@ -280,14 +280,12 @@ fn side(
     Side {
         relation,
         projection: projection.into(),
-        selection: selected
-            .map(|field| {
-                Box::new([(
-                    field_id(field),
-                    bumbledb::schema::LiteralSet::One(Value::Bool(true)),
-                )]) as Box<[_]>
-            })
-            .unwrap_or_default(),
+        selection: selected.map_or_default(|field| {
+            Box::new([(
+                field_id(field),
+                bumbledb::schema::LiteralSet::One(Value::Bool(true)),
+            )]) as Box<[_]>
+        }),
     }
 }
 

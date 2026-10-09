@@ -80,10 +80,6 @@ pub trait ChainVisitor {
 /// # Errors
 /// Missing locators before the base, stamp mismatch, budget exhaustion,
 /// or work refusal.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Durable coordinates and work limits remain explicit at this protocol boundary"
-)]
 pub fn walk_decision_chain<B, V>(
     backend: &B,
     prefix: &str,

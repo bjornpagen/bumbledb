@@ -34,13 +34,6 @@ impl Store {
     /// row surrogates and every physical index, packing each tree in ascending
     /// key order. Rebuilding indexes row-by-row interleaves ordered insertions
     /// before other namespaces and leaves half-full LMDB pages.
-    #[cfg_attr(
-        not(any(test, feature = "collision-probe")),
-        expect(
-            clippy::needless_pass_by_value,
-            reason = "The fresh-destination capability must be consumed, not borrowed"
-        )
-    )]
     pub(crate) fn compact_snapshot(
         &self,
         source: &OwnedSnapshot,
@@ -80,10 +73,6 @@ impl Store {
     /// (CORE-015).
     /// # Errors
     /// `ForeignSchema`, `DestinationExists`, growth refusals, storage failure.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "The fresh-destination capability must be consumed, not borrowed"
-    )]
     pub fn adopt_snapshot(
         &self,
         source: &OwnedSnapshot,

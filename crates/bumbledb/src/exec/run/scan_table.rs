@@ -8,14 +8,6 @@ use std::ops::ControlFlow;
 impl Executor {
     /// Scan physical suffix runs, polling bounded work before sink delivery.
     /// Unsupported scans may fall back; cancellation and sink errors may not.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the split borrows and execution context are clearer unpacked"
-    )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
     pub(super) fn run_leaf_scan<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,

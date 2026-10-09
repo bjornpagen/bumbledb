@@ -226,7 +226,7 @@ where
         )
         .expect("head reads")
     {
-        ReceivedHead::Present { body, .. } => body.as_slice().to_vec(),
+        ReceivedHead::Present { body, .. } => body.clone(),
         ReceivedHead::Absent => panic!("head exists"),
     }
 }

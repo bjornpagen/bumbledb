@@ -172,10 +172,6 @@ fn dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     ops
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one OR-tree grammar, every leaf shape in one place — clearer kept together"
-)]
 fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     let mut rng = Rng::new(seed ^ 0x0085_D2F1);
     let at_span = i64::try_from(sizes.postings).expect("fits") * AT_STEP;

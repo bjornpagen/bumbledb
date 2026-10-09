@@ -6,14 +6,6 @@ use super::{
 };
 
 impl Executor {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the split borrows and execution context are clearer unpacked"
-    )]
     pub(super) fn probe_pass<S: Sink, C: Counters>(
         &mut self,
         tables: &PipeTables,
@@ -539,10 +531,6 @@ impl Executor {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the existing batch routing and borrows stay explicit"
-    )]
     pub(super) fn probe_sibling_batch<const K: usize, C: Counters>(
         &mut self,
         scratch: &mut NodeScratch,
@@ -587,10 +575,6 @@ impl Executor {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the existing batch routing and borrows stay explicit"
-    )]
     #[inline(never)]
     fn probe_sibling_keys<const K: usize, const CHILDREN: bool, C: Counters>(
         &mut self,
@@ -666,10 +650,6 @@ impl Executor {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the split borrows and execution context are clearer unpacked"
-)]
 #[expect(
     clippy::inline_always,
     reason = "a monomorphized pure-ALU leaf of the probe hot loop — the \

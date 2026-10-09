@@ -266,11 +266,6 @@ fn interval_param(element: IntervalElement, rng: &mut Rng, cfg: GenConfig) -> Va
             // on the dense line, with a unit fallback where rounding would
             // collapse the pair.
             let ((start, end), _) = interval_data::ladder_i64(cfg.seed, group, rng);
-            #[expect(
-                clippy::cast_precision_loss,
-                reason = "a deliberately rounding draw: a collapsed pair falls \
-                          back to the unit interval below"
-            )]
             let dense = |v: i64| bumbledb::F64::from(v as f64);
             let unit = || {
                 bumbledb::Interval::new(bumbledb::F64::from(0.0), bumbledb::F64::from(1.0))

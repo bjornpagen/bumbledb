@@ -270,10 +270,6 @@ pub(super) fn rule_uses_scratch_derived(
 }
 
 impl<S> PreparedQuery<S> {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the derived phase reads as one protocol: interiors, then rec"
-    )]
     pub(super) fn run_derived<Cnt: Counters>(
         &mut self,
         images: &SourceImages<'_>,
@@ -404,10 +400,6 @@ impl<S> PreparedQuery<S> {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the prepared query's split borrows are clearer unpacked"
-)]
 fn run_reach<Cnt: Counters>(
     driver: &mut ReachDriver,
     rec_id: usize,
@@ -654,10 +646,6 @@ fn fill_plan_images(plan: &crate::plan::fj::ValidatedPlan, derived: &mut Derived
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the prepared query's split borrows are clearer unpacked"
-)]
 fn run_into_projection<S: StageSink, Cnt: Counters>(
     ctx: &mut RunCtx<'_>,
     rules: &mut [PreparedRule],
@@ -697,10 +685,6 @@ fn run_into_projection<S: StageSink, Cnt: Counters>(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the prepared query's split borrows are clearer unpacked"
-)]
 fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
     ctx: &mut RunCtx<'_>,
     rule: &mut FreeJoinRule,

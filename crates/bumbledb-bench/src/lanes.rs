@@ -42,10 +42,6 @@ pub(crate) fn push_ghz(out: &mut String, ghz: Option<GhzReport>) {
     }
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
 pub(crate) fn per_unit(bytes: u64, count: u64) -> f64 {
     if count == 0 {
         0.0

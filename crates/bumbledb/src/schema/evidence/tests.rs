@@ -486,10 +486,6 @@ fn strict_decode_refuses_foreign_and_malformed_frames() {
 /// refuses at interpretation with typed errors — foreign statement ids,
 /// kind mismatches, unknown relations and corrupt canonical rows.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one refusal scenario per foreign-evidence shape"
-)]
 fn interpretation_refuses_foreign_schema_data() {
     let schema = theory();
     let judged = rejected(&schema, &violating_state());

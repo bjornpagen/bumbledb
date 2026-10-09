@@ -545,10 +545,6 @@ fn closed_psi_schema() -> SchemaDescriptor {
 /// Closed-pair sum refutation is covered by schema validation
 /// (`rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound`,
 /// `schema/tests/reject.rs` — a refused schema never reaches a commit verdict).
-#[expect(
-    clippy::too_many_lines,
-    reason = "one flat fixture roster, data not logic"
-)]
 fn fixtures() -> Vec<JudgmentFixture> {
     vec![
         JudgmentFixture {
@@ -1121,10 +1117,6 @@ pub(super) fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
 /// # Panics
 /// On an engine-vs-naive disagreement, a refused base commit, or a
 /// closed-relation write in a fixture.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one flat document assembly, data not logic"
-)]
 fn render_fixture(fixture: &JudgmentFixture) -> String {
     let dir = ScratchDir::new(&format!("judgment-{}", fixture.name));
     let db = Db::create(&dir.0, fixture.schema.clone(), crate::harness::bench_work())

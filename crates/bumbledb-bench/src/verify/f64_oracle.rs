@@ -213,8 +213,7 @@ impl Wide {
         );
         let mut limbs = Vec::with_capacity(self.limbs.len());
         let mut borrow = 0u64;
-        for i in 0..self.limbs.len() {
-            let a = self.limbs[i];
+        for (i, &a) in self.limbs.iter().enumerate() {
             let b = other.limbs.get(i).copied().unwrap_or(0);
             let (d1, b1) = a.overflowing_sub(b);
             let (d2, b2) = d1.overflowing_sub(borrow);

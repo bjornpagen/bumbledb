@@ -270,10 +270,7 @@ pub fn schema() -> &'static Schema {
 /// naive model and the mirror's extension INSERTs consume beside the
 /// sealed schema (the closed-relation differential and the `ops` fuzz
 /// runner both build their [`crate::naive::NaiveDb`] from it).
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)] // the declared ledger, one relation per block
+// the declared ledger, one relation per block
 #[must_use]
 pub fn descriptor() -> SchemaDescriptor {
     {
@@ -491,10 +488,6 @@ pub fn descriptor() -> SchemaDescriptor {
 /// `Transfer(extref) -> Transfer`: every corpus load writes an
 /// adversarial-digest determinant per transfer, and an `Eq` extref binding is
 /// key-covering (the key-probe fast path over a multi-word key).
-#[expect(
-    clippy::too_many_lines,
-    reason = "the declared ledger is one list — 60-validation.md's block in its source order"
-)]
 fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
     use bumbledb::schema::{Side, StatementDescriptor};
     let side = |relation: bumbledb::RelationId,

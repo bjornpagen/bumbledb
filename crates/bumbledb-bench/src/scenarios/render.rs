@@ -1,19 +1,11 @@
 use super::{LaneOutcome, QueryReport, dnf_count, geomean};
 use crate::harness::Protocol;
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
 fn us(ns: u64) -> f64 {
     ns as f64 / 1000.0
 }
 
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one linear report: the lane table then the optional allocation section"
-)]
 pub fn render(reports: &[QueryReport], proto: Protocol) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();

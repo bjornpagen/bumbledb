@@ -45,6 +45,14 @@ something the code and types cannot.
   in a type (design rules R2/R3).
 - The same rules apply to TS (JSDoc only on exported API), TOML, YAML, and shell.
 
+## Tests (strict)
+
+No flaky or brittle tests in the suite. A test must be deterministic: no wall-clock sleeps or
+timing races, no machine-speed-dependent rosters, no scanning cargo's internal build-dir layout,
+no exact allocator-layout transcriptions, and no "returns early when unconfigured = PASS". Delete
+a flaky test rather than tolerating or retrying it, then cover the behavior deterministically if
+it matters. Timing measurements are non-asserting bench reports, never `cargo test` gates.
+
 ## Swarm protocol (parallel agents on the one `main` tree)
 
 - **Ownership.** You edit only the paths you were assigned. If something outside them blocks

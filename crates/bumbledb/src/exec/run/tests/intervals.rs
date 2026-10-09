@@ -399,10 +399,6 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
     let schema = SchemaDescriptor {
         relations: vec![
@@ -903,7 +899,6 @@ fn keyed_overlap_self_join_agrees_with_the_naive_model() {
 type SpanWindow<'a> = &'a dyn Fn((u64, u64), &(u64, u64, u64, u64)) -> bool;
 
 #[test]
-#[allow(clippy::too_many_lines)]
 fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
     let schema = keyed_span_schema(3);
     let mut state = 0x7A11_u64;
@@ -1016,7 +1011,6 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
 }
 
 #[test]
-#[allow(clippy::too_many_lines)]
 fn const_side_touching_residuals_conjoin_into_one_window_query() {
     let schema = tagged_interval_schema(3);
     let mut state = 0x2026_0803_u64;

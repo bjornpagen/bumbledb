@@ -227,7 +227,6 @@ pub fn summarize(samples: &[LayerSample]) -> Vec<LayerSummary> {
                 #[expect(
                     clippy::cast_possible_truncation,
                     clippy::cast_sign_loss,
-                    clippy::cast_precision_loss,
                     reason = "quantile index arithmetic over small sample counts"
                 )]
                 let index = ((ns.len() as f64 - 1.0) * q).round() as usize;

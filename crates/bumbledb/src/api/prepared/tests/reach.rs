@@ -298,10 +298,6 @@ fn dead_main_with_live_interiors_still_reports_interior_emits() {
 /// frontier keeps its watermark contract across the tier
 /// change, and the sealed rec table drains from scratch.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end spilled-recursion scenario"
-)]
 fn spilled_rec_seen_and_frontier_state_preserves_the_closure() {
     use crate::ir::{NonEmpty, Rec, RecRule, RecStep};
     const EDGE: RelationId = RelationId(0);

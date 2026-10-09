@@ -354,10 +354,6 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
 /// BYTE column and read back as 0/1), and a two-word interval per row, round
 /// after round, and finalize then resolves the same seen-set.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one four-column reach query spelled whole, clearer kept together"
-)]
 fn typed_payload_propagates_through_the_recursive_accumulator() {
     let dir = common::TempDir::new("hunt-typed-payload");
     let db = Db::create(dir.path(), Hunt, common::work())

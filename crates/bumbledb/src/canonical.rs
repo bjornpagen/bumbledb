@@ -55,10 +55,6 @@ impl CanonicalRow {
     /// Checks and owns caller values before they can enter a draft.
     /// # Errors
     /// Rejects wrong shape, cancellation, or an unallocatable capacity.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the per-type encode arms are one linear wire table"
-    )]
     pub fn encode(
         fields: &[FieldDescriptor],
         values: &[Value],

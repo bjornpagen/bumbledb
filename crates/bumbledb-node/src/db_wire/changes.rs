@@ -96,7 +96,6 @@ pub(crate) fn publish_page(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_changes_cursor(
     env: Env,
     handle: &External<ChangesHandle>,
@@ -137,7 +136,6 @@ pub fn runtime_changes_cursor_take(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_changes_cursor_next(
     env: Env,
     handle: &External<ChangesCursorHandle>,
@@ -183,7 +181,6 @@ pub fn runtime_changes_cursor_close(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_changes_bytes(
     env: Env,
     handle: &External<ChangesHandle>,
@@ -205,7 +202,6 @@ pub fn runtime_changes_bytes(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_changes_parse(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -262,7 +258,6 @@ pub fn runtime_changes_parse(
 /// Two routed borrows under one operation and cancellation context. The
 /// first stage retains only an Arc, then returns its worker immediately.
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_changes_compose(
     env: Env,
     left: &External<ChangesHandle>,

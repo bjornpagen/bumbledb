@@ -78,10 +78,6 @@ impl<S> Db<S> {
     /// ```
     /// # Errors
     /// Storage failure opening the snapshot, or the closure's own error.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "Database operations accept owned call-scoped work and key values consistently"
-    )]
     pub fn read<R>(
         &self,
         work: WorkContext,

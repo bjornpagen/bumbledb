@@ -177,10 +177,6 @@ fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>, conditions: Vec<ConditionTree>)
 /// and adversarial misses, a membership set, a bytes<32> join (Ref ⋈ Blob on
 /// hash), and the criteria pair — group-by over bytes<N> and Max(weight) at
 /// widths 8/16/32/64.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 fn queries() -> Vec<Op> {
     let mut ops = Vec::new();
 

@@ -414,10 +414,6 @@ impl NaiveDb {
     }
 
     /// Return the independently computed capacity contribution.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the parameter list IS the capacity statement's descriptor, spelled flat"
-    )]
     fn capacity_violated(
         &self,
         state: &[BTreeSet<Tuple>],

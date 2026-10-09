@@ -494,10 +494,6 @@ fn curve_point<S>(
             Ok(buffer.len() as u64)
         })
     })?;
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "reporting a mean must retain fractional rows for hit/miss mixes"
-    )]
     let answers = ours.work as f64 / f64::from(proto.samples.max(1));
 
     let theirs = time_lane(conn, cap, &bundle.canonical, &bundle.draws, &types, proto)?;
@@ -754,10 +750,6 @@ struct LaneCtx<'a> {
 /// loader), then gate-and-time every selected family, then — at the first scale
 /// under `--warmth` — drop the live handles and run the panel on the
 /// already-gated stores.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 fn run_scale(
     ctx: &LaneCtx<'_>,
     curves: &mut [FamilyCurve],
@@ -1097,10 +1089,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the whole report shape pinned verbatim — clearer kept together"
-    )]
     fn report_json_shape_is_pinned() {
         let report = CurvesReport {
             provenance: provenance(),

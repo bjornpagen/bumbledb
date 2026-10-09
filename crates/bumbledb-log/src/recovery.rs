@@ -339,7 +339,6 @@ fn clean_owned_staging(directory: &Path) -> Result<(), RecoveryError> {
 ///
 /// # Errors
 /// Typed refusals; `Corrupt` stops the tenant with evidence.
-#[expect(clippy::too_many_arguments, reason = "one bounded hosted open")]
 pub fn open_hosted<S, B>(
     directory: &Path,
     schema: S,
@@ -847,42 +846,6 @@ impl ChainVisitor for ScratchTail {
     }
 }
 
-#[cfg(test)]
-mod tail_storage_tests {
-    use super::*;
-    use crate::history::DecisionDigest;
-
-    #[test]
-    fn reverse_history_is_staged_on_disk_and_visited_in_forward_order() {
-        let work = WorkContext::new();
-        let mut tail = ScratchTail::new(&work);
-        assert!(!tail.scratch.spilled());
-        for seq in (1..=3u64).rev() {
-            let bytes = seq.to_be_bytes();
-            let reference = ObjectRef::of(1, crate::store::ObjectKind::Decision, &bytes);
-            let stamp = DecisionStamp {
-                seq,
-                hash: DecisionDigest::from_bytes(reference.digest),
-            };
-            tail.visit(stamp, &bytes, reference).unwrap();
-            assert!(
-                tail.scratch.spilled(),
-                "even the first tail record belongs on disk"
-            );
-        }
-        let mut next = 1u64;
-        tail.scratch
-            .for_each(&mut |key, value| {
-                assert_eq!(key, &next.to_be_bytes());
-                assert_eq!(value, key);
-                next += 1;
-                Ok(true)
-            })
-            .unwrap();
-        assert_eq!(next, 4);
-    }
-}
-
 /// Historical replay onto an unready owner. `apply::materialize` still needs
 /// a ready [`Db`] and would mint a `LawfulParent` from an incomplete prefix
 /// (empty nonempty-required genesis, or a capacity-floor checkpoint). The
@@ -998,7 +961,6 @@ fn replay_scratch_tail(
     Ok(authority)
 }
 
-#[expect(clippy::too_many_arguments, reason = "one bounded recovery pipeline")]
 fn hydrate<S, B>(
     directory: &Path,
     schema: S,
@@ -1244,4 +1206,40 @@ pub fn install_materialization(
 #[must_use]
 pub fn gc_in_progress(head: &HeadRecord) -> bool {
     !matches!(head.gc, GcPhase::Idle)
+}
+
+#[cfg(test)]
+mod tail_storage_tests {
+    use super::*;
+    use crate::history::DecisionDigest;
+
+    #[test]
+    fn reverse_history_is_staged_on_disk_and_visited_in_forward_order() {
+        let work = WorkContext::new();
+        let mut tail = ScratchTail::new(&work);
+        assert!(!tail.scratch.spilled());
+        for seq in (1..=3u64).rev() {
+            let bytes = seq.to_be_bytes();
+            let reference = ObjectRef::of(1, crate::store::ObjectKind::Decision, &bytes);
+            let stamp = DecisionStamp {
+                seq,
+                hash: DecisionDigest::from_bytes(reference.digest),
+            };
+            tail.visit(stamp, &bytes, reference).unwrap();
+            assert!(
+                tail.scratch.spilled(),
+                "even the first tail record belongs on disk"
+            );
+        }
+        let mut next = 1u64;
+        tail.scratch
+            .for_each(&mut |key, value| {
+                assert_eq!(key, &next.to_be_bytes());
+                assert_eq!(value, key);
+                next += 1;
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(next, 4);
+    }
 }

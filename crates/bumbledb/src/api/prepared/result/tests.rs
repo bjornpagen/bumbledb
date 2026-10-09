@@ -14,10 +14,6 @@ fn heap_identity() -> ResultIdentity {
     }
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "fixture rows stay far below 2^52"
-)]
 fn sample_answers(rows: u64) -> Answers {
     let mut answers = Answers::new();
     answers.begin(3);
@@ -31,10 +27,6 @@ fn sample_answers(rows: u64) -> Answers {
     answers
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "fixture rows stay far below 2^52"
-)]
 fn assert_rows(collected: &Answers, expected_rows: u64) {
     assert_eq!(collected.len() as u64, expected_rows);
     for i in 0..expected_rows {

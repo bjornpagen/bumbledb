@@ -317,10 +317,6 @@ impl<S> InstanceBuilder<S> {
 
     /// # Errors
     /// Shape refusals.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "a key value is the read's input, spelled `builder.get(id)`"
-    )]
     pub fn get<'a, K: Key<'a, Schema = S>>(&'a self, key: K) -> Result<Option<K::Fact>> {
         self.refuse_poisoned()?;
         let relation = <K::Fact as Fact<'a>>::RELATION;

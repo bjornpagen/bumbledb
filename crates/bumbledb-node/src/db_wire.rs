@@ -268,7 +268,6 @@ pub(crate) fn change_error(error: &ChangeError) -> RuntimeError {
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_schema_compile(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -339,7 +338,6 @@ pub fn runtime_schema_take(
 // ---------------------------------------------------------------------------
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_db_snapshot(
     env: Env,
     db: &External<crate::DbHandle>,
@@ -390,7 +388,6 @@ pub fn runtime_snapshot_close(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_snapshot_prepare(
     env: Env,
     handle: &External<SnapshotHandle>,
@@ -410,7 +407,6 @@ pub fn runtime_snapshot_prepare(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_snapshot_get(
     env: Env,
     handle: &External<SnapshotHandle>,
@@ -439,7 +435,6 @@ pub fn runtime_snapshot_get(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_snapshot_execute(
     env: Env,
     handle: &External<SnapshotHandle>,
@@ -460,7 +455,6 @@ pub fn runtime_snapshot_execute(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_prepared_execute(
     env: Env,
     handle: &External<PreparedHandle>,
@@ -479,7 +473,6 @@ pub fn runtime_prepared_execute(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_prepared_release_memory(
     env: Env,
     handle: &External<PreparedHandle>,
@@ -538,7 +531,6 @@ fn result_shared(handle: &ResultHandle) -> Result<&Arc<ResultShared>, RuntimeErr
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_result_collect(
     env: Env,
     handle: &External<ResultHandle>,
@@ -559,7 +551,6 @@ pub fn runtime_result_collect(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_result_cursor(
     env: Env,
     handle: &External<ResultHandle>,
@@ -622,7 +613,6 @@ fn cursor_shared(handle: &CursorHandle) -> Result<&Arc<CursorShared>, RuntimeErr
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_cursor_next(
     env: Env,
     handle: &External<CursorHandle>,
@@ -689,7 +679,6 @@ pub fn runtime_cursor_close(
 // ---------------------------------------------------------------------------
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_draft_open(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -781,7 +770,6 @@ fn draft_shared(handle: &DraftHandle) -> Result<&Arc<DraftShared>, RuntimeError>
     Ok(&handle.shared)
 }
 
-#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
 fn draft_mutation(
     env: Env,
     handle: &External<DraftHandle>,
@@ -823,7 +811,6 @@ fn draft_mutation(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 pub fn runtime_draft_insert(
     env: Env,
     handle: &External<DraftHandle>,
@@ -836,7 +823,6 @@ pub fn runtime_draft_insert(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 pub fn runtime_draft_delete(
     env: Env,
     handle: &External<DraftHandle>,
@@ -865,7 +851,6 @@ pub fn runtime_report_take(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_draft_finish(
     env: Env,
     handle: &External<DraftHandle>,
@@ -976,7 +961,6 @@ pub fn runtime_changes_close(
 // ---------------------------------------------------------------------------
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_db_apply(
     env: Env,
     db: &External<crate::DbHandle>,
@@ -988,7 +972,6 @@ pub fn runtime_db_apply(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_db_judge(
     env: Env,
     db: &External<crate::DbHandle>,
@@ -1153,7 +1136,6 @@ pub fn runtime_apply_take(
 // ---------------------------------------------------------------------------
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_db_clear_cache(
     env: Env,
     db: &External<crate::DbHandle>,
@@ -1180,7 +1162,6 @@ pub fn runtime_db_clear_cache(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_db_inspect(
     env: Env,
     db: &External<crate::DbHandle>,
@@ -1230,7 +1211,6 @@ pub fn runtime_db_inspect_take(
 // ---------------------------------------------------------------------------
 
 #[napi]
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 pub fn runtime_encode_rows(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -1303,7 +1283,6 @@ pub fn runtime_bytes_take(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_decode_rows(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -1370,7 +1349,6 @@ pub fn runtime_decode_rows(
 // ---------------------------------------------------------------------------
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_schema_snapshot(
     env: Env,
     handle: &External<RuntimeHandle>,
@@ -1414,7 +1392,6 @@ pub fn runtime_schema_snapshot(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_schema_bindings(
     env: Env,
     handle: &External<RuntimeHandle>,

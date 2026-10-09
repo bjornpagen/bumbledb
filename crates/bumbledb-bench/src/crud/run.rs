@@ -120,10 +120,6 @@ pub(crate) fn fold(
             };
             eprintln!("crud [{}]: {}", lane.label(), family.name);
             let (ours, theirs, stamp) = lane_run.time_family(family.name, proto)?;
-            #[expect(
-                clippy::cast_precision_loss,
-                reason = "reporting accepts lossy integer-to-float conversion"
-            )]
             let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
             rows.push(CrudRow {
                 family: family.name,

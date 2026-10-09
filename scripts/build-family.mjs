@@ -89,7 +89,7 @@ export function checkFamily(out, sourceRoot = root) {
 }
 
 function runBuild(sourceRoot, nativeArtifacts, allPlatforms) {
-  const env = { CARGO_TARGET_DIR: path.join(sourceRoot, "ts/crate/target") }
+  const env = { CARGO_TARGET_DIR: path.join(sourceRoot, "target") }
   for (const name of ["ts", "ts-log"]) {
     command(path.join(sourceRoot, name), "pnpm", ["install", "--frozen-lockfile"], env)
   }

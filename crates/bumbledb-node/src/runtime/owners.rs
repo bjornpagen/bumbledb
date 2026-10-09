@@ -752,11 +752,10 @@ impl ManagedDb {
                 .owners
                 .get_mut(&self.owner)
                 .and_then(|entry| entry.databases.get_mut(&self.id))
-                .map(|entry| {
+                .map_or_default(|entry| {
                     entry.begin_close();
                     entry.snapshot_caps()
-                })
-                .unwrap_or_default();
+                });
             for operation in state.operations.values().filter(|operation| {
                 operation.owner == Some(self.owner) && operation.database == Some(self.id)
             }) {
@@ -806,7 +805,6 @@ fn canonical_directory(path: &Path) -> Option<std::path::PathBuf> {
     Some(parent.join(name))
 }
 
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn io_error(error: std::io::Error) -> RuntimeError {
     match error.kind() {
         std::io::ErrorKind::WouldBlock => RuntimeError::DirectoryBusy,

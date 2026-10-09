@@ -38,13 +38,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 echo "==> cargo check -p bumbledb-log --no-default-features"
 cargo check -p bumbledb-log --no-default-features
 
-# ts/crate is workspace-excluded; the bridge lane is its gate.
-echo "==> bridge: cargo fmt --check (ts/crate)"
-cargo fmt --manifest-path ts/crate/Cargo.toml --check
-
-echo "==> bridge: cargo clippy --all-targets -- -D warnings (ts/crate)"
-cargo clippy --manifest-path ts/crate/Cargo.toml --all-targets -- -D warnings
-
 echo "==> native artifact belongs to this immutable build source"
 node scripts/release-results.mjs --verify-native-provenance
 
@@ -60,9 +53,6 @@ scripts/check.sh
 # Independent arithmetic and endpoint oracle; native corpus replay runs above.
 echo "==> independent structural corpus"
 python3 scripts/structural-corpus.py
-
-echo "==> bridge: Rust tests in the parallel process pool (ts/crate)"
-cargo nextest run --manifest-path ts/crate/Cargo.toml --config-file .config/nextest.toml
 
 # The bridge is cdylib-only; rustdoc cannot run doctests for that target.
 # Public Rust examples run in the workspace doctests above, and SDK examples

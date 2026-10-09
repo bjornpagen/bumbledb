@@ -100,10 +100,6 @@ fn to_markdown(report: &HeapReport) -> String {
     out.push_str("| family | heap p50 ns | lmdb p50 ns | heap/lmdb |\n");
     out.push_str("| --- | ---: | ---: | ---: |\n");
     for row in &report.point_reads {
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "p50 ns becomes a printed ratio; mantissa loss is below the table's two decimals"
-        )]
         let ratio = row.heap.p50 as f64 / (row.lmdb.p50 as f64).max(1.0);
         let _ = writeln!(
             out,
@@ -209,10 +205,6 @@ fn join_query() -> Query {
 
 /// # Errors
 /// # Panics
-#[allow(
-    clippy::too_many_lines,
-    reason = "one run body owns the heap-arm report; splitting would hide the lane order"
-)]
 pub fn run(args: &HeapArgs) -> Result<i32, String> {
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(
@@ -334,19 +326,11 @@ pub fn run(args: &HeapArgs) -> Result<i32, String> {
                 return Err(format!("prefix {postings} rejected: {v}"));
             }
         }
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "reporting accepts lossy integer-to-float conversion"
-        )]
         let facts_per_sec = if wall_ns == 0 {
             0.0
         } else {
             facts as f64 * 1e9 / wall_ns as f64
         };
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "reporting accepts lossy integer-to-float conversion"
-        )]
         let ns_per_fact = if facts == 0 {
             0.0
         } else {

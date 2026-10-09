@@ -2132,10 +2132,6 @@ fn capacity_late_unindexed_group_discards_provisional_citations_and_measure() {
 // oversized exact keys, another map spilling inside the callback, and every
 // visitor exit. These are mechanism checks, not a second relation oracle.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "One fixture preserves the exact key oracle across nested spill, visitor failure, cancellation, and cleanup"
-)]
 fn affected_determinants_decode_reordered_oversized_keys_and_release_scratch() {
     use super::grouped::{GroupedMap, ScalarKeyScratch};
     use std::convert::Infallible;

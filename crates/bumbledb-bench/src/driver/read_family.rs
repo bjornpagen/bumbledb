@@ -135,10 +135,6 @@ impl BenchRun<'_> {
             })
         })?;
 
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "reporting accepts lossy integer-to-float conversion"
-        )]
         let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
         Ok(report::ReadFamilyReport {
             name: spec.name.to_owned(),

@@ -531,10 +531,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "reporting accepts lossy integer-to-float conversion"
-    )]
     fn tiny_end_to_end_measures_both_engines() {
         let dir = scratch("storage-lane-e2e");
         let out = dir.join("out");

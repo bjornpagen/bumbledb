@@ -31,7 +31,6 @@ pub fn normalized_p50(samples_ns: &[u64], ghz: &[f64]) -> u64 {
         .zip(ghz)
         .map(|(&ns, &g)| {
             #[expect(
-                clippy::cast_precision_loss,
                 clippy::cast_possible_truncation,
                 clippy::cast_sign_loss,
                 reason = "normalized timing arithmetic accepts the bounded float conversion"

@@ -1,5 +1,5 @@
 ts-log/package.json
-ts/crate/Cargo.toml
+crates/bumbledb-node/Cargo.toml
 ts/npm/darwin-arm64/package.json
 ts/npm/linux-arm64/package.json
 ts/npm/linux-x64/package.json

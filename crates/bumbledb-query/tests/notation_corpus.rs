@@ -585,7 +585,6 @@ macro_rules! corpus_case {
 /// against a real store, round-trips through the renderer, and ties its
 /// pinned strings to the compiled tokens — so the corpus can never say
 /// something this crate did not compile.
-#[allow(clippy::too_many_lines)]
 fn cases() -> Vec<Case> {
     let mut cases: Vec<Case> = Vec::new();
 

@@ -713,10 +713,6 @@ mod target_side {
     const TRANSFER_ACCOUNT: u16 = 11;
     const REST_COVER: u16 = 12;
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
     fn schema() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![

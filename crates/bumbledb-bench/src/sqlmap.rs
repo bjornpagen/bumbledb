@@ -455,10 +455,6 @@ mod tests {
             .expect("the mini schema validates")
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
     fn mini_descriptor() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![

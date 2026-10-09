@@ -858,10 +858,6 @@ fn bind_coordinates(
     ));
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-)]
 fn bind_sides(
     schema: &Schema,
     intern: &mut Interning<'_>,
@@ -906,10 +902,6 @@ fn bind_sides(
     )
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-)]
 fn attach_side(
     intern: &mut Interning<'_>,
     access: &mut StatementAccess,

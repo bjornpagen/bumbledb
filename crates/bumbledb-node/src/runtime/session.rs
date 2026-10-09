@@ -487,10 +487,6 @@ impl Runtime {
         self.changed.notify_all();
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Explicit capability scope and one-shot job admission stay together"
-    )]
     pub(super) fn submit_snapshot(
         &self,
         cap: Capability,

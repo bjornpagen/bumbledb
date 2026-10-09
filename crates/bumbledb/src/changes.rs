@@ -116,10 +116,6 @@ impl ChangeSet {
         self.0.schema
     }
     #[must_use]
-    #[expect(
-        clippy::missing_panics_doc,
-        reason = "private checked construction proves header width"
-    )]
     pub fn len(&self) -> u64 {
         u64::from_be_bytes(
             self.0.bytes[HEADER - 8..HEADER]

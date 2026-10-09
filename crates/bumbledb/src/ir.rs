@@ -499,7 +499,7 @@ pub struct Interior {
 impl Interior {
     #[must_use]
     pub fn head(&self) -> Vec<HeadTerm> {
-        self.rules.first().map(Rule::head).unwrap_or_default()
+        self.rules.first().map_or_default(Rule::head)
     }
 
     /// The projection-only convenience: lift stage rules written in the

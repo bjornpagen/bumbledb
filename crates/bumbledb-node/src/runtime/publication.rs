@@ -15,7 +15,6 @@ use crate::runtime_wire::{RuntimeHandle, owner, thrown};
 /// the local owner is dropped and the job fails `Cancelled`. A page already
 /// registered is kept. Predelivery `Err` still publishes nothing.
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn runtime_arm_publication_cancel(
     env: Env,
     handle: &External<RuntimeHandle>,

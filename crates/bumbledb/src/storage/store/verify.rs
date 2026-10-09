@@ -135,10 +135,6 @@ pub enum VerifyFinding {
 /// Sweep one coherent snapshot. Returns every observed desync in pass
 /// order; an empty vector is coherence. Resource exhaustion and storage
 /// failure are errors, never a shorter report.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the sweep's passes stay one auditable walk over the trees"
-)]
 pub(crate) fn sweep(
     snapshot: &OwnedSnapshot,
     schema: &Schema,

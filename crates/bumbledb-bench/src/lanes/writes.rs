@@ -139,10 +139,6 @@ const DELETE_SEED: u64 = 0x0117_0100;
 
 const POSTING_DELETE: &str = "DELETE FROM \"Posting\" WHERE \"id\" = ?1";
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
 fn commits_per_sec(stats: &Stats) -> f64 {
     1e9 / (stats.mean_ns.max(1) as f64)
 }

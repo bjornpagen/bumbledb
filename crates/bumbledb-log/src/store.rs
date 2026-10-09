@@ -481,7 +481,7 @@ where
                 if object_digest(ObjectKind::Decision, body.as_slice()) != *digest.as_bytes() {
                     return Err(ObjectError::WrongDigest { key });
                 }
-                return Ok((epoch, body.as_slice().to_vec()));
+                return Ok((epoch, body.clone()));
             }
             Err(error) if error.observation() == TransportObservation::Missing => {
                 if epoch == epoch_floor {

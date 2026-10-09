@@ -252,10 +252,6 @@ fn resolved(value: Resolution, directory: PathBuf) -> TransitionOwned {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one transition dispatch and native ownership boundary"
-)]
 fn run(
     resource: &Arc<HistoryResource>,
     call: Call,
@@ -379,7 +375,6 @@ fn run(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_transition_call(
     env: Env,
     handle: &External<LogHistoryHandle>,
@@ -413,7 +408,6 @@ pub fn log_transition_call(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_population_apply(
     env: Env,
     handle: &External<PopulationHandle>,
@@ -455,7 +449,6 @@ pub fn log_population_apply(
 }
 
 #[napi]
-#[allow(clippy::needless_pass_by_value)]
 pub fn log_population_finish(
     env: Env,
     handle: &External<PopulationHandle>,

@@ -182,7 +182,6 @@ where
     /// # Errors
     /// Refuses a foreign existing head (`CommandIdentityConflict`), a
     /// foreign-schema local database, backend failures and frame/work limits.
-    #[allow(clippy::too_many_arguments)]
     pub fn create(
         db: Arc<Db<S>>,
         backend: B,
@@ -400,10 +399,6 @@ where
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Keep the ordered execution and cleanup transitions together"
-    )]
     fn try_submit(
         &self,
         command: &Command,
@@ -553,11 +548,6 @@ where
         Err(SubmitFailure::Unknown(LogError::Backend))
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        clippy::too_many_lines,
-        reason = "Durable coordinates and work limits remain explicit at this protocol boundary"
-    )]
     fn attempt_publish(
         &self,
         command: &Command,
@@ -1237,10 +1227,6 @@ where
 /// - A malformed body is corruption-class evidence; an unreadable or absent
 ///   head stays unknown-typed (`Backend`) — the create may still land, and
 ///   uncertainty is never rewritten into a refusal.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Durable coordinates and work limits remain explicit at this protocol boundary"
-)]
 fn resolve_create_evidence<B>(
     backend: &B,
     head_key: &str,

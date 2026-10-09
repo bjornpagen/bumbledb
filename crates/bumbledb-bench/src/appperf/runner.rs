@@ -539,10 +539,6 @@ fn push_row(out: &mut String, row: &RegimeRow) {
 /// timing. Hosted/maintenance stay `not-run-here` with their owner.
 ///
 /// # Errors
-#[expect(
-    clippy::too_many_lines,
-    reason = "Keep the ordered execution and cleanup transitions together"
-)]
 pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
     if args.plan {
         print!("{}", super::plan::render());

@@ -386,10 +386,6 @@ fn plausible_query(rng: &mut Rng) -> Query {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 fn mutate(rng: &mut Rng, query: &mut Query) {
     match rng.below(16) {
         0 => {

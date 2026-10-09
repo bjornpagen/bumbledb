@@ -1,8 +1,4 @@
 //! Exact-version Node ownership boundary for the shared native executor.
-#![allow(
-    clippy::needless_pass_by_value,
-    reason = "N-API owns value argument conversion"
-)]
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

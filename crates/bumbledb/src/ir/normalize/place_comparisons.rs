@@ -60,10 +60,6 @@ fn same_atom(
         })
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 pub(super) fn place_comparisons(
     comparisons: &[ClassifiedComparison],
     occurrences: &mut [Occurrence],

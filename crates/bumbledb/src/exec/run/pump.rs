@@ -5,14 +5,6 @@ use super::{
 };
 
 impl Executor {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the split borrows and execution context are clearer unpacked"
-    )]
     pub(super) fn pump<S: Sink, C: Counters>(
         &mut self,
         tables: &PipeTables,

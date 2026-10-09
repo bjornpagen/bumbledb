@@ -124,10 +124,6 @@ fn is_membership(field_type: &ValueType, term_type: &ValueType) -> bool {
     field_type.is_interval() && !term_type.is_interval()
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 fn lower_atom(
     schema: &Schema,
     signatures: &[&crate::ir::validate::Signature],

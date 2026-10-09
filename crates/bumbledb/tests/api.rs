@@ -456,7 +456,6 @@ fn export_scan_inserts_into_a_fresh_database() {
 }
 
 #[test]
-#[expect(clippy::too_many_lines, reason = "one public-API citation walk")]
 fn statement_violations_surface_from_commit_through_the_public_api() {
     let dir = common::TempDir::new("api-violations");
     let db = Db::create(dir.path(), Ledger, common::work())

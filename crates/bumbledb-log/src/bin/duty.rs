@@ -294,10 +294,6 @@ fn backend_of(args: &Args, root_name: &str, standard: bool) -> Result<AnyStore, 
     Ok(AnyStore::S3(Box::new(store)))
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one flat argv dispatch over the closed duty verb roster"
-)]
 fn run() -> Result<(), String> {
     let args = parse_args(std::env::args())?;
     let work = work();

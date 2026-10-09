@@ -198,10 +198,6 @@ impl<S> Db<S> {
         }
     }
 
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "Database operations accept owned call-scoped work and key values consistently"
-    )]
     fn write_witnessed<R>(
         &self,
         work: WorkContext,

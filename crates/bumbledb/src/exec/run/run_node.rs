@@ -6,14 +6,6 @@ use super::{
 };
 
 impl Executor {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the current node's disjoint scratch borrow stays explicit"
-    )]
     pub(super) fn run_node<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,

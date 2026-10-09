@@ -219,10 +219,6 @@ impl<S> PreparedQuery<S> {
         Ok(ran)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one rule's regime dispatch reads as a single protocol"
-    )]
     pub(super) fn run_rule<Cnt: Counters>(
         &mut self,
         rule_idx: usize,

@@ -125,10 +125,6 @@ fn d04_compiled_indexes_earn_locality() {
 /// D04 — floor from source removal and selected target replacement match
 /// the independent final-state model.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "One regression keeps setup, fault injection, and post-state assertions together"
-)]
 fn d04_capacity_floor_and_target_replacement_match_complete() {
     let schema = SchemaDescriptor {
         relations: vec![
@@ -380,10 +376,6 @@ fn agree_reject(
 /// Intern order is `index_key` at `visit_compiled_group` only. Removing
 /// that target must reject under complete and incremental judgment.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "One regression keeps setup, fault injection, and post-state assertions together"
-)]
 fn d04_permuted_closed_source_target_deletion_agrees() {
     let schema = SchemaDescriptor {
         relations: vec![
@@ -519,10 +511,6 @@ fn d04_permuted_closed_source_target_deletion_agrees() {
 /// forced-scratch citation keep the same evidence bytes. Selection is by
 /// logical fact bytes before the budget, not by row id.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "One regression keeps setup, fault injection, and post-state assertions together"
-)]
 fn d05_rejection_evidence_is_portable() {
     struct StoreChannel(MapState);
     impl CandidateFacts for StoreChannel {

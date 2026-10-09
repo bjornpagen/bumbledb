@@ -436,11 +436,6 @@ fn encode_exact_field(ty: &ValueType, words: &[u64], out: &mut [u8]) -> Option<u
 /// The bounded reference walk (heap sources, and the indexed path's exact
 /// oracle): decode every source row in lookup-only text mode and compare
 /// the determinant spans exactly. A scan, and named one.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one probe's borrowed working set, threaded rather than \
-              re-bundled into a transient struct"
-)]
 fn probe_uniqueness_scan(
     plan: &KeyProbePlan,
     source: &QuerySource<'_>,

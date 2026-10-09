@@ -30,10 +30,6 @@ impl Colt {
         Ok(())
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-    )]
     fn rehash_into(
         &mut self,
         m: &Map,

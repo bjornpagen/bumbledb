@@ -441,10 +441,6 @@ fn mul_div(a: Value, b: Value, divisor: Value, rounding: Rounding) -> Result<Val
 mod tests {
     use super::*;
 
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "test expression builder consumes temporary trees"
-    )]
     fn run(expr: ScalarExpr) -> Result<Value, ScalarError> {
         ScalarEvaluator::new()
             .unwrap()

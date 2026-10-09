@@ -320,10 +320,6 @@ fn stratified_negation_matches_the_hand_answers_on_every_oracle() {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one differential scenario, schema to verdict — clearer kept together"
-)]
 fn interval_typed_interior_columns_agree_engine_vs_naive() {
     const CLAIM: bumbledb::RelationId = bumbledb::RelationId(0);
     const PROBE: bumbledb::RelationId = bumbledb::RelationId(1);

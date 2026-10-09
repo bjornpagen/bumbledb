@@ -194,10 +194,6 @@ impl Colt {
                 let slot = (matches.trailing_zeros() as usize) >> 3;
                 let base = m.bucket_start + b * (8 * A + 8);
                 let mut eq = true;
-                #[expect(
-                    clippy::needless_range_loop,
-                    reason = "the explicit constant range is the intended unroll shape"
-                )]
                 for i in 0..A {
                     eq &= self.buckets[base + i * 8 + slot] == key[i];
                 }
