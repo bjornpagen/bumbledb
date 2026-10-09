@@ -1,6 +1,6 @@
 # bumbledb cutover plan (living document)
 
-Status: **v5, 2026-10-09.** All investigation is complete and every decision is resolved (D0–D18). Node 26 is installed locally. **Waiting on the Rust toolchain install and the owner's go.**
+Status: **v6, 2026-10-09.** Setup is committed. **One-wave swarm in progress (§4.3).**
 
 **Governing law:** [docs/design/representation-first.md](design/representation-first.md). Every item below is justified as a representation change, not a new branch. Items are tagged with the rule they apply: R1–R7, the bumbledb rules at the end of that document.
 
@@ -505,18 +505,39 @@ CI moves off the AL2023 `dnf nodejs24` package to setup-node v7 with Node 26 (gl
 - **Crate rule.** At most one agent edits a given crate's `src/` per wave, except W2 (comment-only edits can't break builds) and pre-split file lists.
 - **Old log demolished first.** The old bumbledb-log stack is deleted in W1 rather than kept compiling through engine churn. The new S3 log is built fresh in W4/W5 on the new engine API. Until then `examples/notes` and the hosted TS tests are **excluded from the wave gate**.
 
-### 4.3 Waves
+### 4.3 One wave (owner decision): 9 parallel lanes, then one consolidator
 
-| Wave | Agents (parallel unless noted) | Plan items | Gate |
-|---|---|---|---|
-| **W0 Foundation** | 1 agent, serial, owns everything | B (security `cargo update`, blake3/uuid/napi floors); move `ts/crate` → `crates/bumbledb-node` as a workspace member (one lockfile); D19 pnpm 12.10.1 + Node 26 engines + Effect 4.0.2 pins; workspace lint relaxation (`too_many_lines`, `needless_pass_by_value`, `too_many_arguments`, `cast_precision_loss`, `missing_errors_doc`, `missing_panics_doc` allowed) + delete unfulfilled `#[expect]` and empty `# Errors`/`# Panics`; A correctness fixes (`query!` string literal, sweep running-max, `gather_words` OOB assert, plan-validator `.expect` → `Err`, SAFETY comment repair) | full battery |
-| **W1 Demolish** | **log-demolition:** old `crates/bumbledb-log`, `ts-log/`, the bridge's `log*.rs`/log arms, `ts/src/internal/log.ts`, bench `closure/history_model`, notes' hosted code, root `Cargo.toml` members · **engine-delete:** C1, C3, C4, C5, C6 + engine legacy-code cull (L), plus listed bench/bridge compile fix-ups · **bench-residue:** G8 cuts (hashprobe+aegis, largefix, corpus-float, storemode, duralane, devhonesty, clockproxy, merge, 200 seeded fixtures → in-test seeds) · **ci:** G1 skeleton + reruns removed + orphan scripts and evidence apparatus deleted (L) · **ts:** F1, F3 dev loop, F5 `native/op.ts` + interrupt probe, delete `errorFromThrow` | wave gate (notes excluded) |
-| **W2 Comments** | ~8 agents, one per area: engine {api, exec, schema, storage, image+plan+ir, rest}, theory+macros, bench, bridge, TS | Strict comment policy (CLAUDE.md) + comment-level legacy cull (L) over every surviving file | build + `cargo doc -D warnings` + doctests; grep gate for process IDs and history words |
-| **W3 Bump** | 1 agent, serial | nightly-2026-10-09; every crate to latest (rusqlite 0.40 + 5 edits, napi 3.14/derive 3.6, uuid 1.27, …); `try_blocks` comment fixed; Actions majors | full gate on the new nightly |
-| **W4 Restructure** | **engine chain**, sequential within one agent: C7 → C8 → C9 → C10 → C11 → C12 → C13 → C16 → C17 · **macros:** C14 · **test-infra:** G2 (one allocator, after C8), G6 compile-fail runner, G7 cookbook doctests, G9 timing pins → `#[bench]`, G10 Miri via nextest · **log-core:** D5 sans-IO crate fresh, starting after C7 lands | per-agent sandbox, then wave gate |
-| **W5 Hosted + bridge** | **bridge:** F7 generated outputs, F8 serde inputs, D17 single validator · **log-protocol:** D6 TS protocol and stores, D7 migrations + CLI, U11 interface tests, S3 lanes G4 · **ts:** F4 merge, F6 resources/errors/spans, F9 Database DX, D8 notes · **macros:** C15 (after C8) | wave gate + notes back in + in-process S3 + SeaweedFS |
-| **W6 SIMD & floats** | **kernels:** E1, E4a, E4b · **numeric:** E3, E7 · **aggregate:** E6 · **semantics:** E5, then E8 · **bench:** E2 micro + `float_stats` | every-level twins, Miri, micro report |
-| **W7 Finish** | 1–2 agents | L grep gates repo-wide; README/cookbook/docs rewritten for 2.0; `docs/release-2.0.md`; versions → 2.0.0; delete `scripts/swarm/` | full battery + S3 lanes |
+Setup is done and committed (`6d5641585`):
+- nightly-2026-10-09;
+- `crates/bumbledb-node` as a workspace member with one lockfile;
+- security lock refresh (rustls 0.23.45, napi 3.14.2, blake3 1.8.7, uuid 1.27);
+- fearless_simd 1.1 dependency;
+- noise lints relaxed, with 288 redundant expects removed;
+- brittle tests deleted.
+
+Baseline at setup: **2572 passed**, clippy (both configs) clean.
+
+All lanes run at once on `main`. Every agent owns disjoint paths, builds and tests in its sandbox, and commits its own items. Each lane writes `docs/swarm/<lane>.md` to announce API changes and requests; lanes read each other's boards.
+
+| Lane | Owns | Items |
+|---|---|---|
+| **engine-storage** | `crates/bumbledb/{Cargo.toml, src/lib.rs, error*, storage*, schema*, changes*, canonical*, encoding*, work*, digest.rs, verify_store*, alloc_counter.rs, value.rs, interval*, allen.rs, api.rs, api/db*}`, `crates/bumbledb/tests/*` except the files listed for other lanes, `crates/bumbledb-theory/**` | A (sweep), C1, C5, C6, C7 (`bumbledb::host`, early), C8, C9, C10, C15, C16, C17, G2 (engine), L (code) |
+| **engine-query** | `crates/bumbledb/src/{ir*, plan*, exec.rs, exec/** except kernel and sink/aggregate, image*, api/prepared.rs, api/prepared/** except computed}`, `tests/{adversarial_ir, point_reads, reach_finalize_hunt}.rs` | A (plan validator), C3, C4, C11, C12, C13, E5 (lowering/fold/residual), E8, L (code) |
+| **numeric** | `crates/bumbledb/src/{scalar.rs, exec/kernel.rs, exec/kernel/**, exec/sink/aggregate.rs, exec/sink/aggregate/**, api/prepared/computed.rs, api/prepared/computed/**}`, `tests/float_numerics.rs` | A (`gather_words`), E1, E3, E4a, E4b, E5 (MIN/MAX), E6, E7, C4 (aggregate spill) |
+| **macros** | `crates/bumbledb-macros/**`, `crates/bumbledb-query-macros/**`, `crates/bumbledb-query/**`, `crates/bumbledb/tests/{schema_macro.rs, schema-compile-fail/**, compile_fail/**, query/**}`; root `Cargo.toml` `members` | A (`query!` string literal), C14, G6, G7 (doctests), L (macros) |
+| **log-core** | `crates/bumbledb-log/**` | D: delete the old machine; build the new sans-IO core (U11) with nonce, `Idle\|InFlight`, ChangeSet entries, Freeze/Migration/Thaw, deterministic simulation tests |
+| **bridge** | `crates/bumbledb-node/**`, `ts/src/native/binding.d.ts` | Delete the old log wire; F7 generated outputs; F8 serde inputs; D17 sync validate/compile; hosted verbs over log-core |
+| **ts** | `ts/**` except `binding.d.ts`, `ts-log/**`, `examples/**` | D10/D19 pins; F1, F3, F4 (ts-log gone), F5, F6, F9, D17 (TS side), D6 protocol and stores, D7 migrations + CLI, D8 notes |
+| **bench** | `crates/bumbledb-bench/**` | G8 cuts and restructure, rusqlite 0.40, E2 (micro + `float_stats`), adapt to engine API |
+| **ci** | `.github/**`, `scripts/**` except `scripts/swarm/**`, `.config/**`, `.dockerignore`; root `Cargo.toml` `[profile.*]` | G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config) |
+
+**Consolidator (one agent, after every lane):**
+- Integration: a full green gate (fmt, 2 clippy configs, rustdoc, `nextest --workspace`, TS build and tests, notes).
+- The strict **comment purge** across the whole repo.
+- The **legacy cull** grep gate (L).
+- Docs and README rewritten for 2.0; `docs/release-2.0.md`; versions bumped to 2.0.0.
+- Commit `Cargo.lock`.
+- Delete `scripts/swarm/` and `docs/swarm/`.
 
 ## 5. Investigator status
 
