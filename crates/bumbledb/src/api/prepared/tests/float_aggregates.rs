@@ -168,3 +168,58 @@ fn mean_requires_explicit_float_input() {
         Err(Error::Validation(_))
     ));
 }
+
+#[test]
+fn f64_min_and_max_propagate_nan_through_queries() {
+    let rows = [
+        (0, 1, F64::from(3.0)),
+        (0, 2, F64::NAN),
+        (0, 3, F64::from(-1.0)),
+        (1, 4, F64::from(2.0)),
+        (1, 5, F64::NEG_INFINITY),
+        (1, 6, F64::from(5.0)),
+        (2, 7, F64::NAN),
+    ];
+    let fix = readings(&rows);
+    let extrema = |grouped: bool| {
+        let mut rule = reduction_rule(true);
+        rule.finds = [FoldOp::Min, FoldOp::Max]
+            .map(|op| FindTerm::Aggregate { op, over: VarId(2) })
+            .into();
+        if grouped {
+            rule.finds.insert(0, FindTerm::Var(VarId(0)));
+        }
+        rule
+    };
+    let mut grouped = fix.prepare(&Query::single(extrema(true))).unwrap();
+    let answers = fix.execute(&mut grouped, &[] as &[BindValue]).unwrap();
+    let mut got: Vec<_> = (0..answers.len())
+        .map(|row| {
+            (
+                answers.get(row, 0),
+                answers.get(row, 1),
+                answers.get(row, 2),
+            )
+        })
+        .collect();
+    got.sort_by_key(|(group, _, _)| match group {
+        AnswerValue::U64(group) => *group,
+        _ => panic!("group key"),
+    });
+    let f = |value: F64| AnswerValue::F64(value);
+    assert_eq!(
+        got,
+        vec![
+            (AnswerValue::U64(0), f(F64::NAN), f(F64::NAN)),
+            (AnswerValue::U64(1), f(F64::NEG_INFINITY), f(F64::from(5.0))),
+            (AnswerValue::U64(2), f(F64::NAN), f(F64::NAN)),
+        ]
+    );
+    let mut ungrouped = fix.prepare(&Query::single(extrema(false))).unwrap();
+    let answers = fix.execute(&mut ungrouped, &[] as &[BindValue]).unwrap();
+    assert_eq!(answers.len(), 1);
+    assert_eq!(
+        (answers.get(0, 0), answers.get(0, 1)),
+        (f(F64::NAN), f(F64::NAN))
+    );
+}
