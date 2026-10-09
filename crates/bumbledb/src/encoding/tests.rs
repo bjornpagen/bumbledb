@@ -869,36 +869,6 @@ fn exhaustive_fixed_interval_start_word_preserves_start_order() {
     }
 }
 
-#[test]
-fn decode_values_keyed_never_resolves_a_projected_field() {
-    use bumbledb_theory::Value;
-    use bumbledb_theory::schema::FieldId;
-    let layout = mixed_layout();
-    let mut fact = Vec::new();
-    encode_fact(&mixed_values(), &layout, &mut fact);
-    // Projection (u64 field 2, str field 4): the resolver must never see
-
-    let supplied = [Value::U64(u64::MAX), Value::String(Box::from("supplied"))];
-    let decoded = super::decode::decode_values_keyed(
-        layout.encoded(&fact),
-        &[FieldId(2), FieldId(4)],
-        &supplied,
-        |id| panic!("projected field resolved through the dictionary (id {id})"),
-    )
-    .expect("decode");
-    assert_eq!(decoded[2], supplied[0]);
-    assert_eq!(decoded[4], supplied[1]);
-
-    let plain = super::decode_values(layout.encoded(&fact), |id| {
-        assert_eq!(id, 7);
-        Ok(Box::from("resolved"))
-    })
-    .expect("decode");
-    for idx in [0, 1, 3, 5, 6, 7] {
-        assert_eq!(decoded[idx], plain[idx]);
-    }
-}
-
 /// Uuid physical words: the sixteen exact bytes, byte order = total
 /// order; decode is total and returns the same identity (E-CODEC).
 #[test]

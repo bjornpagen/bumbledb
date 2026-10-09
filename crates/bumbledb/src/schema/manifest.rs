@@ -69,7 +69,7 @@ impl ManifestDescriptor for SchemaDescriptor {
     /// # Panics
     fn manifest(&self) -> Manifest {
         let materialized = self.materialized_statements();
-        let mirrors = super::validate::mirror_links(&materialized);
+        let mirrors = bumbledb_theory::schema::mirror_links(&materialized);
         Manifest {
             statements: materialized
                 .iter()

@@ -128,7 +128,7 @@ pub fn render_rejection(
         .validate()
         .expect("render_rejection is for an admitted theory");
     let materialized = descriptor.materialized_statements();
-    let mirrors = super::validate::mirror_links(&materialized);
+    let mirrors = bumbledb_theory::schema::mirror_links(&materialized);
     violations
         .citations()
         .map(|(violation, cited)| {
@@ -235,8 +235,36 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
 #[must_use]
 pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String {
     let materialized = descriptor.materialized_statements();
-    let mirrors = super::validate::mirror_links(&materialized);
+    let mirrors = bumbledb_theory::schema::mirror_links(&materialized);
     render_materialized(descriptor, &materialized, &mirrors, id)
+}
+
+/// A schema error followed by its statement as declared, when it names one.
+#[must_use]
+pub fn schema_error<'a>(
+    error: &'a crate::error::SchemaError,
+    descriptor: &'a SchemaDescriptor,
+) -> impl std::fmt::Display + 'a {
+    SchemaErrorDisplay { error, descriptor }
+}
+
+struct SchemaErrorDisplay<'a> {
+    error: &'a crate::error::SchemaError,
+    descriptor: &'a SchemaDescriptor,
+}
+
+impl std::fmt::Display for SchemaErrorDisplay<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.error.statement() {
+            Some(statement) => write!(
+                f,
+                "{} — in `{}`",
+                self.error,
+                render_declared(self.descriptor, statement)
+            ),
+            None => write!(f, "{}", self.error),
+        }
+    }
 }
 
 /// Render the exact materialized direction, without joining a mirror pair.

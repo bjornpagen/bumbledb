@@ -13,17 +13,8 @@ use super::{
 use crate::encoding::encode_literal;
 use bumbledb_theory::Value;
 
-/// `v2`: closed relations — every relation gains a closedness tag byte (so
-/// ordinary and closed relations can never alias one byte stream), and a closed
-/// relation's ground axioms hash after its fields. `v3`: the
-/// dependency-vocabulary extension — every selection binding hashes a literal
-/// COUNT before its literals (the disjunctive set form), and the two extension
-/// statement forms took tags 2 (the count-only window) and 3 (order mark).
-/// `v6` (the successor family): the per-field generation byte is deleted with
-/// the fresh machinery, `uuid` (tag 9) and the dense `interval<f64>` element
-/// (tag 2) join the type vocabulary, and old labels never alias the new
-/// stream — the label is hashed first, so no v5 fingerprint can equal a v6 one.
-pub(super) const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v6";
+/// Hashed first, so no other encoding of a schema can alias this one.
+pub(super) const FORMAT_VERSION_LABEL: &[u8] = b"bdb.schema.v1";
 
 /// Deterministic schema identity: blake3 of the canonical bytes. Stored at
 /// database creation; open compares fingerprints and mismatches are hard
@@ -58,7 +49,7 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
                 put_len(out, rows.len());
                 for row in rows {
                     put_bytes(out, row.handle.as_bytes());
-                    put_bytes(out, &row.fact);
+                    put_bytes(out, row.row.as_bytes());
                 }
             }
         }
@@ -261,10 +252,8 @@ mod tests {
         fingerprint(&schema_of(base()))
     }
 
-    /// The v6 canonical BYTES are the pinned golden (they determine the
-    /// blake3 fingerprint); the label is hashed first, so no v5 stream can
-    /// alias a v6 one, and the fingerprint of equal canonical bytes is
-    /// stable across recomputation and the descriptor helper.
+    /// The fingerprint is the blake3 of the canonical bytes, which start
+    /// with the label, and is stable across recomputation.
     #[test]
     fn the_fingerprint_is_a_pure_function_of_the_canonical_bytes() {
         let schema = schema_of(base());
@@ -496,27 +485,25 @@ mod tests {
         canonical_bytes(&schema, &mut bytes);
 
         let mut expected: Vec<u8> = Vec::new();
-        expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v6");
+        expected.extend_from_slice(&13u32.to_le_bytes());
+        expected.extend_from_slice(b"bdb.schema.v1");
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(b"R");
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(b"x");
-        expected.push(2);
-        expected.push(0);
+        expected.push(2); // u64
+        expected.push(1); // ordinary
         expected.extend_from_slice(&1u32.to_le_bytes());
-        expected.push(0);
+        expected.push(1); // functionality
         expected.extend_from_slice(&0u32.to_le_bytes());
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&0u16.to_le_bytes());
         assert_eq!(bytes, expected);
     }
 
-    /// The new scalar/interval tags have exact golden bytes: `uuid` is
-    /// tag 9 and the dense interval element is tag 2 — neither can alias
-    /// the v5 stream, whose label already differs.
+    /// `uuid` is tag 9 and the dense interval element is tag 3.
     #[test]
     fn golden_bytes_pin_the_new_type_tags() {
         let schema = schema_of(SchemaDescriptor {
@@ -539,8 +526,8 @@ mod tests {
         canonical_bytes(&schema, &mut bytes);
 
         let mut expected: Vec<u8> = Vec::new();
-        expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v6");
+        expected.extend_from_slice(&13u32.to_le_bytes());
+        expected.extend_from_slice(b"bdb.schema.v1");
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(b"R");
@@ -551,8 +538,8 @@ mod tests {
         expected.extend_from_slice(&4u32.to_le_bytes());
         expected.extend_from_slice(b"span");
         expected.push(6); // interval
-        expected.push(2); // dense F64 element
-        expected.push(0); // ordinary
+        expected.push(3); // dense F64 element
+        expected.push(1); // ordinary
         expected.extend_from_slice(&0u32.to_le_bytes());
         assert_eq!(bytes, expected);
     }
@@ -591,16 +578,16 @@ mod tests {
         canonical_bytes(&schema, &mut bytes);
 
         let mut expected: Vec<u8> = Vec::new();
-        expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v6");
+        expected.extend_from_slice(&13u32.to_le_bytes());
+        expected.extend_from_slice(b"bdb.schema.v1");
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"Holder");
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(b"id");
-        expected.push(2);
-        expected.push(0);
+        expected.push(2); // u64
+        expected.push(1); // ordinary
         expected.extend_from_slice(&7u32.to_le_bytes());
         expected.extend_from_slice(b"Account");
         expected.extend_from_slice(&2u32.to_le_bytes());
@@ -609,14 +596,14 @@ mod tests {
         expected.push(2);
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"status");
-        expected.push(2);
-        expected.push(0);
+        expected.push(2); // u64
+        expected.push(1); // ordinary
         expected.extend_from_slice(&2u32.to_le_bytes());
-        expected.push(0);
+        expected.push(1); // functionality
         expected.extend_from_slice(&0u32.to_le_bytes());
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&0u16.to_le_bytes());
-        expected.push(1);
+        expected.push(2); // containment
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&0u16.to_le_bytes());
@@ -692,8 +679,8 @@ mod tests {
         canonical_bytes(&schema, &mut bytes);
 
         let mut expected: Vec<u8> = Vec::new();
-        expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v6");
+        expected.extend_from_slice(&13u32.to_le_bytes());
+        expected.extend_from_slice(b"bdb.schema.v1");
         expected.extend_from_slice(&2u32.to_le_bytes());
         let put_relation = |expected: &mut Vec<u8>, name: &str, fields: [&str; 3]| {
             expected.extend_from_slice(&u32::try_from(name.len()).expect("len").to_le_bytes());
@@ -705,18 +692,18 @@ mod tests {
                 );
                 expected.extend_from_slice(field_name.as_bytes());
                 if idx == 2 {
-                    expected.push(6);
-                    expected.push(0);
+                    expected.push(6); // interval
+                    expected.push(1); // u64 element
                 } else {
-                    expected.push(2);
+                    expected.push(2); // u64
                 }
             }
-            expected.push(0);
+            expected.push(1); // ordinary
         };
         put_relation(&mut expected, "Pool", ["id", "supply", "span"]);
         put_relation(&mut expected, "Dev", ["pool", "watts", "busy"]);
         expected.extend_from_slice(&5u32.to_le_bytes());
-        expected.push(0);
+        expected.push(1); // functionality
         expected.extend_from_slice(&0u32.to_le_bytes());
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&0u16.to_le_bytes());
@@ -728,39 +715,39 @@ mod tests {
             expected.extend_from_slice(&0u32.to_le_bytes());
         };
 
-        expected.push(4);
+        expected.push(3); // capacity
         put_bare_side(&mut expected, 0);
-        expected.push(0);
+        expected.push(1); // unit weight
         expected.extend_from_slice(&2u64.to_le_bytes());
-        expected.push(0);
+        expected.push(1); // no hi
         put_bare_side(&mut expected, 1);
 
-        expected.push(4);
+        expected.push(3); // capacity
         put_bare_side(&mut expected, 0);
-        expected.push(0);
+        expected.push(1); // unit weight
         expected.extend_from_slice(&0u64.to_le_bytes());
-        expected.push(1);
-        expected.push(0);
+        expected.push(2); // hi
+        expected.push(1); // literal
         expected.extend_from_slice(&3u64.to_le_bytes());
         put_bare_side(&mut expected, 1);
 
-        expected.push(4);
+        expected.push(3); // capacity
         put_bare_side(&mut expected, 0);
-        expected.push(1);
+        expected.push(2); // field weight
         expected.extend_from_slice(&1u16.to_le_bytes());
         expected.extend_from_slice(&0u64.to_le_bytes());
-        expected.push(1);
-        expected.push(1);
+        expected.push(2); // hi
+        expected.push(2); // target field
         expected.extend_from_slice(&1u16.to_le_bytes());
         put_bare_side(&mut expected, 1);
 
-        expected.push(4);
+        expected.push(3); // capacity
         put_bare_side(&mut expected, 0);
-        expected.push(2);
+        expected.push(3); // duration weight
         expected.extend_from_slice(&2u16.to_le_bytes());
         expected.extend_from_slice(&0u64.to_le_bytes());
-        expected.push(1);
-        expected.push(2);
+        expected.push(2); // hi
+        expected.push(3); // target duration
         expected.extend_from_slice(&2u16.to_le_bytes());
         put_bare_side(&mut expected, 1);
         assert_eq!(bytes, expected);
@@ -828,32 +815,37 @@ mod tests {
         canonical_bytes(&schema, &mut bytes);
 
         let mut expected: Vec<u8> = Vec::new();
-        expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v6");
+        expected.extend_from_slice(&13u32.to_le_bytes());
+        expected.extend_from_slice(b"bdb.schema.v1");
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&8u32.to_le_bytes());
         expected.extend_from_slice(b"Currency");
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(b"id");
-        expected.push(2);
+        expected.push(2); // u64
         expected.extend_from_slice(&11u32.to_le_bytes());
         expected.extend_from_slice(b"minor_units");
-        expected.push(2);
-        expected.push(1);
+        expected.push(2); // u64
+        expected.push(2); // closed
         expected.extend_from_slice(&2u32.to_le_bytes());
+        // Each row is a canonical row: arity, then a tag and payload per field.
+        let canonical = |expected: &mut Vec<u8>, id: u64, minor_units: u64| {
+            expected.extend_from_slice(&20u32.to_le_bytes());
+            expected.extend_from_slice(&2u16.to_be_bytes());
+            expected.push(1);
+            expected.extend_from_slice(&id.to_be_bytes());
+            expected.push(1);
+            expected.extend_from_slice(&minor_units.to_be_bytes());
+        };
         expected.extend_from_slice(&3u32.to_le_bytes());
         expected.extend_from_slice(b"Usd");
-        expected.extend_from_slice(&16u32.to_le_bytes());
-        expected.extend_from_slice(&0u64.to_be_bytes());
-        expected.extend_from_slice(&2u64.to_be_bytes());
+        canonical(&mut expected, 0, 2);
         expected.extend_from_slice(&3u32.to_le_bytes());
         expected.extend_from_slice(b"Eur");
-        expected.extend_from_slice(&16u32.to_le_bytes());
-        expected.extend_from_slice(&1u64.to_be_bytes());
-        expected.extend_from_slice(&2u64.to_be_bytes());
+        canonical(&mut expected, 1, 2);
         expected.extend_from_slice(&1u32.to_le_bytes());
-        expected.push(0);
+        expected.push(1); // functionality
         expected.extend_from_slice(&0u32.to_le_bytes());
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&0u16.to_le_bytes());

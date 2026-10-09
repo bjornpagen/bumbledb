@@ -179,7 +179,7 @@ impl<S> Db<S> {
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
     ) -> Result<WriteOutcome<R>> {
         let parent = self.store.snapshot(&work).map_err(Error::from_store)?;
-        let mut tx = WriteTx::new(&self.schema, self.closed.as_ref(), &parent, &work);
+        let mut tx = WriteTx::new(&self.schema, &parent, &work);
         let value = f(&mut tx)?;
         if let Some(source) = tx.poisoned() {
             return Err(Error::TransactionPoisoned {

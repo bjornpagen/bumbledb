@@ -17,7 +17,6 @@ use crate::work::WorkContext;
 use bumbledb_theory::schema::{RelationId, StatementId};
 
 mod builder;
-mod closed;
 mod collection;
 mod get;
 pub mod host;
@@ -99,7 +98,6 @@ pub trait Key<'a>: Sized {
 pub struct Db<S> {
     pub(crate) store: crate::storage::store::Store,
     schema: Arc<Schema>,
-    closed: Arc<closed::ClosedRows>,
     /// The relation-image and text cache shared by every prepared program.
     cache: Arc<ImageCache>,
     marker: PhantomData<fn() -> S>,

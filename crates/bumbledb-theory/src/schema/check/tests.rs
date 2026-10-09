@@ -1,4 +1,4 @@
-use crate::schema::{AxiomIndex, MemberSet};
+use super::MemberSet;
 
 fn naive_member(members: &[u64; 4], id: u64) -> bool {
     let mut found = false;
@@ -14,18 +14,18 @@ fn naive_member(members: &[u64; 4], id: u64) -> bool {
 }
 
 fn member_set(words: &[u64; 4]) -> MemberSet {
-    let mut members = MemberSet::empty();
+    let mut members = MemberSet::default();
     for index in 0..256u16 {
         let word = usize::from(index / 64);
         if words[word] & (1 << (index % 64)) != 0 {
-            members.insert(AxiomIndex(u8::try_from(index).expect("index < 256")));
+            members.insert(u8::try_from(index).expect("index < 256"));
         }
     }
     members
 }
 
 fn contains(members: &MemberSet, id: u64) -> bool {
-    AxiomIndex::try_from(id).is_ok_and(|index| members.contains(index))
+    u8::try_from(id).is_ok_and(|index| members.contains(index))
 }
 
 fn splitmix(state: &mut u64) -> u64 {

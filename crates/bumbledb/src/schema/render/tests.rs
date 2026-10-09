@@ -284,7 +284,7 @@ fn schema_error_diagnostics_render_the_offending_statement() {
         .clone()
         .validate()
         .expect_err("no matching target key");
-    let rendered = format!("{}", err.display_with(&declaration));
+    let rendered = format!("{}", super::schema_error(&err, &declaration));
     assert!(
         rendered.contains("Shift(worker | span == 0..86400) <= Roster(worker)"),
         "{rendered}"
@@ -313,7 +313,7 @@ fn declaration_scoped_errors_render_without_a_statement_citation() {
         .clone()
         .validate()
         .expect_err("duplicate relation name");
-    let rendered = format!("{}", err.display_with(&declaration));
+    let rendered = format!("{}", super::schema_error(&err, &declaration));
     assert!(!rendered.contains(" — in `"), "{rendered}");
 }
 

@@ -381,24 +381,6 @@ pub fn decode_field(
     }
 }
 
-pub(crate) fn decode_values(
-    fact: FactView<'_, '_>,
-    resolve_str: impl FnMut(u64) -> crate::error::Result<Box<str>>,
-) -> crate::error::Result<Vec<bumbledb_theory::Value>> {
-    decode_values_keyed(fact, &[], &[], resolve_str)
-}
-
-pub(crate) fn decode_values_keyed(
-    fact: FactView<'_, '_>,
-    projection: &[bumbledb_theory::schema::FieldId],
-    key_values: &[bumbledb_theory::Value],
-    resolve_str: impl FnMut(u64) -> crate::error::Result<Box<str>>,
-) -> crate::error::Result<Vec<bumbledb_theory::Value>> {
-    let mut out = Vec::new();
-    decode_values_keyed_into(fact, projection, key_values, resolve_str, &mut out)?;
-    Ok(out)
-}
-
 pub(crate) fn decode_values_keyed_into(
     fact: FactView<'_, '_>,
     projection: &[bumbledb_theory::schema::FieldId],

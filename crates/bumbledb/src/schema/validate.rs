@@ -1,1597 +1,253 @@
-//! Declaration validation: the boundary that turns a [`SchemaDescriptor`]
-//! into the sealed [`Schema`] witness.
-//! Field checks precede statement checks. Every accepted statement leaves
-//! as a typed arena witness, with its target key and value domains resolved.
+//! Sealing: [`bumbledb_theory::schema::check`] decides a declaration, and
+//! its checked form becomes the [`Schema`] witness with typed statement
+//! arenas and per-relation statement indexes.
 
-use std::collections::BTreeMap;
+use bumbledb_theory::schema::{
+    CapacityResolution, Checked, CheckedRelation, CheckedStatement, Resolution, check,
+};
 
 use super::{
-    AxiomIndex, Bound, CapacityEnforcement, CapacityId, CapacityStatement, ContainmentId,
-    ContainmentStatement, DisjointDeterminantProof, EncodableCheck, Enforcement, FactLayout,
-    FieldDescriptor, FieldId, KeyForm, KeyId, KeyStatement, LiteralSet, MemberSet, Pairing,
-    Relation, RelationBody, RelationDescriptor, RelationId, Schema, SchemaDescriptor, SealedBound,
-    SealedWeight, Side, StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType,
-    Weight, value_matches,
+    CapacityEnforcement, CapacityId, CapacityStatement, ContainmentId, ContainmentStatement,
+    Enforcement, KeyForm, KeyId, KeyStatement, Pairing, Relation, RelationBody, Schema,
+    SchemaDescriptor, SealedRow, StatementId, StatementRef,
 };
-use crate::encoding::{field_bytes, field_word_bytes};
-use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
-use crate::schema::compiled::{LMDB_KEY_LIMIT, select_key_encoding_width};
-use bumbledb_theory::Value;
+use crate::canonical::CanonicalRow;
+use crate::encoding::FactLayout;
+use crate::error::SchemaError;
 
-/// Physical LMDB key bound for one key statement's scalar determinant (chapter
-/// 40). Schema validation rejects only when the complete physical key cannot
-/// fit the backend — not the obsolete 496-byte scalar embedding limit.
-/// Conservative maximum framing: validation precedes schema-fixed encoding.
-pub(crate) const DETERMINANT_KEY_OVERHEAD: usize = 1 + 2 + 8;
-
-/// The admission boundary as an extension trait: [`SchemaDescriptor`] is
-/// theory data (hosted in `bumbledb-theory`), so the engine-side sealing
-/// pass hangs off it here rather than as an inherent method.
+/// The admission boundary: a [`SchemaDescriptor`] (theory data) seals into
+/// a [`Schema`].
 pub trait ValidateDescriptor: Sized {
     /// # Errors
+    /// The first [`SchemaError`] of [`check`].
     fn validate(self) -> Result<Schema, SchemaError>;
 }
 
 impl ValidateDescriptor for SchemaDescriptor {
-    /// # Panics
-    /// If a relation index exceeds u32. Statement count is checked before
-    /// any u16 statement id is minted.
     fn validate(self) -> Result<Schema, SchemaError> {
-        for (rel_idx, decl) in self.relations.iter().enumerate() {
-            let columns = derived_columns(decl);
-            if columns > usize::from(u16::MAX) {
-                return Err(SchemaError::RelationTooManyColumns {
-                    relation: RelationId(u32::try_from(rel_idx).expect("relation count fits u32")),
-                    columns,
-                });
+        Ok(seal(check(&self)?))
+    }
+}
+
+fn arena_index(index: usize) -> u16 {
+    u16::try_from(index).expect("statement count is checked")
+}
+
+fn seal(checked: Checked) -> Schema {
+    let Checked {
+        relations,
+        statements,
+    } = checked;
+    let mut indexes = vec![RelationIndexes::default(); relations.len()];
+
+    // Arena ids follow materialized order within each statement kind.
+    let mut order = Vec::with_capacity(statements.len());
+    let (mut keys, mut containments, mut capacities) = (0, 0, 0);
+    for statement in &statements {
+        order.push(match statement {
+            CheckedStatement::Key { .. } => {
+                keys += 1;
+                StatementRef::Key(KeyId(arena_index(keys - 1)))
             }
-        }
-
-        let descriptors = self.materialized_statements();
-
-        // The materialized roster must fit every typed statement arena.
-        if descriptors.len() > 1 << 16 {
-            return Err(SchemaError::TooManyStatements {
-                count: descriptors.len(),
-            });
-        }
-
-        let mut relations = Vec::with_capacity(self.relations.len());
-        for (rel_idx, decl) in self.relations.into_iter().enumerate() {
-            let rel_id = RelationId(u32::try_from(rel_idx).expect("relation count fits u32"));
-            relations.push(validate_relation(rel_id, decl)?);
-        }
-
-        for (idx, relation) in relations.iter().enumerate() {
-            if relations[..idx].iter().any(|r| r.name == relation.name) {
-                return Err(SchemaError::DuplicateRelationName {
-                    name: relation.name.clone(),
-                });
+            CheckedStatement::Containment { .. } => {
+                containments += 1;
+                StatementRef::Containment(ContainmentId(arena_index(containments - 1)))
             }
+            CheckedStatement::Capacity { .. } => {
+                capacities += 1;
+                StatementRef::Capacity(CapacityId(arena_index(capacities - 1)))
+            }
+        });
+    }
+    let key_of = |statement: StatementId| match order[usize::from(statement.0)] {
+        StatementRef::Key(key) => key,
+        StatementRef::Containment(_) | StatementRef::Capacity(_) => {
+            unreachable!("a resolution names a key statement")
         }
+    };
 
-        // Key resolution sees the full descriptor list, including later keys.
-        let normalized: Vec<StatementIdentity> =
-            descriptors.iter().map(StatementIdentity::of).collect();
-        let key_count = descriptors
-            .iter()
-            .filter(|descriptor| matches!(descriptor, StatementDescriptor::Functionality { .. }))
-            .count();
-        let mut keys = Vec::with_capacity(key_count);
-        let mut containments = Vec::new();
-        let mut capacities = Vec::new();
-        let mut order = Vec::with_capacity(descriptors.len());
-        let mut relation_keys: Vec<Vec<KeyId>> = vec![Vec::new(); relations.len()];
-        let mut relation_outgoing: Vec<Vec<ContainmentId>> = vec![Vec::new(); relations.len()];
-        let mut relation_capacity_sources: Vec<Vec<CapacityId>> = vec![Vec::new(); relations.len()];
-        let mut relation_capacity_targets: Vec<Vec<CapacityId>> = vec![Vec::new(); relations.len()];
-        let mut dependents: Vec<Vec<ContainmentId>> = vec![Vec::new(); key_count];
-
-        for (idx, descriptor) in descriptors.iter().enumerate() {
-            let id = statement_id(idx);
-            let sealed = match descriptor {
-                StatementDescriptor::Functionality {
+    let mut sealed_keys = Vec::with_capacity(keys);
+    let mut sealed_containments = Vec::with_capacity(containments);
+    let mut sealed_capacities = Vec::with_capacity(capacities);
+    let mut dependents: Vec<Vec<ContainmentId>> = vec![Vec::new(); keys];
+    for (index, (statement, reference)) in statements.into_vec().into_iter().zip(&order).enumerate()
+    {
+        let id = StatementId(arena_index(index));
+        match (statement, *reference) {
+            (
+                CheckedStatement::Key {
                     relation,
                     projection,
-                } => {
-                    let evidence = validate_functionality(
-                        id,
-                        *relation,
-                        projection,
-                        &relations,
-                        &descriptors,
-                    )?;
-                    let key_id =
-                        KeyId(u16::try_from(keys.len()).expect("statement count fits u16"));
-                    relation_keys[relation.0 as usize].push(key_id);
-                    keys.push(KeyStatement {
-                        id,
-                        relation: *relation,
-                        projection: projection.clone(),
-                        form: match evidence {
-                            FunctionalityEvidence::Pointwise(disjoint, tail) => {
-                                KeyForm::Pointwise { tail, disjoint }
+                    tail,
+                },
+                StatementRef::Key(key),
+            ) => {
+                indexes[relation.0 as usize].keys.push(key);
+                sealed_keys.push(KeyStatement {
+                    id,
+                    relation,
+                    projection,
+                    form: tail.map_or(KeyForm::Scalar, |tail| KeyForm::Pointwise { tail }),
+                });
+            }
+            (
+                CheckedStatement::Containment {
+                    source,
+                    target,
+                    resolution,
+                    mirror,
+                },
+                StatementRef::Containment(containment),
+            ) => {
+                let enforcement = match resolution {
+                    Resolution::ScalarProbe {
+                        key,
+                        key_projection,
+                    } => Enforcement::ScalarProbe {
+                        target_key: key_of(key),
+                        key_projection,
+                    },
+                    Resolution::IntervalCoverage {
+                        key,
+                        key_projection,
+                        source_tail,
+                        target_tail,
+                    } => Enforcement::IntervalCoverage {
+                        target_key: key_of(key),
+                        key_projection,
+                        source_tail,
+                        target_tail,
+                    },
+                    Resolution::Closed { members } => Enforcement::Closed { members },
+                };
+                if let Some(key) = enforcement.target_key() {
+                    dependents[usize::from(key.0)].push(containment);
+                }
+                indexes[source.relation.0 as usize]
+                    .outgoing
+                    .push(containment);
+                sealed_containments.push(ContainmentStatement {
+                    id,
+                    source,
+                    target,
+                    enforcement,
+                    pairing: match mirror {
+                        None => Pairing::OneWay,
+                        Some(partner) => match order[usize::from(partner.0)] {
+                            StatementRef::Containment(partner) => Pairing::Mirror(partner),
+                            StatementRef::Key(_) | StatementRef::Capacity(_) => {
+                                unreachable!("a mirror is a containment")
                             }
-                            FunctionalityEvidence::Scalar => KeyForm::Scalar,
                         },
-                    });
-                    StatementRef::Key(key_id)
-                }
-                StatementDescriptor::Containment { source, target } => {
-                    let enforcement =
-                        validate_containment(id, source, target, &relations, &descriptors)?;
-                    let containment_id = ContainmentId(
-                        u16::try_from(containments.len()).expect("statement count fits u16"),
-                    );
-                    if let Some(target_key) = enforcement.target_key() {
-                        dependents[usize::from(target_key.0)].push(containment_id);
-                    }
-                    relation_outgoing[source.relation.0 as usize].push(containment_id);
-                    containments.push(ContainmentStatement {
-                        id,
-                        source: canonical_side(source),
-                        target: canonical_side(target),
-                        enforcement,
-                        pairing: Pairing::OneWay,
-                    });
-                    StatementRef::Containment(containment_id)
-                }
-                StatementDescriptor::Capacity {
+                    },
+                });
+            }
+            (
+                CheckedStatement::Capacity {
                     target,
                     weight,
                     lo,
                     hi,
                     source,
-                } => {
-                    let sealed = validate_capacity(
-                        id,
-                        target,
-                        *weight,
-                        *lo,
-                        *hi,
-                        source,
-                        &relations,
-                        &descriptors,
-                    )?;
-                    let capacity_id = CapacityId(
-                        u16::try_from(capacities.len()).expect("statement count fits u16"),
-                    );
-                    relation_capacity_sources[source.relation.0 as usize].push(capacity_id);
-                    relation_capacity_targets[target.relation.0 as usize].push(capacity_id);
-                    capacities.push(CapacityStatement {
-                        id,
-                        target: canonical_side(target),
-                        weight: sealed.weight,
-                        lo: *lo,
-                        hi: sealed.hi,
-                        source: canonical_side(source),
-                        enforcement: sealed.enforcement,
-                    });
-                    StatementRef::Capacity(capacity_id)
-                }
-            };
-
-            if let Some(earlier) = normalized[..idx].iter().position(|n| *n == normalized[idx]) {
-                return Err(StatementErrorKind::DuplicateStatement {
-                    earlier: statement_id(earlier),
-                }
-                .at(id));
+                    resolution,
+                },
+                StatementRef::Capacity(capacity),
+            ) => {
+                indexes[source.relation.0 as usize]
+                    .capacity_sources
+                    .push(capacity);
+                indexes[target.relation.0 as usize]
+                    .capacity_targets
+                    .push(capacity);
+                sealed_capacities.push(CapacityStatement {
+                    id,
+                    target,
+                    weight,
+                    lo,
+                    hi,
+                    source,
+                    enforcement: match resolution {
+                        CapacityResolution::ScalarProbe {
+                            key,
+                            key_projection,
+                        } => CapacityEnforcement::ScalarProbe {
+                            target_key: key_of(key),
+                            key_projection,
+                        },
+                        CapacityResolution::Closed { members } => {
+                            CapacityEnforcement::Closed { members }
+                        }
+                    },
+                });
             }
-            order.push(sealed);
-        }
-        pair_mirrors(&mut containments, &order, &normalized);
-
-        for (((relation, rel_keys), outgoing), (capacity_sources, capacity_targets)) in relations
-            .iter_mut()
-            .zip(relation_keys)
-            .zip(relation_outgoing)
-            .zip(
-                relation_capacity_sources
-                    .into_iter()
-                    .zip(relation_capacity_targets),
-            )
-        {
-            relation.keys = rel_keys.into_boxed_slice();
-            relation.outgoing = outgoing.into_boxed_slice();
-            relation.capacity_sources = capacity_sources.into_boxed_slice();
-            relation.capacity_targets = capacity_targets.into_boxed_slice();
-        }
-
-        let schema = Schema {
-            identity: std::sync::OnceLock::new(),
-            compiled: std::sync::OnceLock::new(),
-            relations: relations.into_boxed_slice(),
-            keys: keys.into_boxed_slice(),
-            containments: containments.into_boxed_slice(),
-            capacities: capacities.into_boxed_slice(),
-            order: order.into_boxed_slice(),
-            dependents: dependents.into_iter().map(Vec::into_boxed_slice).collect(),
-        };
-        // Compile identity once with the schema; change ingestion and command
-        // sealing must not repeatedly allocate/hash its complete descriptor.
-        let _ = super::fingerprint::fingerprint(&schema);
-        Ok(schema)
-    }
-}
-
-fn mirror_of(normalized: &[StatementIdentity], index: usize) -> Option<StatementId> {
-    let StatementIdentity::Containment { source, target } = &normalized[index] else {
-        return None;
-    };
-    normalized
-        .iter()
-        .enumerate()
-        .find(|(other, descriptor)| {
-            *other != index
-                && matches!(
-                    descriptor,
-                    StatementIdentity::Containment {
-                        source: mirror_source,
-                        target: mirror_target,
-                    } if mirror_source == target && mirror_target == source
-                )
-        })
-        .map(|(other, _)| statement_id(other))
-}
-
-/// Keys and capacities cannot have a partner, so they do not occupy holes.
-pub(super) fn mirror_links(
-    descriptors: &[StatementDescriptor],
-) -> BTreeMap<StatementId, StatementId> {
-    let normalized: Vec<StatementIdentity> =
-        descriptors.iter().map(StatementIdentity::of).collect();
-    (0..normalized.len())
-        .filter_map(|index| {
-            let StatementIdentity::Containment { .. } = &normalized[index] else {
-                return None;
-            };
-            mirror_of(&normalized, index).map(|partner| (statement_id(index), partner))
-        })
-        .collect()
-}
-
-/// The materialized-order [`StatementId`] for a list index (the typed
-/// [`SchemaError::TooManyStatements`] gate runs before any id is minted, so the
-/// expect is a true invariant).
-fn statement_id(index: usize) -> StatementId {
-    StatementId(u16::try_from(index).expect("statement count fits u16"))
-}
-
-/// Fill [`ContainmentStatement::pairing`] after every containment has a witness
-/// id — a partner later in the list is not yet minted at push time, so the
-/// stored identity is the arena id, not a re-resolved [`StatementId`].
-fn pair_mirrors(
-    containments: &mut [ContainmentStatement],
-    order: &[StatementRef],
-    normalized: &[StatementIdentity],
-) {
-    for containment in containments.iter_mut() {
-        containment.pairing = match mirror_of(normalized, usize::from(containment.id.0)) {
-            None => Pairing::OneWay,
-            Some(partner) => match order[usize::from(partner.0)] {
-                StatementRef::Containment(id) => Pairing::Mirror(id),
-                StatementRef::Key(_) | StatementRef::Capacity(_) => {
-                    unreachable!("mirror_of only pairs containments")
-                }
-            },
-        };
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FieldSet(Box<[FieldId]>);
-
-impl FieldSet {
-    fn new(fields: &[FieldId]) -> Result<Self, FieldId> {
-        let mut canonical = fields.to_vec();
-        canonical.sort_unstable();
-        if let Some(duplicate) = canonical
-            .windows(2)
-            .find_map(|pair| (pair[0] == pair[1]).then_some(pair[0]))
-        {
-            return Err(duplicate);
-        }
-        Ok(Self(canonical.into_boxed_slice()))
-    }
-}
-
-struct Projection<'a> {
-    ordered: &'a [FieldId],
-    fields: FieldSet,
-}
-
-impl Projection<'_> {
-    fn ordered(&self) -> &[FieldId] {
-        self.ordered
-    }
-
-    fn fields(&self) -> &FieldSet {
-        &self.fields
-    }
-}
-
-#[derive(Clone, Copy)]
-enum FunctionalityEvidence {
-    Scalar,
-
-    Pointwise(DisjointDeterminantProof, ValueType),
-}
-
-/// Interval positions match by element domain. Width refinements do not
-/// change the pointwise coverage relation.
-fn positional_types_match(a: &ValueType, b: &ValueType) -> bool {
-    match (a.interval_element(), b.interval_element()) {
-        (Some(ea), Some(eb)) => ea == eb,
-        _ => a == b,
-    }
-}
-
-fn interval_positions(fields: &[FieldDescriptor], projection: &[FieldId]) -> Vec<usize> {
-    projection
-        .iter()
-        .enumerate()
-        .filter(|(_, field)| {
-            matches!(
-                fields[usize::from(field.0)].value_type,
-                ValueType::Interval { .. } | ValueType::FixedInterval { .. }
-            )
-        })
-        .map(|(pos, _)| pos)
-        .collect()
-}
-
-fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
-    fn rank(value: &Value) -> u8 {
-        match value {
-            Value::Bool(_) => 0,
-            Value::U64(_) => 1,
-            Value::I64(_) => 2,
-            Value::String(_) => 3,
-            Value::FixedBytes(_) => 4,
-            Value::IntervalU64(_) => 5,
-            Value::IntervalI64(_) => 6,
-            Value::F64(_) => 7,
-            Value::Uuid(_) => 8,
-            Value::IntervalF64(_) => 9,
+            _ => unreachable!("order follows statement kinds"),
         }
     }
-    match (a, b) {
-        (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
-        (Value::U64(x), Value::U64(y)) => x.cmp(y),
-        (Value::I64(x), Value::I64(y)) => x.cmp(y),
-        (Value::F64(x), Value::F64(y)) => x.cmp(y),
-        (Value::Uuid(x), Value::Uuid(y)) => x.cmp(y),
-        (Value::String(x), Value::String(y)) => x.cmp(y),
-        (Value::FixedBytes(x), Value::FixedBytes(y)) => x.cmp(y),
-        (Value::IntervalU64(x), Value::IntervalU64(y)) => {
-            (x.start(), x.end()).cmp(&(y.start(), y.end()))
-        }
-        (Value::IntervalI64(x), Value::IntervalI64(y)) => {
-            (x.start(), x.end()).cmp(&(y.start(), y.end()))
-        }
-        (Value::IntervalF64(x), Value::IntervalF64(y)) => {
-            (x.start(), x.end()).cmp(&(y.start(), y.end()))
-        }
-        _ => rank(a).cmp(&rank(b)),
-    }
-}
 
-/// Duplicates were rejected by [`validate_side_shape`] before any side seals,
-/// so sorting is the whole canonicalization.
-fn canonical_literals(literals: &LiteralSet) -> LiteralSet {
-    match literals {
-        LiteralSet::One(_) => literals.clone(),
-        LiteralSet::Many(values) => {
-            let mut sorted = values.to_vec();
-            sorted.sort_by(literal_cmp);
-            LiteralSet::Many(sorted.into_boxed_slice())
-        }
-    }
-}
-
-fn canonical_side(side: &Side) -> Side {
-    Side {
-        relation: side.relation,
-        projection: side.projection.clone(),
-        selection: side
-            .selection
-            .iter()
-            .map(|(field, literals)| (*field, canonical_literals(literals)))
+    let schema = Schema {
+        identity: std::sync::OnceLock::new(),
+        compiled: std::sync::OnceLock::new(),
+        relations: relations
+            .into_vec()
+            .into_iter()
+            .zip(indexes)
+            .map(|(relation, indexes)| seal_relation(relation, indexes))
             .collect(),
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NormalizedSide {
-    relation: RelationId,
-    projection: Box<[FieldId]>,
-    selection: Box<[(FieldId, LiteralSet)]>,
-}
-
-impl NormalizedSide {
-    fn new(side: &Side) -> Self {
-        let mut selection: Vec<_> = side
-            .selection
-            .iter()
-            .map(|(field, literals)| (*field, canonical_literals(literals)))
-            .collect();
-        selection.sort_by_key(|(field, _)| *field);
-        Self {
-            relation: side.relation,
-            projection: side.projection.clone(),
-            selection: selection.into_boxed_slice(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum StatementIdentity {
-    Functionality {
-        relation: RelationId,
-        projection: Box<[FieldId]>,
-    },
-    Containment {
-        source: NormalizedSide,
-        target: NormalizedSide,
-    },
-    Capacity {
-        target: NormalizedSide,
-        weight: Weight,
-        lo: u64,
-        hi: Option<Bound>,
-        source: NormalizedSide,
-    },
-}
-
-impl StatementIdentity {
-    fn of(descriptor: &StatementDescriptor) -> Self {
-        match descriptor {
-            StatementDescriptor::Functionality {
-                relation,
-                projection,
-            } => Self::Functionality {
-                relation: *relation,
-                projection: projection.clone(),
-            },
-            StatementDescriptor::Containment { source, target } => Self::Containment {
-                source: NormalizedSide::new(source),
-                target: NormalizedSide::new(target),
-            },
-            StatementDescriptor::Capacity {
-                target,
-                weight,
-                lo,
-                hi,
-                source,
-            } => Self::Capacity {
-                target: NormalizedSide::new(target),
-                weight: *weight,
-                lo: *lo,
-                hi: *hi,
-                source: NormalizedSide::new(source),
-            },
-        }
-    }
-}
-
-fn validate_functionality(
-    id: StatementId,
-    relation_id: RelationId,
-    projection: &[FieldId],
-    relations: &[Relation],
-    descriptors: &[StatementDescriptor],
-) -> Result<FunctionalityEvidence, SchemaError> {
-    let relation = known_relation(id, relation_id, relations)?;
-    let projection = validate_projection(id, relation_id, projection, relation)?;
-
-    let positions = interval_positions(&relation.fields, projection.ordered());
-    if positions.len() > 1 {
-        return Err(StatementErrorKind::FunctionalityMultipleIntervals {
-            relation: relation_id,
-            field: projection.ordered()[positions[1]],
-        }
-        .at(id));
-    }
-    let interval_position = positions.first().copied();
-    if let Some(pos) = interval_position
-        && pos != projection.ordered().len() - 1
-    {
-        return Err(StatementErrorKind::FunctionalityIntervalNotLast {
-            relation: relation_id,
-            field: projection.ordered()[pos],
-        }
-        .at(id));
-    }
-
-    let tail = interval_position.map(|pos| {
-        let idx = usize::from(projection.ordered()[pos].0);
-        match relation.fields[idx].value_type {
-            ty if ty.is_interval() => ty,
-            _ => unreachable!("interval_positions found an interval field"),
-        }
-    });
-
-    let this_set = projection.fields();
-    for (idx, earlier) in descriptors[..usize::from(id.0)].iter().enumerate() {
-        if let StatementDescriptor::Functionality {
-            relation: r,
-            projection: p,
-        } = earlier
-            && *r == relation_id
-            && FieldSet::new(p).is_ok_and(|set| &set == this_set)
-        {
-            return Err(StatementErrorKind::DuplicateFunctionality {
-                earlier: statement_id(idx),
-            }
-            .at(id));
-        }
-    }
-
-    let scalar_fields: Vec<_> = projection
-        .ordered()
-        .iter()
-        .filter(|field| {
-            !relation.fields[usize::from(field.0)]
-                .value_type
-                .is_interval()
-        })
-        .map(|field| relation.fields[usize::from(field.0)].clone())
-        .collect();
-    let routing = select_key_encoding_width(&scalar_fields);
-    if DETERMINANT_KEY_OVERHEAD.saturating_add(routing) > LMDB_KEY_LIMIT {
-        return Err(StatementErrorKind::DeterminantKeyTooWide { width: routing }.at(id));
-    }
-
-    if let Some(rows) = relation.body.closed_rows() {
-        let layout = &relation.layout;
-        let scalar_len = projection.ordered().len() - usize::from(interval_position.is_some());
-        for (row_idx, row) in rows.iter().enumerate() {
-            for earlier in &rows[..row_idx] {
-                let scalars_agree = projection.ordered()[..scalar_len].iter().all(|field| {
-                    let idx = usize::from(field.0);
-                    field_bytes(layout.encoded(&row.fact), idx)
-                        == field_bytes(layout.encoded(&earlier.fact), idx)
-                });
-                if !scalars_agree {
-                    continue;
-                }
-                let collide = match interval_position.zip(tail) {
-                    None => true,
-                    Some((pos, tail)) => {
-                        let idx = usize::from(projection.ordered()[pos].0);
-
-                        // programmer invariant, never data.
-                        let (a_start, a_end) = crate::encoding::interval_words(
-                            tail,
-                            field_bytes(layout.encoded(&row.fact), idx),
-                        )
-                        .expect("sealed rows hold canonical interval bytes");
-                        let (b_start, b_end) = crate::encoding::interval_words(
-                            tail,
-                            field_bytes(layout.encoded(&earlier.fact), idx),
-                        )
-                        .expect("sealed rows hold canonical interval bytes");
-                        a_start < b_end && b_start < a_end
-                    }
-                };
-                if collide {
-                    return Err(StatementErrorKind::ClosedStatementRefuted {
-                        relation: relation_id,
-                        row: RowIndex(row_idx),
-                    }
-                    .at(id));
-                }
-            }
-        }
-    }
-
-    Ok(match tail {
-        Some(tail) => FunctionalityEvidence::Pointwise(DisjointDeterminantProof(()), tail),
-        None => FunctionalityEvidence::Scalar,
-    })
-}
-
-fn validate_containment(
-    id: StatementId,
-    source: &Side,
-    target: &Side,
-    relations: &[Relation],
-    descriptors: &[StatementDescriptor],
-) -> Result<Enforcement, SchemaError> {
-    let target_projection = validate_side_pair(id, source, target, relations)?;
-
-    // Interval positions on closed containments: refused v0. A pointwise
-
-    let target_fields = &relations[target.relation.0 as usize].fields;
-    let source_closed = matches!(
-        relations[source.relation.0 as usize].body,
-        RelationBody::Closed { .. }
-    );
-    let target_closed = matches!(
-        relations[target.relation.0 as usize].body,
-        RelationBody::Closed { .. }
-    );
-    if (source_closed || target_closed)
-        && !interval_positions(target_fields, &target.projection).is_empty()
-    {
-        return Err(StatementErrorKind::ClosedContainmentInterval {
-            relation: if target_closed {
-                target.relation
-            } else {
-                source.relation
-            },
-        }
-        .at(id));
-    }
-
-    let resolved = resolve_target_key(
-        id,
-        source,
-        target,
-        &target_projection,
-        relations,
-        descriptors,
-        relations[source.relation.0 as usize].interval_tail(&source.projection),
-    )?;
-
-    if let (Enforcement::Closed { members }, Some(rows)) = (
-        &resolved,
-        relations[source.relation.0 as usize].body.closed_rows(),
-    ) {
-        let layout = &relations[source.relation.0 as usize].layout;
-        let phi = encodable_checks(
-            &source.selection,
-            &relations[source.relation.0 as usize].fields,
-        );
-        for (row_idx, row) in rows.iter().enumerate() {
-            if !sealed_satisfies(&phi, layout, &row.fact) {
-                continue;
-            }
-            let word = decoded_word(layout, source.projection[0], &row.fact);
-
-            if !AxiomIndex::try_from(word).is_ok_and(|index| members.contains(index)) {
-                return Err(StatementErrorKind::ClosedStatementRefuted {
-                    relation: source.relation,
-                    row: RowIndex(row_idx),
-                }
-                .at(id));
-            }
-        }
-    }
-
-    Ok(resolved)
-}
-
-struct SealedCapacity {
-    enforcement: CapacityEnforcement,
-    weight: SealedWeight,
-    hi: SealedBound,
-}
-
-/// Validate capacity weights and dependent bounds against their source
-/// and target fields, then reuse side-shape and target-key validation.
-/// Group projections are scalar identities; interval values enter through
-/// the duration measure. Reject inverted literal windows; equivalent or
-/// vacuous windows retain their ordinary grouped-measure meaning.
-fn validate_capacity(
-    id: StatementId,
-    target: &Side,
-    weight: Weight,
-    lo: u64,
-    hi: Option<Bound>,
-    source: &Side,
-    relations: &[Relation],
-    descriptors: &[StatementDescriptor],
-) -> Result<SealedCapacity, SchemaError> {
-    // Only genuinely different semantics refuse: an inverted literal window
-    // admits nothing. Vacuous `{0..*}` and unit-floor windows are accepted
-    // canonical grouped-measure laws — equivalent spellings normalized at
-    // the authoring surface, never a per-client ban table (a confirmed P00
-    // decision; the trivially satisfied law keeps its authored statement
-    // id and attribution).
-    if let Some(Bound::Lit(hi)) = hi
-        && hi < lo
-    {
-        return Err(StatementErrorKind::CapacityInvertedWindow { lo, hi }.at(id));
-    }
-
-    let target_projection = validate_side_pair(id, source, target, relations)?;
-
-    // The v0 interval refusal, narrowed to projections: capacity
-
-    let source_fields = &relations[source.relation.0 as usize].fields;
-    let positions = interval_positions(source_fields, &source.projection);
-    if let Some(pos) = positions.first() {
-        return Err(StatementErrorKind::CapacityIntervalPosition {
-            relation: source.relation,
-            field: source.projection[*pos],
-        }
-        .at(id));
-    }
-
-    // signed field under `[field]` is the typed polarity refusal (an
-
-    let sealed_weight = match weight {
-        Weight::Unit => SealedWeight::Unit,
-        Weight::Field(field) => {
-            let descriptor = known_field(id, source.relation, field, relations)?;
-            if descriptor.value_type != ValueType::U64 {
-                return Err(StatementErrorKind::CapacityWeightNotU64 {
-                    relation: source.relation,
-                    field,
-                }
-                .at(id));
-            }
-            SealedWeight::Field(field)
-        }
-        Weight::DurationOf(field) => {
-            let descriptor = known_field(id, source.relation, field, relations)?;
-            // Exact integer duration only: a dense float interval has a
-            // numerical length, never an exact capacity weight. Float
-            // capacity is refused at schema validation, not judged with
-            // rounding.
-            if !descriptor.value_type.is_discrete_interval() {
-                return Err(StatementErrorKind::CapacityWeightNotDuration {
-                    relation: source.relation,
-                    field,
-                }
-                .at(id));
-            }
-            let tail = descriptor.value_type;
-            SealedWeight::Duration { field, tail }
-        }
+        keys: sealed_keys.into_boxed_slice(),
+        containments: sealed_containments.into_boxed_slice(),
+        capacities: sealed_capacities.into_boxed_slice(),
+        order: order.into_boxed_slice(),
+        dependents: dependents.into_iter().map(Vec::into_boxed_slice).collect(),
     };
-
-    // window against it mixes dimensions and is refused. A u64-field
-
-    let sealed_hi = match hi {
-        None => SealedBound::Unbounded,
-        Some(Bound::Lit(n)) => SealedBound::Lit(n),
-        Some(Bound::TargetField(field)) => {
-            let descriptor = known_field(id, target.relation, field, relations)?;
-            if descriptor.value_type != ValueType::U64 {
-                return Err(StatementErrorKind::CapacityBoundNotU64 {
-                    relation: target.relation,
-                    field,
-                }
-                .at(id));
-            }
-            // A u64 field can carry the measured width of a discrete interval.
-            // Its unit is supplied by the application, just as for a literal
-            // bound. Do not confuse an explicit scalar measure with row count.
-            SealedBound::TargetField(field)
-        }
-        Some(Bound::TargetDuration(field)) => {
-            let descriptor = known_field(id, target.relation, field, relations)?;
-            // The same discreteness rule as the weight: no float-length bound.
-            if !descriptor.value_type.is_discrete_interval() {
-                return Err(StatementErrorKind::CapacityBoundNotDuration {
-                    relation: target.relation,
-                    field,
-                }
-                .at(id));
-            }
-            let tail = descriptor.value_type;
-            if matches!(weight, Weight::Unit) {
-                return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
-            }
-            SealedBound::Duration { field, tail }
-        }
-    };
-
-    let enforcement = resolve_capacity_target(
-        id,
-        source,
-        target,
-        &target_projection,
-        relations,
-        descriptors,
-    )?;
-
-    // Both sides are constant; evaluate the window during validation.
-
-    if let (CapacityEnforcement::Closed { .. }, Some(source_rows)) = (
-        &enforcement,
-        relations[source.relation.0 as usize].body.closed_rows(),
-    ) {
-        let target_relation = &relations[target.relation.0 as usize];
-        let target_rows = target_relation
-            .body
-            .closed_rows()
-            .expect("the Closed enforcement arm resolves only against a closed target");
-        let source_layout = &relations[source.relation.0 as usize].layout;
-        let phi = encodable_checks(&source.selection, source_fields);
-        let psi = encodable_checks(&target.selection, &target_relation.fields);
-        for (row_idx, parent) in target_rows.iter().enumerate() {
-            if !sealed_satisfies(&psi, &target_relation.layout, &parent.fact) {
-                continue;
-            }
-
-            let resolved_hi =
-                sealed_resolve_bound(sealed_hi, &target_relation.layout, &parent.fact)
-                    .expect("sealed extension rows carry no ray or inverted intervals");
-            let measure: u128 = source_rows
-                .iter()
-                .filter(|child| {
-                    sealed_satisfies(&phi, source_layout, &child.fact)
-                        && source
-                            .projection
-                            .iter()
-                            .zip(target.projection.iter())
-                            .all(|(s, t)| {
-                                field_bytes(source_layout.encoded(&child.fact), usize::from(s.0))
-                                    == field_bytes(
-                                        target_relation.layout.encoded(&parent.fact),
-                                        usize::from(t.0),
-                                    )
-                            })
-                })
-                .map(|child| {
-                    u128::from(
-                        sealed_measure_weight(sealed_weight, source_layout, &child.fact)
-                            .expect("sealed extension rows carry no ray or inverted intervals"),
-                    )
-                })
-                .sum();
-            let over = match resolved_hi {
-                crate::schema::BoundCeiling::Unbounded => false,
-                crate::schema::BoundCeiling::Finite(hi) => measure > u128::from(hi),
-            };
-            if measure < u128::from(lo) || over {
-                return Err(StatementErrorKind::ClosedStatementRefuted {
-                    relation: target.relation,
-                    row: RowIndex(row_idx),
-                }
-                .at(id));
-            }
-        }
-    }
-
-    Ok(SealedCapacity {
-        enforcement,
-        weight: sealed_weight,
-        hi: sealed_hi,
-    })
+    // The identity is computed once, with the schema.
+    let _ = super::fingerprint::fingerprint(&schema);
+    schema
 }
 
-fn known_field(
-    id: StatementId,
-    relation: RelationId,
-    field: FieldId,
-    relations: &[Relation],
-) -> Result<&FieldDescriptor, SchemaError> {
-    relations[relation.0 as usize]
-        .fields
-        .get(usize::from(field.0))
-        .ok_or(StatementErrorKind::UnknownField { relation, field }.at(id))
+/// The statements that name one relation.
+#[derive(Clone, Default)]
+struct RelationIndexes {
+    keys: Vec<KeyId>,
+    outgoing: Vec<ContainmentId>,
+    capacity_sources: Vec<CapacityId>,
+    capacity_targets: Vec<CapacityId>,
 }
 
-fn encoded_literal(literal: &Value, desc: bumbledb_theory::schema::ValueType) -> Box<[u8]> {
-    let mut bytes = Vec::with_capacity(16);
-    crate::encoding::encode_literal(literal, desc, &mut bytes);
-    bytes.into()
-}
-
-fn encodable_checks(
-    selection: &[(FieldId, LiteralSet)],
-    fields: &[FieldDescriptor],
-) -> Box<[EncodableCheck]> {
-    selection
-        .iter()
-        .map(|(field, literals)| {
-            let desc = fields[usize::from(field.0)].value_type;
-            match canonical_literals(literals) {
-                LiteralSet::One(Value::String(_)) => {
-                    unreachable!("closed relations refuse str columns")
-                }
-                LiteralSet::One(literal) => EncodableCheck::Encoded {
-                    field: *field,
-                    bytes: encoded_literal(&literal, desc),
-                },
-                LiteralSet::Many(values) if matches!(values.first(), Some(Value::String(_))) => {
-                    unreachable!("closed relations refuse str columns")
-                }
-                LiteralSet::Many(values) => EncodableCheck::EncodedSet {
-                    field: *field,
-                    alternatives: values
-                        .iter()
-                        .map(|literal| encoded_literal(literal, desc))
-                        .collect(),
-                },
-            }
-        })
-        .collect()
-}
-
-fn sealed_satisfies(checks: &[EncodableCheck], layout: &FactLayout, fact: &[u8]) -> bool {
-    checks.iter().all(|check| check.matches(layout, fact))
-}
-
-fn decoded_word(layout: &FactLayout, field: FieldId, fact: &[u8]) -> u64 {
-    u64::from_be_bytes(field_word_bytes(layout.encoded(fact), usize::from(field.0)))
-}
-
-/// The sealed-extension twin of the judge's weight law
-/// (`schema/judge.rs::capacity`): one source row's measure read off its
-/// sealed dense bytes. `Unit` is 1; `Field` reads the u64-encoded source
-/// position; `Duration` reads the interval position's measure in encoded
-/// word space (`end − start` — both element encodings preserve
-/// differences). `None` only for a ray or inverted interval, which a
-/// validated extension refuses at sealing — callers expect.
-fn sealed_measure_weight(weight: SealedWeight, layout: &FactLayout, fact: &[u8]) -> Option<u64> {
-    match weight {
-        SealedWeight::Unit => Some(1),
-        SealedWeight::Field(field) => Some(decoded_word(layout, field, fact)),
-        SealedWeight::Duration { field, tail } => {
-            sealed_interval_measure(tail, layout, field, fact)
-        }
-    }
-}
-
-/// The sealed-extension twin of the judge's ceiling resolution: a literal
-/// passes through; a dependent bound reads the named TARGET-row field —
-/// u64 word or interval measure — off the sealed parent fact in hand.
-fn sealed_resolve_bound(
-    bound: SealedBound,
-    layout: &FactLayout,
-    parent_fact: &[u8],
-) -> Option<super::BoundCeiling> {
-    match bound {
-        SealedBound::Unbounded => Some(super::BoundCeiling::Unbounded),
-        SealedBound::Lit(n) => Some(super::BoundCeiling::Finite(n)),
-        SealedBound::TargetField(field) => Some(super::BoundCeiling::Finite(decoded_word(
-            layout,
-            field,
-            parent_fact,
-        ))),
-        SealedBound::Duration { field, tail } => {
-            sealed_interval_measure(tail, layout, field, parent_fact)
-                .map(super::BoundCeiling::Finite)
-        }
-    }
-}
-
-fn sealed_interval_measure(
-    tail: ValueType,
-    layout: &FactLayout,
-    field: FieldId,
-    fact: &[u8],
-) -> Option<u64> {
-    let (start, end) = crate::encoding::interval_words(
-        tail,
-        crate::encoding::field_bytes(layout.encoded(fact), usize::from(field.0)),
-    )?;
-    if end == u64::MAX {
-        return None; // a ray has no finite measure
-    }
-    end.checked_sub(start)
-}
-
-fn known_relation(
-    id: StatementId,
-    relation: RelationId,
-    relations: &[Relation],
-) -> Result<&Relation, SchemaError> {
-    relations
-        .get(relation.0 as usize)
-        .ok_or(StatementErrorKind::UnknownRelation { relation }.at(id))
-}
-
-fn validate_projection<'p>(
-    id: StatementId,
-    relation_id: RelationId,
-    projection: &'p [FieldId],
-    relation: &Relation,
-) -> Result<Projection<'p>, SchemaError> {
-    if projection.is_empty() {
-        return Err(StatementErrorKind::EmptyProjection {
-            relation: relation_id,
-        }
-        .at(id));
-    }
-    for field in projection {
-        if usize::from(field.0) >= relation.fields.len() {
-            return Err(StatementErrorKind::UnknownField {
-                relation: relation_id,
-                field: *field,
-            }
-            .at(id));
-        }
-    }
-    let fields = FieldSet::new(projection).map_err(|field| {
-        StatementErrorKind::DuplicateProjectionField {
-            relation: relation_id,
-            field,
-        }
-        .at(id)
-    })?;
-    Ok(Projection {
-        ordered: projection,
-        fields,
-    })
-}
-
-/// Shared side-pair validation for containment and capacity. Each caller
-/// retains its own field restrictions and window vocabulary.
-fn validate_side_pair<'t>(
-    id: StatementId,
-    source: &Side,
-    target: &'t Side,
-    relations: &[Relation],
-) -> Result<Projection<'t>, SchemaError> {
-    validate_side_shape(id, source, relations)?;
-    let target_projection = validate_side_shape(id, target, relations)?;
-
-    if source.projection.len() != target.projection.len() {
-        return Err(StatementErrorKind::ContainmentArityMismatch {
-            mismatch: Mismatch {
-                witnessed: source.projection.len(),
-                required: target.projection.len(),
-            },
-        }
-        .at(id));
-    }
-
-    let source_fields = &relations[source.relation.0 as usize].fields;
-    let target_fields = &relations[target.relation.0 as usize].fields;
-    for (position, (s, t)) in source
-        .projection
-        .iter()
-        .zip(target.projection.iter())
-        .enumerate()
-    {
-        if !positional_types_match(
-            &source_fields[usize::from(s.0)].value_type,
-            &target_fields[usize::from(t.0)].value_type,
-        ) {
-            return Err(StatementErrorKind::ContainmentTypeMismatch { position }.at(id));
-        }
-    }
-
-    validate_side_selection(id, source, relations)?;
-    validate_side_selection(id, target, relations)?;
-
-    Ok(target_projection)
-}
-
-fn validate_side_shape<'s>(
-    id: StatementId,
-    side: &'s Side,
-    relations: &[Relation],
-) -> Result<Projection<'s>, SchemaError> {
-    let relation = known_relation(id, side.relation, relations)?;
-    let projection = validate_projection(id, side.relation, &side.projection, relation)?;
-    for (idx, (field, literals)) in side.selection.iter().enumerate() {
-        if usize::from(field.0) >= relation.fields.len() {
-            return Err(StatementErrorKind::UnknownField {
-                relation: side.relation,
-                field: *field,
-            }
-            .at(id));
-        }
-        if side.selection[..idx].iter().any(|(f, _)| f == field) {
-            return Err(StatementErrorKind::DuplicateSelectionField {
-                relation: side.relation,
-                field: *field,
-            }
-            .at(id));
-        }
-        if let LiteralSet::Many(values) = literals {
-            if values.len() < 2 {
-                return Err(StatementErrorKind::DegenerateSelectionSet {
-                    relation: side.relation,
-                    field: *field,
-                    len: values.len(),
-                }
-                .at(id));
-            }
-            for (value_idx, value) in values.iter().enumerate() {
-                if values[..value_idx]
-                    .iter()
-                    .any(|earlier| literal_cmp(earlier, value) == std::cmp::Ordering::Equal)
-                {
-                    return Err(StatementErrorKind::DuplicateSelectionLiteral {
-                        relation: side.relation,
-                        field: *field,
-                    }
-                    .at(id));
-                }
-            }
-        }
-    }
-    Ok(projection)
-}
-
-fn validate_side_selection(
-    id: StatementId,
-    side: &Side,
-    relations: &[Relation],
-) -> Result<(), SchemaError> {
-    let relation = &relations[side.relation.0 as usize];
-    for (field, _) in &side.selection {
-        if side.projection.contains(field) {
-            return Err(StatementErrorKind::SelectedFieldProjected {
-                relation: side.relation,
-                field: *field,
-            }
-            .at(id));
-        }
-    }
-    for (field, literals) in &side.selection {
-        for literal in literals.literals() {
-            validate_selection_literal(
-                id,
-                side.relation,
-                *field,
-                &relation.fields[usize::from(field.0)].value_type,
-                literal,
-            )?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_selection_literal(
-    id: StatementId,
-    relation: RelationId,
-    field: FieldId,
-    value_type: &ValueType,
-    literal: &Value,
-) -> Result<(), SchemaError> {
-    value_matches(literal, value_type).map_err(|ValueMismatch::Type| {
-        StatementErrorKind::SelectionLiteralTypeMismatch { relation, field }.at(id)
-    })
-}
-
-fn resolve_target_key(
-    id: StatementId,
-    source: &Side,
-    target: &Side,
-    target_projection: &Projection<'_>,
-    relations: &[Relation],
-    descriptors: &[StatementDescriptor],
-    source_tail: Option<ValueType>,
-) -> Result<Enforcement, SchemaError> {
-    let target_relation = &relations[target.relation.0 as usize];
-
-    // projection must be exactly the synthetic id — its OWN refusal, not
-
-    // the refused field set, and the rule here is closedness, not key
-
-    if let Some(rows) = target_relation.body.closed_rows() {
-        if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
-            return Err(StatementErrorKind::ClosedTargetNotHandle {
-                target: target.relation,
-                target_name: target_relation.name.clone(),
-                projection: target.projection.clone(),
-                projection_names: projection_field_names(target_relation, &target.projection),
-            }
-            .at(id));
-        }
-        return Ok(Enforcement::Closed {
-            members: compile_member_set(target_relation, target, rows),
-        });
-    }
-
-    let target_fields = &target_relation.fields;
-    let positions = interval_positions(target_fields, &target.projection);
-
-    if positions.len() > 1 {
-        return Err(missing_target_key(id, target, relations, descriptors, true));
-    }
-    let interval_position = positions.first().copied();
-
-    let want = target_projection.fields();
-    let Some((key_idx, key_projection)) =
-        matching_functionality(target.relation, want, descriptors)
-    else {
-        return Err(missing_target_key(
-            id,
-            target,
-            relations,
-            descriptors,
-            interval_position.is_some(),
-        ));
-    };
-
-    let key_projection_in_order =
-        source_key_projection(&source.projection, target_projection, key_projection);
-    let target_key = functionality_key_id(descriptors, key_idx);
-
-    if interval_position.is_some() {
-        let FunctionalityEvidence::Pointwise(disjoint, target_tail) = validate_functionality(
-            statement_id(key_idx),
-            target.relation,
-            key_projection,
-            relations,
-            descriptors,
-        )?
-        else {
-            unreachable!("a set-equal interval projection resolves to a pointwise key")
-        };
-        let Some(source_tail) = source_tail else {
-            unreachable!("positional type match: a coverage target implies an interval source");
-        };
-        Ok(Enforcement::IntervalCoverage {
-            target_key,
-            key_projection: key_projection_in_order,
-            disjoint,
-            source_tail,
-            target_tail,
-        })
-    } else {
-        Ok(Enforcement::ScalarProbe {
-            target_key,
-            key_projection: key_projection_in_order,
-        })
-    }
-}
-
-/// Coverage is unrepresentable — projections already refused interval
-/// positions.
-fn resolve_capacity_target(
-    id: StatementId,
-    source: &Side,
-    target: &Side,
-    target_projection: &Projection<'_>,
-    relations: &[Relation],
-    descriptors: &[StatementDescriptor],
-) -> Result<CapacityEnforcement, SchemaError> {
-    let target_relation = &relations[target.relation.0 as usize];
-    if let Some(rows) = target_relation.body.closed_rows() {
-        if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
-            return Err(StatementErrorKind::ClosedTargetNotHandle {
-                target: target.relation,
-                target_name: target_relation.name.clone(),
-                projection: target.projection.clone(),
-                projection_names: projection_field_names(target_relation, &target.projection),
-            }
-            .at(id));
-        }
-        return Ok(CapacityEnforcement::Closed {
-            members: compile_member_set(target_relation, target, rows),
-        });
-    }
-
-    let Some((key_idx, key_projection)) =
-        matching_functionality(target.relation, target_projection.fields(), descriptors)
-    else {
-        return Err(missing_target_key(
-            id,
-            target,
-            relations,
-            descriptors,
-            false,
-        ));
-    };
-    Ok(CapacityEnforcement::ScalarProbe {
-        target_key: functionality_key_id(descriptors, key_idx),
-        key_projection: source_key_projection(
-            &source.projection,
-            target_projection,
-            key_projection,
-        ),
-    })
-}
-
-fn matching_functionality<'a>(
-    relation: RelationId,
-    want: &FieldSet,
-    descriptors: &'a [StatementDescriptor],
-) -> Option<(usize, &'a [FieldId])> {
-    descriptors
-        .iter()
-        .enumerate()
-        .find_map(|(index, descriptor)| match descriptor {
-            StatementDescriptor::Functionality {
-                relation: r,
-                projection,
-            } if *r == relation && FieldSet::new(projection).is_ok_and(|set| &set == want) => {
-                Some((index, projection.as_ref()))
-            }
-            StatementDescriptor::Functionality { .. }
-            | StatementDescriptor::Containment { .. }
-            | StatementDescriptor::Capacity { .. } => None,
-        })
-}
-
-fn source_key_projection(
-    source_projection: &[FieldId],
-    target_projection: &Projection<'_>,
-    key_projection: &[FieldId],
-) -> Box<[FieldId]> {
-    key_projection
-        .iter()
-        .map(|key_field| {
-            let pos = target_projection
-                .ordered()
-                .iter()
-                .position(|field| field == key_field)
-                .expect("set-equal projection contains every key field");
-            source_projection[pos]
-        })
-        .collect()
-}
-
-fn functionality_key_id(descriptors: &[StatementDescriptor], key_idx: usize) -> KeyId {
-    KeyId(
-        u16::try_from(
-            descriptors[..key_idx]
-                .iter()
-                .filter(|descriptor| {
-                    matches!(descriptor, StatementDescriptor::Functionality { .. })
-                })
-                .count(),
-        )
-        .expect("statement count fits u16"),
-    )
-}
-
-/// The projection was validated (`validate_projection`) before any rejection
-/// citing it, so the index is total.
-fn projection_field_names(relation: &Relation, projection: &[FieldId]) -> Box<[Box<str>]> {
-    projection
-        .iter()
-        .map(|field| relation.fields[usize::from(field.0)].name.clone())
-        .collect()
-}
-
-fn target_key_candidates(
-    target: RelationId,
-    relations: &[Relation],
-    descriptors: &[StatementDescriptor],
-) -> Box<[TargetKeyCandidate]> {
-    let mut next_key = 0usize;
-    let mut available = Vec::new();
-    for descriptor in descriptors {
-        if let StatementDescriptor::Functionality {
-            relation,
-            projection,
-        } = descriptor
-        {
-            let key = KeyId(u16::try_from(next_key).expect("statement count fits u16"));
-            next_key += 1;
-            if *relation == target {
-                available.push(TargetKeyCandidate {
-                    key,
-                    projection: projection.clone(),
-                    projection_names: projection_field_names(
-                        &relations[target.0 as usize],
-                        projection,
-                    ),
-                });
-            }
-        }
-    }
-    available.into_boxed_slice()
-}
-
-fn missing_target_key(
-    statement: StatementId,
-    side: &Side,
-    relations: &[Relation],
-    descriptors: &[StatementDescriptor],
-    pointwise: bool,
-) -> SchemaError {
-    let target = side.relation;
-    let target_relation = &relations[target.0 as usize];
-    let target_name = target_relation.name.clone();
-    let projection = side.projection.clone();
-    let projection_names = projection_field_names(target_relation, &projection);
-    let available = target_key_candidates(target, relations, descriptors);
-    if pointwise {
-        StatementErrorKind::NoPointwiseTargetKey {
-            target,
-            target_name,
-            projection,
-            projection_names,
-            available,
-        }
-        .at(statement)
-    } else {
-        StatementErrorKind::NoMatchingTargetKey {
-            target,
-            target_name,
-            projection,
-            projection_names,
-            available,
-        }
-        .at(statement)
-    }
-}
-
-/// The extension passed validation before statement resolution, so every
-/// declaration index is below [`super::MAX_EXTENSION_ROWS`].
-fn compile_member_set(target: &Relation, side: &Side, rows: &[super::SealedRow]) -> MemberSet {
-    let psi = encodable_checks(&side.selection, &target.fields);
-    let mut members = MemberSet::empty();
-    for (idx, row) in rows.iter().enumerate() {
-        if sealed_satisfies(&psi, &target.layout, &row.fact) {
-            let index =
-                AxiomIndex(u8::try_from(idx).expect("the validated extension cap is below 256"));
-            members.insert(index);
-        }
-    }
-    members
-}
-
-/// An interval field spans two word columns, a `bytes<N>` field its `⌈N/8⌉` —
-/// never counted below one: `bytes<0>` is invalid, but its width rejection runs
-/// only after the u16 field ids are minted, so the cap must be a true lower
-/// bound on any legal repair of the declaration.
-fn derived_columns(decl: &RelationDescriptor) -> usize {
-    usize::from(decl.extension.is_some())
-        + decl
-            .fields
-            .iter()
-            .map(|field| match field.value_type {
-                ValueType::Interval { .. } | ValueType::FixedInterval { .. } | ValueType::Uuid => 2,
-                ValueType::FixedBytes { len } => crate::encoding::fixed_bytes_words(len).max(1),
-                _ => 1,
-            })
-            .sum::<usize>()
-}
-
-fn validate_relation(
-    rel_id: RelationId,
-    decl: RelationDescriptor,
-) -> Result<Relation, SchemaError> {
-    let RelationDescriptor {
-        name,
-        fields: declared,
-        extension,
-    } = decl;
-
-    let mut fields = Vec::with_capacity(declared.len() + usize::from(extension.is_some()));
-    if extension.is_some() {
-        fields.push(FieldDescriptor {
-            name: "id".into(),
-            value_type: ValueType::U64,
-        });
-    }
-    fields.extend(declared);
-
-    for (idx, field) in fields.iter().enumerate() {
-        let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
-        if fields[..idx].iter().any(|f| f.name == field.name) {
-            return Err(SchemaError::DuplicateFieldName {
-                relation: rel_id,
-                name: field.name.clone(),
-            });
-        }
-        if let ValueType::FixedBytes { len } = field.value_type {
-            // bytes<N> width gate: N ∈ 1..=64 (64 bytes = 8 words).
-            if len == 0 || usize::from(len) > crate::encoding::MAX_FIXED_BYTES {
-                return Err(SchemaError::FixedBytesWidthOutOfRange {
-                    relation: rel_id,
-                    field: field_id,
-                    len,
-                });
-            }
-        }
-        if let ValueType::FixedInterval { width, .. } = field.value_type {
-            // interval<E, w> width gate: w ≥ 1 and w ≤ u64::MAX − 1.
-            if width == 0 || width == u64::MAX {
-                return Err(SchemaError::IntervalWidthOutOfRange {
-                    relation: rel_id,
-                    field: field_id,
-                    width,
-                });
-            }
-        }
-
-        // intrinsic-vs-policy law). `str` is refused — the handle IS the
-        // dictionary writes at open. No `fresh` refusal survives: the
-        // generation attribute itself is deleted (ENG-004/ENG-007).
-
-        if extension.is_some() && field.value_type == ValueType::String {
-            return Err(SchemaError::StrOnClosedRelation {
-                relation: rel_id,
-                field: field_id,
-            });
-        }
-    }
-
+fn seal_relation(relation: CheckedRelation, indexes: RelationIndexes) -> Relation {
+    let CheckedRelation { name, fields, rows } = relation;
     let layout = FactLayout::new(&fields.iter().map(|f| f.value_type).collect::<Vec<_>>());
-
-    let body = match extension {
+    let body = match rows {
         None => RelationBody::Ordinary,
         Some(rows) => RelationBody::Closed {
-            extension: validate_extension(rel_id, &fields, &layout, &rows)?,
+            extension: rows
+                .into_vec()
+                .into_iter()
+                .map(|row| {
+                    let canonical =
+                        CanonicalRow::encode(&fields, &row.values, &crate::WorkContext::new())
+                            .expect("checked closed rows encode");
+                    let mut fact = Vec::with_capacity(layout.fact_width());
+                    for (value, field) in row.values.iter().zip(&fields) {
+                        crate::encoding::encode_literal(value, field.value_type, &mut fact);
+                    }
+                    SealedRow {
+                        handle: row.handle,
+                        values: row.values,
+                        row: canonical,
+                        fact: fact.into_boxed_slice(),
+                    }
+                })
+                .collect(),
         },
     };
-
-    Ok(Relation {
+    Relation {
         name,
-        fields: fields.into_boxed_slice(),
+        fields,
         layout,
-        keys: Box::new([]),
-        outgoing: Box::new([]),
-        capacity_sources: Box::new([]),
-        capacity_targets: Box::new([]),
+        keys: indexes.keys.into_boxed_slice(),
+        outgoing: indexes.outgoing.into_boxed_slice(),
+        capacity_sources: indexes.capacity_sources.into_boxed_slice(),
+        capacity_targets: indexes.capacity_targets.into_boxed_slice(),
         body,
-    })
-}
-
-/// The extension roster: ground axioms validated through the one shared
-/// [`value_matches`] check and canonically encoded ONCE — each sealed row
-/// carries its full fact bytes (synthetic id ‖ intrinsic values), never
-/// re-encoded after validate (the staging law applied to the feature itself).
-fn validate_extension(
-    rel_id: RelationId,
-    fields: &[FieldDescriptor],
-    layout: &FactLayout,
-    rows: &[super::Row],
-) -> Result<Box<[super::SealedRow]>, SchemaError> {
-    if rows.is_empty() {
-        return Err(SchemaError::EmptyExtension { relation: rel_id });
     }
-    if rows.len() > super::MAX_EXTENSION_ROWS {
-        return Err(SchemaError::ExtensionTooManyRows {
-            relation: rel_id,
-            count: rows.len(),
-        });
-    }
-    let columns = fields.len() - 1;
-    let mut sealed = Vec::with_capacity(rows.len());
-    for (row_idx, row) in rows.iter().enumerate() {
-        if rows[..row_idx].iter().any(|r| r.handle == row.handle) {
-            return Err(SchemaError::DuplicateExtensionHandle {
-                relation: rel_id,
-                handle: row.handle.clone(),
-            });
-        }
-        if row.values.len() != columns {
-            return Err(SchemaError::ExtensionArityMismatch {
-                relation: rel_id,
-                row: RowIndex(row_idx),
-                mismatch: Mismatch {
-                    witnessed: row.values.len(),
-                    required: columns,
-                },
-            });
-        }
-        let mut fact = Vec::with_capacity(layout.fact_width());
-        fact.extend_from_slice(&crate::encoding::encode_u64(
-            u64::try_from(row_idx).expect("row count fits u64"),
-        ));
-        for (value, (field_idx, field)) in row.values.iter().zip(fields.iter().enumerate().skip(1))
-        {
-            let field_id = FieldId(u16::try_from(field_idx).expect("field count fits u16"));
-            value_matches(value, &field.value_type).map_err(|ValueMismatch::Type| {
-                SchemaError::ExtensionValueTypeMismatch {
-                    relation: rel_id,
-                    row: RowIndex(row_idx),
-                    field: field_id,
-                }
-            })?;
-
-            let is_ray = match value {
-                Value::IntervalU64(interval) => interval.is_ray(),
-                Value::IntervalI64(interval) => interval.is_ray(),
-                // A sealed ground axiom's dense interval must be bounded:
-                // unbounded endpoints have no exact sealed measure and the
-                // closed-row judgment walks assume bounded words.
-                Value::IntervalF64(interval) => !interval.is_bounded(),
-                _ => false,
-            };
-            if is_ray {
-                return Err(SchemaError::ExtensionIntervalRay {
-                    relation: rel_id,
-                    row: RowIndex(row_idx),
-                    field: field_id,
-                });
-            }
-            // Total here: String and enums (refused columns) and AllenMask
-            // (no field type) all fail `value_matches` before reaching the
-
-            crate::encoding::encode_literal(value, field.value_type, &mut fact);
-        }
-        debug_assert_eq!(fact.len(), layout.fact_width());
-        sealed.push(super::SealedRow {
-            handle: row.handle.clone(),
-            fact: fact.into_boxed_slice(),
-        });
-    }
-    Ok(sealed.into_boxed_slice())
 }

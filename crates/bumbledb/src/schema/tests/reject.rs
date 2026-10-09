@@ -3,7 +3,7 @@ use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKe
 
 fn target_key(key: u16, projection: &[FieldId], names: &[&str]) -> TargetKeyCandidate {
     TargetKeyCandidate {
-        key: KeyId(key),
+        key: StatementId(key),
         projection: projection.into(),
         projection_names: names.iter().map(|name| Box::from(*name)).collect(),
     }
@@ -618,7 +618,7 @@ fn target_key_diagnostic_lists_the_requested_projection_and_every_available_key(
     assert_eq!(
         error.to_string(),
         "statement 2: target relation T (1) projection {x (0), y (1)} matches no \
-         declared key; available keys: key 0 {x (0)}; key 1 {y (1), z (2)}"
+         declared key; available keys: statement 0 {x (0)}; statement 1 {y (1), z (2)}"
     );
 }
 
@@ -653,7 +653,7 @@ fn rejects_interval_containment_without_pointwise_key() {
     assert_eq!(
         error.to_string(),
         "statement 1: target relation T (1) projection {who (0), during (1)} \
-         matches no declared key; available keys: key 0 {who (0)}; hint: declare \
+         matches no declared key; available keys: statement 0 {who (0)}; hint: declare \
          the exact pointwise key `R(prefix…, interval) -> R`"
     );
 }

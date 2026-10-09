@@ -13,15 +13,13 @@ mod tests;
 
 #[cfg(test)]
 pub(crate) use decode::FieldDecodeError;
-pub use decode::{
-    decode_bool, decode_f64, decode_fixed_interval_start, decode_i64, field_bytes, field_word_bytes,
-};
+pub use decode::{decode_bool, decode_f64, decode_fixed_interval_start, decode_i64, field_bytes};
 #[cfg(test)]
 pub use decode::{
     decode_bool_at, decode_field, decode_fixed_bytes, decode_interval_f64, decode_interval_i64,
     decode_interval_u64, decode_u64, decode_uuid,
 };
-pub(crate) use decode::{decode_values, decode_values_keyed_into, interval_words, split_halves};
+pub(crate) use decode::{decode_values_keyed_into, interval_words, split_halves};
 pub use encode::{append_field, encode_bool, encode_f64, encode_i64, encode_literal, encode_u64};
 #[cfg(test)]
 pub use encode::{encode_fact, encode_uuid};
@@ -60,11 +58,8 @@ impl InternId {
 
 use bumbledb_theory::{Interval, schema::IntervalElement};
 
-/// The `bytes<N>` width ceiling: 64 bytes = 8 words = two cache lines of
-/// key material — digests in the wild are 16/20/32/64
-/// . Schema validation rejects
-/// widths outside `1..=MAX_FIXED_BYTES` with a typed `SchemaError`.
-pub const MAX_FIXED_BYTES: usize = 64;
+/// The widest `bytes<N>` field, in bytes.
+pub const MAX_FIXED_BYTES: usize = bumbledb_theory::schema::MAX_FIXED_BYTES as usize;
 
 /// The word count of a `bytes<len>` value's padded encoding: `⌈len/8⌉`.
 #[must_use]

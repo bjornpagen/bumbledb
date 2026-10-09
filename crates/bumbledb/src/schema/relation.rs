@@ -1,10 +1,8 @@
 //! Field, layout, and statement-index accessors on a validated relation.
+
 use super::{
     CapacityId, ContainmentId, FactLayout, FieldDescriptor, FieldId, KeyId, Relation, RelationBody,
-    ValueType,
 };
-// (`fresh_key` and the fresh mint field are deleted: no database-issued
-// identity survives in the successor — ENG-004/ENG-007.)
 
 impl Relation {
     #[must_use]
@@ -12,7 +10,7 @@ impl Relation {
         &self.name
     }
 
-    /// (ground axioms). Match; do not re-test a flag (CONTRACT C9).
+    /// Ordinary, or closed with its rows.
     #[must_use]
     pub fn body(&self) -> &RelationBody {
         &self.body
@@ -51,13 +49,5 @@ impl Relation {
     #[must_use]
     pub fn capacity_targets(&self) -> &[CapacityId] {
         &self.capacity_targets
-    }
-
-    #[must_use]
-    pub(crate) fn interval_tail(&self, projection: &[FieldId]) -> Option<ValueType> {
-        projection.iter().find_map(|field| {
-            let ty = self.field(*field).value_type;
-            ty.is_interval().then_some(ty)
-        })
     }
 }

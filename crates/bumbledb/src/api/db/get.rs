@@ -17,7 +17,7 @@
 
 use crate::error::{DynIdError, Result};
 use crate::ir::Value;
-use crate::schema::{KeyId, KeyStatement, Schema, StatementView};
+use crate::schema::{KeyId, KeyStatement, Schema, SealedRow, StatementView};
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId, value_matches};
 
 use super::collection::shape_mismatch;
@@ -160,10 +160,10 @@ fn store_work(error: crate::work::WorkError) -> crate::error::Error {
 
 /// Find the closed-relation row matching the key projection.
 pub(super) fn closed_row_by_key<'c>(
-    rows: &'c [super::closed::ClosedRow],
+    rows: &'c [SealedRow],
     statement: &KeyStatement,
     key_values: &[Value],
-) -> Option<&'c super::closed::ClosedRow> {
+) -> Option<&'c SealedRow> {
     rows.iter()
         .find(|row| projection_matches(&row.values, &statement.projection, key_values))
 }
@@ -171,7 +171,7 @@ pub(super) fn closed_row_by_key<'c>(
 /// One keyed row hit from [`get_with_work`]: closed relations carry
 /// pre-decoded values; stored relations carry canonical row bytes.
 pub(super) enum KeyedRowHit<'a> {
-    Closed(&'a super::closed::ClosedRow),
+    Closed(&'a SealedRow),
     Store(&'a [u8]),
 }
 
@@ -181,8 +181,7 @@ pub(super) enum KeyedRowHit<'a> {
 /// operation's policy, not a long-lived session lease's embedded ledger.
 pub(super) fn get_with_work<'a>(
     snapshot: &'a crate::storage::store::OwnedSnapshot,
-    schema: &Schema,
-    closed: &'a super::closed::ClosedRows,
+    schema: &'a Schema,
     relation: RelationId,
     key: StatementId,
     key_values: &[Value],
@@ -190,7 +189,7 @@ pub(super) fn get_with_work<'a>(
 ) -> Result<Option<KeyedRowHit<'a>>> {
     let (_, statement) = key_statement_of(schema, relation, key)?;
     check_key_shape(schema, relation, &statement.projection, key_values)?;
-    if let Some(rows) = closed.get(relation) {
+    if let Some(rows) = schema.closed_rows(relation) {
         return Ok(closed_row_by_key(rows, statement, key_values).map(KeyedRowHit::Closed));
     }
     find_snapshot_row(

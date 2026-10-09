@@ -1,9 +1,8 @@
-//! Allen's interval algebra as a coordinate system — the mask vocabulary
-//! .
-//! The 13 basic relations are jointly exhaustive and pairwise disjoint
-//! over nonempty half-open intervals (the type's precondition —
-//! [`crate::Interval`]), so the set of all interval-pair predicates *is*
-//! the powerset 2¹³: one operator parameterized by a 13-bit mask replaces
+//! Allen's interval algebra as masks. The 13 basic relations are jointly
+//! exhaustive and pairwise disjoint over nonempty half-open intervals
+//! ([`crate::Interval`]'s invariant), so every interval-pair predicate is a
+//! set of basic relations: one 13-bit [`AllenMask`].
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Basic {

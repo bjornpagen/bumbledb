@@ -1,5 +1,6 @@
-//! Shared descriptor-wire tags. The encoder ([`super::fingerprint`]) names
-//! these discriminants; the bytes are the historical stream (tag 1 remains
+//! The tags of the schema fingerprint's canonical encoding
+//! ([`super::fingerprint`]), numbered densely from 1.
+
 use super::{Bound, FieldId};
 
 macro_rules! wire_tag {
@@ -19,7 +20,7 @@ macro_rules! wire_tag {
 }
 
 wire_tag!(ValueTypeTag {
-    Bool = 0,
+    Bool = 1,
     U64 = 2,
     I64 = 3,
     String = 4,
@@ -31,40 +32,37 @@ wire_tag!(ValueTypeTag {
 });
 
 wire_tag!(IntervalElementTag {
-    U64 = 0,
-    I64 = 1,
-    F64 = 2,
+    U64 = 1,
+    I64 = 2,
+    F64 = 3,
 });
 
-// GenerationTag is deleted with the fresh machinery: fields carry no
-// generation attribute in the v6 canonical stream (ENG-004/ENG-007).
-
 wire_tag!(ClosednessTag {
-    Ordinary = 0,
-    Closed = 1,
+    Ordinary = 1,
+    Closed = 2,
 });
 
 wire_tag!(StatementFormTag {
-    Functionality = 0,
-    Containment = 1,
-    Capacity = 4,
+    Functionality = 1,
+    Containment = 2,
+    Capacity = 3,
 });
 
 wire_tag!(WeightTag {
-    Unit = 0,
-    Field = 1,
-    DurationOf = 2,
+    Unit = 1,
+    Field = 2,
+    DurationOf = 3,
 });
 
 wire_tag!(HiPresence {
-    Absent = 0,
-    Present = 1,
+    Absent = 1,
+    Present = 2,
 });
 
 wire_tag!(BoundKind {
-    Lit = 0,
-    TargetField = 1,
-    TargetDuration = 2,
+    Lit = 1,
+    TargetField = 2,
+    TargetDuration = 3,
 });
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

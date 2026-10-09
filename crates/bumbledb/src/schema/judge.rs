@@ -25,9 +25,8 @@
 //! statement; resource failure is not a rejection.
 use crate::schema::compiled::{CompiledProjection, CompiledTheory, ProjectionBinding};
 use crate::schema::{
-    AxiomIndex, CapacityStatement, CompileError, ContainmentStatement, Enforcement, KeyStatement,
-    MemberSet, RelationId, Schema, SealedBound, SealedWeight, Side, StatementId, StatementKind,
-    StatementView,
+    CapacityStatement, CompileError, ContainmentStatement, Enforcement, KeyStatement, MemberSet,
+    RelationId, Schema, SealedBound, SealedWeight, Side, StatementId, StatementKind, StatementView,
 };
 use crate::{Value, WorkContext, WorkError};
 
@@ -498,12 +497,7 @@ impl<E> Judge<'_, '_, E> {
         if let Some(extension) = sealed.body().closed_rows() {
             for (seq, row) in extension.iter().enumerate() {
                 self.work.checkpoint()?;
-                let decoded =
-                    crate::encoding::decode_values(sealed.layout().encoded(&row.fact), |_| {
-                        unreachable!("closed relations refuse str columns")
-                    })
-                    .expect("sealed extension rows decode by construction");
-                if !visit(self, seq as u64, &decoded)? {
+                if !visit(self, seq as u64, &row.values)? {
                     return Ok(());
                 }
             }
@@ -1059,7 +1053,7 @@ impl<E> Judge<'_, '_, E> {
         }
         let handle = &row[usize::from(statement.source.projection[0].0)];
         let witnessed = matches!(handle, Value::U64(word)
-            if AxiomIndex::try_from(*word).is_ok_and(|index| members.contains(index)));
+            if u8::try_from(*word).is_ok_and(|index| members.contains(index)));
         if !witnessed {
             pending.violated = true;
             self.offer(pending, statement.source.relation, row)?;

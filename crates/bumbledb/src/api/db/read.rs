@@ -25,7 +25,6 @@ impl<S> Db<S> {
         let snapshot = self.store.snapshot(work).map_err(Error::from_store)?;
         Ok(OwnedRead {
             schema: Arc::clone(&self.schema),
-            closed: Arc::clone(&self.closed),
             snapshot,
             cache: Arc::clone(&self.cache),
             marker: PhantomData,
@@ -86,7 +85,6 @@ impl<S> Db<S> {
         let snapshot = self.store.snapshot(&work).map_err(Error::from_store)?;
         f(&ReadFrame {
             schema: &self.schema,
-            closed: &self.closed,
             snapshot: &snapshot,
             cache: &self.cache,
             work: &work,

@@ -1,5 +1,5 @@
-//! [`OwnedRead`] owns one LMDB snapshot with the shared schema, closed-row
-//! and image-cache owners: `Send`, not `Sync`. [`ReadFrame`] borrows it for
+//! [`OwnedRead`] owns one LMDB snapshot with the shared schema and image
+//! cache: `Send`, not `Sync`. [`ReadFrame`] borrows it for
 //! one operation and carries that operation's [`WorkContext`].
 //!
 //! ```compile_fail
@@ -30,16 +30,14 @@ use crate::storage::store::OwnedSnapshot;
 use crate::work::WorkContext;
 use bumbledb_theory::schema::{RelationId, StatementId};
 
-use super::closed::ClosedRows;
 use super::get as get_path;
 use super::row_reader::RowReader;
 use super::tx::row_error;
 use super::{Fact, Key};
 
-/// One pinned snapshot plus the shared schema, closed-row and cache owners.
+/// One pinned snapshot plus the shared schema and image cache.
 pub struct OwnedRead<S> {
     pub(super) schema: Arc<Schema>,
-    pub(super) closed: Arc<ClosedRows>,
     pub(super) snapshot: OwnedSnapshot,
     pub(super) cache: Arc<ImageCache>,
     pub(super) marker: PhantomData<fn() -> S>,
@@ -48,7 +46,6 @@ pub struct OwnedRead<S> {
 /// One operation's borrowed view of a pinned snapshot.
 pub struct ReadFrame<'read, S> {
     pub(super) schema: &'read Arc<Schema>,
-    pub(super) closed: &'read ClosedRows,
     pub(super) snapshot: &'read OwnedSnapshot,
     pub(super) cache: &'read Arc<ImageCache>,
     pub(super) work: &'read WorkContext,
@@ -79,7 +76,6 @@ impl<S> OwnedRead<S> {
     pub fn frame<'read>(&'read self, work: &'read WorkContext) -> ReadFrame<'read, S> {
         ReadFrame {
             schema: &self.schema,
-            closed: &self.closed,
             snapshot: &self.snapshot,
             cache: &self.cache,
             work,
@@ -100,7 +96,7 @@ impl<S> OwnedRead<S> {
         key: K,
         work: &WorkContext,
     ) -> Result<Option<K::Fact>> {
-        get_fact(&self.snapshot, &self.schema, &self.closed, key, work)
+        get_fact(&self.snapshot, &self.schema, key, work)
     }
 
     /// # Errors
@@ -115,7 +111,6 @@ impl<S> OwnedRead<S> {
         get_row(
             &self.snapshot,
             &self.schema,
-            &self.closed,
             relation,
             key,
             key_values,
@@ -233,9 +228,9 @@ impl<S> ReadFrame<'_, S> {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
         let fields = relation.fields();
-        if let Some(rows) = self.closed.get(rel) {
+        if let Some(rows) = self.schema.closed_rows(rel) {
             return Ok(ScanRows::Closed(rows.iter().map(move |row| {
-                crate::canonical::decode(fields, &row.canonical, self.work).map_err(row_error)
+                crate::canonical::decode(fields, row.row.as_bytes(), self.work).map_err(row_error)
             })));
         }
         let iterator = self.snapshot.rows(rel).map_err(Error::from_store)?;
@@ -250,10 +245,10 @@ impl<S> ReadFrame<'_, S> {
     pub fn scan_facts<'lease, F: Fact<'lease, Schema = S>>(
         &'lease self,
     ) -> Result<impl Iterator<Item = Result<F>> + 'lease> {
-        if let Some(rows) = self.closed.get(F::RELATION) {
+        if let Some(rows) = self.schema.closed_rows(F::RELATION) {
             return Ok(ScanRows::Closed(
                 rows.iter()
-                    .map(|row| F::decode(RowReader::new(&row.canonical)?)),
+                    .map(|row| F::decode(RowReader::new(row.row.as_bytes())?)),
             ));
         }
         let iterator = self.snapshot.rows(F::RELATION).map_err(Error::from_store)?;
@@ -278,7 +273,7 @@ impl<S> ReadFrame<'_, S> {
     }
 
     fn contains_values(&self, relation: RelationId, values: &[Value]) -> Result<bool> {
-        if let Some(rows) = self.closed.get(relation) {
+        if let Some(rows) = self.schema.closed_rows(relation) {
             return Ok(rows.iter().any(|row| row.values.as_ref() == values));
         }
         let bytes = super::tx::encode_values(self.schema.as_ref(), relation, values, self.work)?;
@@ -305,7 +300,7 @@ impl<S> ReadFrame<'_, S> {
         work: &WorkContext,
         key: K,
     ) -> Result<Option<K::Fact>> {
-        get_fact(self.snapshot, self.schema, self.closed, key, work)
+        get_fact(self.snapshot, self.schema, key, work)
     }
 
     /// # Errors
@@ -317,15 +312,7 @@ impl<S> ReadFrame<'_, S> {
         key_values: &[Value],
         work: &WorkContext,
     ) -> Result<Option<DecodedRow>> {
-        get_row(
-            self.snapshot,
-            self.schema,
-            self.closed,
-            relation,
-            key,
-            key_values,
-            work,
-        )
+        get_row(self.snapshot, self.schema, relation, key, key_values, work)
     }
 
     /// # Errors
@@ -361,26 +348,17 @@ impl<S> PreparedQuery<S> {
 // a temporary frame. Both public read surfaces share this exact lookup.
 fn get_fact<'row, K: Key<'row>>(
     snapshot: &'row OwnedSnapshot,
-    schema: &Schema,
-    closed: &'row ClosedRows,
+    schema: &'row Schema,
     key: K,
     work: &WorkContext,
 ) -> Result<Option<K::Fact>> {
     let relation = <K::Fact as Fact<'row>>::RELATION;
     let mut key_values = Vec::new();
     key.append_key_values(&mut key_values)?;
-    match get_path::get_with_work(
-        snapshot,
-        schema,
-        closed,
-        relation,
-        K::STATEMENT,
-        &key_values,
-        work,
-    )? {
+    match get_path::get_with_work(snapshot, schema, relation, K::STATEMENT, &key_values, work)? {
         None => Ok(None),
         Some(get_path::KeyedRowHit::Closed(row)) => {
-            K::Fact::decode(RowReader::new(&row.canonical)?).map(Some)
+            K::Fact::decode(RowReader::new(row.row.as_bytes())?).map(Some)
         }
         Some(get_path::KeyedRowHit::Store(bytes)) => {
             K::Fact::decode(RowReader::new(bytes)?).map(Some)
@@ -391,18 +369,16 @@ fn get_fact<'row, K: Key<'row>>(
 fn get_row(
     snapshot: &OwnedSnapshot,
     schema: &Schema,
-    closed: &ClosedRows,
     relation: RelationId,
     key: StatementId,
     key_values: &[Value],
     work: &WorkContext,
 ) -> Result<Option<DecodedRow>> {
-    let bytes =
-        match get_path::get_with_work(snapshot, schema, closed, relation, key, key_values, work)? {
-            None => None,
-            Some(get_path::KeyedRowHit::Closed(row)) => Some(row.canonical.as_ref()),
-            Some(get_path::KeyedRowHit::Store(bytes)) => Some(bytes),
-        };
+    let bytes = match get_path::get_with_work(snapshot, schema, relation, key, key_values, work)? {
+        None => None,
+        Some(get_path::KeyedRowHit::Closed(row)) => Some(row.row.as_bytes()),
+        Some(get_path::KeyedRowHit::Store(bytes)) => Some(bytes),
+    };
     let row = bytes
         .map(|bytes| {
             crate::canonical::decode(schema.relation(relation).fields(), bytes, work)

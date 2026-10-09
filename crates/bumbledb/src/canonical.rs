@@ -46,7 +46,7 @@ impl std::error::Error for RowError {}
 
 /// Canonical, owned, schema-checked bytes. No unvalidated constructor or raw
 /// mutable view exists.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalRow {
     bytes: Box<[u8]>,
 }

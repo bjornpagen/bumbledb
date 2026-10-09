@@ -1,6 +1,5 @@
 use super::*;
 
-mod member_set;
 mod obligations;
 mod reject;
 mod valid;

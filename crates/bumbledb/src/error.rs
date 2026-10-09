@@ -12,12 +12,14 @@ pub use crate::ir::validate::error::{
     AggregateRefusal, ComparisonRefusal, FieldRefusal, HeadMismatch, Limit, ParamRefusal,
     RecRefusal, Unordered, ValidationError, VariableRefusal,
 };
+pub use bumbledb_theory::schema::{
+    Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate,
+};
 
 use std::path::PathBuf;
 
 use crate::encoding::InternId;
 use crate::ir::ParamId;
-use crate::schema::KeyId;
 use crate::schema::StatementRef;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId, ValueType};
 
@@ -34,10 +36,6 @@ pub struct FindIndex(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RuleIndex(pub usize);
 
-/// Extension-row index in a closed relation's ground axioms.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RowIndex(pub usize);
-
 macro_rules! display_index {
     ($($ty:ty),* $(,)?) => {
         $(
@@ -50,17 +48,7 @@ macro_rules! display_index {
     };
 }
 
-display_index!(AtomIndex, FindIndex, RuleIndex, RowIndex);
-
-/// A witnessed value against the bound it was required to equal.
-/// Operand order is the type: `witnessed` is what was observed,
-/// `required` is the bound — never `(expected, actual)` in one
-/// variant and `(found, expected)` in the next.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Mismatch<T> {
-    pub witnessed: T,
-    pub required: T,
-}
+display_index!(AtomIndex, FindIndex, RuleIndex);
 
 /// A quantity that crossed its ceiling. Operand order is the type:
 /// `observed` is what was measured, `ceiling` is the bound it must
@@ -69,17 +57,6 @@ pub struct Mismatch<T> {
 pub struct Exceeded<T> {
     pub observed: T,
     pub ceiling: T,
-}
-
-/// One declared key offered as owned evidence in a target-key rejection.
-/// The diagnostic may outlive the descriptor, so it carries no schema
-/// (`projection_names` pairs `projection` positionwise), so the refusal
-/// speaks the caller's own vocabulary without a descriptor lookup.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TargetKeyCandidate {
-    pub key: KeyId,
-    pub projection: Box<[FieldId]>,
-    pub projection_names: Box<[Box<str>]>,
 }
 
 /// Impossible stored bytes: a hard error, never a skip or a default.
@@ -121,250 +98,6 @@ pub enum CorruptionError {
 
     /// An index entry names a row that does not exist.
     DanglingIndexEntry,
-}
-
-/// A schema declaration error: one variant per illegal shape, so an invalid
-/// schema is unconstructible. Declaration-scoped variants carry no statement
-/// id; every statement rejection is [`SchemaError::Statement`], its id beside
-/// a [`StatementErrorKind`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SchemaError {
-    DuplicateRelationName {
-        name: Box<str>,
-    },
-    DuplicateFieldName {
-        relation: RelationId,
-        name: Box<str>,
-    },
-    FixedBytesWidthOutOfRange {
-        relation: RelationId,
-        field: FieldId,
-        len: u16,
-    },
-
-    IntervalWidthOutOfRange {
-        relation: RelationId,
-        field: FieldId,
-        width: u64,
-    },
-
-    RelationTooManyColumns {
-        relation: RelationId,
-        columns: usize,
-    },
-
-    TooManyStatements {
-        count: usize,
-    },
-
-    EmptyExtension {
-        relation: RelationId,
-    },
-
-    ExtensionTooManyRows {
-        relation: RelationId,
-        count: usize,
-    },
-
-    DuplicateExtensionHandle {
-        relation: RelationId,
-        handle: Box<str>,
-    },
-
-    ExtensionArityMismatch {
-        relation: RelationId,
-        row: RowIndex,
-        mismatch: Mismatch<usize>,
-    },
-
-    ExtensionValueTypeMismatch {
-        relation: RelationId,
-        row: RowIndex,
-        field: FieldId,
-    },
-
-    ExtensionIntervalRay {
-        relation: RelationId,
-        row: RowIndex,
-        field: FieldId,
-    },
-
-    StrOnClosedRelation {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    Statement {
-        statement: StatementId,
-        kind: StatementErrorKind,
-    },
-}
-
-/// One violated line of the statement-validation roster
-/// — the
-/// kind half of [`SchemaError::Statement`]: one variant per roster line,
-/// no catch-all; each doc comment cites its line. Payloads carry ids and
-/// owned evidence; the statement id lives on the carrier, so no variant
-/// can forget it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StatementErrorKind {
-    UnknownRelation {
-        relation: RelationId,
-    },
-
-    UnknownField {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    EmptyProjection {
-        relation: RelationId,
-    },
-
-    DuplicateProjectionField {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    DuplicateSelectionField {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    /// A Many selection requires at least two distinct literals.
-    DegenerateSelectionSet {
-        relation: RelationId,
-        field: FieldId,
-        len: usize,
-    },
-
-    DuplicateSelectionLiteral {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    CapacityInvertedWindow {
-        lo: u64,
-        hi: u64,
-    },
-
-    /// Interval positions cannot be capacity group keys.
-    CapacityIntervalPosition {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    /// the typed polarity refusal (a negative weight would let an insert
-    CapacityWeightNotU64 {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    CapacityWeightNotDuration {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    /// roster (ruled 2026-07-24, C1) and must be u64-encoded — signed
-    /// and non-scalar encodings are refused.
-    CapacityBoundNotU64 {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    CapacityBoundNotDuration {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    /// a dimension error (ruled 2026-07-24, C18; the legal pairings:
-    CapacityDimensionMixing {
-        field: FieldId,
-    },
-
-    FunctionalityMultipleIntervals {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    FunctionalityIntervalNotLast {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    DuplicateFunctionality {
-        earlier: StatementId,
-    },
-
-    DeterminantKeyTooWide {
-        width: usize,
-    },
-
-    ContainmentArityMismatch {
-        mismatch: Mismatch<usize>,
-    },
-
-    ContainmentTypeMismatch {
-        position: usize,
-    },
-
-    SelectedFieldProjected {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    SelectionLiteralTypeMismatch {
-        relation: RelationId,
-        field: FieldId,
-    },
-
-    /// has the descriptor in hand, and the refusal must speak the
-    NoMatchingTargetKey {
-        target: RelationId,
-        target_name: Box<str>,
-        projection: Box<[FieldId]>,
-        projection_names: Box<[Box<str>]>,
-        available: Box<[TargetKeyCandidate]>,
-    },
-
-    NoPointwiseTargetKey {
-        target: RelationId,
-        target_name: Box<str>,
-        projection: Box<[FieldId]>,
-        projection_names: Box<[Box<str>]>,
-        available: Box<[TargetKeyCandidate]>,
-    },
-    /// An interval position on a containment with a closed side — refused
-    ClosedContainmentInterval {
-        relation: RelationId,
-    },
-
-    /// set may equal the refused projection — the refusal reason is
-    ClosedTargetNotHandle {
-        target: RelationId,
-        target_name: Box<str>,
-        projection: Box<[FieldId]>,
-        projection_names: Box<[Box<str>]>,
-    },
-
-    ClosedStatementRefuted {
-        relation: RelationId,
-        row: RowIndex,
-    },
-
-    DuplicateStatement {
-        earlier: StatementId,
-    },
-}
-
-impl StatementErrorKind {
-    #[must_use]
-    pub fn at(self, statement: StatementId) -> SchemaError {
-        SchemaError::Statement {
-            statement,
-            kind: self,
-        }
-    }
 }
 
 /// A dynamic-surface id that does not resolve: relation, field, fresh

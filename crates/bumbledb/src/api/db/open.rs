@@ -80,12 +80,10 @@ impl<S> Db<S> {
     pub(super) fn assemble(store: Store, schema: Schema, work: WorkContext) -> Result<Self> {
         work.checkpoint().map_err(Error::from)?;
         let schema = Arc::new(schema);
-        let closed = Arc::new(super::closed::ClosedRows::build(schema.as_ref(), &work)?);
         let cache = Arc::new(ImageCache::new(schema.as_ref()));
         Ok(Self {
             store,
             schema,
-            closed,
             cache,
             marker: std::marker::PhantomData,
         })

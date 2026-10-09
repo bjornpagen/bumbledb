@@ -1,12 +1,21 @@
-//! The schema as declared: descriptors, the shared value/type vocabulary,
-//! .
-//! This is the theory half of the schema surface: plain data a host (or
-//! the `schema!` macro's expansion) constructs, and the pure judgments
-//! over it — [`SchemaDescriptor::materialized_statements`] and
-//! [`value_matches`]. The admission boundary stays engine-side: the only
+//! The schema as declared: descriptors and the value and type vocabulary,
+//! with the pure judgments over them. [`check()`] decides whether a
+//! declaration is a schema; the engine seals what it accepts.
+
+pub mod check;
+pub mod error;
 pub mod spec;
 
+pub use check::{
+    CapacityResolution, Checked, CheckedRelation, CheckedRow, CheckedStatement, MemberSet,
+    Resolution, SealedBound, SealedWeight, check, mirror_links,
+};
+pub use error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
+
 use crate::value::Value;
+
+/// The widest `bytes<N>` field.
+pub const MAX_FIXED_BYTES: u16 = 64;
 
 /// Dense relation id: the relation's index in schema declaration order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -140,9 +149,8 @@ pub struct FieldDescriptor {
     pub value_type: ValueType,
 }
 
-/// vocabulary of the checking boundaries (query literals, bound params,
-/// dynamic facts, statement selections). UTF-8 is [`Value::String`]'s
-/// type, not a match failure.
+/// Why a value does not match a value type, at every checking boundary
+/// (query literals, bound parameters, dynamic facts, statement selections).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueMismatch {
     Type,
@@ -247,8 +255,7 @@ impl From<Value> for LiteralSet {
     }
 }
 
-/// One side of a containment: the single-atom query `R(X | φ)`
-/// .
+/// One side of a containment or capacity: the single-atom query `R(X | φ)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Side {
     pub relation: RelationId,
@@ -283,8 +290,7 @@ pub enum Bound {
     TargetDuration(FieldId),
 }
 
-/// One dependency statement: a judgment about queries
-/// . Statements are anonymous —
+/// One dependency statement. Statements are anonymous —
 /// their identity is their materialized-order [`StatementId`]. There is no
 /// bidirectional variant: `==` is lowered to two `Containment` statements
 /// with the sides swapped.
@@ -413,9 +419,8 @@ impl SchemaDescriptor {
     }
 }
 
-/// The statement-form tag, as plain data — the kind a bindings layer
-/// the payload-carrying enums ([`StatementDescriptor`] / the engine's
-/// `Violation`).
+/// The statement form as plain data, without the payload of
+/// [`StatementDescriptor`] or the engine's `Violation`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StatementKind {
     Functionality,

@@ -34,7 +34,6 @@ use crate::schema::{Schema, Theory, ValidateDescriptor as _};
 use crate::work::WorkContext;
 use bumbledb_theory::schema::{RelationId, StatementId};
 
-use super::closed::ClosedRows;
 use super::collection::AcceptedCollection;
 use super::get as get_path;
 use super::row_reader::RowReader;
@@ -48,7 +47,6 @@ enum BuilderPhase {
 
 pub struct InstanceBuilder<S> {
     schema: Arc<Schema>,
-    closed: Arc<ClosedRows>,
     work: WorkContext,
     /// The staged final set: canonical rows per relation. Set semantics by
     /// construction — the builder starts empty, so a net delta and the
@@ -65,10 +63,8 @@ impl<S: Theory> InstanceBuilder<S> {
     pub fn new(theory: S, work: WorkContext) -> Result<Self> {
         let schema = Arc::new(theory.descriptor().validate()?);
         work.checkpoint()?;
-        let closed = Arc::new(ClosedRows::build(schema.as_ref(), &work)?);
         Ok(Self {
             schema,
-            closed,
             work,
             staged: BTreeMap::new(),
             phase: BuilderPhase::Clean,
@@ -304,7 +300,7 @@ impl<S> InstanceBuilder<S> {
     }
 
     fn contains_values(&self, relation: RelationId, values: &[Value]) -> Result<bool> {
-        if let Some(rows) = self.closed.get(relation) {
+        if let Some(rows) = self.schema.closed_rows(relation) {
             return Ok(rows.iter().any(|row| row.values.as_ref() == values));
         }
         let bytes = encode_values(self.schema.as_ref(), relation, values, &self.work)?;
@@ -329,9 +325,9 @@ impl<S> InstanceBuilder<S> {
             &statement.projection,
             &key_values,
         )?;
-        if let Some(rows) = self.closed.get(relation) {
+        if let Some(rows) = self.schema.closed_rows(relation) {
             return match get_path::closed_row_by_key(rows, statement, &key_values) {
-                Some(row) => K::Fact::decode(RowReader::new(&row.canonical)?).map(Some),
+                Some(row) => K::Fact::decode(RowReader::new(row.row.as_bytes())?).map(Some),
                 None => Ok(None),
             };
         }
@@ -357,12 +353,12 @@ impl<S> InstanceBuilder<S> {
             &statement.projection,
             key_values,
         )?;
-        if let Some(rows) = self.closed.get(relation) {
+        if let Some(rows) = self.schema.closed_rows(relation) {
             return get_path::closed_row_by_key(rows, statement, key_values)
                 .map(|row| {
                     crate::canonical::decode(
                         self.schema.relation(relation).fields(),
-                        &row.canonical,
+                        row.row.as_bytes(),
                         &self.work,
                     )
                     .map_err(row_error)
@@ -422,7 +418,6 @@ impl<S> InstanceBuilder<S> {
             )),
             Judgment::Admitted => Ok(Admission::Accepted(OwnedInstance::seal(
                 self.schema,
-                self.closed,
                 self.staged
                     .into_iter()
                     .map(|(relation, rows)| (relation, rows.into_iter().collect()))

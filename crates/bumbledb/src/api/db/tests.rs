@@ -125,8 +125,7 @@ fn pending_owners_release_duplicates_and_opposite_mutations_and_transfer_into_se
     let db = create(&dir);
     let work = operation();
     let parent = db.store.snapshot(&work).unwrap();
-    let mut tx: super::WriteTx<'_, Ledger> =
-        super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
+    let mut tx: super::WriteTx<'_, Ledger> = super::WriteTx::new(&db.schema, &parent, &work);
     let baseline = crate::alloc_counter::snapshot().absolute.live_bytes;
     tx.insert([&Entry {
         name: "alpha",
@@ -184,8 +183,7 @@ fn pending_tree_growth_and_removal_release_all_payloads_and_empty_nodes() {
     let db = create(&dir);
     let work = operation();
     let parent = db.store.snapshot(&work).unwrap();
-    let mut tx: super::WriteTx<'_, Ledger> =
-        super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
+    let mut tx: super::WriteTx<'_, Ledger> = super::WriteTx::new(&db.schema, &parent, &work);
     let baseline = crate::alloc_counter::snapshot().absolute.live_bytes;
     for size in [1, 5, 6, 16, 128] {
         for id in 0..size {
@@ -243,8 +241,7 @@ fn cancelled_collection_and_seal_release_all_owned_memory() {
         let work = operation();
         let parent = db.store.snapshot(&work).unwrap();
         let baseline = crate::alloc_counter::snapshot().absolute.live_bytes;
-        let mut tx: super::WriteTx<'_, Ledger> =
-            super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
+        let mut tx: super::WriteTx<'_, Ledger> = super::WriteTx::new(&db.schema, &parent, &work);
         if seal {
             tx.insert_dyn(ENTRY, [entry_row("kept", 1)]).unwrap();
             work.cancel();
@@ -1104,7 +1101,7 @@ fn dynamic_ingestion_stops_at_cancellation_before_later_bad_rows() {
             let work = operation();
             let parent = db.store.snapshot(&work).unwrap();
             let mut tx: super::WriteTx<'_, Ledger> =
-                super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
+                super::WriteTx::new(&db.schema, &parent, &work);
             if prefix {
                 tx.insert_dyn(ENTRY, [entry_row("prior", 0)]).unwrap();
             }
@@ -1735,7 +1732,6 @@ fn scoped_read_borrows_metadata_while_owned_read_retains_it() {
     let metadata_owners = || {
         [
             std::sync::Arc::strong_count(&db.schema),
-            std::sync::Arc::strong_count(&db.closed),
             std::sync::Arc::strong_count(&db.cache),
         ]
     };
@@ -1745,7 +1741,7 @@ fn scoped_read_borrows_metadata_while_owned_read_retains_it() {
             assert_eq!(
                 metadata_owners(),
                 before,
-                "a scoped frame borrows metadata instead of retaining three temporary owners"
+                "a scoped frame borrows metadata instead of retaining owners"
             );
             assert_eq!(
                 frame.get(EntryName("alpha"))?,

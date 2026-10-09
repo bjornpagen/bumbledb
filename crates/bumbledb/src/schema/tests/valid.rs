@@ -2,9 +2,9 @@ use super::*;
 use crate::error::StatementErrorKind;
 
 fn member_set(indices: &[u8]) -> MemberSet {
-    let mut members = MemberSet::empty();
+    let mut members = MemberSet::default();
     for &index in indices {
-        members.insert(AxiomIndex(index));
+        members.insert(index);
     }
     members
 }

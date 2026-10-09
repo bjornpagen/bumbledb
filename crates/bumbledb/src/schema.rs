@@ -33,7 +33,9 @@ pub use bumbledb_theory::schema::{
     StatementDescriptor, StatementId, StatementKind, ValueType, Weight,
 };
 
-pub use bumbledb_theory::schema::{ValueMismatch, value_matches};
+pub use bumbledb_theory::schema::{
+    MemberSet, SealedBound, SealedWeight, ValueMismatch, value_matches,
+};
 
 pub use compiled::{
     CompileError, CompiledProjection, CompiledTheory, DistinctnessWitness, KeyEncoding,
@@ -86,9 +88,6 @@ impl Theory for SchemaDescriptor {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DisjointDeterminantProof(());
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Enforcement {
     ScalarProbe {
@@ -99,7 +98,6 @@ pub(crate) enum Enforcement {
     IntervalCoverage {
         target_key: KeyId,
         key_projection: Box<[FieldId]>,
-        disjoint: DisjointDeterminantProof,
         source_tail: ValueType,
         target_tail: ValueType,
     },
@@ -151,83 +149,12 @@ impl Pairing {
     }
 }
 
+/// A key's form: scalar, or pointwise over a final interval field whose
+/// rows in one scalar group are disjoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AxiomIndex(pub(crate) u8);
-
-impl TryFrom<u64> for AxiomIndex {
-    type Error = std::num::TryFromIntError;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        u8::try_from(value).map(Self)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MemberSet {
-    words: [u64; 4],
-}
-
-impl MemberSet {
-    pub(crate) const fn empty() -> Self {
-        Self { words: [0; 4] }
-    }
-
-    #[must_use]
-    pub(crate) fn contains(&self, index: AxiomIndex) -> bool {
-        let word = usize::from(index.0 / 64);
-        self.words[word] & (1 << (index.0 % 64)) != 0
-    }
-
-    pub(crate) fn insert(&mut self, index: AxiomIndex) {
-        let word = usize::from(index.0 / 64);
-        self.words[word] |= 1 << (index.0 % 64);
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum EncodableCheck {
-    Encoded {
-        field: FieldId,
-        bytes: Box<[u8]>,
-    },
-
-    EncodedSet {
-        field: FieldId,
-        alternatives: Box<[Box<[u8]>]>,
-    },
-}
-
-impl EncodableCheck {
-    pub(crate) fn matches(&self, layout: &FactLayout, fact: &[u8]) -> bool {
-        use crate::encoding::field_bytes;
-        match self {
-            Self::Encoded { field, bytes } => {
-                field_bytes(layout.encoded(fact), usize::from(field.0)) == &bytes[..]
-            }
-            Self::EncodedSet {
-                field,
-                alternatives,
-            } => {
-                let actual = field_bytes(layout.encoded(fact), usize::from(field.0));
-                alternatives.iter().any(|bytes| actual == &bytes[..])
-            }
-        }
-    }
-}
-
-/// The sealed key form: two behaviors, two arms. There is no fresh-row
-/// arm — the database issues no identity, and every key is an ordinary
-/// declared law over application-supplied values. The disjointness proof
-/// lives on the Pointwise arm that needs it (CONTRACT C9).
-#[allow(private_interfaces)]
-#[derive(Debug, Clone)]
 pub enum KeyForm {
     Scalar,
-
-    Pointwise {
-        tail: ValueType,
-        disjoint: DisjointDeterminantProof,
-    },
+    Pointwise { tail: ValueType },
 }
 
 /// One sealed key statement: `R(X) -> R` with its form.
@@ -270,56 +197,6 @@ impl ContainmentStatement {
     pub fn mirror_id(&self, schema: &Schema) -> Option<StatementId> {
         self.pairing.partner().map(|id| schema.containment(id).id)
     }
-}
-
-/// Sealed capacity measure (CONTRACT C9): Duration carries its tail
-/// in-arm. [`Weight::Unit`] is a case, not an absence.
-#[allow(private_interfaces)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SealedWeight {
-    Unit,
-    Field(FieldId),
-    Duration { field: FieldId, tail: ValueType },
-}
-
-impl SealedWeight {
-    #[must_use]
-    pub const fn to_weight(self) -> Weight {
-        match self {
-            Self::Unit => Weight::Unit,
-            Self::Field(field) => Weight::Field(field),
-            Self::Duration { field, .. } => Weight::DurationOf(field),
-        }
-    }
-}
-
-/// Sealed capacity ceiling (CONTRACT C9): `*` is [`SealedBound::Unbounded`],
-/// not a missing bound. Duration carries its tail in-arm.
-#[allow(private_interfaces)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SealedBound {
-    Unbounded,
-    Lit(u64),
-    TargetField(FieldId),
-    Duration { field: FieldId, tail: ValueType },
-}
-
-impl SealedBound {
-    #[must_use]
-    pub const fn to_bound(self) -> Option<Bound> {
-        match self {
-            Self::Unbounded => None,
-            Self::Lit(n) => Some(Bound::Lit(n)),
-            Self::TargetField(field) => Some(Bound::TargetField(field)),
-            Self::Duration { field, .. } => Some(Bound::TargetDuration(field)),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BoundCeiling {
-    Unbounded,
-    Finite(u64),
 }
 
 /// One sealed capacity statement: `B(Y | ψ) <=[w]{lo..hi} A(X | φ)`.
@@ -381,18 +258,20 @@ impl StatementView<'_> {
     }
 }
 
-/// One sealed ground axiom: the handle plus the row's canonical fact bytes
-/// — the synthetic id field (the declaration index) followed by each
-/// intrinsic value's canonical encoding. Validation encodes these once.
+/// One row of a closed relation: its handle, its values in sealed field
+/// order (the handle id, the row's declaration index, first) and the same
+/// values as a canonical row, the codec of stored rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SealedRow {
     pub handle: Box<str>,
+    pub values: Box<[Value]>,
+    pub row: crate::canonical::CanonicalRow,
+    /// The fixed-width fact codec; deleted once nothing reads it.
     pub fact: Box<[u8]>,
 }
 
-/// The sealed relation kind (CONTRACT C9). Shared layout lives on
-/// [`Relation`]; the extension payload lives in the closed arm. Closed
-/// cannot be written.
+/// A relation's kind: ordinary, or closed with its rows. Closed relations
+/// are never written.
 #[derive(Debug, Clone)]
 pub enum RelationBody {
     Ordinary,
@@ -472,6 +351,12 @@ impl Schema {
     #[must_use]
     pub fn relations(&self) -> &[Relation] {
         &self.relations
+    }
+
+    /// The rows of a closed relation; `None` for an ordinary or unknown one.
+    #[must_use]
+    pub fn closed_rows(&self, id: RelationId) -> Option<&[SealedRow]> {
+        self.relation_checked(id)?.body().closed_rows()
     }
 
     /// # Panics

@@ -1,9 +1,9 @@
-//! bumbledb-theory: the engine-free half of bumbledb — the value
-//! vocabulary, the checked [`Interval`] type, Allen's mask algebra, and
-//! the schema-as-declared surface ([`schema::SchemaDescriptor`],
-//! [`schema::spec::SchemaSpec`], and the one name→id lowering).
-//! Everything here is plain data and pure judgment: UUID value support,
-//! zero LMDB/exec reach. The engine crate (`bumbledb`) re-exports this
+//! The engine-free half of bumbledb: the value vocabulary, the checked
+//! [`Interval`] type, Allen's mask algebra, and the declared schema with
+//! its checks ([`schema::SchemaDescriptor`], [`schema::check()`],
+//! [`schema::spec::SchemaSpec`]). Plain data and pure judgment; the
+//! `bumbledb` engine re-exports it.
+
 #[cfg(target_pointer_width = "32")]
 compile_error!("bumbledb targets 64-bit platforms only");
 

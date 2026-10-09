@@ -29,7 +29,6 @@ use crate::schema::Schema;
 use crate::work::WorkContext;
 use bumbledb_theory::schema::{RelationId, StatementId};
 
-use super::closed::ClosedRows;
 use super::get as get_path;
 use super::row_reader::RowReader;
 use super::tx::{encode_values, row_error};
@@ -37,7 +36,6 @@ use super::{Fact, Key};
 
 pub struct OwnedInstance<S> {
     schema: Arc<Schema>,
-    closed: Arc<ClosedRows>,
     /// One image cache for every prepare on this admitted instance.
     cache: Arc<ImageCache>,
     /// The admitted final set: canonical rows per relation, sorted by full
@@ -49,7 +47,6 @@ pub struct OwnedInstance<S> {
 impl<S> OwnedInstance<S> {
     pub(super) fn seal(
         schema: Arc<Schema>,
-        closed: Arc<ClosedRows>,
         relations: BTreeMap<RelationId, Vec<Box<[u8]>>>,
     ) -> Self {
         debug_assert!(
@@ -61,7 +58,6 @@ impl<S> OwnedInstance<S> {
         let cache = Arc::new(ImageCache::new(schema.as_ref()));
         Self {
             schema,
-            closed,
             cache,
             relations,
             marker: PhantomData,
@@ -151,9 +147,9 @@ impl<S> OwnedInstance<S> {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
         let fields = relation.fields();
-        if let Some(rows) = self.closed.get(rel) {
+        if let Some(rows) = self.schema.closed_rows(rel) {
             return Ok(ScanRows::Closed(rows.iter().map(move |row| {
-                crate::canonical::decode(fields, &row.canonical, work).map_err(row_error)
+                crate::canonical::decode(fields, row.row.as_bytes(), work).map_err(row_error)
             })));
         }
         Ok(ScanRows::Heap(self.relation_rows(rel).iter().map(
@@ -166,10 +162,10 @@ impl<S> OwnedInstance<S> {
     pub fn scan_facts<'a, F: Fact<'a, Schema = S>>(
         &'a self,
     ) -> Result<impl Iterator<Item = Result<F>> + 'a> {
-        if let Some(rows) = self.closed.get(F::RELATION) {
+        if let Some(rows) = self.schema.closed_rows(F::RELATION) {
             return Ok(ScanRows::Closed(
                 rows.iter()
-                    .map(|row| F::decode(RowReader::new(&row.canonical)?)),
+                    .map(|row| F::decode(RowReader::new(row.row.as_bytes())?)),
             ));
         }
         Ok(ScanRows::Heap(
@@ -208,7 +204,7 @@ impl<S> OwnedInstance<S> {
         values: &[Value],
         work: &WorkContext,
     ) -> Result<bool> {
-        if let Some(rows) = self.closed.get(relation) {
+        if let Some(rows) = self.schema.closed_rows(relation) {
             return Ok(rows.iter().any(|row| row.values.as_ref() == values));
         }
         let bytes = encode_values(self.schema.as_ref(), relation, values, work)?;
@@ -236,9 +232,9 @@ impl<S> OwnedInstance<S> {
             &statement.projection,
             &key_values,
         )?;
-        if let Some(rows) = self.closed.get(relation) {
+        if let Some(rows) = self.schema.closed_rows(relation) {
             return match get_path::closed_row_by_key(rows, statement, &key_values) {
-                Some(row) => K::Fact::decode(RowReader::new(&row.canonical)?).map(Some),
+                Some(row) => K::Fact::decode(RowReader::new(row.row.as_bytes())?).map(Some),
                 None => Ok(None),
             };
         }
@@ -264,12 +260,12 @@ impl<S> OwnedInstance<S> {
             &statement.projection,
             key_values,
         )?;
-        if let Some(rows) = self.closed.get(relation) {
+        if let Some(rows) = self.schema.closed_rows(relation) {
             return get_path::closed_row_by_key(rows, statement, key_values)
                 .map(|row| {
                     crate::canonical::decode(
                         self.schema.relation(relation).fields(),
-                        &row.canonical,
+                        row.row.as_bytes(),
                         work,
                     )
                     .map_err(row_error)

@@ -25,7 +25,6 @@ use crate::storage::store::OwnedSnapshot;
 use crate::work::WorkContext;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
-use super::closed::ClosedRows;
 use super::collection::AcceptedCollection;
 use super::get as get_path;
 use super::row_reader::RowReader;
@@ -117,7 +116,6 @@ impl RowBatch {
 /// reachable from here.
 pub struct WriteTx<'a, S> {
     schema: &'a Arc<Schema>,
-    closed: &'a ClosedRows,
     parent: &'a OwnedSnapshot,
     work: &'a WorkContext,
     pending: PendingDelta,
@@ -181,13 +179,11 @@ fn dynamic_row_error(
 impl<'a, S> WriteTx<'a, S> {
     pub(super) fn new(
         schema: &'a Arc<Schema>,
-        closed: &'a ClosedRows,
         parent: &'a OwnedSnapshot,
         work: &'a WorkContext,
     ) -> Self {
         Self {
             schema,
-            closed,
             parent,
             work,
             pending: PendingDelta::default(),
@@ -524,7 +520,7 @@ impl<'a, S> WriteTx<'a, S> {
     }
 
     fn contains_values(&self, relation: RelationId, values: &[Value]) -> Result<bool> {
-        if let Some(rows) = self.closed.get(relation) {
+        if let Some(rows) = self.schema.closed_rows(relation) {
             return Ok(rows.iter().any(|row| row.values.as_ref() == values));
         }
         let bytes = encode_owned_values(self.schema.as_ref(), relation, values, self.work)?;
@@ -548,9 +544,9 @@ impl<'a, S> WriteTx<'a, S> {
             &statement.projection,
             &key_values,
         )?;
-        if let Some(rows) = self.closed.get(relation) {
+        if let Some(rows) = self.schema.closed_rows(relation) {
             return match get_path::closed_row_by_key(rows, statement, &key_values) {
-                Some(row) => K::Fact::decode(RowReader::new(&row.canonical)?).map(Some),
+                Some(row) => K::Fact::decode(RowReader::new(row.row.as_bytes())?).map(Some),
                 None => Ok(None),
             };
         }
@@ -581,9 +577,9 @@ impl<'a, S> WriteTx<'a, S> {
             &statement.projection,
             &key_values,
         )?;
-        if let Some(rows) = self.closed.get(relation) {
+        if let Some(rows) = self.schema.closed_rows(relation) {
             return match get_path::closed_row_by_key(rows, statement, &key_values) {
-                Some(row) => K::Fact::decode(RowReader::new(&row.canonical)?).map(Some),
+                Some(row) => K::Fact::decode(RowReader::new(row.row.as_bytes())?).map(Some),
                 None => Ok(None),
             };
         }
@@ -610,12 +606,12 @@ impl<'a, S> WriteTx<'a, S> {
             &statement.projection,
             key_values,
         )?;
-        if let Some(rows) = self.closed.get(relation) {
+        if let Some(rows) = self.schema.closed_rows(relation) {
             return get_path::closed_row_by_key(rows, statement, key_values)
                 .map(|row| {
                     crate::canonical::decode(
                         self.schema.relation(relation).fields(),
-                        &row.canonical,
+                        row.row.as_bytes(),
                         &work,
                     )
                     .map_err(row_error)
