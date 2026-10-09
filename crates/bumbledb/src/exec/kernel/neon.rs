@@ -1,27 +1,21 @@
-//! NEON Allen-interval classification: compare endpoint lanes, pack their
-//! six-bit signatures, then map them through a resident 64-byte table.
+//! The aarch64 Allen specialization: compare endpoint lanes, pack their 6-bit
+//! signatures, then map them through the 64-byte signature table held in four
+//! q registers (`tbl4`). Windows read 8 pairs (16 codes for keep bytes); the
+//! last window overlaps the previous one instead of running a scalar tail.
 use std::arch::aarch64::{
     uint64x2_t, vandq_u64, vceqq_u64, vcgtq_u64, vdupq_n_u64, vld1q_u8, vld1q_u64, vorrq_u64,
     vst1q_u8,
 };
 
-const ALLEN_SIG_TABLE: [u8; 64] = {
-    let mut table = [0xFFu8; 64];
-    table[0b00_0000] = 0;
-    table[0b01_0000] = 1;
-    table[0b10_0000] = 2;
-    table[0b10_0001] = 3;
-    table[0b10_0010] = 4;
-    table[0b10_0110] = 5;
-    table[0b10_0101] = 6;
-    table[0b10_0100] = 7;
-    table[0b10_1000] = 8;
-    table[0b10_1001] = 9;
-    table[0b10_1010] = 10;
-    table[0b01_1010] = 11;
-    table[0b00_1010] = 12;
-    table
-};
+use fearless_simd::aarch64::Neon;
+
+use super::allen::SIGNATURE_CODES as ALLEN_SIG_TABLE;
+
+/// Pairs per classification window; shorter batches take the portable path.
+pub(super) const CODE_LANES: usize = 8;
+
+/// Codes per keep window; shorter batches take the portable path.
+pub(super) const FILTER_LANES: usize = 16;
 
 #[expect(
     clippy::inline_always,
@@ -34,7 +28,7 @@ unsafe fn allen_sig2(
     b_s: uint64x2_t,
     b_e: uint64x2_t,
 ) -> uint64x2_t {
-    // SAFETY (caller's contract): NEON-only lane arithmetic.
+    // SAFETY: lane arithmetic on registers only; NEON is the aarch64 baseline.
     unsafe {
         let bit = |m: uint64x2_t, w: u64| vandq_u64(m, vdupq_n_u64(w));
         let s_eq = bit(vceqq_u64(a_s, b_s), 1);
@@ -58,6 +52,8 @@ unsafe fn allen_code_window(
     a_e: *const u64,
     codes: *mut u8,
 ) {
+    // SAFETY: the caller guarantees `a_s`, `a_e` and every `load_b` lane are
+    // readable for 8 words and `codes` is writable for 8 bytes.
     unsafe {
         use std::arch::aarch64::{vcombine_u16, vcombine_u32, vmovn_u16, vmovn_u32, vmovn_u64};
         let sig = |lane: usize| {
@@ -79,6 +75,7 @@ unsafe fn allen_code_window(
 )]
 #[inline(always)]
 unsafe fn allen_table() -> std::arch::aarch64::uint8x16x4_t {
+    // SAFETY: the four loads read the four 16-byte quarters of a 64-byte table.
     unsafe {
         std::arch::aarch64::uint8x16x4_t(
             vld1q_u8(ALLEN_SIG_TABLE.as_ptr()),
@@ -91,6 +88,7 @@ unsafe fn allen_table() -> std::arch::aarch64::uint8x16x4_t {
 
 #[inline(never)]
 pub(super) fn allen_code_batch_neon(
+    _neon: Neon,
     a_starts: &[u64],
     a_ends: &[u64],
     b_starts: &[u64],
@@ -98,12 +96,16 @@ pub(super) fn allen_code_batch_neon(
     codes: &mut [u8],
 ) {
     let n = codes.len();
-    debug_assert!(n >= 8, "the dispatch owns the small-batch fallback");
-    debug_assert!(
-        a_starts.len() == n && a_ends.len() == n && b_starts.len() == n && b_ends.len() == n
+    assert!(n >= CODE_LANES, "the dispatch owns short batches");
+    assert!(
+        a_starts.len() == n && a_ends.len() == n && b_starts.len() == n && b_ends.len() == n,
+        "four equal-length endpoint streams"
     );
-    // SAFETY: every window reads 8 words from within the four n-length
-
+    // SAFETY: NEON is the aarch64 baseline (and `_neon` proves it). Window
+    // `base` reads words `base..base + 8` of each stream and writes codes
+    // `base..base + 8`: the loop runs `(n - 1) / 8` windows with
+    // `base + 8 <= n - 1`, and the final window starts at `n - 8 >= 0`, so
+    // every access lies inside the four asserted n-length streams and `codes`.
     unsafe {
         let (a_s, a_e) = (a_starts.as_ptr(), a_ends.as_ptr());
         let (b_s, b_e) = (b_starts.as_ptr(), b_ends.as_ptr());
@@ -113,7 +115,8 @@ pub(super) fn allen_code_batch_neon(
         let mut base = 0usize;
         while left != 0 {
             left -= 1;
-
+            // An empty asm that owns the countdown keeps it in a register;
+            // without it LLVM spills and reloads it in every window.
             std::arch::asm!(
                 "/* {c} */",
                 c = inout(reg) left,
@@ -151,6 +154,7 @@ pub(super) fn allen_code_batch_neon(
 
 #[inline(never)]
 pub(super) fn allen_code_batch_const_neon(
+    _neon: Neon,
     starts: &[u64],
     ends: &[u64],
     b_start: u64,
@@ -158,8 +162,11 @@ pub(super) fn allen_code_batch_const_neon(
     codes: &mut [u8],
 ) {
     let n = codes.len();
-    debug_assert!(n >= 8, "the dispatch owns the small-batch fallback");
-    debug_assert!(starts.len() == n && ends.len() == n);
+    assert!(n >= CODE_LANES, "the dispatch owns short batches");
+    assert!(
+        starts.len() == n && ends.len() == n,
+        "two equal-length endpoint streams"
+    );
     // SAFETY: as `allen_code_batch_neon`, with the b side broadcast.
     unsafe {
         let (a_s, a_e) = (starts.as_ptr(), ends.as_ptr());
@@ -170,7 +177,8 @@ pub(super) fn allen_code_batch_const_neon(
         let mut base = 0usize;
         while left != 0 {
             left -= 1;
-
+            // An empty asm that owns the countdown keeps it in a register;
+            // without it LLVM spills and reloads it in every window.
             std::arch::asm!(
                 "/* {c} */",
                 c = inout(reg) left,
@@ -197,10 +205,10 @@ pub(super) fn allen_code_batch_const_neon(
 }
 
 #[inline(never)]
-pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
+pub(super) fn allen_filter_batch_neon(_neon: Neon, codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
     let n = codes.len();
-    debug_assert!(n >= 16, "the dispatch owns the small-batch fallback");
-    debug_assert_eq!(keep.len(), n);
+    assert!(n >= FILTER_LANES, "the dispatch owns short batches");
+    assert_eq!(keep.len(), n, "one keep byte per code");
 
     let mut table = [0u8; 16];
     let mut code = 0usize;
@@ -208,8 +216,10 @@ pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [
         table[code] = ((mask_bits >> code) & 1) as u8;
         code += 1;
     }
-    // SAFETY: every window reads 16 bytes from within `codes` and
-
+    // SAFETY: NEON is the aarch64 baseline. Window `base` reads codes and
+    // writes keep bytes `base..base + 16`: the loop's windows end at most at
+    // `n - 1` and the final window starts at `n - 16 >= 0`, all inside the two
+    // asserted n-length slices.
     unsafe {
         use std::arch::aarch64::vqtbl1q_u8;
         let mask_table = vld1q_u8(table.as_ptr());
@@ -219,7 +229,8 @@ pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [
         let mut base = 0usize;
         while left != 0 {
             left -= 1;
-
+            // An empty asm that owns the countdown keeps it in a register;
+            // without it LLVM spills and reloads it in every window.
             std::arch::asm!(
                 "/* {c} */",
                 c = inout(reg) left,

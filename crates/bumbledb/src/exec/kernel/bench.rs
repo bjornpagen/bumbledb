@@ -104,3 +104,68 @@ pub fn fold_min_max_u64_idx(
 ) -> (u64, u64) {
     super::gather::min_max_u64_idx(level.0, values, stride, offset, indices)
 }
+
+/// [`super::allen_code_batch`] at `level`.
+pub fn allen_code_batch(
+    level: SimdLevel,
+    a_starts: &[u64],
+    a_ends: &[u64],
+    b_starts: &[u64],
+    b_ends: &[u64],
+    codes: &mut Vec<u8>,
+) {
+    super::allen::code_batch(level.0, a_starts, a_ends, b_starts, b_ends, codes);
+}
+
+/// [`super::allen_code_batch_const`] at `level`.
+pub fn allen_code_batch_const(
+    level: SimdLevel,
+    a_starts: &[u64],
+    a_ends: &[u64],
+    b_start: u64,
+    b_end: u64,
+    codes: &mut Vec<u8>,
+) {
+    super::allen::code_batch_const(level.0, a_starts, a_ends, b_start, b_end, codes);
+}
+
+/// [`super::allen_filter_batch`] at `level`.
+pub fn allen_filter_batch(
+    level: SimdLevel,
+    codes: &[u8],
+    mask: crate::AllenMask,
+    keep: &mut Vec<u8>,
+) {
+    super::allen::filter_batch(level.0, codes, mask, keep);
+}
+
+/// [`super::allen_filter_columns`] at `level`.
+pub fn allen_filter_columns(
+    level: SimdLevel,
+    a_starts: &[u64],
+    a_ends: &[u64],
+    b_starts: &[u64],
+    b_ends: &[u64],
+    mask: crate::AllenMask,
+    out: &mut Vec<u32>,
+) {
+    super::allen::filter_columns(level.0, a_starts, a_ends, b_starts, b_ends, mask, out);
+}
+
+/// [`super::allen_filter_columns_const`] at `level`.
+pub fn allen_filter_columns_const(
+    level: SimdLevel,
+    starts: &[u64],
+    ends: &[u64],
+    b_start: u64,
+    b_end: u64,
+    mask: crate::AllenMask,
+    out: &mut Vec<u32>,
+) {
+    super::allen::filter_columns_const(level.0, starts, ends, b_start, b_end, mask, out);
+}
+
+/// [`super::compact_u32_by_mask`] at `level`.
+pub fn compact_u32_by_mask(level: SimdLevel, items: &mut Vec<u32>, mask: &[u8]) {
+    super::compact::compact(level.0, items, mask);
+}

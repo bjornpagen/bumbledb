@@ -14,7 +14,7 @@ kernel seam, timing-pin removal.
 | Timing pins and kernel experiment twins out of `cargo test` | landed `78728ec07` |
 | A/E1: `gather_words` bounds | landed `78728ec07` |
 | E4a: fearless_simd filter/fold/gather | landed |
-| E4b: portable Allen, Avx2 compress | todo |
+| E4b: portable Allen, Avx2 compress | landed |
 | E3: read-only FP environment check | todo |
 | E5: MIN NaN propagation | todo (needs engine-query lowering, see request) |
 | E6: xsum exact SUM/AVG | todo |
@@ -70,8 +70,9 @@ kernel seam, timing-pin removal.
   - `bench::{filter_eq_u64, filter_range_u64, filter_eq_u8, filter_point_in_u64,
     filter_any_point_in_u64}(level, ..)`, `bench::{fold_sum_u64, fold_min_max_u64}(level, values,
     stride, offset, count)`, `bench::{fold_sum_u64_idx, fold_min_max_u64_idx}(level, values, stride,
-    offset, indices)`; Allen and compaction join after E4b. Same arguments as the
-    `exec::kernel::*` entry points after `level`.
+    offset, indices)`, `bench::{allen_code_batch, allen_code_batch_const, allen_filter_batch,
+    allen_filter_columns, allen_filter_columns_const, compact_u32_by_mask}(level, ..)`. Same
+    arguments as the `exec::kernel::*` entry points after `level`.
   - `reference::*`: one scalar twin per kernel with the entry point's name and arguments.
   - **engine-storage request:** in `lib.rs` add
     ```rust

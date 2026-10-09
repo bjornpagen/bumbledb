@@ -1,35 +1,86 @@
-//! The configuration kernel: `Allen(mask)` over a batch of interval
-//! pairs — branch-free, **flag-free**, table-driven; homogeneous
-//! coordinates for time. One kernel pair serves every interval-pair
-//! predicate that exists or ever will (8192 masks, one arithmetic): per
-//! pair, 8 predicate lanes (`cmhi`/`cmeq` over the four endpoint words)
-//! pack into a 6-bit signature; a 64-byte nibble table held in q
+//! `Allen(mask)` over batches of interval pairs, branch-free and table
+//! driven. Per pair, six endpoint predicates pack into a 6-bit signature;
+//! the 13 valid signatures are the 13 basic relations. Codes are the
+//! [`crate::allen::Basic`] discriminants (their bit index in a mask), and a
+//! mask keeps a pair iff it holds the pair's code. The portable kernel maps a
+//! signature through an injective 4-bit hash into one nibble-packed `u64`;
+//! the aarch64 specialization indexes a 64-byte table with NEON `tbl`.
+#![expect(
+    clippy::inline_always,
+    reason = "SIMD bodies inline into the dispatched target-feature context"
+)]
+
 use bumbledb_theory::allen::AllenMask;
+use fearless_simd::{Level, Select, Simd, SimdBase, dispatch, mask64x4, u8x16, u64x4};
 
-#[cfg(target_arch = "aarch64")]
-use super::neon;
-#[cfg(not(target_arch = "aarch64"))]
-use super::reference;
+/// Signature bits, one per endpoint predicate of the pair `(a, b)`.
+const START_EQ: u64 = 1;
+const START_GT: u64 = 2;
+const END_EQ: u64 = 4;
+const END_GT: u64 = 8;
+/// `a.end == b.start || b.end == a.start`.
+const ADJACENT: u64 = 16;
+/// `a.end > b.start && b.end > a.start`.
+const INTERSECTS: u64 = 32;
 
-#[cfg(target_arch = "aarch64")]
-const CODE_LANES: usize = 8;
+/// Basic-relation code per 6-bit signature; `0xFF` marks the 51
+/// signatures no pair of nonempty intervals can produce.
+#[expect(clippy::cast_possible_truncation, reason = "signatures are below 64")]
+pub(super) const SIGNATURE_CODES: [u8; 64] = {
+    let relations: [u64; 13] = [
+        0,
+        ADJACENT,
+        INTERSECTS,
+        INTERSECTS | START_EQ,
+        INTERSECTS | START_GT,
+        INTERSECTS | START_GT | END_EQ,
+        INTERSECTS | START_EQ | END_EQ,
+        INTERSECTS | END_EQ,
+        INTERSECTS | END_GT,
+        INTERSECTS | START_EQ | END_GT,
+        INTERSECTS | START_GT | END_GT,
+        ADJACENT | START_GT | END_GT,
+        START_GT | END_GT,
+    ];
+    let mut table = [0xFFu8; 64];
+    let mut code = 0;
+    while code < relations.len() {
+        table[relations[code] as usize] = code as u8;
+        code += 1;
+    }
+    table
+};
 
-#[cfg(target_arch = "aarch64")]
-const FILTER_LANES: usize = 16;
-
-#[cfg(target_arch = "aarch64")]
-fn classify_code(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> u8 {
-    crate::allen::classify_bounds(&a_start, &a_end, &b_start, &b_end) as u8
+/// The 4-bit hash `(15 * signature) / 4 mod 16`, injective over the 13 valid
+/// signatures.
+const fn hash(signature: u64) -> u64 {
+    (((signature << 4) - signature) >> 2) & 15
 }
 
-/// Endpoint words — strided (whole columns) or gathered (per-survivor
-/// scratch streams) — to 4-bit configuration codes: `codes[i]` is the
-/// [`crate::allen::Basic`] discriminant of pair `i` (its bit index in
-/// the mask coordinate system). `codes` is resized to the pair count
-/// (capacity retained — pooled batch state); no `clear` first, so only
-/// growth past the previous batch's count zero-fills — every byte of
-/// the retained prefix is overwritten by the classify below (the full
-/// per-batch refill was pure `_platform_memset` on the profile).
+/// Nibble `hash(s)` holds `SIGNATURE_CODES[s]` for every valid signature `s`.
+const HASHED_CODES: u64 = {
+    let mut table = 0u64;
+    let mut seen = 0u16;
+    let mut signature = 0;
+    while signature < 64 {
+        let code = SIGNATURE_CODES[signature];
+        if code != 0xFF {
+            let slot = hash(signature as u64);
+            assert!(seen & (1 << slot) == 0, "the hash is injective");
+            seen |= 1 << slot;
+            table |= (code as u64) << (slot * 4);
+        }
+        signature += 1;
+    }
+    table
+};
+
+/// Configuration codes of the pairs `(a[i], b[i])` into `codes`, resized to
+/// the pair count. Only growth zero-fills; every retained byte is
+/// overwritten.
+///
+/// # Panics
+/// If the four endpoint streams differ in length.
 pub fn allen_code_batch(
     a_starts: &[u64],
     a_ends: &[u64],
@@ -37,23 +88,13 @@ pub fn allen_code_batch(
     b_ends: &[u64],
     codes: &mut Vec<u8>,
 ) {
-    let n = a_starts.len();
-    // Release-strength: the NEON core reads 8-word windows through raw
-
-    // safety invariant — asserted here, outside the flag-free gated
-    // symbols, like every sibling unsafe kernel's extent guard.
-    assert_eq!(a_ends.len(), n, "four equal-length endpoint streams");
-    assert_eq!(b_starts.len(), n, "four equal-length endpoint streams");
-    assert_eq!(b_ends.len(), n, "four equal-length endpoint streams");
-    codes.resize(n, 0);
-    codes_into(a_starts, a_ends, b_starts, b_ends, codes);
+    code_batch(super::level(), a_starts, a_ends, b_starts, b_ends, codes);
 }
 
-/// residual's parent-constant side (`run_node`'s Allen pass: a
-/// `Source::Slot` side reads the outer bindings, constant for the
-/// whole call): the constant's two words broadcast into the b-side
-/// predicate lanes, so the kernel streams two gathered arrays instead
-/// of four (two of which would repeat one value per lane).
+/// [`allen_code_batch`] against one constant right operand `[b_start, b_end)`.
+///
+/// # Panics
+/// If the two endpoint streams differ in length.
 pub fn allen_code_batch_const(
     a_starts: &[u64],
     a_ends: &[u64],
@@ -61,33 +102,20 @@ pub fn allen_code_batch_const(
     b_end: u64,
     codes: &mut Vec<u8>,
 ) {
-    let n = a_starts.len();
-    // Release-strength, as `allen_code_batch`: the NEON windows read
-
-    assert_eq!(a_ends.len(), n, "two equal-length endpoint streams");
-    codes.resize(n, 0);
-    codes_into_const(a_starts, a_ends, b_start, b_end, codes);
+    code_batch_const(super::level(), a_starts, a_ends, b_start, b_end, codes);
 }
 
-/// Configuration codes + the broadcast mask to keep bytes:
-/// `keep[i] = 1` iff `(1 << codes[i]) & mask != 0` — the membership
-/// test as a 16-byte `tbl` over the mask's per-code bit, broadcast once
-/// per batch (literal or param alike). `keep` is resized to the code
-/// count — like `codes` above, no `clear`: the membership test below
-/// overwrites every retained byte, so only growth zero-fills;
-/// survivors then feed the existing branchless cursor-write
-/// ([`super::compact_u32_by_mask`], 1.00 cy/item).
+/// `keep[i] = 1` iff `mask` holds `codes[i]`; `keep` is resized like `codes`
+/// in [`allen_code_batch`].
 pub fn allen_filter_batch(codes: &[u8], mask: AllenMask, keep: &mut Vec<u8>) {
-    keep.resize(codes.len(), 0);
-    keep_into(codes, mask, keep);
+    filter_batch(super::level(), codes, mask, keep);
 }
 
-/// The dense filter-position composition (per-atom `Allen` between two
-/// interval fields of one atom): stride-1 column pairs → surviving
-/// positions, appended to `out` in ascending order like every filter
-/// kernel. Chunked through stack scratch — codes, then the broadcast
-/// mask's keep bytes, then the branchless cursor-write — so the view
-/// path allocates nothing.
+/// Positions `i` whose pair `(a[i], b[i])` satisfies `mask`, appended to
+/// `out` in ascending order without allocating.
+///
+/// # Panics
+/// If the four endpoint columns differ in length.
 pub fn allen_filter_columns(
     a_starts: &[u64],
     a_ends: &[u64],
@@ -96,21 +124,21 @@ pub fn allen_filter_columns(
     mask: AllenMask,
     out: &mut Vec<u32>,
 ) {
-    filter_chunked(a_starts.len(), out, |base, len, codes| {
-        codes_into(
-            &a_starts[base..base + len],
-            &a_ends[base..base + len],
-            &b_starts[base..base + len],
-            &b_ends[base..base + len],
-            codes,
-        );
-        mask
-    });
+    filter_columns(
+        super::level(),
+        a_starts,
+        a_ends,
+        b_starts,
+        b_ends,
+        mask,
+        out,
+    );
 }
 
-/// [`allen_filter_columns`] with a constant right operand (the per-atom
-/// `Allen` against a literal/param interval — the filtered-view shape):
-/// the constant's two words broadcast into the b-side predicate lanes.
+/// [`allen_filter_columns`] against one constant right operand.
+///
+/// # Panics
+/// If the two endpoint columns differ in length.
 pub fn allen_filter_columns_const(
     starts: &[u64],
     ends: &[u64],
@@ -119,24 +147,104 @@ pub fn allen_filter_columns_const(
     mask: AllenMask,
     out: &mut Vec<u32>,
 ) {
-    filter_chunked(starts.len(), out, |base, len, codes| {
+    filter_columns_const(super::level(), starts, ends, b_start, b_end, mask, out);
+}
+
+pub(super) fn code_batch(
+    level: Level,
+    a_starts: &[u64],
+    a_ends: &[u64],
+    b_starts: &[u64],
+    b_ends: &[u64],
+    codes: &mut Vec<u8>,
+) {
+    let n = a_starts.len();
+    assert_eq!(a_ends.len(), n, "four equal-length endpoint streams");
+    assert_eq!(b_starts.len(), n, "four equal-length endpoint streams");
+    assert_eq!(b_ends.len(), n, "four equal-length endpoint streams");
+    codes.resize(n, 0);
+    codes_into(level, a_starts, a_ends, b_starts, b_ends, codes);
+}
+
+pub(super) fn code_batch_const(
+    level: Level,
+    a_starts: &[u64],
+    a_ends: &[u64],
+    b_start: u64,
+    b_end: u64,
+    codes: &mut Vec<u8>,
+) {
+    let n = a_starts.len();
+    assert_eq!(a_ends.len(), n, "two equal-length endpoint streams");
+    codes.resize(n, 0);
+    codes_into_const(level, a_starts, a_ends, b_start, b_end, codes);
+}
+
+pub(super) fn filter_batch(level: Level, codes: &[u8], mask: AllenMask, keep: &mut Vec<u8>) {
+    keep.resize(codes.len(), 0);
+    keep_into(level, codes, mask, keep);
+}
+
+pub(super) fn filter_columns(
+    level: Level,
+    a_starts: &[u64],
+    a_ends: &[u64],
+    b_starts: &[u64],
+    b_ends: &[u64],
+    mask: AllenMask,
+    out: &mut Vec<u32>,
+) {
+    let n = a_starts.len();
+    assert_eq!(a_ends.len(), n, "four equal-length endpoint streams");
+    assert_eq!(b_starts.len(), n, "four equal-length endpoint streams");
+    assert_eq!(b_ends.len(), n, "four equal-length endpoint streams");
+    filter_chunked(level, n, mask, out, |range, codes| {
+        codes_into(
+            level,
+            &a_starts[range.clone()],
+            &a_ends[range.clone()],
+            &b_starts[range.clone()],
+            &b_ends[range],
+            codes,
+        );
+    });
+}
+
+pub(super) fn filter_columns_const(
+    level: Level,
+    starts: &[u64],
+    ends: &[u64],
+    b_start: u64,
+    b_end: u64,
+    mask: AllenMask,
+    out: &mut Vec<u32>,
+) {
+    assert_eq!(
+        ends.len(),
+        starts.len(),
+        "two equal-length endpoint streams"
+    );
+    filter_chunked(level, starts.len(), mask, out, |range, codes| {
         codes_into_const(
-            &starts[base..base + len],
-            &ends[base..base + len],
+            level,
+            &starts[range.clone()],
+            &ends[range],
             b_start,
             b_end,
             codes,
         );
-        mask
     });
 }
 
 const SCAN_CHUNK: usize = 256;
 
+/// Codes, keep bytes, then the survivor cursor, one stack chunk at a time.
 fn filter_chunked(
+    level: Level,
     n: usize,
+    mask: AllenMask,
     out: &mut Vec<u32>,
-    fill: impl Fn(usize, usize, &mut [u8]) -> AllenMask,
+    fill: impl Fn(std::ops::Range<usize>, &mut [u8]),
 ) {
     let mut codes = [0u8; SCAN_CHUNK];
     let mut keep = [0u8; SCAN_CHUNK];
@@ -144,15 +252,17 @@ fn filter_chunked(
     let mut base = 0usize;
     while base < n {
         let len = SCAN_CHUNK.min(n - base);
-        let mask = fill(base, len, &mut codes[..len]);
-        keep_into(&codes[..len], mask, &mut keep[..len]);
+        fill(base..base + len, &mut codes[..len]);
+        keep_into(level, &codes[..len], mask, &mut keep[..len]);
         cursor.push_keeps(&keep[..len]);
         base += len;
     }
     cursor.close();
 }
 
+/// Callers assert the four streams match `codes` in length.
 fn codes_into(
+    level: Level,
     a_starts: &[u64],
     a_ends: &[u64],
     b_starts: &[u64],
@@ -160,45 +270,139 @@ fn codes_into(
     codes: &mut [u8],
 ) {
     #[cfg(target_arch = "aarch64")]
+    if let Some(neon) = level.as_neon()
+        && codes.len() >= super::neon::CODE_LANES
     {
-        if codes.len() >= CODE_LANES {
-            neon::allen_code_batch_neon(a_starts, a_ends, b_starts, b_ends, codes);
-            return;
-        }
-        for (i, code) in codes.iter_mut().enumerate() {
-            *code = classify_code(a_starts[i], a_ends[i], b_starts[i], b_ends[i]);
-        }
+        super::neon::allen_code_batch_neon(neon, a_starts, a_ends, b_starts, b_ends, codes);
+        return;
     }
-    #[cfg(not(target_arch = "aarch64"))]
-    reference::allen_codes(a_starts, a_ends, b_starts, b_ends, codes);
+    dispatch!(level, simd => portable_codes(
+        simd,
+        codes,
+        #[inline(always)]
+        |i| {
+            (
+                u64x4::from_slice(simd, &a_starts[i..i + 4]),
+                u64x4::from_slice(simd, &a_ends[i..i + 4]),
+                u64x4::from_slice(simd, &b_starts[i..i + 4]),
+                u64x4::from_slice(simd, &b_ends[i..i + 4]),
+            )
+        },
+        #[inline(always)]
+        |i| code_of(a_starts[i], a_ends[i], b_starts[i], b_ends[i]),
+    ));
 }
 
-fn codes_into_const(starts: &[u64], ends: &[u64], b_start: u64, b_end: u64, codes: &mut [u8]) {
+/// Callers assert the two streams match `codes` in length.
+fn codes_into_const(
+    level: Level,
+    starts: &[u64],
+    ends: &[u64],
+    b_start: u64,
+    b_end: u64,
+    codes: &mut [u8],
+) {
     #[cfg(target_arch = "aarch64")]
+    if let Some(neon) = level.as_neon()
+        && codes.len() >= super::neon::CODE_LANES
     {
-        if codes.len() >= CODE_LANES {
-            neon::allen_code_batch_const_neon(starts, ends, b_start, b_end, codes);
-            return;
-        }
-        for (i, code) in codes.iter_mut().enumerate() {
-            *code = classify_code(starts[i], ends[i], b_start, b_end);
-        }
+        super::neon::allen_code_batch_const_neon(neon, starts, ends, b_start, b_end, codes);
+        return;
     }
-    #[cfg(not(target_arch = "aarch64"))]
-    reference::allen_codes_const(starts, ends, b_start, b_end, codes);
+    dispatch!(level, simd => portable_codes(
+        simd,
+        codes,
+        #[inline(always)]
+        |i| {
+            (
+                u64x4::from_slice(simd, &starts[i..i + 4]),
+                u64x4::from_slice(simd, &ends[i..i + 4]),
+                u64x4::splat(simd, b_start),
+                u64x4::splat(simd, b_end),
+            )
+        },
+        #[inline(always)]
+        |i| code_of(starts[i], ends[i], b_start, b_end),
+    ));
 }
 
-fn keep_into(codes: &[u8], mask: AllenMask, keep: &mut [u8]) {
+fn keep_into(level: Level, codes: &[u8], mask: AllenMask, keep: &mut [u8]) {
     #[cfg(target_arch = "aarch64")]
+    if let Some(neon) = level.as_neon()
+        && codes.len() >= super::neon::FILTER_LANES
     {
-        if codes.len() >= FILTER_LANES {
-            neon::allen_filter_batch_neon(codes, mask.bits(), keep);
-            return;
-        }
-        for (keep, &code) in keep.iter_mut().zip(codes) {
-            *keep = ((mask.bits() >> u32::from(code)) & 1) as u8;
+        super::neon::allen_filter_batch_neon(neon, codes, mask.bits(), keep);
+        return;
+    }
+    dispatch!(level, simd => portable_keep(simd, codes, mask.bits(), keep));
+}
+
+#[inline(always)]
+#[expect(clippy::cast_possible_truncation, reason = "codes are below 13")]
+fn portable_codes<S: Simd>(
+    simd: S,
+    codes: &mut [u8],
+    load: impl Fn(usize) -> (u64x4<S>, u64x4<S>, u64x4<S>, u64x4<S>),
+    scalar: impl Fn(usize) -> u8,
+) {
+    let full = codes.len() / 4 * 4;
+    let (chunks, tail) = codes.as_chunks_mut::<4>();
+    for (chunk, i) in chunks.iter_mut().zip((0..full).step_by(4)) {
+        let (a_s, a_e, b_s, b_e) = load(i);
+        let lanes = codes4(simd, a_s, a_e, b_s, b_e);
+        for (code, lane) in chunk.iter_mut().zip(lanes.to_array()) {
+            *code = lane as u8;
         }
     }
-    #[cfg(not(target_arch = "aarch64"))]
-    reference::allen_keep(codes, mask.bits(), keep);
+    for (code, i) in tail.iter_mut().zip(full..) {
+        *code = scalar(i);
+    }
+}
+
+#[inline(always)]
+fn codes4<S: Simd>(
+    simd: S,
+    a_s: u64x4<S>,
+    a_e: u64x4<S>,
+    b_s: u64x4<S>,
+    b_e: u64x4<S>,
+) -> u64x4<S> {
+    let zero = u64x4::splat(simd, 0);
+    let bit =
+        |predicate: mask64x4<S>, weight: u64| predicate.select(u64x4::splat(simd, weight), zero);
+    let signature = bit(a_s.simd_eq(b_s), START_EQ)
+        | bit(a_s.simd_gt(b_s), START_GT)
+        | bit(a_e.simd_eq(b_e), END_EQ)
+        | bit(a_e.simd_gt(b_e), END_GT)
+        | bit(a_e.simd_eq(b_s) | b_e.simd_eq(a_s), ADJACENT)
+        | bit(a_e.simd_gt(b_s) & b_e.simd_gt(a_s), INTERSECTS);
+    let slot = (((signature << 4u32) - signature) >> 2u32) & 15u64;
+    (u64x4::splat(simd, HASHED_CODES) >> (slot << 2u32)) & 15u64
+}
+
+/// The portable kernel's formula for one pair.
+fn code_of(a_s: u64, a_e: u64, b_s: u64, b_e: u64) -> u8 {
+    let bit = |predicate: bool, weight: u64| u64::from(predicate) * weight;
+    let signature = bit(a_s == b_s, START_EQ)
+        | bit(a_s > b_s, START_GT)
+        | bit(a_e == b_e, END_EQ)
+        | bit(a_e > b_e, END_GT)
+        | bit(a_e == b_s || b_e == a_s, ADJACENT)
+        | bit(a_e > b_s && b_e > a_s, INTERSECTS);
+    ((HASHED_CODES >> (hash(signature) << 2)) & 15) as u8
+}
+
+#[inline(always)]
+fn portable_keep<S: Simd>(simd: S, codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
+    let table = u8x16::from_fn(simd, |code| u8::from((mask_bits >> code) & 1 != 0));
+    let (chunks, tail) = codes.as_chunks::<16>();
+    let (keep_chunks, keep_tail) = keep.as_chunks_mut::<16>();
+    for (chunk, keep) in chunks.iter().zip(keep_chunks) {
+        *keep = table
+            .swizzle_dyn(u8x16::load_array(simd, *chunk))
+            .to_array();
+    }
+    for (keep, &code) in keep_tail.iter_mut().zip(tail) {
+        *keep = u8::from((mask_bits >> code) & 1 != 0);
+    }
 }
