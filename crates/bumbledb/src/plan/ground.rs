@@ -16,14 +16,14 @@ use bumbledb_theory::schema::{FieldId, Side, StatementId};
 
 pub(crate) mod evaluate;
 
-#[cfg(any(test, feature = "ground-off"))]
+#[cfg(any(test, feature = "testing"))]
 thread_local! {
 
     static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// tests' off switch. Restores on unwind.
-#[cfg(any(test, feature = "ground-off"))]
+#[cfg(any(test, feature = "testing"))]
 pub fn with_grounding_disabled<T>(f: impl FnOnce() -> T) -> T {
     struct Reset;
     impl Drop for Reset {
@@ -37,7 +37,7 @@ pub fn with_grounding_disabled<T>(f: impl FnOnce() -> T) -> T {
 }
 
 pub(crate) fn ground(normalized: &mut NormalizedQuery, schema: &Schema, finds: &[FindTerm]) {
-    #[cfg(any(test, feature = "ground-off"))]
+    #[cfg(any(test, feature = "testing"))]
     if DISABLED.with(std::cell::Cell::get) {
         return;
     }
@@ -258,7 +258,7 @@ pub(crate) struct Subsumption {
 /// never searches variable mappings (nothing here recurses); `VarId`s must
 /// already agree, which is exactly what DNF-cloned rules provide.
 pub(crate) fn subsume(rules: &[NormalizedQuery], finds: &[&[FindTerm]]) -> Vec<Subsumption> {
-    #[cfg(any(test, feature = "ground-off"))]
+    #[cfg(any(test, feature = "testing"))]
     if DISABLED.with(std::cell::Cell::get) {
         return Vec::new();
     }
