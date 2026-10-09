@@ -175,7 +175,7 @@ fn deterministic_random_merge_trees_match_unpartitioned_exact_states() {
         *state
     }
     let mut random = 0x17d6_eacd_9748_2021;
-    for _ in 0..128 {
+    for _ in 0..crate::exec::sweep(128) {
         let values: Vec<_> = (0..63).map(|_| F64::from_bits(next(&mut random))).collect();
         let expected = accumulator(&values);
         let mut states: Vec<_> = values.iter().map(|v| accumulator(&[*v])).collect();
@@ -243,7 +243,7 @@ mod oracle {
     #[test]
     fn pushes_merges_repeats_and_key_batches_match_the_limb_accumulator() {
         let mut rng = Rng(0x05ee_d0ff_10a7);
-        for round in 0..400 {
+        for round in 0..crate::exec::sweep(400) {
             let len = [0, 1, 2, 3, 7, 64, 1023, 1024, 1025, 3000][round % 10];
             let values: Vec<F64> = (0..len).map(|_| rng.value()).collect();
             let mut want = LimbAccumulator::default();

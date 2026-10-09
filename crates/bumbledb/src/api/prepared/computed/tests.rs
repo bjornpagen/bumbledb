@@ -469,7 +469,7 @@ mod differential {
         let mut rng = Rng(0x00C0_FFEE);
         let float = DefaultFloatEnvironment::check().ok();
         assert!(float.is_some());
-        for round in 0..1500 {
+        for round in 0..crate::exec::sweep(1500) {
             let columns = bindings(&mut rng);
             let t = [T::U64, T::I64, T::F64, T::Bool][round % 4];
             let expression = generate(&mut rng, t, 5);

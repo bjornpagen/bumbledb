@@ -45,7 +45,7 @@ fn randomized_subset_projections_match_the_oracle_under_d2() {
         state >> 33
     };
     let schema = schema(3);
-    for case in 0..200u32 {
+    for case in 0..crate::exec::sweep(200) {
         let domain = 1 + next() % 6;
         let mut data: Vec<Vec<(u64, u64)>> = Vec::new();
         for _ in 0..3 {

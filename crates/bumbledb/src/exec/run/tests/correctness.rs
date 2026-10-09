@@ -243,7 +243,7 @@ fn randomized_differential_against_the_nested_loop_oracle() {
     };
 
     let schema = schema(3);
-    for case in 0..60u32 {
+    for case in 0..crate::exec::sweep(60) {
         let domain = 1 + next() % 8;
         let mut data: Vec<Vec<(u64, u64)>> = Vec::new();
         for _ in 0..3 {

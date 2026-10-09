@@ -655,12 +655,22 @@ fn sweep_interiors(seeds: std::ops::Range<u64>) {
     assert_mixed(&seeds, ok);
 }
 
+/// A shard's seeds; `BUMBLEDB_DEEP=1` widens every shard sixteenfold over the
+/// same seed sequence, still disjoint from the other shards.
+fn shard_seeds(seeds: std::ops::Range<u64>) -> std::ops::Range<u64> {
+    if std::env::var_os("BUMBLEDB_DEEP").is_some_and(|deep| deep == "1") {
+        seeds.start * 16..seeds.end * 16
+    } else {
+        seeds
+    }
+}
+
 macro_rules! shards {
     ($($name:ident => $sweep:ident($start:literal..$end:literal);)*) => {
         $(
             #[test]
             fn $name() {
-                $sweep($start..$end);
+                $sweep(shard_seeds($start..$end));
             }
         )*
     };
