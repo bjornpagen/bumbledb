@@ -16,6 +16,17 @@ differences. The bumbledb-specific rules are at the end of that document.
   for prior layouts. Do not keep compat aliases. Do not keep code or comments that narrate
   history ("successor", "retired", "transitional", "0.x", ticket IDs). One format per
   artifact: the current one, guarded by a single magic/version equality check.
+- **Canonical extension is `bdb` (D20).** Every file, format, and artifact name that used
+  "bumbledb" as an extension or namespace uses `bdb`, everywhere (code, tests, docs, notes,
+  scripts):
+  - database directories and checkpoint images are `<name>.bdb`; the notes data dir is `.bdb/`;
+  - the lock file is `bdb.lock`;
+  - format family tags are `bdb.<kind>.v1` (e.g. `bdb.result.v1`, `bdb.evidence.v1`, every log
+    frame);
+  - the native addon file is `bdb.<platform>.node` / `bdb.node`;
+  - TS brands and symbols are `bdb.*`.
+
+  Crate names, npm package names, the `bumbledb` CLI, and env var names stay `bumbledb`.
 - **Nightly Rust is mandatory.** Never move to stable. Bump the nightly pin and every
   dependency all the way to the latest versions.
 - **Work directly on `main`.** No worktrees, no feature branches. Do not run adversarial
