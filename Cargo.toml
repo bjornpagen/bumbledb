@@ -6,7 +6,6 @@ members = [
     "crates/bumbledb-log",
     "crates/bumbledb-macros",
     "crates/bumbledb-node",
-    "crates/bumbledb-query-macros",
     "crates/bumbledb-theory",
 ]
 

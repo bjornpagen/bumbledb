@@ -11,18 +11,17 @@ mod common {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use bumbledb::{Admission, Result, Violations, WorkContext};
+    use bumbledb::{Result, Violations, WorkContext, WriteOutcome};
 
     pub fn work() -> WorkContext {
         WorkContext::new()
     }
 
     #[track_caller]
-    pub fn expect_rejected<T: std::fmt::Debug>(result: Result<Admission<T>>) -> Violations {
+    pub fn expect_rejected<T: std::fmt::Debug>(result: Result<WriteOutcome<T>>) -> Violations {
         match result {
-            Ok(Admission::Rejected(violations)) => violations,
-            Ok(Admission::Accepted(_)) => panic!("expected a rejection, the write was admitted"),
-            Err(error) => panic!("expected a rejection, the engine said {error:?}"),
+            Ok(WriteOutcome::Rejected(violations)) => violations,
+            other => panic!("expected a rejection, got {other:?}"),
         }
     }
 
@@ -1029,7 +1028,7 @@ mod keyed_equality {
     }
 
     fn assert_containment<T: std::fmt::Debug>(
-        result: bumbledb::Result<bumbledb::Admission<T>>,
+        result: bumbledb::Result<bumbledb::WriteOutcome<T>>,
         expected: StatementId,
     ) {
         let violations = crate::common::expect_rejected(result);

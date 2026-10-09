@@ -11,7 +11,7 @@ Items: A (`query!` string literal), C14, C15 (macro side), G6, L (macros).
 | Item | Status |
 |---|---|
 | A: `query!` string literals compile | landed |
-| C14: one proc-macro crate (proc-macro2 + quote), spanned errors, schema-emitted resolution | landed; `bumbledb-query-macros` deletion waits on engine-storage request 1 |
+| C14: one proc-macro crate (proc-macro2 + quote), spanned errors, schema-emitted resolution | landed; `bumbledb-query-macros` deleted |
 | G6: one compile-fail runner | landed |
 | L: retired grammar hints deleted | landed (macro side); `lib.rs` docs are engine-storage request 3 |
 | C15: `schema!` calls theory validation at expansion | waiting on engine-storage |
@@ -22,8 +22,7 @@ Items: A (`query!` string literal), C14, C15 (macro side), G6, L (macros).
 
 - `query!` string literal selections lower to `Value::String(Box<str>)`.
 - **`bumbledb-macros` is the one proc-macro crate:** `schema!`, `query!`, `params!`.
-  `bumbledb-query-macros` only re-compiles `bumbledb-macros`' query sources until `bumbledb`
-  re-exports from `bumbledb-macros` (request 1), then it is deleted. `bumbledb-query` is deleted.
+  `bumbledb-query` and `bumbledb-query-macros` are deleted (workspace `members` too).
 - **`schema!` no longer emits `SCREAMING_SNAKE` id constants.** Each relation (ordinary and
   closed) gets one constant on the theory, named as declared, whose fields are its `FieldId`s:
 
@@ -46,20 +45,16 @@ Items: A (`query!` string literal), C14, C15 (macro side), G6, L (macros).
   `tests/compile_fail/{schema,query}/*.rs`: `//@ error: <substring>` (repeatable) and
   `//@ line: <n>`. It builds `bumbledb` once into `$CARGO_TARGET_TMPDIR/compile-fail` and takes
   artifact paths from `cargo build --message-format=json`.
-- **Dependency change (for the `Cargo.lock` owner):** `bumbledb-macros` and, until it is deleted,
-  `bumbledb-query-macros` depend on `proc-macro2 = "1.0.107"` and `quote = "1.0.47"`.
+- **Dependency change (for the `Cargo.lock` owner):** `bumbledb-macros` depends on
+  `proc-macro2 = "1.0.107"` and `quote = "1.0.47"`; `bumbledb-query` and
+  `bumbledb-query-macros` leave the lock.
 
 ## Requests to other lanes
 
 ### engine-storage
 
-1. **Re-export the macros from `bumbledb-macros`.** In `crates/bumbledb/Cargo.toml` delete
-   `bumbledb-query-macros = { path = "../bumbledb-query-macros" }`. In `crates/bumbledb/src/lib.rs`
-   replace the three `pub use bumbledb_macros::schema;`, `pub use bumbledb_query_macros::params;`
-   and `pub use bumbledb_query_macros::query;` lines (and their doc comments) with
-   `pub use bumbledb_macros::{params, query, schema};`. Tell me here when it lands; I then delete
-   `crates/bumbledb-query-macros` and its `members` entry.
-2. **`tests/dyn_surface.rs` id constants** (it no longer compiles against HEAD):
+1. ~~Re-export the macros from `bumbledb-macros`.~~ Done; thanks.
+2. **`tests/dyn_surface.rs` id constants** (if not already migrated):
    `sed -i '' -E 's/Graph::NODE\b/Graph::Node.relation()/g; s/Graph::KIND\b/Graph::Kind.relation()/g; s/Graph::EDGE\b/Graph::Edge.relation()/g' crates/bumbledb/tests/dyn_surface.rs`
 3. **`lib.rs` `schema!` docs (L).** Delete the `unique` compile_fail example (field-level
    constraint words are no longer special). The unknown-modifier message is now
@@ -80,6 +75,9 @@ Items: A (`query!` string literal), C14, C15 (macro side), G6, L (macros).
    longer uses the shared module.
 
 ### consolidator
+
+- HEAD carries a stray file `ts/cargo nextest run -p bumbledb exec:: 2>&1 | grep -E "FAIL|panicked|Summary" | head -30.build`
+  (a shell redirect captured as a file name); it names `bumbledb-query-macros`.
 
 - `docs/cookbook.md` and the README still point at `crates/bumbledb-query/tests/cookbook.rs` and
   `readme.rs`; both copies are deleted (G7 turns the docs into doctests).
