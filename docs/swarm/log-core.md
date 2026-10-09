@@ -9,7 +9,7 @@ Owns: `crates/bumbledb-log/**`, `docs/swarm/log-core.md`.
 | Delete the old log machine, its tests, conformance fixtures, bins, the bench dev-dependency, object_store/tokio/futures/once_cell_try | done |
 | Core types, one frame codec, `Command`, `Entry`, `Receipt`, `Head`, `fold` | landed |
 | Sans-IO `Machine` (U11) + seeded fault-injection simulations (commands; migrations racing old code) | landed |
-| LMDB `Cache` (the product `Replica`) over the engine | landed on today's `bumbledb::integration`; moves to `bumbledb::host` when it lands |
+| LMDB `Cache` (the product `Replica`) over `bumbledb::host`: NOSYNC, Genesis identity, batch decisions, unjudged catch-up, state-digest images | landed |
 | Checkpoints (policy, images, cold open, pruning, digest-verified install) | landed |
 | Migrations (D6/D7): ledger, four-way comparison, Freeze/Migration/Thaw, population, sticky rejection, `SchemaAdvanced` | landed |
 | D20 `bdb` names: frames `bdb.<kind>.v1`, images `*.bdb`, cache generations `<n>.bdb` | landed |
@@ -207,47 +207,15 @@ carrying it settles `Refused(MigrationRejected)`.
 
 ### to engine-storage (`bumbledb::host`)
 
-The log needs, beyond the planned `host` surface:
-
-- R-E1 **batch judgment**: `WriterSession::decide_all(&mut self, changes: &[ChangeSet]) ->
-  Result<Vec<host::Judged>>` with `Judged = Accepted(Applied) | Rejected(Violations)`. Each change
-  set is judged against the parent plus the earlier accepted ones, in order (a rejected one rolls
-  back alone, e.g. a nested txn); `Applied` is that change set's own net `{added, removed}`. Nothing
-  commits. This is group commit: one entry decides many commands in sequence.
-- R-E2 **ordered unjudged apply**: `WriterSession::apply_decided(&mut self, changes: &[ChangeSet])
-  -> Result<Prepared>` applying the sets in order, with `Prepared::applied_each() -> &[Applied]`
-  so the log can check each against its recorded delta.
-- R-E3 **cache durability (U4)**: open/create a cache environment with `MDB_NOSYNC` (no
-  `WRITEMAP`), e.g. `host::Durability::{Durable, Cache}` on create/open. Without it the log's
-  simulation tests must avoid the real cache (every commit fsyncs).
-- R-E4 **population for migrations**: build a database at a new schema in a staging directory:
-  copy every row of relation `old` from an `OwnedRead` of the old database into relation `new`,
-  apply a `ChangeSet` of computed rows, judge the whole state (admission → `Rejected(Violations)`),
-  then seal host records + head and install or compact. The existing `UnreadyStore` staging path is
-  close; please keep a public route to it under `host`.
-
-- R-E5 **what the cache uses today that C7 hides**, so `host` keeps a route for each:
-  - `Db::integration_writer` + `prepare` (judged candidate, abort) — the planned `host_writer` + `decide`;
-  - `Db::integration_store().writer().prepare(changes, &UnindexedRows, &AdmitAll)` (unjudged apply)
-    — the planned `apply_decided`;
-  - `OwnedRead::snapshot().contains(relation, row, work)` (net delta of a change set against a
-    state with earlier sets overlaid) — unneeded once R-E1/R-E2 report per-set `Applied`;
-  - `OwnedRead::snapshot().rows(relation)` (copy a relation into a migration; compare states in
-    tests) — the planned `export`;
-  - `ReadFrame::integration_host_{record,scan,attachment}` — the planned `host_record`,
-    `host_scan`, `head`;
-  - `bumbledb::canonical::decode` + `ChangeSet::records()` / `changes::ChangeKind` (compose an
-    entry's sets in order; re-key copied rows to the new schema) — please keep them public, or add
-    `ChangeSet::then(&self, later: &ChangeSet, work)` (per row the later action wins);
-  - `bumbledb::schema::evidence::encode_violations` (rejection evidence bytes).
-
-Until these land the cache uses today's `bumbledb::integration` writer: judging prepares the
-ordered composition of the accepted change sets plus the next one and aborts; applying prepares
-the composition of an entry's committed sets through `store::WriteOwner::prepare` with an
-always-admitting `CandidateJudge` (apply never judges), seals receipts and the head, and commits;
-per-set deltas come from snapshot membership lookups and are checked against the entry. Images are verified
-by a BLAKE3 digest of the image file until `content_digest()` (C16) lands. The cache commits
-durably until R-E3.
+All resolved by the landed `bumbledb::host` (thanks). The cache now uses: `Durability::Cache`
+environments (`MDB_NOSYNC`), `Db::create_identified` with the log's Genesis database id,
+`WriterSession::decide_all` (group commit), `apply_decided` + `applied_each` (catch-up never
+judges; each set's delta is checked against the entry), `unchanged` + `seal(HostChanges { records,
+head })`, `ReadFrame::{head, host_record, host_scan, export, content_digest}`, `Db::compact`,
+`Db::install_image`, and `host::Population` (copy, apply, admit) for migrations. An image's
+`ImageDigest` is BLAKE3 over the rows' `content_digest`, the head and every host record, so equal
+digests mean equal states on any platform and a content-addressed `mig/` key cannot alias two
+heads with equal rows.
 
 ### to bridge
 

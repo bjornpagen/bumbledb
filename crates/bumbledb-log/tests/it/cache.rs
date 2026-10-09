@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use bumbledb::{RelationId, WorkContext};
+use bumbledb::WorkContext;
 use bumbledb_log::{
     Body, Bucket, Bundle, Cache, CheckpointPolicy, Command, Config, DatabaseId, Done, Entry, Input,
     IoBody, IoResponse, IoResult, Machine, Millis, Op, Outcome, Precondition, Receipt, Refusal,
@@ -144,25 +144,18 @@ fn settled_one(done: &[Done], ticket: Ticket) -> Settled {
 /// The cache's whole state as the reference model represents it.
 fn cache_state(cache: &Cache) -> State {
     let db = cache.db().expect("a live cache");
-    let work = WorkContext::new();
-    let read = db.snapshot(&work).unwrap();
     let mut rows = BTreeSet::new();
-    for relation in 0..db.schema().relations().len() {
-        let relation = u32::try_from(relation).unwrap();
-        for row in read.snapshot().rows(RelationId(relation)).unwrap() {
-            rows.insert((relation, row.unwrap().1.to_vec()));
-        }
-    }
     let mut receipts = BTreeMap::new();
-    db.read(work, |frame| {
-        frame
-            .integration_host_scan(b"r", &mut |_, value| {
-                let receipt = Receipt::decode(value).expect("a receipt record");
-                receipts.insert(receipt.command.request, receipt);
-                Ok(())
-            })
-            .expect("scan");
-        Ok(())
+    db.read(WorkContext::new(), |frame| {
+        frame.export(&mut |relation, row| {
+            rows.insert((relation.0, row.to_vec()));
+            Ok(())
+        })?;
+        frame.host_scan(b"r", &mut |_, value| {
+            let receipt = Receipt::decode(value).expect("a receipt record");
+            receipts.insert(receipt.command.request, receipt);
+            Ok(())
+        })
     })
     .unwrap();
     State {

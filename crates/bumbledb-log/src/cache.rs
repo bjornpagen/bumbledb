@@ -1,27 +1,23 @@
-//! The product replica: a disposable LMDB cache of the log's state. Facts,
-//! receipts (host records `r‖request`) and the head (the attachment) commit
-//! in one transaction. The live database is the generation named by
-//! `CURRENT`; creation, images and migrations are built aside and swapped in
-//! by renaming `CURRENT`, so a crash leaves the old state or the new one.
+//! The product replica: a disposable LMDB cache of the log's state, opened
+//! without syncing (the log is the authority). Facts, receipts (host records
+//! `r‖request`) and the head commit in one transaction. The live database is
+//! the generation named by `CURRENT`; creation, images and migrations are
+//! built aside and swapped in by renaming `CURRENT`.
 
-use std::collections::{BTreeMap, HashMap};
-use std::convert::Infallible;
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bumbledb::changes::ChangeKind;
-use bumbledb::integration::{AttachmentChange, HostChanges, HostRecordChange, Preparation};
+use bumbledb::host::{self, HostChanges, HostRecord, Judged};
 use bumbledb::schema::evidence;
-use bumbledb::store::{
-    CandidateJudge, CandidateState, Judgment as StoreJudgment, Prepared, StoreResult, UnindexedRows,
-};
 use bumbledb::{
-    Admission, ChangeSet, Db, RelationId, Schema, SchemaDescriptor, SchemaFingerprint, WorkContext,
+    Admission, ChangeSet, Db, Durability, Options, Schema, SchemaDescriptor, SchemaFingerprint,
+    Violations, WorkContext,
 };
 
 use crate::head::Head;
-use crate::ids::{ImageDigest, RequestId};
+use crate::ids::{DatabaseId, ImageDigest, RequestId};
 use crate::io::hex;
 use crate::receipt::{Delta, Evidence, Receipt};
 use crate::replica::{
@@ -30,6 +26,7 @@ use crate::replica::{
 
 const CURRENT: &str = "CURRENT";
 const RECEIPT: u8 = b'r';
+const IMAGE_CONTEXT: &str = "bdb.image.v1 digest";
 /// The largest rejection evidence a log entry carries.
 const EVIDENCE_BYTES: usize = 64 * 1024;
 
@@ -184,41 +181,32 @@ impl Replica for Cache {
             return Ok(None);
         };
         let key = receipt_key(request);
-        let mut found = Ok(None);
-        live.db
+        let bytes = live
+            .db
             .read(WorkContext::new(), |frame| {
-                found = frame
-                    .integration_host_record(&key)
-                    .map(|bytes| bytes.map(<[u8]>::to_vec))
-                    .map_err(local);
-                Ok(())
+                Ok(frame.host_record(&key)?.map(<[u8]>::to_vec))
             })
             .map_err(local)?;
-        found?
+        bytes
             .map(|bytes| Receipt::decode(&bytes).map_err(local))
             .transpose()
     }
 
     fn judge(&self, accepted: &[ChangeSet], next: &ChangeSet) -> Result<Judgment, CacheError> {
         let live = self.live();
-        let schema = live.db.schema();
-        let mut sets: Vec<&ChangeSet> = accepted.iter().collect();
-        sets.push(next);
-        let (added, removed) = *deltas(&live.db, &sets)?.last().expect("next is judged");
-        let candidate = sequence(schema, &sets)?;
         let work = WorkContext::new();
-        let mut session = live.db.integration_writer(&work).map_err(local)?;
-        match session.prepare(&candidate).map_err(local)? {
-            Preparation::Accepted(prepared) => {
-                prepared.abort();
-                Ok(Delta::new(added, removed).map_or(Judgment::Unchanged, Judgment::Changed))
-            }
-            Preparation::Rejected { violations, .. } => {
-                let bytes = evidence::encode_violations(schema, &violations, EVIDENCE_BYTES, &work)
-                    .map_err(local)?;
-                Ok(Judgment::Rejected(
-                    Evidence::new(bytes.into()).ok_or(CacheError::Diverged)?,
-                ))
+        let mut sets = accepted.to_vec();
+        sets.push(next.clone());
+        let judged = live
+            .db
+            .host_writer(&work)
+            .and_then(|mut session| session.decide_all(&sets))
+            .map_err(local)?;
+        match judged.last().expect("the next set is judged") {
+            Judged::Accepted(applied) => Ok(Delta::new(applied.added, applied.removed)
+                .map_or(Judgment::Unchanged, Judgment::Changed)),
+            Judged::Rejected(violations) => {
+                evidence_of(live.db.schema(), violations).map(Judgment::Rejected)
             }
         }
     }
@@ -228,48 +216,44 @@ impl Replica for Cache {
             .live
             .as_mut()
             .expect("the machine applies to a created cache");
-        let sets: Vec<&ChangeSet> = update.commits.iter().map(|(changes, _)| *changes).collect();
-        let applied = deltas(&live.db, &sets)?;
-        for ((_, delta), (added, removed)) in update.commits.iter().zip(&applied) {
-            if (delta.added(), delta.removed()) != (*added, *removed) {
-                return Err(CacheError::Diverged);
-            }
-        }
-        let changes = if sets.is_empty() {
-            ChangeSet::builder(live.db.schema(), WorkContext::new())
-                .finish()
-                .map_err(local)?
-        } else {
-            sequence(live.db.schema(), &sets)?
-        };
+        let sets: Vec<ChangeSet> = update
+            .commits
+            .iter()
+            .map(|(changes, _)| (*changes).clone())
+            .collect();
         let receipts: BTreeMap<Vec<u8>, Vec<u8>> = update
             .receipts
             .iter()
             .map(|receipt| (receipt_key(receipt.command.request), receipt.encode()))
             .collect();
-        let records: Vec<HostRecordChange<'_>> = receipts
+        let records: Vec<HostRecord<'_>> = receipts
             .iter()
-            .map(|(key, value)| HostRecordChange::Put { key, value })
+            .map(|(key, value)| HostRecord::Put { key, value })
             .collect();
         let head = update.head.encode();
         let work = WorkContext::new();
-        let mut owner = live.db.integration_store().writer(&work).map_err(local)?;
-        let prepared = match owner
-            .prepare(&changes, &UnindexedRows, &Decided)
-            .map_err(local)?
-        {
-            Prepared::Admitted(prepared) => prepared,
-            Prepared::Rejected { rejection, .. } => match rejection {},
-        };
+        let mut session = live.db.host_writer(&work).map_err(local)?;
+        let prepared = session.apply_decided(&sets).map_err(local)?;
+        let diverged =
+            update
+                .commits
+                .iter()
+                .zip(prepared.applied_each())
+                .any(|((_, delta), applied)| {
+                    (delta.added(), delta.removed()) != (applied.added, applied.removed)
+                });
+        if diverged {
+            prepared.abort();
+            return Err(CacheError::Diverged);
+        }
         prepared
             .seal(HostChanges {
                 records: &records,
-                attachment: AttachmentChange::Put(&head),
+                head: host::Head::Put(&head),
             })
-            .map_err(local)?
-            .commit()
+            .and_then(host::Sealed::commit)
             .map_err(local)?;
-        drop(owner);
+        drop(session);
         live.head = update.head.clone();
         Ok(())
     }
@@ -278,12 +262,30 @@ impl Replica for Cache {
         let step = self.step(head.schema)?.clone();
         self.replace(|path| {
             let work = WorkContext::new();
-            let Admission::Accepted(db) =
-                CacheDb::create(path, step.descriptor.clone(), work.clone()).map_err(local)?
-            else {
+            let database = engine_id(head.database);
+            let created = CacheDb::create_identified(
+                path,
+                step.descriptor.clone(),
+                database,
+                options(),
+                work.clone(),
+            )
+            .map_err(local)?;
+            let Admission::Accepted(db) = created else {
                 return Err(CacheError::Diverged);
             };
-            write_head(&db, &[], head)?;
+            let encoded = head.encode();
+            db.host_writer(&work)
+                .and_then(|mut session| {
+                    session
+                        .unchanged()?
+                        .seal(HostChanges {
+                            records: &[],
+                            head: host::Head::Put(&encoded),
+                        })?
+                        .commit()
+                })
+                .map_err(local)?;
             Ok((db, head.clone()))
         })
     }
@@ -294,16 +296,21 @@ impl Replica for Cache {
         digest: ImageDigest,
         schema: SchemaFingerprint,
     ) -> Result<(), CacheError> {
-        if file_digest(path)? != digest {
-            return Err(CacheError::Digest);
-        }
         let step = self.step(schema)?.clone();
         self.replace(|dir| {
-            std::fs::create_dir_all(dir).map_err(local)?;
-            std::fs::rename(path, dir.join("data.mdb")).map_err(local)?;
-            let db = open_db(dir, &step)?;
+            let db = CacheDb::install_image(
+                path,
+                dir,
+                step.descriptor.clone(),
+                options(),
+                WorkContext::new(),
+            )
+            .map_err(local)?;
+            if state_digest(&db)? != digest {
+                return Err(CacheError::Digest);
+            }
             let head = read_head(&db)?.ok_or(CacheError::Digest)?;
-            if head.schema != schema {
+            if head.schema != schema || engine_id(head.database) != db.database_id() {
                 return Err(CacheError::Digest);
             }
             Ok((db, head))
@@ -312,7 +319,7 @@ impl Replica for Cache {
 
     fn image(&mut self) -> Result<Image, CacheError> {
         let dir = self.root.join("outgoing.bdb");
-        compact(&self.live().db, &dir)
+        image(&self.live().db, &dir)
     }
 
     fn download_path(&self) -> PathBuf {
@@ -325,122 +332,111 @@ impl Replica for Cache {
         let stage = self.root.join("stage.bdb");
         remove(&stage)?;
         let work = WorkContext::new();
-        let Admission::Accepted(db) =
-            CacheDb::create(&stage, step.descriptor.clone(), work.clone()).map_err(local)?
-        else {
-            return Err(CacheError::Diverged);
-        };
-        let copied = copy_relations(old, &step.schema, &population.copy)?;
-        let rows = copied.compose(&population.rows, &work).map_err(local)?;
+        let mut populating = host::Population::begin(
+            &stage,
+            step.descriptor.clone(),
+            engine_id(head.database),
+            options(),
+            work.clone(),
+        )
+        .map_err(local)?;
+        old.read(work, |frame| {
+            for &(new, from) in &population.copy {
+                populating.copy_relation(frame, from, new)?;
+            }
+            Ok(())
+        })
+        .map_err(local)?;
+        populating.apply(&population.rows).map_err(local)?;
         let records = host_records(old)?;
-        let puts: Vec<HostRecordChange<'_>> = records
+        let puts: Vec<HostRecord<'_>> = records
             .iter()
-            .map(|(key, value)| HostRecordChange::Put { key, value })
+            .map(|(key, value)| HostRecord::Put { key, value })
             .collect();
         let encoded = head.encode();
-        let rejected = {
-            let mut session = db.integration_writer(&work).map_err(local)?;
-            match session.prepare(&rows).map_err(local)? {
-                Preparation::Accepted(prepared) => {
-                    prepared
-                        .seal(HostChanges {
-                            records: &puts,
-                            attachment: AttachmentChange::Put(&encoded),
-                        })
-                        .map_err(local)?
-                        .commit()
-                        .map_err(local)?;
-                    None
-                }
-                Preparation::Rejected { violations, .. } => Some(
-                    evidence::encode_violations(&step.schema, &violations, EVIDENCE_BYTES, &work)
-                        .map_err(local)?,
-                ),
+        let admitted = populating
+            .admit(HostChanges {
+                records: &puts,
+                head: host::Head::Put(&encoded),
+            })
+            .map_err(local)?;
+        match admitted {
+            Admission::Rejected(violations) => {
+                remove(&stage)?;
+                evidence_of(&step.schema, &violations).map(Migrated::Rejected)
             }
-        };
-        let migrated = match rejected {
-            Some(bytes) => Evidence::new(bytes.into())
-                .map(Migrated::Rejected)
-                .ok_or(CacheError::Diverged),
-            None => compact(&db, &self.root.join("migration.bdb")).map(Migrated::Image),
-        };
-        drop(db);
-        remove(&stage)?;
-        migrated
+            Admission::Accepted(db) => {
+                let migrated = image(&db, &self.root.join("migration.bdb"));
+                drop(db);
+                remove(&stage)?;
+                migrated.map(Migrated::Image)
+            }
+        }
     }
 }
 
-/// Admits every candidate: an applied entry was decided when it was written.
-struct Decided;
-
-impl CandidateJudge for Decided {
-    type Rejection = Infallible;
-
-    fn judge(
-        &self,
-        _: &CandidateState<'_, '_>,
-        _: &WorkContext,
-    ) -> StoreResult<StoreJudgment<Infallible>> {
-        Ok(StoreJudgment::Admitted)
+/// A cache environment: never synced, rebuilt from the log after a crash.
+fn options() -> Options {
+    Options {
+        durability: Durability::Cache,
+        ..Options::default()
     }
+}
+
+fn engine_id(database: DatabaseId) -> host::DatabaseId {
+    host::DatabaseId(database.0)
 }
 
 fn open_db(path: &Path, step: &BundledMigration) -> Result<CacheDb, CacheError> {
-    CacheDb::open(path, step.descriptor.clone(), WorkContext::new()).map_err(local)
+    CacheDb::open_with(path, step.descriptor.clone(), options(), WorkContext::new()).map_err(local)
 }
 
 fn read_head(db: &CacheDb) -> Result<Option<Head>, CacheError> {
-    let mut bytes = None;
-    db.read(WorkContext::new(), |frame| {
-        bytes = frame.integration_host_attachment()?.map(<[u8]>::to_vec);
-        Ok(())
-    })
-    .map_err(local)?;
+    let bytes = db
+        .read(WorkContext::new(), |frame| {
+            Ok(frame.head()?.map(<[u8]>::to_vec))
+        })
+        .map_err(local)?;
     bytes
         .map(|bytes| Head::decode(&bytes).map_err(local))
         .transpose()
 }
 
-fn write_head(
-    db: &CacheDb,
-    records: &[HostRecordChange<'_>],
-    head: &Head,
-) -> Result<(), CacheError> {
-    let work = WorkContext::new();
-    let empty = ChangeSet::builder(db.schema(), work.clone())
-        .finish()
-        .map_err(local)?;
-    let encoded = head.encode();
-    let mut session = db.integration_writer(&work).map_err(local)?;
-    let Preparation::Accepted(prepared) = session.prepare(&empty).map_err(local)? else {
-        return Err(CacheError::Diverged);
-    };
-    prepared
-        .seal(HostChanges {
-            records,
-            attachment: AttachmentChange::Put(&encoded),
-        })
-        .map_err(local)?
-        .commit()
-        .map_err(local)?;
-    Ok(())
+fn evidence_of(schema: &Schema, violations: &Violations) -> Result<Evidence, CacheError> {
+    let bytes =
+        evidence::encode_violations(schema, violations, EVIDENCE_BYTES, &WorkContext::new())
+            .map_err(local)?;
+    Evidence::new(bytes.into()).ok_or(CacheError::Diverged)
 }
 
-/// Compact `db` into `dir` and name its data file as an image.
-fn compact(db: &CacheDb, dir: &Path) -> Result<Image, CacheError> {
+/// Compact `db` into `dir` and name the image by its state.
+fn image(db: &CacheDb, dir: &Path) -> Result<Image, CacheError> {
     remove(dir)?;
     db.compact(dir, WorkContext::new()).map_err(local)?;
-    let path = dir.join("data.mdb");
     Ok(Image {
-        digest: file_digest(&path)?,
-        path,
+        path: dir.join("data.mdb"),
+        digest: state_digest(db)?,
     })
 }
 
-fn file_digest(path: &Path) -> Result<ImageDigest, CacheError> {
-    let mut hasher = blake3::Hasher::new();
-    let mut file = std::fs::File::open(path).map_err(local)?;
-    std::io::copy(&mut file, &mut hasher).map_err(local)?;
+/// BLAKE3 over the rows' platform-independent content digest, the head and
+/// every host record: two images with one digest hold one state.
+fn state_digest(db: &CacheDb) -> Result<ImageDigest, CacheError> {
+    fn part(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+        hasher.update(&(bytes.len() as u64).to_be_bytes());
+        hasher.update(bytes);
+    }
+    let mut hasher = blake3::Hasher::new_derive_key(IMAGE_CONTEXT);
+    db.read(WorkContext::new(), |frame| {
+        hasher.update(&frame.content_digest()?);
+        part(&mut hasher, frame.head()?.unwrap_or_default());
+        frame.host_scan(b"", &mut |key, value| {
+            part(&mut hasher, key);
+            part(&mut hasher, value);
+            Ok(())
+        })
+    })
+    .map_err(local)?;
     Ok(ImageDigest(*hasher.finalize().as_bytes()))
 }
 
@@ -456,99 +452,14 @@ type HostRecords = BTreeMap<Vec<u8>, Vec<u8>>;
 
 fn host_records(db: &CacheDb) -> Result<HostRecords, CacheError> {
     let mut records = HostRecords::new();
-    let mut scanned = Ok(());
     db.read(WorkContext::new(), |frame| {
-        scanned = frame
-            .integration_host_scan(b"", &mut |key, value| {
-                records.insert(key.to_vec(), value.to_vec());
-                Ok(())
-            })
-            .map_err(local);
-        Ok(())
+        frame.host_scan(b"", &mut |key, value| {
+            records.insert(key.to_vec(), value.to_vec());
+            Ok(())
+        })
     })
     .map_err(local)?;
-    scanned.map(|()| records)
-}
-
-/// Every row of each `(new, old)` relation of `db`, as additions at `schema`.
-fn copy_relations(
-    db: &CacheDb,
-    schema: &Schema,
-    pairs: &[(RelationId, RelationId)],
-) -> Result<ChangeSet, CacheError> {
-    let work = WorkContext::new();
-    let old = db.snapshot(&work).map_err(local)?;
-    let mut builder = ChangeSet::builder(schema, work.clone());
-    for &(new, from) in pairs {
-        let fields = db
-            .schema()
-            .relation_checked(from)
-            .ok_or_else(|| local(from))?
-            .fields();
-        for row in old.snapshot().rows(from).map_err(local)? {
-            let (_, row) = row.map_err(local)?;
-            let values = bumbledb::canonical::decode(fields, row, &work).map_err(local)?;
-            builder.insert(new, values.values()).map_err(local)?;
-        }
-    }
-    builder.finish().map_err(local)
-}
-
-/// The net `(added, removed)` each change set makes when the sets apply in
-/// order to the committed state.
-fn deltas(db: &CacheDb, sets: &[&ChangeSet]) -> Result<Vec<(u64, u64)>, CacheError> {
-    let work = WorkContext::new();
-    let read = db.snapshot(&work).map_err(local)?;
-    let mut present: HashMap<(RelationId, &[u8]), bool> = HashMap::new();
-    let mut out = Vec::with_capacity(sets.len());
-    for set in sets {
-        let (mut added, mut removed) = (0, 0);
-        for record in set.records() {
-            let key = (record.relation, record.row);
-            let before = match present.get(&key) {
-                Some(before) => *before,
-                None => read
-                    .snapshot()
-                    .contains(record.relation, record.row, &work)
-                    .map_err(local)?,
-            };
-            let after = record.kind == ChangeKind::Add;
-            match (before, after) {
-                (false, true) => added += 1,
-                (true, false) => removed += 1,
-                _ => {}
-            }
-            present.insert(key, after);
-        }
-        out.push((added, removed));
-    }
-    Ok(out)
-}
-
-/// One change set equal to applying `sets` in order: per row, the last
-/// action wins.
-fn sequence(schema: &Schema, sets: &[&ChangeSet]) -> Result<ChangeSet, CacheError> {
-    if let [only] = sets {
-        return Ok((*only).clone());
-    }
-    let work = WorkContext::new();
-    let mut last: BTreeMap<(RelationId, &[u8]), ChangeKind> = BTreeMap::new();
-    for set in sets {
-        for record in set.records() {
-            last.insert((record.relation, record.row), record.kind);
-        }
-    }
-    let mut builder = ChangeSet::builder(schema, work.clone());
-    for ((relation, row), kind) in last {
-        let fields = schema.relation(relation).fields();
-        let values = bumbledb::canonical::decode(fields, row, &work).map_err(local)?;
-        match kind {
-            ChangeKind::Add => builder.insert(relation, values.values()),
-            ChangeKind::Remove => builder.delete(relation, values.values()),
-        }
-        .map_err(local)?;
-    }
-    builder.finish().map_err(local)
+    Ok(records)
 }
 
 fn remove(path: &Path) -> Result<(), CacheError> {

@@ -33,7 +33,7 @@ bytes_role!(
 bytes_role!(
     ImageDigest,
     32,
-    "BLAKE3 of a checkpoint or migration image file."
+    "Names an image by the state it holds; the replica computes and verifies it."
 );
 bytes_role!(
     MigrationHash,
