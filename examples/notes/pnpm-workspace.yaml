@@ -1,2 +1,5 @@
 patchedDependencies:
-  alchemy@2.0.0-beta.76: patches/alchemy@2.0.0-beta.76.patch
+  alchemy@2.0.0-beta.81: patches/alchemy@2.0.0-beta.81.patch
+
+allowBuilds:
+  workerd: false

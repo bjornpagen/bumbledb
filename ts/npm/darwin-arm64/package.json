@@ -21,7 +21,7 @@
 		"directory": "ts/npm/darwin-arm64"
 	},
 	"engines": {
-		"node": ">=24"
+		"node": ">=26"
 	},
 	"publishConfig": {
 		"access": "public"

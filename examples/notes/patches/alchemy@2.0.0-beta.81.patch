@@ -1,7 +1,7 @@
 diff --git a/lib/State/ResourceState.d.ts b/lib/State/ResourceState.d.ts
 --- a/lib/State/ResourceState.d.ts
 +++ b/lib/State/ResourceState.d.ts
-@@ -39,7 +39,7 @@ interface BaseResourceState {
+@@ -35,7 +35,7 @@ interface BaseResourceState {
      /** Desired state (input props) of this Resource */
      props?: Props;
      /** The output attributes of this Resource (if it has been created) */
@@ -9,11 +9,11 @@ diff --git a/lib/State/ResourceState.d.ts b/lib/State/ResourceState.d.ts
 +    attr?: Attr | undefined;
      /** The removal policy of the resource */
      removalPolicy?: RemovalPolicy["Service"];
-     /**
+     /** Attr-less lookup could recover the predecessor migrated away from this FQN. */
 diff --git a/src/State/ResourceState.ts b/src/State/ResourceState.ts
 --- a/src/State/ResourceState.ts
 +++ b/src/State/ResourceState.ts
-@@ -57,7 +57,7 @@ interface BaseResourceState {
+@@ -52,7 +52,7 @@ interface BaseResourceState {
    /** Desired state (input props) of this Resource */
    props?: Props;
    /** The output attributes of this Resource (if it has been created) */
@@ -21,4 +21,4 @@ diff --git a/src/State/ResourceState.ts b/src/State/ResourceState.ts
 +  attr?: Attr | undefined;
    /** The removal policy of the resource */
    removalPolicy?: RemovalPolicy["Service"];
-   /**
+   /** Attr-less lookup could recover the predecessor migrated away from this FQN. */

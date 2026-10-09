@@ -51,22 +51,22 @@
 	},
 	"homepage": "https://github.com/bjornpagen/bumbledb#readme",
 	"dependencies": {
-		"arkregex": "^0.0.8"
+		"arkregex": "0.0.13"
 	},
 	"peerDependencies": {
-		"effect": "4.0.0-rc.112"
+		"effect": "^4.0.2"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.4",
-		"@effect/platform-node": "4.0.0-rc.112",
-		"@types/node": "^26.1.0",
-		"effect": "4.0.0-rc.112",
-		"typescript": "^7.0.2"
+		"@biomejs/biome": "2.5.15",
+		"@effect/platform-node": "catalog:",
+		"@types/node": "26.6.4",
+		"effect": "catalog:",
+		"typescript": "7.0.2"
 	},
 	"engines": {
-		"node": ">=24"
+		"node": ">=26"
 	},
-	"packageManager": "pnpm@11.9.0",
+	"packageManager": "pnpm@12.10.1",
 	"publishConfig": {
 		"access": "public"
 	},

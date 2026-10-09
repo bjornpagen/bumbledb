@@ -1,14 +1,9 @@
-# pnpm 11 defaults minimumReleaseAge to 1440 minutes: a freshly published
-# package is refused for ~24h as supply-chain protection. Our own scope is
-# exempted so a just-published @bjornpagen/bumbledb(-<platform>) release
-# installs immediately — without this, every post-publish lockfile
-# regeneration (and any fresh install here) fails for a day, and pnpm keeps
-# auto-writing this file to say so. Committed deliberately; do not delete.
+catalog:
+  effect: 4.0.2
+  '@effect/platform-node': 4.0.2
+
 minimumReleaseAgeExclude:
   - '@bjornpagen/*'
 
-# Effect includes msgpackr; its optional string-extraction addon is not used by
-# our native row codec. Keep dependency builds reviewed without requiring a
-# second native build toolchain just to install the Effect SDK.
 allowBuilds:
   msgpackr-extract: false
