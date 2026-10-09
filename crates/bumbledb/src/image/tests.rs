@@ -12,9 +12,7 @@ mod decode;
 mod fixed_bytes;
 mod interval;
 mod stride;
-mod stride_ab;
 mod text_owners;
-mod timing;
 
 fn schema() -> Schema {
     SchemaDescriptor {

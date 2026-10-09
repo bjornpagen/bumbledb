@@ -36,18 +36,6 @@ impl Colt {
             + self.dense.len()
     }
 
-    #[cfg(test)]
-    #[must_use]
-    pub fn chunk_footprint_bytes(&self) -> usize {
-        self.chunks.len() * std::mem::size_of::<super::Chunk>() + self.chunk_positions.len() * 4
-    }
-
-    #[cfg(test)]
-    pub fn set_first_chunk_cap(&mut self, cap: u8) {
-        assert!(cap >= 2, "the second position allocates the first chunk");
-        self.first_chunk_cap = cap;
-    }
-
     #[must_use]
     pub fn key_count(&self, cursor: Cursor) -> KeyCount {
         match cursor {

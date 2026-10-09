@@ -25,7 +25,7 @@ impl Colt {
     pub(super) fn append_child(&mut self, child_at: usize, position: u32) -> Result<(), WorkError> {
         match unpack_child(self.buckets[child_at]) {
             Cursor::Row(first_position) => {
-                let chunk_idx = self.alloc_chunk(usize::from(self.first_chunk_cap))?;
+                let chunk_idx = self.alloc_chunk(super::FIRST_CHUNK_CAP)?;
                 reserve_pool(self.nodes.len() + 1, &mut self.nodes, self.work.as_ref())?;
                 let c = self.chunks[chunk_idx as usize];
                 self.chunk_positions[c.start as usize] = first_position;

@@ -287,7 +287,6 @@ pub struct Colt {
 
     chunk_positions: Vec<u32>,
 
-    first_chunk_cap: u8,
     maps: Vec<Map>,
 
     ctrl: Vec<u8>,

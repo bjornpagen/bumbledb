@@ -88,7 +88,6 @@ mod admit;
 mod dense;
 mod model;
 mod overflow;
-mod pins;
 mod selection;
 mod sizing;
 mod synthetic;
