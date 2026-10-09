@@ -25,6 +25,8 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 | `BUMBLEDB_DEEP=1` release run of the whole bench suite green | landed `b27f24add` |
 | E2 check at HEAD: `micro --levels all` (neon here), `micro --levels <name>` refusing an unavailable level by name, and `micro --compare a.json b.json` all run against `bumbledb::kernels` | verified |
 | C8 stage B (`Error::Store` deleted) | nothing to do: the bench names no `StoreError`/`Error::Store` |
+| Tests: the SQLite cap test is decided by operation counts (zero cap), not the clock; every scratch directory is one `fixture::TempDir` (removed on drop, panics included) | landed `623f37f07`, `4a8b2bc2d` |
+| Gate at `4a8b2bc2d`: `clippy -p bumbledb-bench --all-targets -- -D warnings` clean, `nextest -p bumbledb-bench` 375/375 | green |
 
 ## Layout (crate `bumbledb_bench`)
 
@@ -68,15 +70,6 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
   `aegis` removed; no features on `bumbledb` in `[dependencies]` or `[dev-dependencies]`.
 
 ## Requests to other lanes
-
-### engine-storage, engine-query
-
-- At `4460daaa8` (C5 query side) the `bumbledb` lib has dead code that `-D warnings` turns into
-  errors for every dependent crate's clippy gate: `encoding.rs` (`FactView`, `FactLayout::encoded`,
-  `layout`, unused `decode` re-exports), `encoding/decode.rs` (most decoders, the
-  `InvalidBool`/`NonCanonicalF64`/... variants), `canonical.rs::decode_sealed`,
-  `api/prepared/source.rs::work_error`. The bench itself is lint-clean (`cargo clippy -p
-  bumbledb-bench --all-targets` reports nothing in `crates/bumbledb-bench`).
 
 ### engine-storage
 
