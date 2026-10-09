@@ -3,20 +3,21 @@
 //! semantics beyond the declared cell types.
 use bumbledb::schema::{IntervalElement, StatementDescriptor, ValueType};
 use bumbledb::{
-    AnswerValue, F64, Interval, RelationId, RenderedViolation, StatementId, StatementKind, Uuid,
-    Value,
+    AnswerValue, Direction, F64, Interval, RelationId, RenderedViolation, StatementId, Uuid, Value,
 };
 use napi::bindgen_prelude::{
-    Array, BigInt, Either6, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, Utf16String, i64n,
+    Array, BigInt, Either, Either6, Env, FromNapiValue, Object, ToNapiValue, Uint8Array,
+    Utf16String, i64n,
 };
-use napi_derive::napi;
 use napi::{Unknown, ValueType as JsType, sys};
+use napi_derive::napi;
 
+use crate::runtime::RuntimeError;
 use crate::schema::SchemaHandle;
 use crate::tags;
 
-pub(crate) fn err(message: String) -> napi::Error {
-    napi::Error::from_reason(message)
+pub(crate) fn err(message: String) -> RuntimeError {
+    RuntimeError::InvalidValue { message }
 }
 
 pub(crate) fn engine_message(error: &bumbledb::Error) -> String {
@@ -43,7 +44,7 @@ pub(crate) fn req<T: FromNapiValue>(
     obj: &Object,
     key: &str,
     ctx: impl std::fmt::Display,
-) -> napi::Result<T> {
+) -> Result<T, RuntimeError> {
     obj.get::<T>(key)?
         .ok_or_else(|| err(format!("bumbledb marshal: missing `{key}` in {ctx}")))
 }
@@ -52,7 +53,7 @@ pub(crate) fn req_at<T: FromNapiValue>(
     arr: &Array,
     index: u32,
     ctx: impl std::fmt::Display,
-) -> napi::Result<T> {
+) -> Result<T, RuntimeError> {
     arr.get::<T>(index)?.ok_or_else(|| {
         err(format!(
             "bumbledb marshal: missing element {index} in {ctx}"
@@ -62,7 +63,7 @@ pub(crate) fn req_at<T: FromNapiValue>(
 
 // N-API's UTF-8 conversion replaces unpaired JS surrogates. Read code units
 // instead so malformed input is refused, never changed into a different fact.
-fn string_in(value: &Utf16String, ctx: impl std::fmt::Display) -> napi::Result<String> {
+fn string_in(value: &Utf16String, ctx: impl std::fmt::Display) -> Result<String, RuntimeError> {
     String::from_utf16(value).map_err(|_| {
         err(format!(
             "bumbledb marshal: {ctx}: expected well-formed Unicode text"
@@ -70,11 +71,15 @@ fn string_in(value: &Utf16String, ctx: impl std::fmt::Display) -> napi::Result<S
     })
 }
 
-fn req_text(obj: &Object, key: &str, ctx: impl std::fmt::Display + Copy) -> napi::Result<String> {
+fn req_text(
+    obj: &Object,
+    key: &str,
+    ctx: impl std::fmt::Display + Copy,
+) -> Result<String, RuntimeError> {
     string_in(&req::<Utf16String>(obj, key, ctx)?, ctx)
 }
 
-pub(crate) fn u64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Result<u64> {
+pub(crate) fn u64_in(value: &BigInt, ctx: impl std::fmt::Display) -> Result<u64, RuntimeError> {
     let (sign, word, lossless) = value.get_u64();
     if sign || !lossless {
         return Err(err(format!(
@@ -84,7 +89,7 @@ pub(crate) fn u64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Resul
     Ok(word)
 }
 
-pub(crate) fn i64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Result<i64> {
+pub(crate) fn i64_in(value: &BigInt, ctx: impl std::fmt::Display) -> Result<i64, RuntimeError> {
     let (word, lossless) = value.get_i64();
     if !lossless {
         return Err(err(format!(
@@ -94,7 +99,7 @@ pub(crate) fn i64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Resul
     Ok(word)
 }
 
-pub(crate) fn u16_id(value: u32, ctx: &str) -> napi::Result<u16> {
+pub(crate) fn u16_id(value: u32, ctx: &str) -> Result<u16, RuntimeError> {
     u16::try_from(value)
         .map_err(|_| err(format!("bumbledb marshal: {ctx}: id {value} exceeds u16")))
 }
@@ -102,7 +107,7 @@ pub(crate) fn u16_id(value: u32, ctx: &str) -> napi::Result<u16> {
 fn interval_u64_in(
     obj: &Object,
     ctx: impl std::fmt::Display + Copy,
-) -> napi::Result<Interval<u64>> {
+) -> Result<Interval<u64>, RuntimeError> {
     let start = u64_in(&req::<BigInt>(obj, "start", ctx)?, ctx)?;
     let end = u64_in(&req::<BigInt>(obj, "end", ctx)?, ctx)?;
     Interval::<u64>::new(start, end).ok_or_else(|| {
@@ -115,7 +120,7 @@ fn interval_u64_in(
 fn interval_i64_in(
     obj: &Object,
     ctx: impl std::fmt::Display + Copy,
-) -> napi::Result<Interval<i64>> {
+) -> Result<Interval<i64>, RuntimeError> {
     let start = i64_in(&req::<BigInt>(obj, "start", ctx)?, ctx)?;
     let end = i64_in(&req::<BigInt>(obj, "end", ctx)?, ctx)?;
     Interval::<i64>::new(start, end).ok_or_else(|| {
@@ -128,7 +133,7 @@ fn interval_i64_in(
 fn interval_f64_in(
     obj: &Object,
     ctx: impl std::fmt::Display + Copy,
-) -> napi::Result<Interval<F64>> {
+) -> Result<Interval<F64>, RuntimeError> {
     let start_raw = req::<f64>(obj, "start", ctx)?;
     let end_raw = req::<f64>(obj, "end", ctx)?;
     let start = F64::from(start_raw);
@@ -140,7 +145,10 @@ fn interval_f64_in(
     })
 }
 
-pub(crate) fn uuid_in(text: &str, ctx: impl std::fmt::Display + Copy) -> napi::Result<Uuid> {
+pub(crate) fn uuid_in(
+    text: &str,
+    ctx: impl std::fmt::Display + Copy,
+) -> Result<Uuid, RuntimeError> {
     let id =
         Uuid::parse_str(text).map_err(|error| err(format!("bumbledb marshal: {ctx}: {error}")))?;
     let mut buffer = Uuid::encode_buffer();
@@ -160,7 +168,7 @@ fn interval_in(
     obj: &Object,
     element: IntervalElement,
     ctx: impl std::fmt::Display + Copy,
-) -> napi::Result<Value> {
+) -> Result<Value, RuntimeError> {
     match element {
         IntervalElement::U64 => interval_u64_in(obj, ctx).map(Value::IntervalU64),
         IntervalElement::I64 => interval_i64_in(obj, ctx).map(Value::IntervalI64),
@@ -180,14 +188,14 @@ impl std::fmt::Display for CellCtx<'_> {
     }
 }
 
-fn cell_mismatch(ctx: CellCtx<'_>, want: &str, got: JsType) -> napi::Error {
+fn cell_mismatch(ctx: CellCtx<'_>, want: &str, got: JsType) -> RuntimeError {
     err(format!(
         "bumbledb marshal: {ctx}: expected {want}, got {}",
         js_type_name(got)
     ))
 }
 
-fn bytes_width_mismatch(ctx: CellCtx<'_>, len: u16, witnessed: usize) -> napi::Error {
+fn bytes_width_mismatch(ctx: CellCtx<'_>, len: u16, witnessed: usize) -> RuntimeError {
     err(format!(
         "bumbledb marshal: {ctx}: expected bytes<{len}>, got {witnessed} bytes"
     ))
@@ -204,7 +212,7 @@ pub(crate) fn schema_value_in(
     value: &Unknown,
     relation: &str,
     field: &str,
-) -> napi::Result<Value> {
+) -> Result<Value, RuntimeError> {
     let ctx = CellCtx { relation, field };
     let got = value.get_type()?;
     let mismatch = |want: &str| cell_mismatch(ctx, want, got);
@@ -292,7 +300,7 @@ pub(crate) fn key_row(
     relation: u32,
     key_statement: u32,
     values: &Array,
-) -> napi::Result<(RelationId, StatementId, Vec<Value>)> {
+) -> Result<(RelationId, StatementId, Vec<Value>), RuntimeError> {
     let rel = RelationId(relation);
     let roster = schema
         .rosters
@@ -340,7 +348,7 @@ pub(crate) fn key_row(
     Ok((rel, statement_id, row))
 }
 
-pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
+pub(crate) fn tagged_value(obj: &Object) -> Result<Value, RuntimeError> {
     let kind: String = req_text(obj, "kind", "value")?;
     match kind.as_str() {
         tags::value::BOOL => Ok(Value::Bool(req::<bool>(obj, "value", "bool value")?)),
@@ -383,7 +391,7 @@ pub(crate) enum OwnedParam {
     Set(Vec<Value>),
 }
 
-pub(crate) fn params_in(arr: &Array) -> napi::Result<Vec<OwnedParam>> {
+pub(crate) fn params_in(arr: &Array) -> Result<Vec<OwnedParam>, RuntimeError> {
     let mut params = Vec::with_capacity(arr.len() as usize);
     for index in 0..arr.len() {
         let obj = req_at::<Object>(arr, index, "params")?;
@@ -416,6 +424,33 @@ pub struct CellInterval {
     #[napi(ts_type = "bigint | number")]
     pub end: (),
 }
+
+/// One tagged data-plane value: an execute param's scalar, or a set member.
+#[napi(discriminant = "kind", object_to_js = false, object_from_js = false)]
+pub enum CellIn {
+    Bool { value: bool },
+    U64 { value: BigInt },
+    I64 { value: BigInt },
+    F64 { value: f64 },
+    String { value: String },
+    Uuid { value: String },
+    FixedBytes { value: Uint8Array },
+    IntervalU64 { start: BigInt, end: BigInt },
+    IntervalI64 { start: BigInt, end: BigInt },
+    IntervalF64 { start: f64, end: f64 },
+}
+
+/// A set param: membership in any of `values`.
+#[napi(object, object_to_js = false, object_from_js = false)]
+pub struct ParamSetIn {
+    #[napi(ts_type = "'Set'")]
+    pub kind: (),
+    pub values: Vec<CellIn>,
+}
+
+/// One execute param, positional by `ParamId`.
+#[napi]
+pub type ParamIn = Either<CellIn, ParamSetIn>;
 
 #[derive(Debug)]
 pub enum ValueOut {
@@ -518,10 +553,7 @@ impl ToNapiValue for ValueOut {
 }
 
 fn allocation_error(_: std::collections::TryReserveError) -> crate::runtime::RuntimeError {
-    crate::runtime::RuntimeError::Io {
-        kind: std::io::ErrorKind::OutOfMemory,
-        code: None,
-    }
+    crate::runtime::RuntimeError::OutOfMemory
 }
 
 /// Reserve the final destination once; no result-sized staging owner.
@@ -640,110 +672,104 @@ pub(crate) fn push_result_row(
     Ok(())
 }
 
-pub struct ViolationWire {
-    pub(crate) statement: u16,
-    pub(crate) kind: StatementKind,
-    pub(crate) canonical: String,
-    pub(crate) direction: Option<&'static str>,
-    pub(crate) measure: Option<u128>,
-    pub(crate) facts: Vec<(String, Vec<(String, Value)>)>,
+/// One named cell of a rendered fact or closed row.
+#[napi(object, object_from_js = false)]
+pub struct NamedValueOut {
+    pub name: String,
+    #[napi(ts_type = "CellValue")]
+    pub value: ValueOut,
 }
 
-impl ViolationWire {
-    pub(crate) fn from_rendered(rendered: RenderedViolation) -> Self {
-        let facts = |facts: Vec<bumbledb::RenderedFact>| {
-            facts
+/// One fact a violation cites, by relation and field names.
+#[napi(object, object_from_js = false)]
+pub struct FactOut {
+    pub relation: String,
+    pub fields: Vec<NamedValueOut>,
+}
+
+#[napi(string_enum)]
+pub enum DirectionOut {
+    SourceUnsatisfied,
+    TargetRequired,
+}
+
+/// One violated statement: its id, canonical spelling and the cited facts.
+#[napi(discriminant = "_tag", object_from_js = false)]
+pub enum ViolationOut {
+    Functionality {
+        statement: u32,
+        spelling: String,
+        facts: Vec<FactOut>,
+    },
+    Containment {
+        statement: u32,
+        spelling: String,
+        direction: DirectionOut,
+        facts: Vec<FactOut>,
+    },
+    /// `measure` is the grouped measure that left the capacity window.
+    Capacity {
+        statement: u32,
+        spelling: String,
+        measure: u128,
+        facts: Vec<FactOut>,
+    },
+}
+
+fn facts_out(facts: Vec<bumbledb::RenderedFact>) -> Vec<FactOut> {
+    facts
+        .into_iter()
+        .map(|fact| FactOut {
+            relation: fact.relation.into_string(),
+            fields: fact
+                .fields
                 .into_iter()
-                .map(|fact| {
-                    (
-                        fact.relation.into_string(),
-                        fact.fields
-                            .into_iter()
-                            .map(|(name, value)| (name.into_string(), value))
-                            .collect(),
-                    )
+                .map(|(name, value)| NamedValueOut {
+                    name: name.into_string(),
+                    value: ValueOut::from_value(value),
                 })
-                .collect()
-        };
+                .collect(),
+        })
+        .collect()
+}
+
+impl From<RenderedViolation> for ViolationOut {
+    fn from(rendered: RenderedViolation) -> Self {
         match rendered {
             RenderedViolation::Functionality {
                 statement,
                 spelling,
-                facts: rendered_facts,
-            } => Self {
-                statement: statement.0,
-                kind: StatementKind::Functionality,
-                canonical: spelling,
-                direction: None,
-                measure: None,
-                facts: facts(rendered_facts),
+                facts,
+            } => Self::Functionality {
+                statement: u32::from(statement.0),
+                spelling,
+                facts: facts_out(facts),
             },
             RenderedViolation::Containment {
                 statement,
                 spelling,
                 direction,
-                facts: rendered_facts,
-            } => Self {
-                statement: statement.0,
-                kind: StatementKind::Containment,
-                canonical: spelling,
-                direction: Some(tags::direction::tag(&direction)),
-                measure: None,
-                facts: facts(rendered_facts),
+                facts,
+            } => Self::Containment {
+                statement: u32::from(statement.0),
+                spelling,
+                direction: match direction {
+                    Direction::SourceUnsatisfied => DirectionOut::SourceUnsatisfied,
+                    Direction::TargetRequired => DirectionOut::TargetRequired,
+                },
+                facts: facts_out(facts),
             },
             RenderedViolation::Capacity {
                 statement,
                 spelling,
                 measure,
-                facts: rendered_facts,
-            } => Self {
-                statement: statement.0,
-                kind: StatementKind::Capacity,
-                canonical: spelling,
-                direction: None,
-                measure: Some(measure),
-                facts: facts(rendered_facts),
+                facts,
+            } => Self::Capacity {
+                statement: u32::from(statement.0),
+                spelling,
+                measure,
+                facts: facts_out(facts),
             },
         }
-    }
-}
-
-impl ToNapiValue for ViolationWire {
-    #[expect(
-        unsafe_code,
-        reason = "napi declares `ToNapiValue::to_napi_value` unsafe; the impl \
-                  only builds plain objects and delegates to napi's own impls"
-    )]
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let env_handle = Env::from_raw(env);
-        let mut obj = Object::new(&env_handle)?;
-        obj.set("statementId", u32::from(val.statement))?;
-        obj.set("kind", tags::statement_kind::tag(&val.kind))?;
-        obj.set("canonical", val.canonical)?;
-        if let Some(direction) = val.direction {
-            obj.set("direction", direction)?;
-        }
-        if let Some(measure) = val.measure {
-            // u128 → BigInt, whole (C3): two little-endian u64 words.
-            obj.set("measure", BigInt::from(measure))?;
-        }
-        let mut facts = Vec::with_capacity(val.facts.len());
-        for (relation, fields) in val.facts {
-            let mut fact_obj = Object::new(&env_handle)?;
-            fact_obj.set("relation", relation)?;
-            let mut field_objs = Vec::with_capacity(fields.len());
-            for (name, value) in fields {
-                let mut field_obj = Object::new(&env_handle)?;
-                field_obj.set("name", name)?;
-                field_obj.set("value", ValueOut::from_value(value))?;
-                field_objs.push(field_obj);
-            }
-            fact_obj.set("fields", field_objs)?;
-            facts.push(fact_obj);
-        }
-        obj.set("facts", facts)?;
-        // SAFETY: `env` is the live environment napi handed this very call,
-        // and `obj` was created against it.
-        unsafe { Object::to_napi_value(env, obj) }
     }
 }

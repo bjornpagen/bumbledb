@@ -394,6 +394,10 @@ impl RegistryAdmission {
         self.cap
     }
 
+    pub(crate) fn runtime(&self) -> &Arc<Runtime> {
+        &self.runtime
+    }
+
     /// Coalesced close: existing admitted obligation, not a new job.
     #[cfg(test)]
     pub(crate) fn request_close(&self) -> Result<CloseDrain, RuntimeError> {

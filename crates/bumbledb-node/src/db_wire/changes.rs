@@ -1,5 +1,5 @@
 //! Immutable change values: native composition, checked bytes and bounded
-//! delivery. Cursors own an Arc share, never a decoded copy or offset index.
+//! delivery. Cursors own an `Arc` share, never a decoded copy or offset index.
 
 use std::sync::Arc;
 
@@ -10,16 +10,13 @@ use napi_derive::napi;
 
 use crate::marshal::{self, ValueOut};
 use crate::runtime::registry::{NativeKind, Payload, RegistryAdmission};
-use crate::runtime::{Output, PublicationSink, QueuedBytes, Runtime, RuntimeError};
+use crate::runtime::{Output, PublicationSink, QueuedBytes, RuntimeError};
 use crate::runtime_wire::{
-    OperationHandle, RuntimeHandle, notification, operation_handle, owner, reporter, take_output,
-    thrown, unshared_input,
+    CloseOut, OperationHandle, RuntimeHandle, notification, operation_handle, operation_runtime,
+    owner, reporter, take_output, thrown, unshared_input, wrong_output,
 };
 
-use super::{
-    ChangesHandle, ChangesOpened, change_error, changes_from_payload, changes_route,
-    close_admitted, identity,
-};
+use super::{ChangesHandle, ChangesOpened, change_error, changes_from_payload, close_admitted};
 
 const PAGE_ROWS: usize = 256;
 const PAGE_BYTES: usize = 64 * 1024;
@@ -29,16 +26,20 @@ pub struct ChangesCursorOpened {
     schema: Arc<bumbledb::Schema>,
 }
 
-pub struct ChangesCursorHandle {
-    identity: usize,
-    runtime: Arc<Runtime>,
-    admission: RegistryAdmission,
+/// An independent read position over a change set's shared bytes.
+pub struct ChangesCursorHandle(RegistryAdmission);
+
+#[napi(string_enum)]
+pub enum ChangeKindOut {
+    Add,
+    Remove,
 }
 
+/// One change record: an addition or removal of one row of `relation`.
 #[napi(object, object_from_js = false)]
-pub struct ChangeRecordWire {
+pub struct ChangeRecordOut {
     pub relation: u32,
-    pub kind: String,
+    pub kind: ChangeKindOut,
     #[napi(ts_type = "Array<CellValue>")]
     pub values: Vec<ValueOut>,
 }
@@ -75,13 +76,12 @@ pub(crate) fn publish_page(
             .fields();
         let values = bumbledb::canonical::decode(fields, record.row, work)
             .map_err(|error| change_error(&error.into()))?;
-        records.push(ChangeRecordWire {
+        records.push(ChangeRecordOut {
             relation: record.relation.0,
             kind: match record.kind {
-                ChangeKind::Add => "add",
-                ChangeKind::Remove => "remove",
-            }
-            .into(),
+                ChangeKind::Add => ChangeKindOut::Add,
+                ChangeKind::Remove => ChangeKindOut::Remove,
+            },
             values: marshal::row_out(work, &values)?,
         });
     }
@@ -96,22 +96,28 @@ pub(crate) fn publish_page(
     Ok(Output::Ready)
 }
 
+/// Open a fresh read position over the change set's records.
 #[napi]
 pub fn runtime_changes_cursor(
     env: Env,
     handle: &External<ChangesHandle>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let (runtime, cap) = changes_route(handle).map_err(|error| thrown(env, error))?;
+    let runtime = handle.0.runtime();
     let operation = runtime
-        .submit_payload(cap, WorkContext::new(), notification(callback)?, |_| {
-            Ok(Box::new(|work, payload, _| {
-                work.checkpoint()?;
-                cursor_from_payload(payload)
-            }))
-        })
+        .submit_payload(
+            handle.0.cap(),
+            WorkContext::new(),
+            notification(callback)?,
+            |_| {
+                Ok(Box::new(|work, payload, _| {
+                    work.checkpoint()?;
+                    cursor_from_payload(payload)
+                }))
+            },
+        )
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
+    Ok(operation_handle(runtime, operation))
 }
 
 #[napi]
@@ -119,21 +125,17 @@ pub fn runtime_changes_cursor_take(
     env: Env,
     handle: &External<OperationHandle>,
 ) -> napi::Result<External<ChangesCursorHandle>> {
-    let runtime = crate::runtime_wire::operation_runtime(handle);
+    let runtime = operation_runtime(handle);
     let Output::ChangesCursor(opened) = take_output(env, handle)? else {
-        return Err(thrown(env, RuntimeError::InvalidArgument));
+        return Err(wrong_output(env));
     };
     let admission = RegistryAdmission::admit(
-        Arc::clone(&runtime),
+        runtime,
         NativeKind::ChangesCursor,
         Payload::ChangesCursor(opened),
     )
     .map_err(|error| thrown(env, error))?;
-    Ok(External::new(ChangesCursorHandle {
-        identity: identity(),
-        runtime,
-        admission,
-    }))
+    Ok(External::new(ChangesCursorHandle(admission)))
 }
 
 #[napi]
@@ -142,75 +144,76 @@ pub fn runtime_changes_cursor_next(
     handle: &External<ChangesCursorHandle>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    if handle.identity != identity() {
-        return Err(thrown(env, RuntimeError::ForeignRuntime));
-    }
-    let operation = handle
-        .runtime
+    let runtime = handle.0.runtime();
+    let operation = runtime
         .submit_payload(
-            handle.admission.cap(),
+            handle.0.cap(),
             WorkContext::new(),
             notification(callback)?,
             |_| Ok(Box::new(publish_page)),
         )
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&handle.runtime, operation))
+    Ok(operation_handle(runtime, operation))
 }
 
+/// One page of change records; `null` is the end of the cursor.
 #[napi]
 pub fn runtime_change_page_take(
     env: Env,
     handle: &External<OperationHandle>,
-) -> napi::Result<Option<Vec<ChangeRecordWire>>> {
+) -> napi::Result<Option<Vec<ChangeRecordOut>>> {
     match take_output(env, handle)? {
         Output::ChangePage(page) => Ok(page),
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        _ => Err(wrong_output(env)),
     }
 }
 
 #[napi]
 pub fn runtime_changes_cursor_close(
-    env: Env,
     handle: &External<ChangesCursorHandle>,
-    callback: Function<crate::runtime_wire::CloseWire, ()>,
+    callback: Function<CloseOut, ()>,
 ) -> napi::Result<()> {
-    if handle.identity != identity() {
-        return Err(thrown(env, RuntimeError::ForeignRuntime));
-    }
-    close_admitted(&handle.runtime, handle.admission.cap(), reporter(callback)?);
+    close_admitted(handle.0.runtime(), handle.0.cap(), reporter(callback)?);
     Ok(())
 }
 
+/// The change set's canonical bytes.
 #[napi]
 pub fn runtime_changes_bytes(
     env: Env,
     handle: &External<ChangesHandle>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let (runtime, cap) = changes_route(handle).map_err(|error| thrown(env, error))?;
+    let runtime = handle.0.runtime();
     let operation = runtime
-        .submit_payload(cap, WorkContext::new(), notification(callback)?, |_| {
-            Ok(Box::new(|work, payload, _| {
-                let opened = changes_from_payload(payload)?;
-                Ok(Output::Bytes(QueuedBytes::copy_from(
-                    work,
-                    opened.changes.as_bytes(),
-                )?))
-            }))
-        })
+        .submit_payload(
+            handle.0.cap(),
+            WorkContext::new(),
+            notification(callback)?,
+            |_| {
+                Ok(Box::new(|work, payload, _| {
+                    let opened = changes_from_payload(payload)?;
+                    Ok(Output::Bytes(QueuedBytes::copy_from(
+                        work,
+                        opened.changes.as_bytes(),
+                    )?))
+                }))
+            },
+        )
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
+    Ok(operation_handle(runtime, operation))
 }
 
+/// Parse canonical change-set bytes under a compiled schema.
 #[napi]
 pub fn runtime_changes_parse(
     env: Env,
     handle: &External<RuntimeHandle>,
     schema: &External<Arc<crate::schema::SchemaHandle>>,
-    bytes: Unknown,
+    #[napi(ts_arg_type = "Uint8Array")] bytes: Unknown,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
+    let runtime = owner(handle);
     let bytes = unshared_input(env, bytes)?;
     let schema = Arc::clone(&schema.schema);
     let operation = runtime
@@ -232,8 +235,8 @@ pub fn runtime_changes_parse(
     Ok(operation_handle(runtime, operation))
 }
 
-/// Two routed borrows under one operation and cancellation context. The
-/// first stage retains only an Arc, then returns its worker immediately.
+/// Compose two change sets into one (`left` then `right`). The first stage
+/// retains only an `Arc` share, then returns its worker immediately.
 #[napi]
 pub fn runtime_changes_compose(
     env: Env,
@@ -241,19 +244,24 @@ pub fn runtime_changes_compose(
     right: &External<ChangesHandle>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let (runtime, left) = changes_route(left).map_err(|error| thrown(env, error))?;
-    let (other_runtime, right) = changes_route(right).map_err(|error| thrown(env, error))?;
-    if !Arc::ptr_eq(&runtime, &other_runtime) {
+    let runtime = left.0.runtime();
+    if !Arc::ptr_eq(runtime, right.0.runtime()) {
         return Err(thrown(env, RuntimeError::ForeignRuntime));
     }
+    let right = right.0.cap();
     let operation = runtime
-        .submit_payload(left, WorkContext::new(), notification(callback)?, |_| {
-            Ok(Box::new(move |work, payload, _| {
-                compose_from_payload(payload, right, work)
-            }))
-        })
+        .submit_payload(
+            left.0.cap(),
+            WorkContext::new(),
+            notification(callback)?,
+            |_| {
+                Ok(Box::new(move |work, payload, _| {
+                    compose_from_payload(payload, right, work)
+                }))
+            },
+        )
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
+    Ok(operation_handle(runtime, operation))
 }
 
 fn compose_from_payload(

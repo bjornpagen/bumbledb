@@ -20,7 +20,7 @@ pub mod schema;
 pub use runtime::publication::runtime_arm_publication_cancel;
 mod tags;
 
-use marshal::{OwnedParam, ViolationWire};
+use marshal::{OwnedParam, ViolationOut};
 
 #[napi]
 #[must_use]
@@ -59,13 +59,13 @@ pub(crate) fn param_args(params: &[OwnedParam]) -> Vec<ParamArg<'_>> {
         .collect()
 }
 
-pub(crate) fn violations_wire(
+pub(crate) fn violations_out(
     descriptor: &SchemaDescriptor,
     violations: &Violations,
-) -> Vec<ViolationWire> {
+) -> Vec<ViolationOut> {
     render_rejection(descriptor, violations)
         .into_iter()
-        .map(ViolationWire::from_rendered)
+        .map(Into::into)
         .collect()
 }
 

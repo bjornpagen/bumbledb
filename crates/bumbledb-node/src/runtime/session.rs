@@ -20,10 +20,10 @@ pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
     if let bumbledb::Error::Store(store) = error
         && let bumbledb::store::StoreError::Work(work) = store.as_ref()
     {
-        return RuntimeError::Work(*work);
+        return (*work).into();
     }
     RuntimeError::Engine {
-        kind: crate::tags::error_family::tag(&error.family()),
+        kind: crate::tags::error_family::tag(&error.family()).into(),
         message: crate::marshal::engine_message(error),
     }
 }
@@ -232,7 +232,7 @@ impl SnapshotSession {
         &self.core.runtime
     }
 
-    #[must_use]
+    #[cfg(test)]
     pub fn capability(&self) -> Capability {
         self.core.cap
     }
@@ -375,12 +375,11 @@ impl Runtime {
         if sessions >= self.options.native_handle_capacity
             || state.natives >= self.options.native_handle_capacity
         {
-            return Err(RuntimeError::ResourceLimit {
-                dimension: "nativeHandleCapacity",
-                used: sessions.max(state.natives) as u64,
-                requested: 1,
-                limit: self.options.native_handle_capacity as u64,
-            });
+            return Err(RuntimeError::resource_limit(
+                "nativeHandleCapacity",
+                sessions.max(state.natives),
+                self.options.native_handle_capacity,
+            ));
         }
         let entry = state
             .owners
@@ -577,12 +576,11 @@ impl Runtime {
                 return Err(RuntimeError::ClosedHandle);
             }
             if state.natives >= self.options.native_handle_capacity {
-                return Err(RuntimeError::ResourceLimit {
-                    dimension: "nativeHandleCapacity",
-                    used: state.natives as u64,
-                    requested: 1,
-                    limit: self.options.native_handle_capacity as u64,
-                });
+                return Err(RuntimeError::resource_limit(
+                    "nativeHandleCapacity",
+                    state.natives,
+                    self.options.native_handle_capacity,
+                ));
             }
             state.natives += 1;
         }
@@ -1067,10 +1065,7 @@ mod tests {
                 Ok(Output::Prepared(prepared))
             }))
         });
-        assert!(matches!(
-            cancelled,
-            Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
-        ));
+        assert!(matches!(cancelled, Err(RuntimeError::Cancelled)));
         let (tx, rx) = channel();
         runtime
             .close_resource(
@@ -1113,10 +1108,7 @@ mod tests {
                 Ok(output)
             }))
         });
-        assert!(matches!(
-            cancelled,
-            Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
-        ));
+        assert!(matches!(cancelled, Err(RuntimeError::Cancelled)));
         assert!(
             execute_items(&runtime, &first).is_empty(),
             "cancelled execution leaves the plan reusable"
@@ -1532,10 +1524,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("armed notify");
         assert!(
-            matches!(
-                runtime.take(&refused),
-                Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
-            ),
+            matches!(runtime.take(&refused), Err(RuntimeError::Cancelled)),
             "unregistered local page must drop; cursor/result stay retryable"
         );
         let (ok_tx, ok_rx) = channel();
@@ -1678,10 +1667,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("armed notify");
         assert!(
-            matches!(
-                runtime.take(&refused),
-                Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
-            ),
+            matches!(runtime.take(&refused), Err(RuntimeError::Cancelled)),
             "boundary cancel must not deliver the first page"
         );
         let (ok_tx, ok_rx) = channel();
@@ -1774,8 +1760,7 @@ mod tests {
         assert!(
             matches!(
                 runtime.take(&retained),
-                Err(RuntimeError::SpentHandle
-                    | RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
+                Err(RuntimeError::SpentHandle | RuntimeError::Cancelled)
             ),
             "reclaimed publication is not a later JS take"
         );

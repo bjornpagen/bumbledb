@@ -172,7 +172,7 @@ fn cancelled_pull_refuses_and_retry_delivers_same_row() {
     cancelled.cancel();
     assert!(matches!(
         pull_from_payload(&mut payload, &cancelled),
-        Err(RuntimeError::Work(WorkError::Cancelled))
+        Err(RuntimeError::Cancelled)
     ));
 
     // Cancellation left next_row unmoved: a fresh delivery yields a
@@ -283,7 +283,7 @@ fn arm_cancel_after_page_retries_same_first_row() {
     assert!(
         matches!(
             submit_publish(&runtime, admission.cap()),
-            Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
+            Err(RuntimeError::Cancelled)
         ),
         "armed cancel drops the local page; next_row must not advance"
     );
@@ -503,11 +503,11 @@ fn adopt_and_abort_cannot_be_committed_by_a_fresh_ticket() {
 #[test]
 fn backing_failure_stays_terminal() {
     let store = RuntimeError::Engine {
-        kind: crate::tags::error_family::STORE,
+        kind: crate::tags::error_family::STORE.into(),
         message: "scratch page unreadable".into(),
     };
     let corruption = RuntimeError::Engine {
-        kind: crate::tags::error_family::CORRUPTION,
+        kind: crate::tags::error_family::CORRUPTION.into(),
         message: "page unreadable".into(),
     };
     assert!(is_terminal_backing(&store));
@@ -518,9 +518,9 @@ fn backing_failure_stays_terminal() {
             .is_err()
     );
 
-    let cancel = RuntimeError::Work(WorkError::Cancelled);
+    let cancel = RuntimeError::Cancelled;
     assert!(!is_terminal_backing(&cancel));
-    let allocation = RuntimeError::Work(WorkError::Allocation);
+    let allocation = RuntimeError::OutOfMemory;
     assert!(!is_terminal_backing(&allocation));
 }
 
@@ -542,7 +542,7 @@ fn draft_chunks_accumulate_without_quotas_and_cancellation_releases_the_prefix()
     for _ in 0..2 {
         assert!(matches!(
             ingest_from_payload(&mut payload, &ctx, 0, true, rows.clone()),
-            Ok(Output::Mutation { submitted: 1, .. })
+            Ok(Output::Staged(1))
         ));
     }
     let Payload::Draft(entry) = &payload else {
@@ -553,7 +553,7 @@ fn draft_chunks_accumulate_without_quotas_and_cancellation_releases_the_prefix()
     cancelled.cancel();
     assert!(matches!(
         ingest_from_payload(&mut payload, &cancelled, 0, true, rows.clone()),
-        Err(RuntimeError::Work(WorkError::Cancelled))
+        Err(RuntimeError::Cancelled)
     ));
     let Payload::Draft(entry) = &payload else {
         panic!("draft")
@@ -692,7 +692,7 @@ fn sealed_results_outlive_their_session_and_cancelled_collection() {
     cancelled.cancel();
     assert!(matches!(
         collect_from_payload(&mut payload, &cancelled),
-        Err(RuntimeError::Work(WorkError::Cancelled))
+        Err(RuntimeError::Cancelled)
     ));
     match collect_from_payload(&mut payload, &ctx).expect("bounded collect") {
         Output::Rows(queued) => assert_eq!(queued.rows.len(), 3),
@@ -748,7 +748,7 @@ fn native_text_collection_owns_its_rows_after_every_engine_owner_is_gone() {
     refused.cancel();
     assert!(matches!(
         collect_from_payload(&mut payload, &refused),
-        Err(RuntimeError::Work(WorkError::Cancelled))
+        Err(RuntimeError::Cancelled)
     ));
     let Output::Rows(queued) = collect_from_payload(&mut payload, &work()).unwrap() else {
         panic!("expected rows");
@@ -851,44 +851,29 @@ fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
     let lease = db.access().expect("lease");
     let store_hex = lease.db().integration_store().identity().store.to_string();
 
-    match apply_change_set(
-        &lease,
-        &changes,
-        &ExpectedOwned::Exact {
-            store: store_hex.clone(),
-            generation: 999,
-        },
-        &ctx,
-    )
-    .expect("moved is a domain outcome")
+    match apply(&lease, &changes, Some(&exact(&store_hex, 999)), &ctx)
+        .expect("moved is a domain outcome")
     {
-        Output::Apply(ApplyOutcomeOwned::Moved { witnessed, .. }) => assert_eq!(witnessed, 999),
+        Output::Apply(ApplyOutcome::Moved { witnessed, .. }) => {
+            assert_eq!(witnessed.generation, 999);
+        }
         _ => panic!("expected moved"),
     }
     assert!(matches!(
-        apply_change_set(
-            &lease,
-            &changes,
-            &ExpectedOwned::Exact {
-                store: "00".repeat(16),
-                generation: 0,
-            },
-            &ctx,
-        ),
+        apply(&lease, &changes, Some(&exact(&"00".repeat(16), 0)), &ctx),
         Err(RuntimeError::Engine { .. })
     ));
 
-    let accepted_generation =
-        match apply_change_set(&lease, &changes, &ExpectedOwned::Any, &ctx).expect("applies") {
-            Output::Apply(ApplyOutcomeOwned::Accepted { generation, store }) => {
-                assert_eq!(store, store_hex);
-                generation
-            }
-            _ => panic!("expected accepted"),
-        };
-    match apply_change_set(&lease, &changes, &ExpectedOwned::Any, &ctx).expect("re-applies") {
-        Output::Apply(ApplyOutcomeOwned::NoChange { generation, .. }) => {
-            assert!(generation >= accepted_generation);
+    let accepted_generation = match apply(&lease, &changes, None, &ctx).expect("applies") {
+        Output::Apply(ApplyOutcome::Committed { witness }) => {
+            assert_eq!(witness.store, store_hex);
+            witness.generation
+        }
+        _ => panic!("expected committed"),
+    };
+    match apply(&lease, &changes, None, &ctx).expect("re-applies") {
+        Output::Apply(ApplyOutcome::NoChange { witness }) => {
+            assert!(witness.generation >= accepted_generation);
         }
         _ => panic!("expected no-change"),
     }
@@ -897,7 +882,7 @@ fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
         .writing
         .store(true, std::sync::atomic::Ordering::Release);
     assert!(matches!(
-        apply_change_set(&lease, &changes, &ExpectedOwned::Any, &ctx),
+        apply(&lease, &changes, None, &ctx),
         Err(RuntimeError::WriterBusy)
     ));
     lease
@@ -911,10 +896,35 @@ fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+fn apply(
+    lease: &crate::runtime::owners::DbLease,
+    changes: &ChangeSet,
+    expected: Option<&Expected>,
+    ctx: &WorkContext,
+) -> Result<Output, RuntimeError> {
+    decide_change_set(lease, changes, expected, ctx, WriteMode::Apply)
+}
+
+fn judge(
+    lease: &crate::runtime::owners::DbLease,
+    changes: &ChangeSet,
+    expected: Option<&Expected>,
+    ctx: &WorkContext,
+) -> Result<Output, RuntimeError> {
+    decide_change_set(lease, changes, expected, ctx, WriteMode::Judge)
+}
+
+fn exact(store: &str, generation: u64) -> Expected {
+    Expected {
+        store: store.into(),
+        generation,
+    }
+}
+
 fn assert_judge_refusals(
     lease: &crate::runtime::owners::DbLease,
     changes: &ChangeSet,
-    expected: &ExpectedOwned,
+    expected: &Expected,
     ctx: &WorkContext,
 ) {
     let generation = lease.db().generation(work()).unwrap().value();
@@ -922,7 +932,7 @@ fn assert_judge_refusals(
         .writing
         .store(true, std::sync::atomic::Ordering::Release);
     assert!(matches!(
-        judge_change_set(lease, changes, expected, ctx),
+        judge(lease, changes, Some(expected), ctx),
         Err(RuntimeError::WriterBusy)
     ));
     lease
@@ -931,18 +941,15 @@ fn assert_judge_refusals(
     let stopped = work();
     stopped.cancel();
     assert!(matches!(
-        judge_change_set(lease, changes, expected, &stopped),
-        Err(RuntimeError::Work(WorkError::Cancelled))
+        judge(lease, changes, Some(expected), &stopped),
+        Err(RuntimeError::Cancelled)
     ));
     assert!(!lease.writing.load(std::sync::atomic::Ordering::Acquire));
     assert!(matches!(
-        judge_change_set(
+        judge(
             lease,
             changes,
-            &ExpectedOwned::Exact {
-                store: "00".repeat(16),
-                generation
-            },
+            Some(&exact(&"00".repeat(16), generation)),
             ctx
         ),
         Err(RuntimeError::Engine { .. })
@@ -973,21 +980,13 @@ fn judge_aborts_both_outcomes_and_releases_writer_on_every_exit() {
     let lease = db.access().unwrap();
     let generation = lease.db().generation(work()).unwrap().value();
     let store = lease.db().integration_store().identity().store.to_string();
-    let expected = ExpectedOwned::Exact {
-        store: store.clone(),
-        generation,
-    };
+    let expected = exact(&store, generation);
     for _ in 0..3 {
-        match judge_change_set(&lease, &changes, &expected, &ctx).unwrap() {
-            Output::Judge(JudgeOutcomeOwned::Admitted {
-                store: observed,
-                generation: observed_generation,
-                application,
-            }) => {
-                assert_eq!(observed, store);
-                assert_eq!(observed_generation, generation);
-                assert_eq!(application.added, 2);
-                assert_eq!(application.removed, 0);
+        match judge(&lease, &changes, Some(&expected), &ctx).unwrap() {
+            Output::Judge(JudgeOutcome::Admitted { base, changes }) => {
+                assert_eq!(base.store, store);
+                assert_eq!(base.generation, generation);
+                assert_eq!((changes.added, changes.removed), (2, 0));
             }
             _ => panic!("must admit without committing"),
         }
@@ -997,18 +996,17 @@ fn judge_aborts_both_outcomes_and_releases_writer_on_every_exit() {
     assert_judge_refusals(&lease, &changes, &expected, &ctx);
 
     assert!(matches!(
-        apply_change_set(&lease, &changes, &expected, &ctx).unwrap(),
-        Output::Apply(ApplyOutcomeOwned::Accepted { .. })
+        apply(&lease, &changes, Some(&expected), &ctx).unwrap(),
+        Output::Apply(ApplyOutcome::Committed { .. })
     ));
     let landed = lease.db().generation(work()).unwrap().value();
     assert!(
-        matches!(judge_change_set(&lease, &changes, &expected, &ctx).unwrap(), Output::Judge(JudgeOutcomeOwned::Moved { current, witnessed, .. }) if current == landed && witnessed == generation)
+        matches!(judge(&lease, &changes, Some(&expected), &ctx).unwrap(), Output::Judge(JudgeOutcome::Moved { current, witnessed }) if current.generation == landed && witnessed.generation == generation)
     );
-    match judge_change_set(&lease, &changes, &ExpectedOwned::Any, &ctx).unwrap() {
-        Output::Judge(JudgeOutcomeOwned::Admitted { application, .. }) => assert_eq!(
-            application,
-            bumbledb::integration::ApplicationChanges::default()
-        ),
+    match judge(&lease, &changes, None, &ctx).unwrap() {
+        Output::Judge(JudgeOutcome::Admitted { changes, .. }) => {
+            assert_eq!((changes.added, changes.removed), (0, 0));
+        }
         _ => panic!("existing additions are a no-op"),
     }
     let mut builder = bumbledb::ChangeSet::builder(&schema, ctx.clone());
@@ -1019,16 +1017,14 @@ fn judge_aborts_both_outcomes_and_releases_writer_on_every_exit() {
         .delete(RelationId(0), &[Value::U64(2), Value::U64(20)])
         .unwrap();
     let conflicting = builder.finish().unwrap();
-    match judge_change_set(&lease, &conflicting, &ExpectedOwned::Any, &ctx).unwrap() {
-        Output::Judge(JudgeOutcomeOwned::Rejected {
-            application,
+    match judge(&lease, &conflicting, None, &ctx).unwrap() {
+        Output::Judge(JudgeOutcome::Rejected {
+            base,
+            changes,
             violations,
-            generation,
-            ..
         }) => {
-            assert_eq!(generation, landed);
-            assert_eq!(application.added, 1);
-            assert_eq!(application.removed, 1);
+            assert_eq!(base.generation, landed);
+            assert_eq!((changes.added, changes.removed), (1, 1));
             assert!(!violations.is_empty());
         }
         _ => panic!("key conflict must reject"),
@@ -1036,8 +1032,8 @@ fn judge_aborts_both_outcomes_and_releases_writer_on_every_exit() {
     assert_eq!(lease.db().generation(work()).unwrap().value(), landed);
     assert!(!lease.writing.load(std::sync::atomic::Ordering::Acquire));
     assert!(matches!(
-        apply_change_set(&lease, &changes, &ExpectedOwned::Any, &ctx).unwrap(),
-        Output::Apply(ApplyOutcomeOwned::NoChange { .. })
+        apply(&lease, &changes, None, &ctx).unwrap(),
+        Output::Apply(ApplyOutcome::NoChange { .. })
     ));
 
     drop(lease);
@@ -1113,7 +1109,7 @@ fn changes_preserve_cancellation_and_allocation_errors_through_the_bridge() {
     cancelled.cancel();
     assert!(matches!(
         decode_rows_values(&schema, RelationId(0), &[], &cancelled),
-        Err(RuntimeError::Work(WorkError::Cancelled))
+        Err(RuntimeError::Cancelled)
     ));
     assert!(matches!(
         encode_rows_bytes(
@@ -1122,14 +1118,14 @@ fn changes_preserve_cancellation_and_allocation_errors_through_the_bridge() {
             &[vec![Value::U64(1), Value::U64(2)]],
             &cancelled
         ),
-        Err(RuntimeError::Work(WorkError::Cancelled))
+        Err(RuntimeError::Cancelled)
     ));
     for reason in [WorkError::Cancelled, WorkError::Allocation] {
         for error in [
             ChangeError::Work(reason),
             ChangeError::Row(bumbledb::canonical::RowError::Work(reason)),
         ] {
-            assert_eq!(change_error(&error), RuntimeError::Work(reason));
+            assert_eq!(change_error(&error), RuntimeError::from(reason));
         }
     }
 }
@@ -1140,7 +1136,7 @@ fn input_rows_use_checked_capacity_and_preserve_cancellation() {
     // Deterministic Vec layout overflow, not an enormous OS allocation attempt.
     assert!(matches!(
         super::codec::reserve_input_rows(u64::MAX, &context),
-        Err(RuntimeError::Work(WorkError::Allocation) | RuntimeError::InvalidArgument)
+        Err(RuntimeError::OutOfMemory | RuntimeError::InvalidArgument)
     ));
     let mut rows = super::codec::reserve_input_rows(2, &context).unwrap();
     assert!(rows.capacity() >= 2);
@@ -1151,7 +1147,7 @@ fn input_rows_use_checked_capacity_and_preserve_cancellation() {
     context.cancel();
     assert!(matches!(
         super::codec::reserve_input_rows(0, &context),
-        Err(RuntimeError::Work(WorkError::Cancelled))
+        Err(RuntimeError::Cancelled)
     ));
 }
 
@@ -1183,7 +1179,7 @@ fn point_read_output_outlives_its_decoded_row() {
     cancelled.cancel();
     assert!(matches!(
         crate::marshal::queued_row(&cancelled, &row),
-        Err(RuntimeError::Work(WorkError::Cancelled))
+        Err(RuntimeError::Cancelled)
     ));
     drop(row);
     drop(encoded);
@@ -1204,7 +1200,7 @@ fn a_cancelled_draft_chunk_spends_the_draft_without_fabricating_usage() {
             true,
             vec![vec![Value::U64(1), Value::U64(2)]]
         ),
-        Err(RuntimeError::Work(WorkError::Cancelled))
+        Err(RuntimeError::Cancelled)
     ));
     let Payload::Draft(entry) = &payload else {
         panic!("draft")

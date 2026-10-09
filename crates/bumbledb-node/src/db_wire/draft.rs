@@ -48,10 +48,7 @@ pub(crate) fn ingest_from_payload(
             });
         }
         context.checkpoint()?;
-        Ok(Output::Mutation {
-            submitted,
-            changed: submitted,
-        })
+        Ok(Output::Staged(submitted))
     })();
     if result.is_err() {
         mark_terminal(entry);

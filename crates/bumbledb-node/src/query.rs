@@ -15,13 +15,16 @@ pub struct QueryHandle {
     pub(crate) query: Query,
 }
 
-/// The engine's refusal: its variant name, message, and whichever rule-local
-/// coordinates it cites (`comparison` indexes the rule's flattened
-/// comparisons).
+/// The engine's refusal: `code` is its `ValidationError` variant, `refusal`
+/// the cited position's specific refusal (for example `Field` with
+/// `Unknown`, `Comparison` with `Unordered.Interval`), plus whichever
+/// rule-local coordinates it cites. `comparison` indexes the rule's
+/// flattened comparisons.
 #[napi(object, object_from_js = false)]
 #[derive(Debug, Default)]
 pub struct QueryDiagnostic {
     pub code: String,
+    pub refusal: Option<String>,
     pub message: String,
     pub rule: Option<u32>,
     pub atom: Option<u32>,
@@ -38,85 +41,83 @@ fn at(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
+/// A refusal's derived `Debug` rendering, `Outer(Inner)` spelled
+/// `Outer.Inner`.
+fn refusal(value: &impl std::fmt::Debug) -> String {
+    format!("{value:?}").replace('(', ".").replace(')', "")
+}
+
 pub(crate) fn query_diagnostic(error: &ValidationError) -> QueryDiagnostic {
     use ValidationError as E;
     let mut out = QueryDiagnostic {
-        code: format!("{error:?}")
-            .split(|c: char| !c.is_alphanumeric())
-            .next()
-            .unwrap_or_default()
-            .to_owned(),
+        code: crate::schema::code(error),
         message: error.to_string(),
         ..QueryDiagnostic::default()
     };
     match error {
         E::EmptyRuleSet
-        | E::TooManyRules { .. }
+        | E::TooMany { .. }
         | E::DnfExceedsRules { .. }
         | E::CountAcrossRules { .. }
         | E::EmptyFinds
         | E::NoPositiveAtoms
-        | E::TooManyAtoms { .. }
-        | E::TooManyVariables { .. }
-        | E::InteriorIdOverflow { .. }
-        | E::EmptyRecursiveBase
-        | E::EmptyRecursiveStep
-        | E::SelfInBase
-        | E::RecArmMissingSelf
-        | E::NonlinearRecArm
-        | E::NegationInRec => {}
-        E::ScalarExpression { find, .. }
-        | E::AggregateInputType { find }
-        | E::AggregateOverClosedReference { find }
-        | E::CountWithVariable { find }
-        | E::AggregateWithoutVariable { find }
-        | E::AggregateOverGroupKey { find }
-        | E::MultiplePackTerms { find }
-        | E::MixedPackAndFold { find }
-        | E::PackInputType { find } => out.find = Some(at(find.0)),
+        | E::Unplannable => {}
+        E::Rec(why) => out.refusal = Some(refusal(why)),
+        E::ScalarExpression { find, .. } | E::AggregateInputType { find } => {
+            out.find = Some(at(find.0));
+        }
+        E::Aggregate { find, refusal: why } => {
+            out.find = Some(at(find.0));
+            out.refusal = Some(refusal(why));
+        }
         E::ConditionNestingTooDeep { rule, .. } | E::HeadArityMismatch { rule, .. } => {
             out.rule = Some(at(rule.0));
         }
-        E::HeadTypeMismatch { rule, position } | E::HeadAggregateMismatch { rule, position } => {
+        E::Head {
+            rule,
+            position,
+            mismatch,
+        } => {
             out.rule = Some(at(rule.0));
             out.find = Some(at(position.0));
+            out.refusal = Some(refusal(mismatch));
         }
         E::UnknownRelation { atom, relation } => {
             out.atom = Some(at(atom.0));
             out.relation = Some(relation.0);
         }
-        E::UnknownField { atom, field }
-        | E::DuplicateFieldBinding { atom, field }
-        | E::LiteralTypeMismatch { atom, field }
-        | E::PointLiteralAtCeiling { atom, field }
-        | E::InteriorColumnOutOfRange { atom, field } => {
-            out.atom = Some(at(atom.0));
-            out.field = Some(u32::from(field.0));
-        }
         E::UnknownInterior { atom, interior } => {
             out.atom = Some(at(atom.0));
             out.interior = Some(interior.0);
         }
-        E::VariableTypeConflict { var }
-        | E::MembershipOnlyVariable { var }
-        | E::NegatedVariableUnbound { var }
-        | E::UnboundFindVariable { var }
-        | E::ComparisonOnlyVariable { var } => out.var = Some(u32::from(var.0)),
-        E::ParamIdGap { param }
-        | E::ParamTypeConflict { param }
-        | E::ParamScalarAndSet { param }
-        | E::IntervalParamSet { param } => out.param = Some(u32::from(param.0)),
-        E::ParamSetComparison { index }
-        | E::IllegalComparison { index }
-        | E::OrderComparisonOnInterval { index }
-        | E::OrderComparisonOnFixedBytes { index }
-        | E::OrderComparisonOnString { index }
-        | E::OrderComparisonOnClosedReference { index }
-        | E::ConstantComparison { index }
-        | E::SelfComparison { index }
-        | E::ComparisonPointLiteralAtCeiling { index }
-        | E::EmptyAllenMask { index }
-        | E::FullAllenMask { index } => out.comparison = Some(at(*index)),
+        E::Field {
+            atom,
+            field,
+            refusal: why,
+        } => {
+            out.atom = Some(at(atom.0));
+            out.field = Some(u32::from(field.0));
+            out.refusal = Some(refusal(why));
+        }
+        E::Variable { var, refusal: why } => {
+            out.var = Some(u32::from(var.0));
+            out.refusal = Some(refusal(why));
+        }
+        E::ParamIdGap { param } => out.param = Some(u32::from(param.0)),
+        E::Param {
+            param,
+            refusal: why,
+        } => {
+            out.param = Some(u32::from(param.0));
+            out.refusal = Some(refusal(why));
+        }
+        E::Comparison {
+            index,
+            refusal: why,
+        } => {
+            out.comparison = Some(at(*index));
+            out.refusal = Some(refusal(why));
+        }
         E::DuplicateFindTerm { index } => out.find = Some(at(*index)),
         E::EmptyInterior { interior }
         | E::InteriorNotPrior { interior, .. }
@@ -197,7 +198,8 @@ mod tests {
         ) else {
             panic!("unknown field refuses")
         };
-        assert_eq!(diagnostic.code, "UnknownField");
+        assert_eq!(diagnostic.code, "Field");
+        assert_eq!(diagnostic.refusal.as_deref(), Some("Unknown"));
         assert_eq!((diagnostic.atom, diagnostic.field), (Some(0), Some(7)));
 
         let QueryValidated::Invalid { diagnostic } = validate(
@@ -209,7 +211,8 @@ mod tests {
         ) else {
             panic!("conflicting variable types refuse")
         };
-        assert_eq!(diagnostic.code, "VariableTypeConflict");
+        assert_eq!(diagnostic.code, "Variable");
+        assert_eq!(diagnostic.refusal.as_deref(), Some("TypeConflict"));
         assert_eq!(diagnostic.var, Some(0));
     }
 

@@ -1,46 +1,30 @@
-//! Exact-version Node ownership boundary for the shared native executor.
+//! The executor's JavaScript surface: the one live runtime, operation
+//! handles, completion and close callbacks, directory owners and databases.
+//! napi's `External` provenance proves every handle is a live one of its
+//! own type from this addon.
 use std::sync::{Arc, Mutex};
 
-use bumbledb::work::{WorkContext, WorkError};
-use napi::bindgen_prelude::{
-    BigInt, Env, External, FromNapiValue, Function, JsValue, Object, Uint8Array, Unknown,
-};
+use bumbledb::work::WorkContext;
+use napi::bindgen_prelude::{Env, External, FromNapiValue, Function, JsValue, Uint8Array, Unknown};
 use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
 
+use crate::runtime::owners::ManagedDbOutcome;
 use crate::runtime::{CloseReport, Inspection, Operation, Output, Phase, Runtime, RuntimeError};
 
 static LIVE: Mutex<Option<Arc<Runtime>>> = Mutex::new(None);
-static ADDON_IDENTITY: u8 = 0;
 
 pub struct RuntimeHandle {
-    identity: usize,
     runtime: Arc<Runtime>,
 }
+
 pub struct OperationHandle {
-    identity: usize,
     runtime: Arc<Runtime>,
     operation: Arc<Operation>,
 }
+
 pub struct DirectoryHandle {
-    identity: usize,
     owner: crate::runtime::owners::DirectoryOwner,
-}
-
-fn identity() -> usize {
-    std::ptr::from_ref(&ADDON_IDENTITY) as usize
-}
-
-/// The one process-local addon identity, shared by every sibling wire
-/// module's handle checks (`db_wire`, `log_wire`).
-pub(crate) fn addon_identity() -> usize {
-    identity()
-}
-
-/// The runtime owning one registered operation (sibling wire modules wrap
-/// taken outputs into retained resources under the same runtime).
-pub(crate) fn operation_runtime(handle: &OperationHandle) -> Arc<Runtime> {
-    Arc::clone(&handle.runtime)
 }
 
 impl Drop for RuntimeHandle {
@@ -55,112 +39,27 @@ impl Drop for OperationHandle {
     }
 }
 
-pub(crate) fn owner(handle: &RuntimeHandle) -> Result<&Arc<Runtime>, RuntimeError> {
-    if handle.identity != identity() {
-        return Err(RuntimeError::ForeignRuntime);
-    }
-    Ok(&handle.runtime)
+pub(crate) fn owner(handle: &RuntimeHandle) -> &Arc<Runtime> {
+    &handle.runtime
 }
 
-pub const ERROR_CODES: &[&str] = &[
-    "RuntimeAlreadyLive",
-    "ForeignRuntime",
-    "ClosedHandle",
-    "HandleBusy",
-    "SpentHandle",
-    "QueueFull",
-    "InvalidArgument",
-    "Internal",
-    "DirectoryBusy",
-    "WriterBusy",
-    "InvalidPath",
-    "Io",
-    "ResourceLimit",
-    "Engine",
-    "Malformed",
-    "Cancelled",
-];
-
-fn error_code(error: &RuntimeError) -> &'static str {
-    match error {
-        RuntimeError::RuntimeAlreadyLive => "RuntimeAlreadyLive",
-        RuntimeError::ForeignRuntime => "ForeignRuntime",
-        RuntimeError::ClosedHandle => "ClosedHandle",
-        RuntimeError::HandleBusy => "HandleBusy",
-        RuntimeError::SpentHandle => "SpentHandle",
-        RuntimeError::QueueFull => "QueueFull",
-        RuntimeError::InvalidArgument => "InvalidArgument",
-        RuntimeError::Internal => "Internal",
-        RuntimeError::DirectoryBusy => "DirectoryBusy",
-        RuntimeError::WriterBusy => "WriterBusy",
-        RuntimeError::InvalidPath => "InvalidPath",
-        RuntimeError::Io { .. } | RuntimeError::Work(WorkError::Allocation) => "Io",
-        RuntimeError::ResourceLimit { .. } => "ResourceLimit",
-        RuntimeError::Engine { .. } => "Engine",
-        RuntimeError::Malformed(_) => "Malformed",
-        RuntimeError::Work(WorkError::Cancelled) => "Cancelled",
-    }
+/// The runtime owning one registered operation.
+pub(crate) fn operation_runtime(handle: &OperationHandle) -> Arc<Runtime> {
+    Arc::clone(&handle.runtime)
 }
 
-/// The typed reason object a core failure crosses as (`{_tag, ...}` — the
-/// `DbReason` roster in ts/src/runtime-errors.ts). Shared with the log wire,
-/// which nests the same object inside its `{source, reason}` frame.
-pub(crate) fn reason_object(env: &Env, error: RuntimeError) -> napi::Result<Object<'_>> {
-    let mut object = Object::new(env)?;
-    object.set("_tag", error_code(&error))?;
-    match error {
-        RuntimeError::Io { kind, code } => {
-            object.set("kind", format!("{kind:?}"))?;
-            object.set("osCode", code)?;
-        }
-        RuntimeError::Engine { kind, message } => {
-            object.set("kind", kind)?;
-            object.set("message", message)?;
-        }
-        RuntimeError::Malformed(malformed) => {
-            object.set("path", malformed.path)?;
-            object.set("message", malformed.message)?;
-        }
-
-        RuntimeError::ResourceLimit {
-            dimension,
-            used,
-            requested,
-            limit,
-        } => {
-            object.set("dimension", dimension)?;
-            object.set("used", BigInt::from(used))?;
-            object.set("requested", BigInt::from(requested))?;
-            object.set("limit", BigInt::from(limit))?;
-        }
-        RuntimeError::Work(WorkError::Allocation) => {
-            object.set("kind", "OutOfMemory")?;
-        }
-        _ => {}
-    }
-    Ok(object)
-}
-
+/// Throw `error` as its `_tag` object and return the pending-exception error.
 pub(crate) fn thrown(env: Env, error: RuntimeError) -> napi::Error {
-    let make = |error: RuntimeError| -> napi::Result<()> {
-        let object = reason_object(&env, error)?;
-        env.throw(object)
-    };
-    make(error)
+    env.throw(error)
         .err()
         .unwrap_or_else(|| napi::Error::from_status(napi::Status::PendingException))
-}
-
-#[napi]
-pub fn runtime_error_codes() -> Vec<String> {
-    ERROR_CODES.iter().map(ToString::to_string).collect()
 }
 
 /// Start the one live runtime. `optionsJson` is a `RuntimeOptionsIn`.
 #[napi]
 pub fn runtime_open(env: Env, options_json: String) -> napi::Result<External<RuntimeHandle>> {
-    let options: crate::input::options::RuntimeOptionsIn = crate::input::decode(&options_json)
-        .map_err(|malformed| thrown(env, RuntimeError::Malformed(malformed)))?;
+    let options: crate::input::options::RuntimeOptionsIn =
+        crate::input::decode(&options_json).map_err(|malformed| thrown(env, malformed.into()))?;
     let mut live = LIVE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -172,150 +71,155 @@ pub fn runtime_open(env: Env, options_json: String) -> napi::Result<External<Run
     }
     let runtime = Runtime::start(options.into()).map_err(|error| thrown(env, error))?;
     *live = Some(Arc::clone(&runtime));
-    Ok(External::new(RuntimeHandle {
-        identity: identity(),
-        runtime,
-    }))
+    Ok(External::new(RuntimeHandle { runtime }))
 }
 
-#[napi(object)]
-pub struct InspectionWire {
-    pub phase: String,
-    pub queued: BigInt,
-    pub active: BigInt,
-    pub retained: BigInt,
-    pub owners: BigInt,
-    pub databases: BigInt,
-    pub natives: BigInt,
+/// Bounded runtime bookkeeping counts.
+#[napi(object, object_from_js = false)]
+pub struct InspectionOut {
+    pub phase: Phase,
+    pub queued: u64,
+    pub active: u64,
+    pub retained: u64,
+    pub owners: u64,
+    pub databases: u64,
+    pub natives: u64,
 }
 
-impl From<Inspection> for InspectionWire {
+impl From<Inspection> for InspectionOut {
     fn from(value: Inspection) -> Self {
         Self {
-            phase: match value.phase {
-                Phase::Open => "open",
-                Phase::Closing => "closing",
-                Phase::Closed => "closed",
-            }
-            .into(),
-            queued: BigInt::from(value.queued as u64),
-            active: BigInt::from(value.active as u64),
-            retained: BigInt::from(value.retained as u64),
-            owners: BigInt::from(value.owners as u64),
-            databases: BigInt::from(value.databases as u64),
-            natives: BigInt::from(value.natives as u64),
+            phase: value.phase,
+            queued: value.queued as u64,
+            active: value.active as u64,
+            retained: value.retained as u64,
+            owners: value.owners as u64,
+            databases: value.databases as u64,
+            natives: value.natives as u64,
         }
     }
 }
 
-#[napi(object)]
-pub struct CloseWire {
-    pub kind: String,
-    pub outstanding: Option<InspectionWire>,
+/// A close or cancel outcome: joined, timed out with work still
+/// outstanding, or failed (cleanup capacity exhausted or teardown failed).
+#[napi(discriminant = "_tag", object_from_js = false)]
+pub enum CloseOut {
+    Closed,
+    Incomplete { outstanding: InspectionOut },
+    Failed,
 }
 
-impl From<CloseReport> for CloseWire {
+impl From<CloseReport> for CloseOut {
     fn from(value: CloseReport) -> Self {
         match value {
-            CloseReport::Closed => Self {
-                kind: "closed".into(),
-                outstanding: None,
+            CloseReport::Closed => Self::Closed,
+            CloseReport::Incomplete(inspection) => Self::Incomplete {
+                outstanding: inspection.into(),
             },
-            CloseReport::Incomplete(inspection) => Self {
-                kind: "incomplete".into(),
-                outstanding: Some(inspection.into()),
-            },
-            CloseReport::Failed => Self {
-                kind: "failed".into(),
-                outstanding: None,
-            },
+            CloseReport::Failed => Self::Failed,
         }
     }
 }
 
-#[napi]
-pub fn runtime_close(
-    env: Env,
-    handle: &External<RuntimeHandle>,
-    callback: Function<CloseWire, ()>,
-) -> napi::Result<()> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
+pub(crate) fn notification(callback: Function<(), ()>) -> napi::Result<Box<dyn FnOnce() + Send>> {
     let callback = callback
         .build_threadsafe_function()
         .callee_handled::<false>()
         .max_queue_size::<1>()
         .build()?;
-    runtime.drain(
-        None,
-        Box::new(move |report| {
-            let _ = callback.call(report.into(), ThreadsafeFunctionCallMode::NonBlocking);
-        }),
-    );
+    Ok(Box::new(move || {
+        let _ = callback.call((), ThreadsafeFunctionCallMode::NonBlocking);
+    }))
+}
+
+pub(crate) fn reporter(
+    callback: Function<CloseOut, ()>,
+) -> napi::Result<Box<dyn FnOnce(CloseReport) + Send>> {
+    let callback = callback
+        .build_threadsafe_function()
+        .callee_handled::<false>()
+        .max_queue_size::<1>()
+        .build()?;
+    Ok(Box::new(move |report| {
+        let _ = callback.call(report.into(), ThreadsafeFunctionCallMode::NonBlocking);
+    }))
+}
+
+pub(crate) fn operation_handle(
+    runtime: &Arc<Runtime>,
+    operation: Arc<Operation>,
+) -> External<OperationHandle> {
+    External::new(OperationHandle {
+        runtime: Arc::clone(runtime),
+        operation,
+    })
+}
+
+/// Spend one completed operation's output. A second take of the same handle
+/// throws `SpentHandle`; it never returns an empty value.
+pub(crate) fn take_output(env: Env, handle: &OperationHandle) -> napi::Result<Output> {
+    handle
+        .runtime
+        .take(&handle.operation)
+        .map_err(|error| thrown(env, error))
+}
+
+pub(crate) fn wrong_output(env: Env) -> napi::Error {
+    thrown(env, RuntimeError::InvalidArgument)
+}
+
+#[napi]
+pub fn runtime_close(
+    handle: &External<RuntimeHandle>,
+    callback: Function<CloseOut, ()>,
+) -> napi::Result<()> {
+    handle.runtime.drain(None, reporter(callback)?);
     Ok(())
 }
 
 #[napi]
 pub fn runtime_cancel(
-    env: Env,
     handle: &External<OperationHandle>,
-    callback: Function<CloseWire, ()>,
+    callback: Function<CloseOut, ()>,
 ) -> napi::Result<()> {
-    if handle.identity != identity() {
-        return Err(thrown(env, RuntimeError::ForeignRuntime));
-    }
-    let callback = callback
-        .build_threadsafe_function()
-        .callee_handled::<false>()
-        .max_queue_size::<1>()
-        .build()?;
-    handle.runtime.drain(
-        Some(&handle.operation),
-        Box::new(move |report| {
-            let _ = callback.call(report.into(), ThreadsafeFunctionCallMode::NonBlocking);
-        }),
-    );
+    handle
+        .runtime
+        .drain(Some(&handle.operation), reporter(callback)?);
     Ok(())
 }
 
 #[napi]
-pub fn runtime_inspect(env: Env, handle: &External<RuntimeHandle>) -> napi::Result<InspectionWire> {
-    Ok(owner(handle)
-        .map_err(|error| thrown(env, error))?
-        .inspect()
-        .into())
+#[must_use]
+pub fn runtime_inspect(handle: &External<RuntimeHandle>) -> InspectionOut {
+    handle.runtime.inspect().into()
 }
 
+/// One executor round trip with no payload.
 #[napi]
 pub fn runtime_ready(
     env: Env,
     handle: &External<RuntimeHandle>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let callback = callback
-        .build_threadsafe_function()
-        .callee_handled::<false>()
-        .max_queue_size::<1>()
-        .build()?;
-    let operation = runtime
-        .submit(
-            WorkContext::new(),
-            Box::new(move || {
-                let _ = callback.call((), ThreadsafeFunctionCallMode::NonBlocking);
-            }),
-            |_| {
-                Ok(Box::new(|context| {
-                    context.checkpoint()?;
-                    Ok(Output::Ready)
-                }))
-            },
-        )
+    let operation = handle
+        .runtime
+        .submit(WorkContext::new(), notification(callback)?, |_| {
+            Ok(Box::new(|context| {
+                context.checkpoint()?;
+                Ok(Output::Ready)
+            }))
+        })
         .map_err(|error| thrown(env, error))?;
-    Ok(External::new(OperationHandle {
-        identity: identity(),
-        runtime: Arc::clone(runtime),
-        operation,
-    }))
+    Ok(operation_handle(&handle.runtime, operation))
+}
+
+/// Take a payload-less completion.
+#[napi]
+pub fn runtime_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<()> {
+    match take_output(env, handle)? {
+        Output::Ready => Ok(()),
+        _ => Err(wrong_output(env)),
+    }
 }
 
 #[expect(
@@ -359,85 +263,9 @@ pub(crate) fn unshared_input(env: Env, value: Unknown) -> napi::Result<Uint8Arra
     if !valid {
         return Err(thrown(env, RuntimeError::InvalidArgument));
     }
-    // SAFETY: exact Uint8 kind, attached unshared backing. No
-    // application callback/JS runs between this check and the owned copy.
+    // SAFETY: exact Uint8 kind, attached unshared backing. No application
+    // callback or JS runs between this check and the owned copy.
     unsafe { Uint8Array::from_napi_value(env.raw(), value.raw()) }
-}
-
-/// Take one completed operation's payload. PINNED double-take contract
-/// (P12's F3 note, decided wave-E): the FIRST take spends the operation;
-/// every later take of the same handle THROWS the typed `SpentHandle`
-/// refusal — it never returns `null`. `null` is reserved for a payload-less
-/// completion (`Output::Ready`), so silence can never be mistaken for a
-/// spent handle. The same contract holds for every `*Take` verb riding
-/// `Runtime::take` (db and log bridges included).
-#[napi]
-pub fn runtime_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<()> {
-    if handle.identity != identity() {
-        return Err(thrown(env, RuntimeError::ForeignRuntime));
-    }
-    match handle
-        .runtime
-        .take(&handle.operation)
-        .map_err(|error| thrown(env, error))?
-    {
-        Output::Ready => Ok(()),
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
-    }
-}
-
-pub(crate) fn notification(callback: Function<(), ()>) -> napi::Result<Box<dyn FnOnce() + Send>> {
-    let callback = callback
-        .build_threadsafe_function()
-        .callee_handled::<false>()
-        .max_queue_size::<1>()
-        .build()?;
-    Ok(Box::new(move || {
-        let _ = callback.call((), ThreadsafeFunctionCallMode::NonBlocking);
-    }))
-}
-
-pub(crate) fn reporter(
-    callback: Function<CloseWire, ()>,
-) -> napi::Result<Box<dyn FnOnce(CloseReport) + Send>> {
-    let callback = callback
-        .build_threadsafe_function()
-        .callee_handled::<false>()
-        .max_queue_size::<1>()
-        .build()?;
-    Ok(Box::new(move |report| {
-        let _ = callback.call(report.into(), ThreadsafeFunctionCallMode::NonBlocking);
-    }))
-}
-
-fn directory(
-    handle: &DirectoryHandle,
-) -> Result<&crate::runtime::owners::DirectoryOwner, RuntimeError> {
-    if handle.identity != identity() {
-        return Err(RuntimeError::ForeignRuntime);
-    }
-    Ok(&handle.owner)
-}
-
-pub(crate) fn operation_handle(
-    runtime: &Arc<Runtime>,
-    operation: Arc<Operation>,
-) -> External<OperationHandle> {
-    External::new(OperationHandle {
-        identity: identity(),
-        runtime: Arc::clone(runtime),
-        operation,
-    })
-}
-
-pub(crate) fn take_output(env: Env, handle: &OperationHandle) -> napi::Result<Output> {
-    if handle.identity != identity() {
-        return Err(thrown(env, RuntimeError::ForeignRuntime));
-    }
-    handle
-        .runtime
-        .take(&handle.operation)
-        .map_err(|error| thrown(env, error))
 }
 
 #[napi]
@@ -447,11 +275,11 @@ pub fn runtime_directory_acquire(
     path: String,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let operation = runtime
+    let operation = handle
+        .runtime
         .acquire_directory(path, WorkContext::new(), notification(callback)?)
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(runtime, operation))
+    Ok(operation_handle(&handle.runtime, operation))
 }
 
 #[napi]
@@ -460,31 +288,27 @@ pub fn runtime_directory_take(
     handle: &External<OperationHandle>,
 ) -> napi::Result<External<DirectoryHandle>> {
     match take_output(env, handle)? {
-        Output::Directory(owner) => Ok(External::new(DirectoryHandle {
-            identity: identity(),
-            owner,
-        })),
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        Output::Directory(owner) => Ok(External::new(DirectoryHandle { owner })),
+        _ => Err(wrong_output(env)),
     }
 }
 
+/// Hold the directory open across awaited JavaScript work; end it with
+/// `runtimeDirectoryEnd`.
 #[napi]
 pub fn runtime_directory_begin(
     env: Env,
     handle: &External<DirectoryHandle>,
 ) -> napi::Result<External<OperationHandle>> {
-    let owner = directory(handle).map_err(|error| thrown(env, error))?;
-    let operation = owner
+    let operation = handle
+        .owner
         .begin_work(WorkContext::new())
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(owner.runtime(), operation))
+    Ok(operation_handle(handle.owner.runtime(), operation))
 }
 
 #[napi]
 pub fn runtime_directory_check(env: Env, handle: &External<OperationHandle>) -> napi::Result<()> {
-    if handle.identity != identity() {
-        return Err(thrown(env, RuntimeError::ForeignRuntime));
-    }
     handle
         .runtime
         .checkpoint_external(&handle.operation)
@@ -493,9 +317,6 @@ pub fn runtime_directory_check(env: Env, handle: &External<OperationHandle>) -> 
 
 #[napi]
 pub fn runtime_directory_end(env: Env, handle: &External<OperationHandle>) -> napi::Result<()> {
-    if handle.identity != identity() {
-        return Err(thrown(env, RuntimeError::ForeignRuntime));
-    }
     if !handle.operation.is_external() {
         return Err(thrown(env, RuntimeError::InvalidArgument));
     }
@@ -505,15 +326,13 @@ pub fn runtime_directory_end(env: Env, handle: &External<OperationHandle>) -> na
 
 #[napi]
 pub fn runtime_directory_close(
-    env: Env,
     handle: &External<DirectoryHandle>,
     remove: bool,
-    callback: Function<CloseWire, ()>,
+    callback: Function<CloseOut, ()>,
 ) -> napi::Result<()> {
-    let owner = directory(handle).map_err(|error| thrown(env, error))?;
     let report = reporter(callback)?;
-    owner.close_with(remove);
-    owner.drain(report);
+    handle.owner.close_with(remove);
+    handle.owner.drain(report);
     Ok(())
 }
 
@@ -528,8 +347,7 @@ pub fn runtime_directory_db_open(
     create: bool,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    use crate::runtime::owners::ManagedDbOutcome;
-    let owner = directory(handle).map_err(|error| thrown(env, error))?;
+    let owner = &handle.owner;
     let reference = owner.reference();
     let schema = Arc::clone(schema);
     let operation = owner
@@ -544,7 +362,7 @@ pub fn runtime_directory_db_open(
                         Ok(bumbledb::Admission::Accepted(db)) => Ok(db),
                         Ok(bumbledb::Admission::Rejected(violations)) => {
                             return Ok(Output::Db(ManagedDbOutcome::Rejected(
-                                crate::violations_wire(&schema.descriptor, &violations),
+                                crate::violations_out(&schema.descriptor, &violations),
                             )));
                         }
                         Err(error) => Err(error),
@@ -558,15 +376,13 @@ pub fn runtime_directory_db_open(
                         Ok(Output::Db(ManagedDbOutcome::Opened(managed)))
                     }
                     Err(error @ bumbledb::Error::SchemaMismatch { .. }) => {
-                        Ok(Output::Db(ManagedDbOutcome::Refused {
-                            kind: crate::tags::open_kind::FINGERPRINT_MISMATCH,
-                            message: crate::marshal::engine_message(&error),
+                        Ok(Output::Db(ManagedDbOutcome::FingerprintMismatch {
+                            message: error.to_string(),
                         }))
                     }
                     Err(error @ bumbledb::Error::DestinationExists { .. }) => {
-                        Ok(Output::Db(ManagedDbOutcome::Refused {
-                            kind: crate::tags::open_kind::DESTINATION_EXISTS,
-                            message: crate::marshal::engine_message(&error),
+                        Ok(Output::Db(ManagedDbOutcome::DestinationExists {
+                            message: error.to_string(),
                         }))
                     }
                     Err(bumbledb::Error::EnvironmentLocked) => Err(RuntimeError::DirectoryBusy),
@@ -578,76 +394,61 @@ pub fn runtime_directory_db_open(
     Ok(operation_handle(owner.runtime(), operation))
 }
 
-#[napi]
-pub fn runtime_db_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<Object<'_>> {
-    use crate::runtime::owners::ManagedDbOutcome;
-    let mut object = Object::new(&env)?;
-    match take_output(env, handle)? {
-        Output::Db(ManagedDbOutcome::Opened(db)) => {
-            object.set("tag", "accepted")?;
-            object.set("db", External::new(crate::DbHandle::managed(db)))?;
-        }
-        Output::Db(ManagedDbOutcome::Rejected(violations)) => {
-            object.set("tag", "rejected")?;
-            object.set("violations", violations)?;
-        }
-        Output::Db(ManagedDbOutcome::Refused { kind, message }) => {
-            object.set("tag", "refused")?;
-            object.set("kind", kind)?;
-            object.set("message", message)?;
-        }
-        _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
-    }
-    Ok(object)
+/// A database open outcome. Refusals are domain outcomes, not failures.
+#[napi(discriminant = "_tag", object_from_js = false)]
+pub enum DbOpened {
+    Opened {
+        db: External<crate::DbHandle>,
+    },
+    /// A created database's closed relations violate the schema's laws.
+    Rejected {
+        violations: Vec<crate::marshal::ViolationOut>,
+    },
+    /// The directory holds a database of a different schema.
+    FingerprintMismatch {
+        message: String,
+    },
+    /// `create` found an existing database.
+    DestinationExists {
+        message: String,
+    },
 }
 
 #[napi]
+pub fn runtime_db_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<DbOpened> {
+    match take_output(env, handle)? {
+        Output::Db(ManagedDbOutcome::Opened(db)) => Ok(DbOpened::Opened {
+            db: External::new(crate::DbHandle::managed(db)),
+        }),
+        Output::Db(ManagedDbOutcome::Rejected(violations)) => Ok(DbOpened::Rejected { violations }),
+        Output::Db(ManagedDbOutcome::FingerprintMismatch { message }) => {
+            Ok(DbOpened::FingerprintMismatch { message })
+        }
+        Output::Db(ManagedDbOutcome::DestinationExists { message }) => {
+            Ok(DbOpened::DestinationExists { message })
+        }
+        _ => Err(wrong_output(env)),
+    }
+}
+
+/// The one close authority: begin the database's drain and report its
+/// real outcome.
+#[napi]
 pub fn runtime_managed_db_close(
-    _env: Env,
     db: &External<crate::DbHandle>,
-    callback: Function<CloseWire, ()>,
+    callback: Function<CloseOut, ()>,
 ) -> napi::Result<()> {
-    // One close authority: begin the owner's drain and report its real
-    // outcome. There is no second synchronous JS-owned close verb.
     db.owner().drain(reporter(callback)?);
     Ok(())
 }
 
-// The 0.x five-verb JS filesystem transport (`runtime_fs`/`runtime_fs_take`)
-// is DELETED with the TS CAS authority: object-store work is native (C07,
-// P05's store rewrite), driven by the log machine (`log_wire.rs`) — no JS
-// layer holds a conditional-store verb anymore.
-
-// ---------------------------------------------------------------------------
-// Worker-table snapshots (C7): capability tokens into a fixed worker's
-// resource table. JS-driven WriterSession/HostWrite ABI is deleted; sealed
-// apply/submit keeps the whole writer operation inside one native job.
-// ---------------------------------------------------------------------------
-
+/// One compiled plan pinned to its snapshot on a fixed worker.
 pub struct PreparedHandle {
-    identity: usize,
     session: Arc<crate::runtime::session::SnapshotSession>,
 }
 
-impl PreparedHandle {
-    pub(crate) fn new(session: crate::runtime::session::SnapshotSession) -> Self {
-        Self {
-            identity: identity(),
-            session: Arc::new(session),
-        }
-    }
-}
-
-pub(crate) fn prepared(
-    handle: &PreparedHandle,
-) -> Result<&crate::runtime::session::SnapshotSession, RuntimeError> {
-    if handle.identity != identity() {
-        return Err(RuntimeError::ForeignRuntime);
-    }
-    if handle.session.capability().kind != crate::runtime::NativeKind::Prepared {
-        return Err(RuntimeError::InvalidArgument);
-    }
-    Ok(&handle.session)
+pub(crate) fn prepared(handle: &PreparedHandle) -> &crate::runtime::session::SnapshotSession {
+    &handle.session
 }
 
 /// Adopt one compiled worker-owned plan. Dropping an untaken output closes
@@ -658,20 +459,19 @@ pub fn runtime_prepared_take(
     handle: &External<OperationHandle>,
 ) -> napi::Result<External<PreparedHandle>> {
     match take_output(env, handle)? {
-        Output::Prepared(session) => Ok(External::new(PreparedHandle::new(session))),
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        Output::Prepared(session) => Ok(External::new(PreparedHandle {
+            session: Arc::new(session),
+        })),
+        _ => Err(wrong_output(env)),
     }
 }
 
 #[napi]
 pub fn runtime_prepared_close(
-    env: Env,
     handle: &External<PreparedHandle>,
-    callback: Function<CloseWire, ()>,
+    callback: Function<CloseOut, ()>,
 ) -> napi::Result<()> {
-    prepared(handle)
-        .map_err(|error| thrown(env, error))?
-        .drain(reporter(callback)?);
+    handle.session.drain(reporter(callback)?);
     Ok(())
 }
 
@@ -682,7 +482,7 @@ pub fn runtime_rows_take(
 ) -> napi::Result<crate::runtime::QueuedOutput> {
     match take_output(env, handle)? {
         Output::Rows(queued) => Ok(queued),
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        _ => Err(wrong_output(env)),
     }
 }
 
@@ -693,6 +493,6 @@ pub fn runtime_row_take(
 ) -> napi::Result<Option<crate::runtime::QueuedRow>> {
     match take_output(env, handle)? {
         Output::Row(row) => Ok(row),
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        _ => Err(wrong_output(env)),
     }
 }

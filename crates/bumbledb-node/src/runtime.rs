@@ -108,9 +108,12 @@ impl napi::bindgen_prelude::ToNapiValue for QueuedRow {
     }
 }
 
+/// Why a bridge call failed. Thrown to JavaScript as this `_tag` object.
+#[napi_derive::napi(discriminant = "_tag", object_from_js = false)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
     RuntimeAlreadyLive,
+    /// Handles from two different runtimes were combined.
     ForeignRuntime,
     ClosedHandle,
     /// An admitted job temporarily owns this live capability.
@@ -118,38 +121,74 @@ pub enum RuntimeError {
     SpentHandle,
     QueueFull,
     InvalidArgument,
+    /// A data-plane value (row cell, param, key) that does not fit its
+    /// declared type.
+    InvalidValue {
+        message: String,
+    },
     Internal,
     DirectoryBusy,
-    /// The one LMDB writer for this database is already owned by a live
-    /// write session; the engine ships the refusal, never a queued thread
-    /// blocked on the writer mutex.
+    /// The database's one writer is owned by a live write.
     WriterBusy,
     InvalidPath,
     Io {
-        kind: std::io::ErrorKind,
-        code: Option<i32>,
+        kind: String,
+        os_code: Option<i32>,
     },
     ResourceLimit {
-        dimension: &'static str,
+        dimension: String,
         used: u64,
         requested: u64,
         limit: u64,
     },
-    /// A typed engine refusal crossing the executor as owned data: the
-    /// core error family tag plus its rendered message. Never a raw
-    /// pointer, handle or borrow.
+    /// A typed engine refusal: the engine error kind and its message.
     Engine {
-        kind: &'static str,
+        kind: String,
         message: String,
     },
     /// A JSON input that does not match its wire type.
-    Malformed(crate::input::Malformed),
-    Work(WorkError),
+    Malformed {
+        path: String,
+        message: String,
+    },
+    Cancelled,
+    OutOfMemory,
 }
 
 impl From<WorkError> for RuntimeError {
     fn from(value: WorkError) -> Self {
-        Self::Work(value)
+        match value {
+            WorkError::Cancelled => Self::Cancelled,
+            WorkError::Allocation => Self::OutOfMemory,
+        }
+    }
+}
+
+impl From<napi::Error> for RuntimeError {
+    fn from(value: napi::Error) -> Self {
+        Self::InvalidValue {
+            message: value.reason.clone(),
+        }
+    }
+}
+
+impl From<crate::input::Malformed> for RuntimeError {
+    fn from(value: crate::input::Malformed) -> Self {
+        Self::Malformed {
+            path: value.path,
+            message: value.message,
+        }
+    }
+}
+
+impl RuntimeError {
+    pub(crate) fn resource_limit(dimension: &str, used: usize, limit: usize) -> Self {
+        Self::ResourceLimit {
+            dimension: dimension.into(),
+            used: used as u64,
+            requested: 1,
+            limit: limit as u64,
+        }
     }
 }
 
@@ -176,6 +215,7 @@ impl Default for Options {
     }
 }
 
+#[napi_derive::napi(string_enum)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Open,
@@ -215,10 +255,8 @@ pub enum Output {
     Count(u64),
     #[cfg(test)]
     Generation(u64),
-    Mutation {
-        submitted: u64,
-        changed: u64,
-    },
+    /// Rows one draft chunk staged.
+    Staged(u64),
     /// One compiled query with its own worker route and snapshot share.
     Prepared(session::SnapshotSession),
     /// One sealed completed query result, owned and independent.
@@ -231,7 +269,7 @@ pub enum Output {
     Changes(crate::db_wire::ChangesOpened),
     /// Independent position over shared immutable change bytes.
     ChangesCursor(crate::db_wire::ChangesCursorOpened),
-    ChangePage(Option<Vec<crate::db_wire::ChangeRecordWire>>),
+    ChangePage(Option<Vec<crate::db_wire::changes::ChangeRecordOut>>),
     /// Continue the same admitted operation on another resource's worker.
     /// Never published to JS; no worker blocks waiting for another worker.
     PayloadContinuation {
@@ -239,11 +277,11 @@ pub enum Output {
         work: session::PayloadWork,
     },
     /// One immutable final-state apply outcome (chapter 35 `Db.apply`).
-    Apply(crate::db_wire::ApplyOutcomeOwned),
+    Apply(crate::db_wire::ApplyOutcome),
     /// A non-committing judgment; cancellation never becomes mutation evidence.
-    Judge(crate::db_wire::JudgeOutcomeOwned),
+    Judge(crate::db_wire::JudgeOutcome),
     /// Bounded database diagnostics (measurements, never rows).
-    DbReport(crate::db_wire::DbInspectionOwned),
+    DbReport(crate::db_wire::DbInspection),
     /// Owned bounded byte payloads (row codec responses).
     Bytes(QueuedBytes),
 }

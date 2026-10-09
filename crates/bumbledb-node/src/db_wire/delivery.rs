@@ -175,9 +175,8 @@ impl PullOutcome {
 pub(crate) fn is_terminal_backing(error: &RuntimeError) -> bool {
     matches!(
         error,
-        RuntimeError::Engine {
-            kind: crate::tags::error_family::CORRUPTION | crate::tags::error_family::STORE,
-            ..
-        }
+        RuntimeError::Engine { kind, .. }
+            if kind == crate::tags::error_family::CORRUPTION
+                || kind == crate::tags::error_family::STORE
     )
 }

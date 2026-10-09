@@ -1,6 +1,6 @@
-//! Wire tags for the data plane and violations: one exhaustive table per
+//! Wire tags for the data plane and engine errors: one exhaustive table per
 //! mirrored engine enum, so a new engine variant fails to compile here.
-use bumbledb::{Direction, ErrorFamily, StatementKind, Value};
+use bumbledb::{ErrorFamily, Value};
 
 use crate::marshal::OwnedParam;
 
@@ -26,45 +26,27 @@ macro_rules! wire_tags {
 }
 
 wire_tags! {
-    /// `bumbledb::Value` — the tagged value lane (`tagged_value`).
+    /// `bumbledb::Value`: the `kind` of a tagged data-plane value (`CellIn`).
     mod value for Value {
-        BOOL: Value::Bool(_) => "bool",
-        U64: Value::U64(_) => "u64",
-        I64: Value::I64(_) => "i64",
-        F64: Value::F64(_) => "f64",
-        UUID: Value::Uuid(_) => "uuid",
-        STRING: Value::String(_) => "string",
-        FIXED_BYTES: Value::FixedBytes(_) => "fixedBytes",
-        INTERVAL_U64: Value::IntervalU64(_) => "intervalU64",
-        INTERVAL_I64: Value::IntervalI64(_) => "intervalI64",
-        INTERVAL_F64: Value::IntervalF64(_) => "intervalF64",
+        BOOL: Value::Bool(_) => "Bool",
+        U64: Value::U64(_) => "U64",
+        I64: Value::I64(_) => "I64",
+        F64: Value::F64(_) => "F64",
+        UUID: Value::Uuid(_) => "Uuid",
+        STRING: Value::String(_) => "String",
+        FIXED_BYTES: Value::FixedBytes(_) => "FixedBytes",
+        INTERVAL_U64: Value::IntervalU64(_) => "IntervalU64",
+        INTERVAL_I64: Value::IntervalI64(_) => "IntervalI64",
+        INTERVAL_F64: Value::IntervalF64(_) => "IntervalF64",
     }
 }
 
 wire_tags! {
-    /// `bumbledb::StatementKind`: the violation form tag.
-    mod statement_kind for StatementKind {
-        FUNCTIONALITY: StatementKind::Functionality => "functionality",
-        CONTAINMENT: StatementKind::Containment => "containment",
-        CAPACITY: StatementKind::Capacity => "capacity",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::Direction`: the containment violation direction.
-    mod direction for Direction {
-        SOURCE_UNSATISFIED: Direction::SourceUnsatisfied => "sourceUnsatisfied",
-        TARGET_REQUIRED: Direction::TargetRequired => "targetRequired",
-    }
-}
-
-wire_tags! {
-    /// The execute-param fork (`params_in`): a scalar param IS a tagged
-    /// value (its tag is the value's own), the set arm is the one extra
-    /// spelling — mirroring `bumbledb::ParamArg` structurally.
+    /// The execute-param fork: a scalar param is a tagged value, a set is
+    /// `{ kind: "Set", values }`.
     mod param for OwnedParam {
-        SET: OwnedParam::Set(_) => "set",
-        SCALAR: OwnedParam::Scalar(_) => "scalar",
+        SET: OwnedParam::Set(_) => "Set",
+        SCALAR: OwnedParam::Scalar(_) => "Scalar",
     }
 }
 
@@ -99,9 +81,4 @@ wire_tags! {
         CORRUPTION: ErrorFamily::Corruption => "corruption",
         STORE: ErrorFamily::Store => "store",
     }
-}
-
-pub(crate) mod open_kind {
-    pub(crate) const FINGERPRINT_MISMATCH: &str = "fingerprintMismatch";
-    pub(crate) const DESTINATION_EXISTS: &str = "destinationExists";
 }

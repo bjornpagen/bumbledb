@@ -4,8 +4,8 @@ use std::time::Duration;
 use super::*;
 use crate::runtime::registry::Capability;
 use crate::runtime::session::PayloadWork;
-use crate::runtime::{CloseReport, Operation, Options};
-use bumbledb::{RelationId, Theory, Value, WorkError};
+use crate::runtime::{CloseReport, Operation, Options, Runtime};
+use bumbledb::{RelationId, Theory, Value};
 
 bumbledb::schema! {
     pub Items;
@@ -92,7 +92,7 @@ fn finish(runtime: &Arc<Runtime>) {
 fn page(
     runtime: &Arc<Runtime>,
     cap: Capability,
-) -> Result<Option<Vec<ChangeRecordWire>>, RuntimeError> {
+) -> Result<Option<Vec<ChangeRecordOut>>, RuntimeError> {
     let (op, done) = submit(runtime, cap, Box::new(publish_page));
     match take(runtime, &op, &done)? {
         Output::ChangePage(page) => Ok(page),
@@ -100,7 +100,7 @@ fn page(
     }
 }
 
-fn first_id(page: &[ChangeRecordWire]) -> u64 {
+fn first_id(page: &[ChangeRecordOut]) -> u64 {
     match page[0].values[0] {
         ValueOut::U64(id) => id,
         _ => panic!("id"),
@@ -122,10 +122,7 @@ fn bounded_cursor_retries_cancelled_page_without_advancing() {
     );
     let cap = held.cap();
     runtime.arm_publication_cancel();
-    assert!(matches!(
-        page(&runtime, cap),
-        Err(RuntimeError::Work(WorkError::Cancelled))
-    ));
+    assert!(matches!(page(&runtime, cap), Err(RuntimeError::Cancelled)));
     for (id, size) in [(0, 256), (256, 256), (512, 88)] {
         let page = page(&runtime, cap).unwrap().unwrap();
         assert_eq!(page.len(), size);
@@ -254,10 +251,7 @@ fn composition_gap(cancel: bool) {
     release.send(()).unwrap();
     let output = take(&runtime, &op, &done);
     if cancel {
-        assert!(matches!(
-            output,
-            Err(RuntimeError::Work(WorkError::Cancelled))
-        ));
+        assert!(matches!(output, Err(RuntimeError::Cancelled)));
     } else {
         let Output::Changes(changes) = output.unwrap() else {
             panic!("composed after source close")

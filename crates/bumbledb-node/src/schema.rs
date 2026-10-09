@@ -13,7 +13,7 @@ use napi_derive::napi;
 
 use crate::input::schema::SchemaSpecIn;
 use crate::input::{Malformed, decode};
-use crate::marshal::ValueOut;
+use crate::marshal::{NamedValueOut, ValueOut};
 
 /// A sealed field roster: the relation name and its sealed field slots
 /// (a closed relation's synthetic `id` first).
@@ -44,7 +44,7 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 }
 
 /// The leading identifier of a derived `Debug` rendering: the variant name.
-fn code(value: &impl Debug) -> String {
+pub(crate) fn code(value: &impl Debug) -> String {
     let rendered = format!("{value:?}");
     rendered
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
@@ -213,13 +213,6 @@ pub struct FieldOut {
     pub id: u32,
     pub value_type: ValueTypeOut,
     pub newtype: Option<String>,
-}
-
-#[napi(object, object_from_js = false)]
-pub struct NamedValueOut {
-    pub name: String,
-    #[napi(ts_type = "CellValue")]
-    pub value: ValueOut,
 }
 
 /// One closed relation row: its handle, declaration-order id and columns.

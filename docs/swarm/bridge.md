@@ -10,7 +10,7 @@ Owns: `crates/bumbledb-node/**`, `ts/src/native/binding.d.ts`, `docs/swarm/bridg
 | Brittle tests deleted: exact allocation transcriptions, the `alloc-counter` feature, the pinned fingerprint twin (`fingerprint_lock.rs`), the cross-lane `tags.json` golden, duplicate idle-shutdown test | done |
 | F8: serde JSON cold inputs (`SchemaSpecIn`, `QueryIn`, `RuntimeOptionsIn`) with `{path, message}` refusals | done |
 | D17: sync `compileSchema` / `validateQuery` / `schemaBindings` returning branded handles | done |
-| F7: `binding.d.ts` generated and committed (`crates/bumbledb-node/dts.sh`); typed take outputs and the thrown failure union | in progress (several takes still return `object`) |
+| F7: every export typed in the generated, committed `binding.d.ts` (`crates/bumbledb-node/dts.sh`, gate: `dts.sh --check` + standalone `tsc`) | done |
 | A: error arms against engine-storage's one `Error` / `Error::kind()` | waits on engine-storage C8 |
 | Hosted verbs over log-core's sans-IO `Machine` | waits on log-core |
 
@@ -97,3 +97,31 @@ All shapes below are in `ts/src/native/binding.d.ts`; that file is the contract.
   `runtimeSchemaSnapshot`, `runtimeDraftTake`; `runtimeTake` returns `undefined` (ready only).
   `runtimeDbInspectTake` reports `diskBytes` (engine C17) instead of the map report.
 - Row cells are `CellValue = boolean | bigint | number | string | Uint8Array | CellInterval`.
+
+F7 (all outputs generated; no hand-built objects remain):
+
+- Every thrown failure is the `RuntimeError` union (`_tag`): `RuntimeAlreadyLive`,
+  `ForeignRuntime`, `ClosedHandle`, `HandleBusy`, `SpentHandle`, `QueueFull`, `InvalidArgument`,
+  `InvalidValue { message }` (a data-plane cell/param/key that does not fit its type),
+  `Internal`, `DirectoryBusy`, `WriterBusy`, `InvalidPath`, `Io { kind, osCode? }`,
+  `ResourceLimit { dimension, used, requested, limit }` (bigints), `Engine { kind, message }`,
+  `Malformed { path, message }`, `Cancelled`, `OutOfMemory`. `runtimeErrorCodes` is deleted.
+- Close/cancel callbacks receive `CloseOut = Closed | Incomplete { outstanding: InspectionOut } | Failed`;
+  `runtimeInspect` returns `InspectionOut` (`phase: 'Open' | 'Closing' | 'Closed'`, bigint counts).
+- `runtimeDbTake: DbOpened = Opened { db } | Rejected { violations } | FingerprintMismatch { message } | DestinationExists { message }`.
+- `runtimeSnapshotTake: { snapshot, witness: WitnessOut }`, `WitnessOut = { store, generation: bigint }`.
+- `runtimeDbApply` / `runtimeDbJudge(db, changes, expected: WitnessIn | null, cb)`;
+  `WitnessIn = { store, generation: bigint }`, absent means "whatever is current".
+  `runtimeApplyTake: ApplyOutcome = Committed { witness } | NoChange { witness } | Rejected { violations } | Moved { witnessed, current }`;
+  `runtimeJudgeTake: JudgeOutcome = Admitted { base, changes } | Rejected { base, changes, violations } | Moved { witnessed, current }`
+  (`changes: ChangeCounts = { added, removed }`).
+- `ViolationOut = Functionality { statement, spelling, facts } | Containment { …, direction: 'SourceUnsatisfied' | 'TargetRequired' } | Capacity { …, measure: bigint }`;
+  `facts: FactOut[] = { relation, fields: { name, value: CellValue }[] }`.
+- `runtimeChangesTake: ChangesOut = { changes, fingerprint, counts, byteLength: bigint }`;
+  `runtimeChangePageTake: ChangeRecordOut[] | null`, `ChangeRecordOut = { relation, kind: 'Add' | 'Remove', values: CellValue[] }`.
+- Draft chunks: `runtimeStagedTake(op): bigint` (rows staged) replaces `runtimeReportTake`.
+- `runtimeDbInspectTake: DbInspection = { generation, diskBytes, retainedOperations }` (bigints).
+- Data-plane params: `ParamIn = CellIn | { kind: 'Set', values: CellIn[] }`; `CellIn` kinds are
+  now PascalCase (`Bool`, `U64`, `I64`, `F64`, `String`, `Uuid`, `FixedBytes`, `IntervalU64`,
+  `IntervalI64`, `IntervalF64`) with JS-native payloads.
+- Dropping a result, cursor, draft, change set or change cursor handle (including by GC) closes it.

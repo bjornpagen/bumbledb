@@ -66,6 +66,16 @@ export declare class ExternalObject<T> {
   }
 }
 
+/**
+ * One apply outcome. `NoChange` committed nothing new; `Moved` means the
+ * expected state was not the current one.
+ */
+export type ApplyOutcome =
+  | { _tag: 'Committed'; witness: WitnessOut }
+  | { _tag: 'NoChange'; witness: WitnessOut }
+  | { _tag: 'Rejected'; violations: Array<ViolationOut> }
+  | { _tag: 'Moved'; witnessed: WitnessOut; current: WitnessOut }
+
 export interface AtomIn {
   source: AtomSourceIn
   bindings: Array<BindingIn>
@@ -97,6 +107,19 @@ export type CeilingOut =
   | { _tag: 'TargetField'; field: number }
   | { _tag: 'TargetDuration'; field: number }
 
+/** One tagged data-plane value: an execute param's scalar, or a set member. */
+export type CellIn =
+  | { kind: 'Bool'; value: boolean }
+  | { kind: 'U64'; value: bigint }
+  | { kind: 'I64'; value: bigint }
+  | { kind: 'F64'; value: number }
+  | { kind: 'String'; value: string }
+  | { kind: 'Uuid'; value: string }
+  | { kind: 'FixedBytes'; value: Uint8Array }
+  | { kind: 'IntervalU64'; start: bigint; end: bigint }
+  | { kind: 'IntervalI64'; start: bigint; end: bigint }
+  | { kind: 'IntervalF64'; start: number; end: number }
+
 export interface CellInterval {
   start: bigint | number
   end: bigint | number
@@ -109,10 +132,26 @@ export interface CellInterval {
  */
 export type CellValue = boolean | bigint | number | string | Uint8Array | CellInterval
 
-export interface ChangeRecordWire {
+export interface ChangeCounts {
+  added: bigint
+  removed: bigint
+}
+
+export type ChangeKindOut = 'Add' | 'Remove'
+
+/** One change record: an addition or removal of one row of `relation`. */
+export interface ChangeRecordOut {
   relation: number
-  kind: string
+  kind: ChangeKindOut
   values: Array<CellValue>
+}
+
+/** A sealed change set and its summary. */
+export interface ChangesOut {
+  changes: ExternalObject<ChangesHandle>
+  fingerprint: string
+  counts: ChangeCounts
+  byteLength: bigint
 }
 
 /** One closed relation row: its handle, declaration-order id and columns. */
@@ -127,10 +166,14 @@ export interface ClosedSpecIn {
   rows: Array<RowSpecIn>
 }
 
-export interface CloseWire {
-  kind: string
-  outstanding?: InspectionWire
-}
+/**
+ * A close or cancel outcome: joined, timed out with work still
+ * outstanding, or failed (cleanup capacity exhausted or teardown failed).
+ */
+export type CloseOut =
+  | { _tag: 'Closed' }
+  | { _tag: 'Incomplete'; outstanding: InspectionOut }
+  | { _tag: 'Failed' }
 
 /** A comparison operator; `Allen.mask` is a nonzero 13-bit relation set. */
 export type CmpOpIn =
@@ -151,7 +194,29 @@ export type ConditionIn =
   | { kind: 'And'; children: Array<ConditionIn> }
   | { kind: 'Or'; children: Array<ConditionIn> }
 
+/** Bounded database diagnostics, never rows. */
+export interface DbInspection {
+  generation: bigint
+  diskBytes: bigint
+  retainedOperations: bigint
+}
+
+/** A database open outcome. Refusals are domain outcomes, not failures. */
+export type DbOpened =
+  | { _tag: 'Opened'; db: ExternalObject<DbHandle> }
+  | { _tag: 'Rejected'; violations: Array<ViolationOut> }
+  | { _tag: 'FingerprintMismatch'; message: string }
+  | { _tag: 'DestinationExists'; message: string }
+
+export type DirectionOut = 'SourceUnsatisfied' | 'TargetRequired'
+
 export declare function engineVersion(): string
+
+/** One fact a violation cites, by relation and field names. */
+export interface FactOut {
+  relation: string
+  fields: Array<NamedValueOut>
+}
 
 export interface FieldOut {
   name: string
@@ -185,8 +250,9 @@ export type HeadTermIn =
   | { kind: 'Compute' }
   | { kind: 'Aggregate'; op: HeadOpIn }
 
-export interface InspectionWire {
-  phase: string
+/** Bounded runtime bookkeeping counts. */
+export interface InspectionOut {
+  phase: Phase
   queued: bigint
   active: bigint
   retained: bigint
@@ -202,6 +268,12 @@ export interface InteriorIn {
 export type IntervalElementIn = 'U64' | 'I64' | 'F64'
 
 export type IntervalElementOut = 'U64' | 'I64' | 'F64'
+
+/** One judgment of a private candidate; the database never changes. */
+export type JudgeOutcome =
+  | { _tag: 'Admitted'; base: WitnessOut; changes: ChangeCounts }
+  | { _tag: 'Rejected'; base: WitnessOut; changes: ChangeCounts; violations: Array<ViolationOut> }
+  | { _tag: 'Moved'; witnessed: WitnessOut; current: WitnessOut }
 
 /** One selection binding's right side; a literal set reads disjunctively. */
 export type LiteralSetSpecIn =
@@ -222,6 +294,7 @@ export interface Malformed {
   message: string
 }
 
+/** One named cell of a rendered fact or closed row. */
 export interface NamedValueOut {
   name: string
   value: CellValue
@@ -229,13 +302,27 @@ export interface NamedValueOut {
 
 export type NumericCastIn = 'ToF64' | 'ToF64Exact' | 'ToI64Exact' | 'ToU64Exact'
 
+/** One execute param, positional by `ParamId`. */
+export type ParamIn = CellIn | ParamSetIn
+
+/** A set param: membership in any of `values`. */
+export interface ParamSetIn {
+  kind: 'Set'
+  values: Array<CellIn>
+}
+
+export type Phase = 'Open' | 'Closing' | 'Closed'
+
 /**
- * The engine's refusal: its variant name, message, and whichever rule-local
- * coordinates it cites (`comparison` indexes the rule's flattened
- * comparisons).
+ * The engine's refusal: `code` is its `ValidationError` variant, `refusal`
+ * the cited position's specific refusal (for example `Field` with
+ * `Unknown`, `Comparison` with `Unordered.Interval`), plus whichever
+ * rule-local coordinates it cites. `comparison` indexes the rule's
+ * flattened comparisons.
  */
 export interface QueryDiagnostic {
   code: string
+  refusal?: string
   message: string
   rule?: number
   atom?: number
@@ -308,75 +395,89 @@ export interface RuleIn {
   conditions: Array<ConditionIn>
 }
 
-export declare function runtimeApplyTake(handle: ExternalObject<OperationHandle>): object
+export declare function runtimeApplyTake(handle: ExternalObject<OperationHandle>): ApplyOutcome
 
 /**
- * Arm the next `dispatch_payload_message` / `run_payload_publication`.
- * After `work()` returns a page and before `operation.output` is written,
- * the local owner is dropped and the job fails `Cancelled`. A page already
- * registered is kept. Predelivery `Err` still publishes nothing.
+ * Cancel the next payload publication between producing a page and
+ * accepting its delivery. A page already accepted is kept.
  */
 export declare function runtimeArmPublicationCancel(handle: ExternalObject<RuntimeHandle>): void
 
 export declare function runtimeBytesTake(handle: ExternalObject<OperationHandle>): Uint8Array
 
-export declare function runtimeCancel(handle: ExternalObject<OperationHandle>, callback: (arg: CloseWire) => void): void
+export declare function runtimeCancel(handle: ExternalObject<OperationHandle>, callback: (arg: CloseOut) => void): void
 
-export declare function runtimeChangePageTake(handle: ExternalObject<OperationHandle>): Array<ChangeRecordWire> | null
+/** One page of change records; `null` is the end of the cursor. */
+export declare function runtimeChangePageTake(handle: ExternalObject<OperationHandle>): Array<ChangeRecordOut> | null
 
+/** The change set's canonical bytes. */
 export declare function runtimeChangesBytes(handle: ExternalObject<ChangesHandle>, callback: () => void): ExternalObject<OperationHandle>
 
-export declare function runtimeChangesClose(handle: ExternalObject<ChangesHandle>, callback: (arg: CloseWire) => void): void
+export declare function runtimeChangesClose(handle: ExternalObject<ChangesHandle>, callback: (arg: CloseOut) => void): void
 
 /**
- * Two routed borrows under one operation and cancellation context. The
- * first stage retains only an Arc, then returns its worker immediately.
+ * Compose two change sets into one (`left` then `right`). The first stage
+ * retains only an `Arc` share, then returns its worker immediately.
  */
 export declare function runtimeChangesCompose(left: ExternalObject<ChangesHandle>, right: ExternalObject<ChangesHandle>, callback: () => void): ExternalObject<OperationHandle>
 
+/** Open a fresh read position over the change set's records. */
 export declare function runtimeChangesCursor(handle: ExternalObject<ChangesHandle>, callback: () => void): ExternalObject<OperationHandle>
 
-export declare function runtimeChangesCursorClose(handle: ExternalObject<ChangesCursorHandle>, callback: (arg: CloseWire) => void): void
+export declare function runtimeChangesCursorClose(handle: ExternalObject<ChangesCursorHandle>, callback: (arg: CloseOut) => void): void
 
 export declare function runtimeChangesCursorNext(handle: ExternalObject<ChangesCursorHandle>, callback: () => void): ExternalObject<OperationHandle>
 
 export declare function runtimeChangesCursorTake(handle: ExternalObject<OperationHandle>): ExternalObject<ChangesCursorHandle>
 
-export declare function runtimeChangesParse(handle: ExternalObject<RuntimeHandle>, schema: ExternalObject<SchemaHandle>, bytes: unknown, callback: () => void): ExternalObject<OperationHandle>
+/** Parse canonical change-set bytes under a compiled schema. */
+export declare function runtimeChangesParse(handle: ExternalObject<RuntimeHandle>, schema: ExternalObject<SchemaHandle>, bytes: Uint8Array, callback: () => void): ExternalObject<OperationHandle>
 
-export declare function runtimeChangesTake(handle: ExternalObject<OperationHandle>): object
+export declare function runtimeChangesTake(handle: ExternalObject<OperationHandle>): ChangesOut
 
-export declare function runtimeClose(handle: ExternalObject<RuntimeHandle>, callback: (arg: CloseWire) => void): void
+export declare function runtimeClose(handle: ExternalObject<RuntimeHandle>, callback: (arg: CloseOut) => void): void
 
-export declare function runtimeCursorClose(handle: ExternalObject<CursorHandle>, callback: (arg: CloseWire) => void): void
+export declare function runtimeCursorClose(handle: ExternalObject<CursorHandle>, callback: (arg: CloseOut) => void): void
 
+/** Publish the cursor's next page; a terminal store failure closes it. */
 export declare function runtimeCursorNext(handle: ExternalObject<CursorHandle>, callback: () => void): ExternalObject<OperationHandle>
 
 export declare function runtimeCursorTake(handle: ExternalObject<OperationHandle>): ExternalObject<CursorHandle>
 
-export declare function runtimeDbApply(db: ExternalObject<DbHandle>, changes: ExternalObject<ChangesHandle>, expected: object, callback: () => void): ExternalObject<OperationHandle>
+/**
+ * Apply a sealed change set as one judged commit. `expected` absent
+ * applies to whatever state is current.
+ */
+export declare function runtimeDbApply(db: ExternalObject<DbHandle>, changes: ExternalObject<ChangesHandle>, expected: WitnessIn | undefined | null, callback: () => void): ExternalObject<OperationHandle>
 
+/** Drop the database's derived query caches. */
 export declare function runtimeDbClearCache(db: ExternalObject<DbHandle>, callback: () => void): ExternalObject<OperationHandle>
 
 export declare function runtimeDbInspect(db: ExternalObject<DbHandle>, callback: () => void): ExternalObject<OperationHandle>
 
-export declare function runtimeDbInspectTake(handle: ExternalObject<OperationHandle>): object
+export declare function runtimeDbInspectTake(handle: ExternalObject<OperationHandle>): DbInspection
 
-export declare function runtimeDbJudge(db: ExternalObject<DbHandle>, changes: ExternalObject<ChangesHandle>, expected: object, callback: () => void): ExternalObject<OperationHandle>
+/** Judge a sealed change set against the current state without committing. */
+export declare function runtimeDbJudge(db: ExternalObject<DbHandle>, changes: ExternalObject<ChangesHandle>, expected: WitnessIn | undefined | null, callback: () => void): ExternalObject<OperationHandle>
 
 export declare function runtimeDbSnapshot(db: ExternalObject<DbHandle>, callback: () => void): ExternalObject<OperationHandle>
 
-export declare function runtimeDbTake(handle: ExternalObject<OperationHandle>): object
+export declare function runtimeDbTake(handle: ExternalObject<OperationHandle>): DbOpened
 
-export declare function runtimeDecodeRows(handle: ExternalObject<RuntimeHandle>, schema: ExternalObject<SchemaHandle>, relation: number, bytes: unknown, callback: () => void): ExternalObject<OperationHandle>
+/** Decode canonical-codec bytes holding only additions of `relation`. */
+export declare function runtimeDecodeRows(handle: ExternalObject<RuntimeHandle>, schema: ExternalObject<SchemaHandle>, relation: number, bytes: Uint8Array, callback: () => void): ExternalObject<OperationHandle>
 
 export declare function runtimeDirectoryAcquire(handle: ExternalObject<RuntimeHandle>, path: string, callback: () => void): ExternalObject<OperationHandle>
 
+/**
+ * Hold the directory open across awaited JavaScript work; end it with
+ * `runtimeDirectoryEnd`.
+ */
 export declare function runtimeDirectoryBegin(handle: ExternalObject<DirectoryHandle>): ExternalObject<OperationHandle>
 
 export declare function runtimeDirectoryCheck(handle: ExternalObject<OperationHandle>): void
 
-export declare function runtimeDirectoryClose(handle: ExternalObject<DirectoryHandle>, remove: boolean, callback: (arg: CloseWire) => void): void
+export declare function runtimeDirectoryClose(handle: ExternalObject<DirectoryHandle>, remove: boolean, callback: (arg: CloseOut) => void): void
 
 /**
  * Open (or create) one database in a child directory of an owned
@@ -388,26 +489,56 @@ export declare function runtimeDirectoryEnd(handle: ExternalObject<OperationHand
 
 export declare function runtimeDirectoryTake(handle: ExternalObject<OperationHandle>): ExternalObject<DirectoryHandle>
 
-export declare function runtimeDraftClose(handle: ExternalObject<DraftHandle>, callback: (arg: CloseWire) => void): void
+export declare function runtimeDraftClose(handle: ExternalObject<DraftHandle>, callback: (arg: CloseOut) => void): void
 
-export declare function runtimeDraftDelete(handle: ExternalObject<DraftHandle>, relation: number, rows: bigint, cells: unknown[], callback: () => void): ExternalObject<OperationHandle>
+/** Stage `rows` removals of `relation`, shaped like `runtimeDraftInsert`. */
+export declare function runtimeDraftDelete(handle: ExternalObject<DraftHandle>, relation: number, rows: bigint, cells: Array<CellValue>, callback: () => void): ExternalObject<OperationHandle>
 
+/** Seal the draft into an immutable change set; the draft is spent. */
 export declare function runtimeDraftFinish(handle: ExternalObject<DraftHandle>, callback: () => void): ExternalObject<OperationHandle>
 
-export declare function runtimeDraftInsert(handle: ExternalObject<DraftHandle>, relation: number, rows: bigint, cells: unknown[], callback: () => void): ExternalObject<OperationHandle>
+/**
+ * Stage `rows` additions of `relation`; `cells` is row-major in sealed
+ * field order. A refused chunk spends the draft.
+ */
+export declare function runtimeDraftInsert(handle: ExternalObject<DraftHandle>, relation: number, rows: bigint, cells: Array<CellValue>, callback: () => void): ExternalObject<OperationHandle>
 
 /** Open a database-free change draft under a compiled schema. */
 export declare function runtimeDraftOpen(handle: ExternalObject<RuntimeHandle>, schema: ExternalObject<SchemaHandle>): ExternalObject<DraftHandle>
 
-export declare function runtimeEncodeRows(handle: ExternalObject<RuntimeHandle>, schema: ExternalObject<SchemaHandle>, relation: number, rows: bigint, cells: unknown[], callback: () => void): ExternalObject<OperationHandle>
+/** Encode `rows` rows of `relation` into the canonical change-set row codec. */
+export declare function runtimeEncodeRows(handle: ExternalObject<RuntimeHandle>, schema: ExternalObject<SchemaHandle>, relation: number, rows: bigint, cells: Array<CellValue>, callback: () => void): ExternalObject<OperationHandle>
 
-export declare function runtimeErrorCodes(): Array<string>
+/** Why a bridge call failed. Thrown to JavaScript as this `_tag` object. */
+export type RuntimeError =
+  | { _tag: 'RuntimeAlreadyLive' }
+  | { _tag: 'ForeignRuntime' }
+  | { _tag: 'ClosedHandle' }
+  | { _tag: 'HandleBusy' }
+  | { _tag: 'SpentHandle' }
+  | { _tag: 'QueueFull' }
+  | { _tag: 'InvalidArgument' }
+  | { _tag: 'InvalidValue'; message: string }
+  | { _tag: 'Internal' }
+  | { _tag: 'DirectoryBusy' }
+  | { _tag: 'WriterBusy' }
+  | { _tag: 'InvalidPath' }
+  | { _tag: 'Io'; kind: string; osCode?: number }
+  | { _tag: 'ResourceLimit'; dimension: string; used: bigint; requested: bigint; limit: bigint }
+  | { _tag: 'Engine'; kind: string; message: string }
+  | { _tag: 'Malformed'; path: string; message: string }
+  | { _tag: 'Cancelled' }
+  | { _tag: 'OutOfMemory' }
 
-export declare function runtimeInspect(handle: ExternalObject<RuntimeHandle>): InspectionWire
+export declare function runtimeInspect(handle: ExternalObject<RuntimeHandle>): InspectionOut
 
-export declare function runtimeJudgeTake(handle: ExternalObject<OperationHandle>): object
+export declare function runtimeJudgeTake(handle: ExternalObject<OperationHandle>): JudgeOutcome
 
-export declare function runtimeManagedDbClose(db: ExternalObject<DbHandle>, callback: (arg: CloseWire) => void): void
+/**
+ * The one close authority: begin the database's drain and report its
+ * real outcome.
+ */
+export declare function runtimeManagedDbClose(db: ExternalObject<DbHandle>, callback: (arg: CloseOut) => void): void
 
 /** Start the one live runtime. `optionsJson` is a `RuntimeOptionsIn`. */
 export declare function runtimeOpen(optionsJson: string): ExternalObject<RuntimeHandle>
@@ -421,11 +552,12 @@ export interface RuntimeOptionsIn {
   cleanupTimeoutMs?: number
 }
 
+/** One page of rows; `null` is the end of the cursor. */
 export declare function runtimePageTake(handle: ExternalObject<OperationHandle>): Array<Array<CellValue>> | null
 
-export declare function runtimePreparedClose(handle: ExternalObject<PreparedHandle>, callback: (arg: CloseWire) => void): void
+export declare function runtimePreparedClose(handle: ExternalObject<PreparedHandle>, callback: (arg: CloseOut) => void): void
 
-export declare function runtimePreparedExecute(handle: ExternalObject<PreparedHandle>, params: unknown[], callback: () => void): ExternalObject<OperationHandle>
+export declare function runtimePreparedExecute(handle: ExternalObject<PreparedHandle>, params: Array<ParamIn>, callback: () => void): ExternalObject<OperationHandle>
 
 export declare function runtimePreparedReleaseMemory(handle: ExternalObject<PreparedHandle>, callback: () => void): ExternalObject<OperationHandle>
 
@@ -435,14 +567,15 @@ export declare function runtimePreparedReleaseMemory(handle: ExternalObject<Prep
  */
 export declare function runtimePreparedTake(handle: ExternalObject<OperationHandle>): ExternalObject<PreparedHandle>
 
+/** One executor round trip with no payload. */
 export declare function runtimeReady(handle: ExternalObject<RuntimeHandle>, callback: () => void): ExternalObject<OperationHandle>
 
-export declare function runtimeReportTake(handle: ExternalObject<OperationHandle>): object
+export declare function runtimeResultClose(handle: ExternalObject<ResultHandle>, callback: (arg: CloseOut) => void): void
 
-export declare function runtimeResultClose(handle: ExternalObject<ResultHandle>, callback: (arg: CloseWire) => void): void
-
+/** Collect every row of a sealed result; the result stays available. */
 export declare function runtimeResultCollect(handle: ExternalObject<ResultHandle>, callback: () => void): ExternalObject<OperationHandle>
 
+/** Move a sealed result's backing into its one cursor. */
 export declare function runtimeResultCursor(handle: ExternalObject<ResultHandle>, callback: () => void): ExternalObject<OperationHandle>
 
 export declare function runtimeResultTake(handle: ExternalObject<OperationHandle>): ExternalObject<ResultHandle>
@@ -451,25 +584,21 @@ export declare function runtimeRowsTake(handle: ExternalObject<OperationHandle>)
 
 export declare function runtimeRowTake(handle: ExternalObject<OperationHandle>): Array<CellValue> | null
 
-export declare function runtimeSnapshotClose(handle: ExternalObject<SnapshotHandle>, callback: (arg: CloseWire) => void): void
+export declare function runtimeSnapshotClose(handle: ExternalObject<SnapshotHandle>, callback: (arg: CloseOut) => void): void
 
-export declare function runtimeSnapshotExecute(handle: ExternalObject<SnapshotHandle>, query: ExternalObject<QueryHandle>, params: unknown[], callback: () => void): ExternalObject<OperationHandle>
+export declare function runtimeSnapshotExecute(handle: ExternalObject<SnapshotHandle>, query: ExternalObject<QueryHandle>, params: Array<ParamIn>, callback: () => void): ExternalObject<OperationHandle>
 
-export declare function runtimeSnapshotGet(handle: ExternalObject<SnapshotHandle>, relation: number, keyStatement: number, keyValues: unknown[], callback: () => void): ExternalObject<OperationHandle>
+/** Read one row by a key statement of `relation`. */
+export declare function runtimeSnapshotGet(handle: ExternalObject<SnapshotHandle>, relation: number, keyStatement: number, keyValues: Array<CellValue>, callback: () => void): ExternalObject<OperationHandle>
 
 export declare function runtimeSnapshotPrepare(handle: ExternalObject<SnapshotHandle>, query: ExternalObject<QueryHandle>, callback: () => void): ExternalObject<OperationHandle>
 
-export declare function runtimeSnapshotTake(handle: ExternalObject<OperationHandle>): object
+export declare function runtimeSnapshotTake(handle: ExternalObject<OperationHandle>): SnapshotOpened
 
-/**
- * Take one completed operation's payload. PINNED double-take contract
- * (P12's F3 note, decided wave-E): the FIRST take spends the operation;
- * every later take of the same handle THROWS the typed `SpentHandle`
- * refusal — it never returns `null`. `null` is reserved for a payload-less
- * completion (`Output::Ready`), so silence can never be mistaken for a
- * spent handle. The same contract holds for every `*Take` verb riding
- * `Runtime::take` (db and log bridges included).
- */
+/** The number of rows one draft chunk staged. */
+export declare function runtimeStagedTake(handle: ExternalObject<OperationHandle>): bigint
+
+/** Take a payload-less completion. */
 export declare function runtimeTake(handle: ExternalObject<OperationHandle>): void
 
 /** A scalar expression over rule-local variables. */
@@ -547,6 +676,11 @@ export interface SideSpecIn {
   selection: Array<SelectionIn>
 }
 
+export interface SnapshotOpened {
+  snapshot: ExternalObject<SnapshotHandle>
+  witness: WitnessOut
+}
+
 /**
  * One spec resolution issue; `statement` indexes the spec's statements,
  * `relation` and `row` its relations and a closed relation's rows.
@@ -621,6 +755,12 @@ export type ValueTypeOut =
   | { _tag: 'Interval'; element: IntervalElementOut }
   | { _tag: 'FixedInterval'; element: IntervalElementOut; width: bigint }
 
+/** One violated statement: its id, canonical spelling and the cited facts. */
+export type ViolationOut =
+  | { _tag: 'Functionality'; statement: number; spelling: string; facts: Array<FactOut> }
+  | { _tag: 'Containment'; statement: number; spelling: string; direction: DirectionOut; facts: Array<FactOut> }
+  | { _tag: 'Capacity'; statement: number; spelling: string; measure: bigint; facts: Array<FactOut> }
+
 export type WeightOut =
   | { _tag: 'Unit' }
   | { _tag: 'Field'; field: number }
@@ -630,3 +770,15 @@ export type WeightSpecIn =
   | { kind: 'Unit' }
   | { kind: 'Field'; field: string }
   | { kind: 'Duration'; field: string }
+
+/** The state a write expects to find. */
+export interface WitnessIn {
+  store: string
+  generation: bigint
+}
+
+/** A database state: the store identity and its committed generation. */
+export interface WitnessOut {
+  store: string
+  generation: bigint
+}

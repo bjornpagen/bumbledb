@@ -16,8 +16,9 @@ use super::{
 
 pub enum ManagedDbOutcome {
     Opened(ManagedDb),
-    Rejected(Vec<crate::marshal::ViolationWire>),
-    Refused { kind: &'static str, message: String },
+    Rejected(Vec<crate::marshal::ViolationOut>),
+    FingerprintMismatch { message: String },
+    DestinationExists { message: String },
 }
 
 pub(super) struct DatabaseEntry {
@@ -310,12 +311,11 @@ impl Runtime {
             return Err(RuntimeError::ClosedHandle);
         }
         if state.owners.len() >= self.options.owner_capacity {
-            return Err(RuntimeError::ResourceLimit {
-                dimension: "ownerCapacity",
-                used: state.owners.len() as u64,
-                requested: 1,
-                limit: self.options.owner_capacity as u64,
-            });
+            return Err(RuntimeError::resource_limit(
+                "ownerCapacity",
+                state.owners.len(),
+                self.options.owner_capacity,
+            ));
         }
         let id = state.next_id;
         state.next_id = id.checked_add(1).ok_or(RuntimeError::Internal)?;
@@ -571,12 +571,11 @@ impl DirectoryReference {
             .map(|entry| entry.databases.len())
             .sum();
         if used >= self.runtime.options.native_handle_capacity {
-            return Err(RuntimeError::ResourceLimit {
-                dimension: "nativeHandleCapacity",
-                used: used as u64,
-                requested: 1,
-                limit: self.runtime.options.native_handle_capacity as u64,
-            });
+            return Err(RuntimeError::resource_limit(
+                "nativeHandleCapacity",
+                used,
+                self.runtime.options.native_handle_capacity,
+            ));
         }
         let id = state.next_id;
         state.next_id = id.checked_add(1).ok_or(RuntimeError::Internal)?;
@@ -686,8 +685,8 @@ pub(crate) fn io_error(error: std::io::Error) -> RuntimeError {
         std::io::ErrorKind::WouldBlock => RuntimeError::DirectoryBusy,
         std::io::ErrorKind::InvalidInput => RuntimeError::InvalidPath,
         kind => RuntimeError::Io {
-            kind,
-            code: error.raw_os_error(),
+            kind: format!("{kind:?}"),
+            os_code: error.raw_os_error(),
         },
     }
 }

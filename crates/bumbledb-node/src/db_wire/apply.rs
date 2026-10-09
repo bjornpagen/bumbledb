@@ -1,6 +1,6 @@
-//! One immutable final-state apply and bounded inspection.
-//! Apply runs as a payload job over the sealed `ChangeSet` capability so the
-//! JS thread never holds the change-set bytes as authority.
+//! Apply and judge of a sealed change set, and bounded inspection. Both run
+//! as a payload job over the change set's capability, so JavaScript never
+//! holds the change-set bytes as authority.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -11,7 +11,7 @@ use bumbledb::work::WorkContext;
 use crate::runtime::{Output, RuntimeError};
 
 use super::{
-    ApplyOutcomeOwned, DbInspectionOwned, ExpectedOwned, JudgeOutcomeOwned, change_error,
+    ApplyOutcome, ChangeCounts, DbInspection, Expected, JudgeOutcome, WitnessOut, change_error,
     engine_error,
 };
 
@@ -29,38 +29,29 @@ impl Drop for WriterFlag {
     }
 }
 
-/// Exclusive-writer admission by refusal (`WriterBusy`), witness comparison
-/// as a domain outcome (`moved`), complete final-state judgment, one
-/// durable commit. A foreign `ChangeSet` refuses typed.
-pub(crate) fn apply_change_set(
-    lease: &crate::runtime::owners::DbLease,
-    changes: &ChangeSet,
-    expected: &ExpectedOwned,
-    context: &WorkContext,
-) -> Result<Output, RuntimeError> {
-    decide_change_set(lease, changes, expected, context, WriteMode::Apply)
+fn counts(application: &bumbledb::integration::ApplicationChanges) -> ChangeCounts {
+    ChangeCounts {
+        added: application.added,
+        removed: application.removed,
+    }
 }
 
-/// Judge the same private candidate as apply, then abort it on this worker.
-/// Neither the exclusive session nor a commit capability escapes to JS.
-pub(crate) fn judge_change_set(
+/// Judge `changes` as a private candidate against the current state, then
+/// commit it (`Apply`) or abort it (`Judge`). A second concurrent writer
+/// refuses `WriterBusy`; an `expected` state that moved is a `Moved` outcome.
+pub(crate) fn decide_change_set(
     lease: &crate::runtime::owners::DbLease,
     changes: &ChangeSet,
-    expected: &ExpectedOwned,
-    context: &WorkContext,
-) -> Result<Output, RuntimeError> {
-    decide_change_set(lease, changes, expected, context, WriteMode::Judge)
-}
-
-fn decide_change_set(
-    lease: &crate::runtime::owners::DbLease,
-    changes: &ChangeSet,
-    expected: &ExpectedOwned,
+    expected: Option<&Expected>,
     context: &WorkContext,
     mode: WriteMode,
 ) -> Result<Output, RuntimeError> {
     context.checkpoint()?;
-    let store_hex = lease.db().integration_store().identity().store.to_string();
+    let store = lease.db().integration_store().identity().store.to_string();
+    let witness = |generation| WitnessOut {
+        store: store.clone(),
+        generation,
+    };
     if lease.writing.swap(true, Ordering::AcqRel) {
         return Err(RuntimeError::WriterBusy);
     }
@@ -70,25 +61,18 @@ fn decide_change_set(
         .integration_writer(context)
         .map_err(integration_error)?;
     let base = session.generation().map_err(integration_error)?.value();
-    if let ExpectedOwned::Exact { store, generation } = expected {
-        if *store != store_hex {
+    if let Some(expected) = expected {
+        if expected.store != store {
             return Err(RuntimeError::Engine {
-                kind: crate::tags::error_family::FOREIGN_WITNESS,
+                kind: crate::tags::error_family::FOREIGN_WITNESS.into(),
                 message: "expected-state witness names a different store".into(),
             });
         }
-        if base != *generation {
+        if base != expected.generation {
+            let (witnessed, current) = (witness(expected.generation), witness(base));
             return Ok(match mode {
-                WriteMode::Apply => Output::Apply(ApplyOutcomeOwned::Moved {
-                    store: store_hex,
-                    witnessed: *generation,
-                    current: base,
-                }),
-                WriteMode::Judge => Output::Judge(JudgeOutcomeOwned::Moved {
-                    store: store_hex,
-                    witnessed: *generation,
-                    current: base,
-                }),
+                WriteMode::Apply => Output::Apply(ApplyOutcome::Moved { witnessed, current }),
+                WriteMode::Judge => Output::Judge(JudgeOutcome::Moved { witnessed, current }),
             });
         }
     }
@@ -97,13 +81,12 @@ fn decide_change_set(
             violations,
             application,
         } => {
-            let violations = crate::violations_wire(&lease.schema.descriptor, &violations);
+            let violations = crate::violations_out(&lease.schema.descriptor, &violations);
             Ok(match mode {
-                WriteMode::Apply => Output::Apply(ApplyOutcomeOwned::Rejected(violations)),
-                WriteMode::Judge => Output::Judge(JudgeOutcomeOwned::Rejected {
-                    store: store_hex,
-                    generation: base,
-                    application,
+                WriteMode::Apply => Output::Apply(ApplyOutcome::Rejected { violations }),
+                WriteMode::Judge => Output::Judge(JudgeOutcome::Rejected {
+                    base: witness(base),
+                    changes: counts(&application),
                     violations,
                 }),
             })
@@ -113,10 +96,9 @@ fn decide_change_set(
                 let application = prepared.application_changes();
                 prepared.abort();
                 context.checkpoint()?;
-                return Ok(Output::Judge(JudgeOutcomeOwned::Admitted {
-                    store: store_hex,
-                    generation: base,
-                    application,
+                return Ok(Output::Judge(JudgeOutcome::Admitted {
+                    base: witness(base),
+                    changes: counts(&application),
                 }));
             }
             let sealed = prepared
@@ -126,18 +108,12 @@ fn decide_change_set(
                 })
                 .map_err(integration_error)?;
             let commit = sealed.commit().map_err(integration_error)?;
-            let outcome = if commit.changed {
-                ApplyOutcomeOwned::Accepted {
-                    store: store_hex,
-                    generation: commit.generation.value(),
-                }
+            let witness = witness(commit.generation.value());
+            Ok(Output::Apply(if commit.changed {
+                ApplyOutcome::Committed { witness }
             } else {
-                ApplyOutcomeOwned::NoChange {
-                    store: store_hex,
-                    generation: commit.generation.value(),
-                }
-            };
-            Ok(Output::Apply(outcome))
+                ApplyOutcome::NoChange { witness }
+            }))
         }
     }
 }
@@ -148,12 +124,12 @@ pub(crate) fn integration_error(error: bumbledb::integration::IntegrationError) 
         IntegrationError::Core(error) => engine_error(&error),
         IntegrationError::Changes(error) => change_error(&error),
         IntegrationError::Host(error) => RuntimeError::Engine {
-            kind: "hostSeal",
+            kind: "hostSeal".into(),
             message: format!("{error:?}"),
         },
-        IntegrationError::Work(error) => RuntimeError::Work(error),
+        IntegrationError::Work(error) => error.into(),
         IntegrationError::ForeignSchema => RuntimeError::Engine {
-            kind: crate::tags::error_family::SCHEMA_MISMATCH,
+            kind: crate::tags::error_family::SCHEMA_MISMATCH.into(),
             message: "the ChangeSet's schema is not this database's schema".into(),
         },
         IntegrationError::ReentrantWriter => RuntimeError::WriterBusy,
@@ -176,15 +152,14 @@ pub(crate) fn inspect_db(
         .disk_size()
         .map_err(|error| engine_error(&error))?;
     let retained = lease.runtime().database_operations(owner_id, database_id);
-    Ok(Output::DbReport(DbInspectionOwned {
+    Ok(Output::DbReport(DbInspection {
         generation: generation.value(),
         disk_bytes,
         retained_operations: retained,
     }))
 }
 
-/// Worker-side copy of a sealed change set. L14 should submit a payload
-/// job and call this instead of a JS-thread payload lock.
+/// The sealed change set held by a payload, read on its owning worker.
 pub(crate) fn changes_from_payload(
     payload: &crate::runtime::registry::Payload,
 ) -> Result<super::ChangesOpened, RuntimeError> {

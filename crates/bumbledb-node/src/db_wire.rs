@@ -1,36 +1,31 @@
-//! The core db-bridge verb roster: schema compile, coherent
-//! snapshots and snapshot-bound execution sessions, point reads, complete
-//! bounded execution into sealed [`bumbledb::CompleteResult`]s, one-shot
-//! cursor transfer, database-free change drafts, one immutable final-state
-//! apply, bounded inspection, the shared canonical row codec and the two
-//! read-only schema snapshot/binding entrypoints.
+//! Database verbs: coherent snapshots and their prepared plans, point
+//! reads, sealed completed results and their one-shot cursors, database-free
+//! change drafts, apply and judge of sealed change sets, inspection, and the
+//! canonical row codec.
 //!
-//! Every verb registers a bounded operation before any completion can run
-//! in JS. Retained resources live in the worker table behind
-//! [`crate::runtime::registry::Capability`]; JS wrappers are not retention
-//! authority. Each operation starts a fresh [`WorkContext`]. Collection and
-//! paging open a core [`bumbledb::DeliveryTicket`], preview/adopt under
-//! admitted overlap, register the native [`crate::runtime::QueuedOutput`],
-//! then `commit` the same ticket once through `publication.accept`.
-//! Budget refusal and cancel abort that ticket (no accepted page, no
-//! leftover `pending_advance`). Terminal backing stays sticky.
+//! Every verb registers a bounded operation before any completion can run in
+//! JS, and each operation has its own `WorkContext`. Retained resources live
+//! in a worker table behind a capability; a JS wrapper is never the
+//! retention authority. Paging commits each `DeliveryTicket` exactly once
+//! through `PublicationSink::accept`; cancellation aborts it.
 
 use std::sync::Arc;
 
 use bumbledb::work::WorkContext;
 use bumbledb::{ChangeError, ChangeSet, CompleteResult, RelationId, ResultCursor};
-use napi::bindgen_prelude::{Array, BigInt, Env, External, Function, Object, Unknown};
+use napi::bindgen_prelude::{Array, BigInt, Env, External, Function, Unknown};
 use napi_derive::napi;
 
-use crate::marshal;
+use crate::marshal::{self, ViolationOut};
 use crate::query::QueryHandle;
 use crate::runtime::registry::{
-    Capability, NativeKind, Payload, RegistryAdmission, ResultState, registry_draft::DraftPayload,
+    NativeKind, Payload, RegistryAdmission, ResultState, registry_draft::DraftPayload,
 };
-use crate::runtime::{Output, QueuedBytes, QueuedOutput, Runtime, RuntimeError};
+use crate::runtime::{Output, QueuedBytes, QueuedOutput, RuntimeError};
 use crate::runtime_wire::{
-    OperationHandle, PreparedHandle, RuntimeHandle, notification, operation_handle, owner,
-    prepared, reporter, take_output, thrown, unshared_input,
+    CloseOut, OperationHandle, PreparedHandle, RuntimeHandle, notification, operation_handle,
+    operation_runtime, owner, prepared, reporter, take_output, thrown, unshared_input,
+    wrong_output,
 };
 use crate::schema::SchemaHandle;
 
@@ -42,10 +37,8 @@ mod delivery;
 mod draft;
 mod snapshot;
 
-pub(crate) use apply::{
-    WriteMode, apply_change_set, changes_from_payload, inspect_db, judge_change_set,
-};
-pub use changes::{ChangeRecordWire, ChangesCursorOpened};
+pub(crate) use apply::{WriteMode, changes_from_payload, decide_change_set, inspect_db};
+pub use changes::ChangesCursorOpened;
 pub(crate) use close::close_admitted;
 pub(crate) use codec::{decode_rows_values, encode_rows_bytes, parse_input_rows};
 pub(crate) use delivery::{
@@ -63,158 +56,105 @@ const _: () = {
     assert_send::<ResultCursor>();
 };
 
-fn identity() -> usize {
-    crate::runtime_wire::addon_identity()
-}
-
-// ---------------------------------------------------------------------------
-// Handles — capability tokens only. No JS-held payload Arc / RetainedGuard.
-// ---------------------------------------------------------------------------
-
-/// A coherent owned snapshot: capability-bearing session plus the sealed
-/// roster for JS-thread marshalling. This is the only published-snapshot
-/// type — L14 mints it with [`SnapshotHandle::assemble`]. It is not a
-/// writable core `Db` and does not expose one. Close is
-/// [`runtime_snapshot_close`] (session drain).
+/// A coherent owned snapshot plus the schema its keys and rows marshal by.
+/// Closing drains its session.
 pub struct SnapshotHandle {
-    identity: usize,
-    pub(crate) session: Arc<crate::runtime::session::SnapshotSession>,
-    pub(crate) schema: Arc<SchemaHandle>,
+    session: Arc<crate::runtime::session::SnapshotSession>,
+    schema: Arc<SchemaHandle>,
 }
 
-impl SnapshotHandle {
-    /// The one published-snapshot constructor (core take and L14 log pin).
-    pub(crate) fn assemble(
-        session: Arc<crate::runtime::session::SnapshotSession>,
-        schema: Arc<SchemaHandle>,
-    ) -> Self {
-        Self {
-            identity: identity(),
-            session,
-            schema,
-        }
-    }
-}
-
-pub(crate) fn snapshot(
-    handle: &SnapshotHandle,
-) -> Result<&Arc<crate::runtime::session::SnapshotSession>, RuntimeError> {
-    if handle.identity != identity() {
-        return Err(RuntimeError::ForeignRuntime);
-    }
-    Ok(&handle.session)
-}
-
-/// One sealed completed result. Capability routes to the worker table.
-pub struct ResultHandle {
-    identity: usize,
-    shared: Arc<ResultShared>,
-}
-
-pub(crate) struct ResultShared {
-    runtime: Arc<Runtime>,
-    cap: Capability,
-    _admission: RegistryAdmission,
-}
+/// One sealed completed result.
+pub struct ResultHandle(RegistryAdmission);
 
 /// The one consuming cursor over a spent result's backing.
-pub struct CursorHandle {
-    identity: usize,
-    shared: Arc<CursorShared>,
-}
+pub struct CursorHandle(RegistryAdmission);
 
-pub(crate) struct CursorShared {
-    runtime: Arc<Runtime>,
-    cap: Capability,
-    _admission: RegistryAdmission,
-}
-
-/// A database-free change draft. `sealed` is the marshalling roster, not
-/// draft-payload authority.
+/// A database-free change draft under one compiled schema.
 pub struct DraftHandle {
-    identity: usize,
-    shared: Arc<DraftShared>,
-}
-
-pub(crate) struct DraftShared {
-    runtime: Arc<Runtime>,
-    cap: Capability,
-    _admission: RegistryAdmission,
+    admission: RegistryAdmission,
     schema: Arc<SchemaHandle>,
 }
 
 /// A sealed immutable `ChangeSet`.
-pub struct ChangesHandle {
-    identity: usize,
-    shared: Arc<ChangesShared>,
-}
+pub struct ChangesHandle(RegistryAdmission);
 
-pub(crate) struct ChangesShared {
-    runtime: Arc<Runtime>,
-    cap: Capability,
-    _admission: RegistryAdmission,
-}
-
-/// The sealed `ChangeSet` crossing back from a draft finish.
+/// The sealed `ChangeSet` crossing back from a draft finish or parse.
 pub struct ChangesOpened {
     pub changes: ChangeSet,
     pub schema: Arc<bumbledb::schema::Schema>,
     pub fingerprint: String,
 }
 
-/// One immutable final-state apply outcome, fully owned.
-pub enum ApplyOutcomeOwned {
-    Accepted {
-        store: String,
-        generation: u64,
+/// A database state: the store identity and its committed generation.
+#[napi(object, object_from_js = false)]
+#[derive(Clone)]
+pub struct WitnessOut {
+    pub store: String,
+    pub generation: u64,
+}
+
+/// The state a write expects to find.
+#[napi(object, object_to_js = false)]
+pub struct WitnessIn {
+    pub store: String,
+    pub generation: BigInt,
+}
+
+pub(crate) struct Expected {
+    pub(crate) store: String,
+    pub(crate) generation: u64,
+}
+
+#[napi(object, object_from_js = false)]
+pub struct ChangeCounts {
+    pub added: u64,
+    pub removed: u64,
+}
+
+/// One apply outcome. `NoChange` committed nothing new; `Moved` means the
+/// expected state was not the current one.
+#[napi(discriminant = "_tag", object_from_js = false)]
+pub enum ApplyOutcome {
+    Committed {
+        witness: WitnessOut,
     },
     NoChange {
-        store: String,
-        generation: u64,
-    },
-    Rejected(Vec<marshal::ViolationWire>),
-    Moved {
-        store: String,
-        witnessed: u64,
-        current: u64,
-    },
-}
-
-/// A private candidate's judgment; generation is always the unchanged base.
-pub enum JudgeOutcomeOwned {
-    Admitted {
-        store: String,
-        generation: u64,
-        application: bumbledb::integration::ApplicationChanges,
+        witness: WitnessOut,
     },
     Rejected {
-        store: String,
-        generation: u64,
-        application: bumbledb::integration::ApplicationChanges,
-        violations: Vec<marshal::ViolationWire>,
+        violations: Vec<ViolationOut>,
     },
     Moved {
-        store: String,
-        witnessed: u64,
-        current: u64,
+        witnessed: WitnessOut,
+        current: WitnessOut,
     },
 }
 
-/// Bounded database diagnostics.
-pub struct DbInspectionOwned {
+/// One judgment of a private candidate; the database never changes.
+#[napi(discriminant = "_tag", object_from_js = false)]
+pub enum JudgeOutcome {
+    Admitted {
+        base: WitnessOut,
+        changes: ChangeCounts,
+    },
+    Rejected {
+        base: WitnessOut,
+        changes: ChangeCounts,
+        violations: Vec<ViolationOut>,
+    },
+    Moved {
+        witnessed: WitnessOut,
+        current: WitnessOut,
+    },
+}
+
+/// Bounded database diagnostics, never rows.
+#[napi(object, object_from_js = false)]
+pub struct DbInspection {
     pub generation: u64,
     pub disk_bytes: u64,
     pub retained_operations: u64,
 }
-
-pub(crate) enum ExpectedOwned {
-    Any,
-    Exact { store: String, generation: u64 },
-}
-
-// ---------------------------------------------------------------------------
-// Shared plumbing.
-// ---------------------------------------------------------------------------
 
 pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
     crate::runtime::session::engine_error(error)
@@ -224,17 +164,22 @@ pub(crate) fn change_error(error: &ChangeError) -> RuntimeError {
     if let ChangeError::Work(error) | ChangeError::Row(bumbledb::canonical::RowError::Work(error)) =
         error
     {
-        return RuntimeError::Work(*error);
+        return (*error).into();
     }
     RuntimeError::Engine {
-        kind: crate::tags::error_family::VALIDATION,
+        kind: crate::tags::error_family::VALIDATION.into(),
         message: format!("bumbledb changes: {error:?}"),
     }
 }
 
-// ---------------------------------------------------------------------------
-// Snapshots and snapshot-bound sessions.
-// ---------------------------------------------------------------------------
+fn admit(
+    runtime: &Arc<crate::runtime::Runtime>,
+    kind: NativeKind,
+    payload: Payload,
+    env: Env,
+) -> napi::Result<RegistryAdmission> {
+    RegistryAdmission::admit(Arc::clone(runtime), kind, payload).map_err(|error| thrown(env, error))
+}
 
 #[napi]
 pub fn runtime_db_snapshot(
@@ -250,39 +195,38 @@ pub fn runtime_db_snapshot(
     Ok(operation_handle(&runtime, operation))
 }
 
+#[napi(object, object_from_js = false)]
+pub struct SnapshotOpened {
+    pub snapshot: External<SnapshotHandle>,
+    pub witness: WitnessOut,
+}
+
 #[napi]
 pub fn runtime_snapshot_take(
     env: Env,
     handle: &External<OperationHandle>,
-) -> napi::Result<Object<'_>> {
+) -> napi::Result<SnapshotOpened> {
     match take_output(env, handle)? {
-        Output::Session(opened) => {
-            let mut object = Object::new(&env)?;
-            object.set(
-                "snapshot",
-                External::new(SnapshotHandle::assemble(
-                    Arc::new(opened.session),
-                    opened.schema,
-                )),
-            )?;
-            let mut witness = Object::new(&env)?;
-            witness.set("store", opened.store)?;
-            witness.set("generation", BigInt::from(opened.generation))?;
-            object.set("witness", witness)?;
-            Ok(object)
-        }
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        Output::Session(opened) => Ok(SnapshotOpened {
+            snapshot: External::new(SnapshotHandle {
+                session: Arc::new(opened.session),
+                schema: opened.schema,
+            }),
+            witness: WitnessOut {
+                store: opened.store,
+                generation: opened.generation,
+            },
+        }),
+        _ => Err(wrong_output(env)),
     }
 }
 
 #[napi]
 pub fn runtime_snapshot_close(
-    env: Env,
     handle: &External<SnapshotHandle>,
-    callback: Function<crate::runtime_wire::CloseWire, ()>,
+    callback: Function<CloseOut, ()>,
 ) -> napi::Result<()> {
-    let session = snapshot(handle).map_err(|error| thrown(env, error))?;
-    session.drain(reporter(callback)?);
+    handle.session.drain(reporter(callback)?);
     Ok(())
 }
 
@@ -293,11 +237,11 @@ pub fn runtime_snapshot_prepare(
     query: &External<Arc<QueryHandle>>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let session = snapshot(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(session.runtime());
+    let runtime = Arc::clone(handle.session.runtime());
     let target = Arc::clone(&runtime);
     let query = Arc::clone(query);
-    let operation = session
+    let operation = handle
+        .session
         .submit(WorkContext::new(), notification(callback)?, move |_| {
             Ok(prepare_work(target, query))
         })
@@ -305,22 +249,22 @@ pub fn runtime_snapshot_prepare(
     Ok(operation_handle(&runtime, operation))
 }
 
+/// Read one row by a key statement of `relation`.
 #[napi]
 pub fn runtime_snapshot_get(
     env: Env,
     handle: &External<SnapshotHandle>,
     relation: u32,
     key_statement: u32,
-    key_values: Array,
+    #[napi(ts_arg_type = "Array<CellValue>")] key_values: Array,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let session = snapshot(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(session.runtime());
+    let runtime = Arc::clone(handle.session.runtime());
     let schema = Arc::clone(&handle.schema);
-    let operation = session
+    let operation = handle
+        .session
         .submit(WorkContext::new(), notification(callback)?, move |_| {
-            let (rel, key, row) = marshal::key_row(&schema, relation, key_statement, &key_values)
-                .map_err(|_| RuntimeError::InvalidArgument)?;
+            let (rel, key, row) = marshal::key_row(&schema, relation, key_statement, &key_values)?;
             Ok(snapshot_get_work(rel, key, row))
         })
         .map_err(|error| thrown(env, error))?;
@@ -332,15 +276,15 @@ pub fn runtime_snapshot_execute(
     env: Env,
     handle: &External<SnapshotHandle>,
     query: &External<Arc<QueryHandle>>,
-    params: Array,
+    #[napi(ts_arg_type = "Array<ParamIn>")] params: Array,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let session = snapshot(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(session.runtime());
+    let runtime = Arc::clone(handle.session.runtime());
     let query = Arc::clone(query);
-    let operation = session
+    let operation = handle
+        .session
         .submit(WorkContext::new(), notification(callback)?, move |_| {
-            let params = marshal::params_in(&params).map_err(|_| RuntimeError::InvalidArgument)?;
+            let params = marshal::params_in(&params)?;
             Ok(execute_complete_work(query, params))
         })
         .map_err(|error| thrown(env, error))?;
@@ -351,14 +295,14 @@ pub fn runtime_snapshot_execute(
 pub fn runtime_prepared_execute(
     env: Env,
     handle: &External<PreparedHandle>,
-    params: Array,
+    #[napi(ts_arg_type = "Array<ParamIn>")] params: Array,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let shared = prepared(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(shared.runtime());
-    let operation = shared
+    let session = prepared(handle);
+    let runtime = Arc::clone(session.runtime());
+    let operation = session
         .submit(WorkContext::new(), notification(callback)?, move |_| {
-            let params = marshal::params_in(&params).map_err(|_| RuntimeError::InvalidArgument)?;
+            let params = marshal::params_in(&params)?;
             Ok(execute_prepared_work(params))
         })
         .map_err(|error| thrown(env, error))?;
@@ -371,9 +315,9 @@ pub fn runtime_prepared_release_memory(
     handle: &External<PreparedHandle>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let shared = prepared(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(shared.runtime());
-    let operation = shared
+    let session = prepared(handle);
+    let runtime = Arc::clone(session.runtime());
+    let operation = session
         .submit(WorkContext::new(), notification(callback)?, |_| {
             Ok(release_prepared_memory_work())
         })
@@ -381,90 +325,75 @@ pub fn runtime_prepared_release_memory(
     Ok(operation_handle(&runtime, operation))
 }
 
-// ---------------------------------------------------------------------------
-// Results: take/collect/cursor/pages/close.
-// ---------------------------------------------------------------------------
-
 #[napi]
 pub fn runtime_result_take(
     env: Env,
     handle: &External<OperationHandle>,
 ) -> napi::Result<External<ResultHandle>> {
-    let runtime = crate::runtime_wire::operation_runtime(handle);
+    let runtime = operation_runtime(handle);
     match take_output(env, handle)? {
         Output::CompleteResult(result) => {
-            let admission = RegistryAdmission::admit(
-                Arc::clone(&runtime),
+            let payload = Payload::Result {
+                result: Some(result),
+                state: ResultState::Live,
+            };
+            Ok(External::new(ResultHandle(admit(
+                &runtime,
                 NativeKind::Result,
-                Payload::Result {
-                    result: Some(result),
-                    state: ResultState::Live,
-                },
-            )
-            .map_err(|error| thrown(env, error))?;
-            let cap = admission.cap();
-            Ok(External::new(ResultHandle {
-                identity: identity(),
-                shared: Arc::new(ResultShared {
-                    runtime,
-                    cap,
-                    _admission: admission,
-                }),
-            }))
+                payload,
+                env,
+            )?)))
         }
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        _ => Err(wrong_output(env)),
     }
 }
 
-fn result_shared(handle: &ResultHandle) -> Result<&Arc<ResultShared>, RuntimeError> {
-    if handle.identity != identity() {
-        return Err(RuntimeError::ForeignRuntime);
-    }
-    Ok(&handle.shared)
-}
-
+/// Collect every row of a sealed result; the result stays available.
 #[napi]
 pub fn runtime_result_collect(
     env: Env,
     handle: &External<ResultHandle>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let shared = Arc::clone(result_shared(handle).map_err(|error| thrown(env, error))?);
-    let runtime = Arc::clone(&shared.runtime);
-    let work = WorkContext::new();
+    let runtime = handle.0.runtime();
     let operation = runtime
-        .submit_payload(shared.cap, work, notification(callback)?, move |_| {
-            Ok(Box::new(move |context, payload, _publication| {
-                context.checkpoint()?;
-                collect_from_payload(payload, context)
-            }))
-        })
+        .submit_payload(
+            handle.0.cap(),
+            WorkContext::new(),
+            notification(callback)?,
+            |_| {
+                Ok(Box::new(|context, payload, _| {
+                    context.checkpoint()?;
+                    collect_from_payload(payload, context)
+                }))
+            },
+        )
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
+    Ok(operation_handle(runtime, operation))
 }
 
+/// Move a sealed result's backing into its one cursor.
 #[napi]
 pub fn runtime_result_cursor(
     env: Env,
     handle: &External<ResultHandle>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let shared = Arc::clone(result_shared(handle).map_err(|error| thrown(env, error))?);
-    let runtime = Arc::clone(&shared.runtime);
+    let runtime = handle.0.runtime();
     let operation = runtime
         .submit_payload(
-            shared.cap,
+            handle.0.cap(),
             WorkContext::new(),
             notification(callback)?,
-            move |_| {
-                Ok(Box::new(move |context, payload, _publication| {
+            |_| {
+                Ok(Box::new(|context, payload, _| {
                     context.checkpoint()?;
                     transfer_from_payload(payload, context)
                 }))
             },
         )
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
+    Ok(operation_handle(runtime, operation))
 }
 
 #[napi]
@@ -472,67 +401,57 @@ pub fn runtime_cursor_take(
     env: Env,
     handle: &External<OperationHandle>,
 ) -> napi::Result<External<CursorHandle>> {
-    let runtime = crate::runtime_wire::operation_runtime(handle);
+    let runtime = operation_runtime(handle);
     match take_output(env, handle)? {
         Output::ResultCursor(cursor) => {
-            let admission = RegistryAdmission::admit(
-                Arc::clone(&runtime),
+            let payload = Payload::Cursor {
+                cursor,
+                drained: false,
+            };
+            Ok(External::new(CursorHandle(admit(
+                &runtime,
                 NativeKind::Cursor,
-                Payload::Cursor {
-                    cursor,
-                    drained: false,
-                },
-            )
-            .map_err(|error| thrown(env, error))?;
-            let cap = admission.cap();
-            Ok(External::new(CursorHandle {
-                identity: identity(),
-                shared: Arc::new(CursorShared {
-                    runtime,
-                    cap,
-                    _admission: admission,
-                }),
-            }))
+                payload,
+                env,
+            )?)))
         }
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        _ => Err(wrong_output(env)),
     }
 }
 
-fn cursor_shared(handle: &CursorHandle) -> Result<&Arc<CursorShared>, RuntimeError> {
-    if handle.identity != identity() {
-        return Err(RuntimeError::ForeignRuntime);
-    }
-    Ok(&handle.shared)
-}
-
+/// Publish the cursor's next page; a terminal store failure closes it.
 #[napi]
 pub fn runtime_cursor_next(
     env: Env,
     handle: &External<CursorHandle>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let shared = Arc::clone(cursor_shared(handle).map_err(|error| thrown(env, error))?);
-    let runtime = Arc::clone(&shared.runtime);
-    let work = WorkContext::new();
-    let cap = shared.cap;
-    let cursor_runtime = Arc::clone(&shared.runtime);
+    let runtime = handle.0.runtime();
+    let cap = handle.0.cap();
+    let closer = Arc::clone(runtime);
     let operation = runtime
-        .submit_payload(shared.cap, work, notification(callback)?, move |_| {
-            Ok(Box::new(move |context, payload, publication| {
-                context.checkpoint()?;
-                match publish_from_payload(payload, context, publication) {
-                    Err(error) if is_terminal_backing(&error) => {
-                        let _ = cursor_runtime.request_resource_close(cap);
-                        Err(error)
+        .submit_payload(
+            cap,
+            WorkContext::new(),
+            notification(callback)?,
+            move |_| {
+                Ok(Box::new(move |context, payload, publication| {
+                    context.checkpoint()?;
+                    match publish_from_payload(payload, context, publication) {
+                        Err(error) if is_terminal_backing(&error) => {
+                            let _ = closer.request_resource_close(cap);
+                            Err(error)
+                        }
+                        other => other,
                     }
-                    other => other,
-                }
-            }))
-        })
+                }))
+            },
+        )
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
+    Ok(operation_handle(runtime, operation))
 }
 
+/// One page of rows; `null` is the end of the cursor.
 #[napi(ts_return_type = "Array<Array<CellValue>> | null")]
 pub fn runtime_page_take(
     env: Env,
@@ -541,35 +460,27 @@ pub fn runtime_page_take(
     match take_output(env, handle)? {
         Output::Page(page) => Ok(page),
         Output::Rows(queued) => Ok(Some(queued)),
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        _ => Err(wrong_output(env)),
     }
 }
 
 #[napi]
 pub fn runtime_result_close(
-    env: Env,
     handle: &External<ResultHandle>,
-    callback: Function<crate::runtime_wire::CloseWire, ()>,
+    callback: Function<CloseOut, ()>,
 ) -> napi::Result<()> {
-    let shared = result_shared(handle).map_err(|error| thrown(env, error))?;
-    close_admitted(&shared.runtime, shared.cap, reporter(callback)?);
+    close_admitted(handle.0.runtime(), handle.0.cap(), reporter(callback)?);
     Ok(())
 }
 
 #[napi]
 pub fn runtime_cursor_close(
-    env: Env,
     handle: &External<CursorHandle>,
-    callback: Function<crate::runtime_wire::CloseWire, ()>,
+    callback: Function<CloseOut, ()>,
 ) -> napi::Result<()> {
-    let shared = cursor_shared(handle).map_err(|error| thrown(env, error))?;
-    close_admitted(&shared.runtime, shared.cap, reporter(callback)?);
+    close_admitted(handle.0.runtime(), handle.0.cap(), reporter(callback)?);
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Drafts and sealed change sets.
-// ---------------------------------------------------------------------------
 
 /// Open a database-free change draft under a compiled schema.
 #[napi]
@@ -578,68 +489,46 @@ pub fn runtime_draft_open(
     handle: &External<RuntimeHandle>,
     schema: &External<Arc<SchemaHandle>>,
 ) -> napi::Result<External<DraftHandle>> {
-    let runtime = Arc::clone(owner(handle).map_err(|error| thrown(env, error))?);
-    let admission = RegistryAdmission::admit(
-        Arc::clone(&runtime),
-        NativeKind::Draft,
-        Payload::Draft(DraftPayload {
-            schema: Arc::clone(&schema.schema),
-            pending: Vec::new(),
-            terminal: false,
-        }),
-    )
-    .map_err(|error| thrown(env, error))?;
+    let payload = Payload::Draft(DraftPayload {
+        schema: Arc::clone(&schema.schema),
+        pending: Vec::new(),
+        terminal: false,
+    });
     Ok(External::new(DraftHandle {
-        identity: identity(),
-        shared: Arc::new(DraftShared {
-            runtime,
-            cap: admission.cap(),
-            _admission: admission,
-            schema: Arc::clone(schema),
-        }),
+        admission: admit(owner(handle), NativeKind::Draft, payload, env)?,
+        schema: Arc::clone(schema),
     }))
-}
-
-fn draft_shared(handle: &DraftHandle) -> Result<&Arc<DraftShared>, RuntimeError> {
-    if handle.identity != identity() {
-        return Err(RuntimeError::ForeignRuntime);
-    }
-    Ok(&handle.shared)
 }
 
 fn draft_mutation(
     env: Env,
-    handle: &External<DraftHandle>,
+    handle: &DraftHandle,
     relation: u32,
     rows: &BigInt,
     cells: Array,
     callback: Function<(), ()>,
     insert: bool,
 ) -> napi::Result<External<OperationHandle>> {
-    let shared = Arc::clone(draft_shared(handle).map_err(|error| thrown(env, error))?);
-    let runtime = Arc::clone(&shared.runtime);
-    let stated = marshal::u64_in(rows, "draft rows")?;
-    let schema = Arc::clone(&shared.schema);
-    let cap = shared.cap;
+    let runtime = handle.admission.runtime();
+    let cap = handle.admission.cap();
+    let stated = marshal::u64_in(rows, "draft rows").map_err(|error| thrown(env, error))?;
+    let schema = Arc::clone(&handle.schema);
     let operation = runtime.submit_payload(
         cap,
         WorkContext::new(),
         notification(callback)?,
         move |context| {
-            let parsed = parse_input_rows(&schema, relation, stated, &cells, context);
-            match parsed {
-                Ok(rows) => Ok(Box::new(
-                    move |context: &WorkContext, payload, _publication| {
-                        context.checkpoint()?;
-                        ingest_from_payload(payload, context, relation, insert, rows)
-                    },
-                )),
-                Err(error) => Err(error),
-            }
+            let rows = parse_input_rows(&schema, relation, stated, &cells, context)?;
+            Ok(Box::new(
+                move |context: &WorkContext, payload, _publication| {
+                    context.checkpoint()?;
+                    ingest_from_payload(payload, context, relation, insert, rows)
+                },
+            ))
         },
     );
     match operation {
-        Ok(operation) => Ok(operation_handle(&runtime, operation)),
+        Ok(operation) => Ok(operation_handle(runtime, operation)),
         Err(error) => {
             let _ = runtime.request_resource_close(cap);
             Err(thrown(env, error))
@@ -647,331 +536,221 @@ fn draft_mutation(
     }
 }
 
+/// Stage `rows` additions of `relation`; `cells` is row-major in sealed
+/// field order. A refused chunk spends the draft.
 #[napi]
 pub fn runtime_draft_insert(
     env: Env,
     handle: &External<DraftHandle>,
     relation: u32,
     rows: BigInt,
-    cells: Array,
+    #[napi(ts_arg_type = "Array<CellValue>")] cells: Array,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     draft_mutation(env, handle, relation, &rows, cells, callback, true)
 }
 
+/// Stage `rows` removals of `relation`, shaped like `runtimeDraftInsert`.
 #[napi]
 pub fn runtime_draft_delete(
     env: Env,
     handle: &External<DraftHandle>,
     relation: u32,
     rows: BigInt,
-    cells: Array,
+    #[napi(ts_arg_type = "Array<CellValue>")] cells: Array,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     draft_mutation(env, handle, relation, &rows, cells, callback, false)
 }
 
+/// The number of rows one draft chunk staged.
 #[napi]
-pub fn runtime_report_take(
-    env: Env,
-    handle: &External<OperationHandle>,
-) -> napi::Result<Object<'_>> {
+pub fn runtime_staged_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<u64> {
     match take_output(env, handle)? {
-        Output::Mutation { submitted, changed } => {
-            let mut object = Object::new(&env)?;
-            object.set("submitted", BigInt::from(submitted))?;
-            object.set("changed", BigInt::from(changed))?;
-            Ok(object)
-        }
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        Output::Staged(rows) => Ok(rows),
+        _ => Err(wrong_output(env)),
     }
 }
 
+/// Seal the draft into an immutable change set; the draft is spent.
 #[napi]
 pub fn runtime_draft_finish(
     env: Env,
     handle: &External<DraftHandle>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let shared = Arc::clone(draft_shared(handle).map_err(|error| thrown(env, error))?);
-    let runtime = Arc::clone(&shared.runtime);
-    let cap = shared.cap;
+    let runtime = handle.admission.runtime();
     let operation = runtime
         .submit_payload(
-            cap,
+            handle.admission.cap(),
             WorkContext::new(),
             notification(callback)?,
-            move |_| {
-                Ok(Box::new(move |context, payload, _publication| {
+            |_| {
+                Ok(Box::new(|context, payload, _| {
                     context.checkpoint()?;
                     finish_from_payload(payload, context)
                 }))
             },
         )
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
+    Ok(operation_handle(runtime, operation))
+}
+
+/// A sealed change set and its summary.
+#[napi(object, object_from_js = false)]
+pub struct ChangesOut {
+    pub changes: External<ChangesHandle>,
+    pub fingerprint: String,
+    pub counts: ChangeCounts,
+    pub byte_length: u64,
 }
 
 #[napi]
 pub fn runtime_changes_take(
     env: Env,
     handle: &External<OperationHandle>,
-) -> napi::Result<Object<'_>> {
-    let runtime = crate::runtime_wire::operation_runtime(handle);
+) -> napi::Result<ChangesOut> {
+    let runtime = operation_runtime(handle);
     match take_output(env, handle)? {
         Output::Changes(opened) => {
             let fingerprint = opened.fingerprint.clone();
             let counts = opened.changes.counts();
             let byte_length = opened.changes.as_bytes().len() as u64;
-            let admission = RegistryAdmission::admit(
-                Arc::clone(&runtime),
-                NativeKind::Changes,
-                Payload::Changes {
-                    changes: opened.changes,
-                    schema: opened.schema,
-                    fingerprint: opened.fingerprint,
+            let payload = Payload::Changes {
+                changes: opened.changes,
+                schema: opened.schema,
+                fingerprint: opened.fingerprint,
+            };
+            Ok(ChangesOut {
+                changes: External::new(ChangesHandle(admit(
+                    &runtime,
+                    NativeKind::Changes,
+                    payload,
+                    env,
+                )?)),
+                fingerprint,
+                counts: ChangeCounts {
+                    added: counts.added,
+                    removed: counts.removed,
                 },
-            )
-            .map_err(|error| thrown(env, error))?;
-            let cap = admission.cap();
-            let mut object = Object::new(&env)?;
-            object.set(
-                "changes",
-                External::new(ChangesHandle {
-                    identity: identity(),
-                    shared: Arc::new(ChangesShared {
-                        runtime,
-                        cap,
-                        _admission: admission,
-                    }),
-                }),
-            )?;
-            object.set("fingerprint", fingerprint)?;
-            let mut counts_wire = Object::new(&env)?;
-            counts_wire.set("added", BigInt::from(counts.added))?;
-            counts_wire.set("removed", BigInt::from(counts.removed))?;
-            object.set("counts", counts_wire)?;
-            object.set("byteLength", BigInt::from(byte_length))?;
-            Ok(object)
+                byte_length,
+            })
         }
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        _ => Err(wrong_output(env)),
     }
 }
 
 #[napi]
 pub fn runtime_draft_close(
-    env: Env,
     handle: &External<DraftHandle>,
-    callback: Function<crate::runtime_wire::CloseWire, ()>,
+    callback: Function<CloseOut, ()>,
 ) -> napi::Result<()> {
-    let shared = draft_shared(handle).map_err(|error| thrown(env, error))?;
-    close_admitted(&shared.runtime, shared.cap, reporter(callback)?);
+    close_admitted(
+        handle.admission.runtime(),
+        handle.admission.cap(),
+        reporter(callback)?,
+    );
     Ok(())
-}
-
-/// Route only; the sealed change payload stays on its owning worker.
-pub(crate) fn changes_route(
-    handle: &ChangesHandle,
-) -> Result<(Arc<Runtime>, Capability), RuntimeError> {
-    if handle.identity != identity() {
-        return Err(RuntimeError::ForeignRuntime);
-    }
-    Ok((Arc::clone(&handle.shared.runtime), handle.shared.cap))
 }
 
 #[napi]
 pub fn runtime_changes_close(
-    env: Env,
     handle: &External<ChangesHandle>,
-    callback: Function<crate::runtime_wire::CloseWire, ()>,
+    callback: Function<CloseOut, ()>,
 ) -> napi::Result<()> {
-    if handle.identity != identity() {
-        return Err(thrown(env, RuntimeError::ForeignRuntime));
-    }
-    let shared = Arc::clone(&handle.shared);
-    close_admitted(&shared.runtime, shared.cap, reporter(callback)?);
+    close_admitted(handle.0.runtime(), handle.0.cap(), reporter(callback)?);
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Apply.
-// ---------------------------------------------------------------------------
-
+/// Apply a sealed change set as one judged commit. `expected` absent
+/// applies to whatever state is current.
 #[napi]
 pub fn runtime_db_apply(
     env: Env,
     db: &External<crate::DbHandle>,
     changes: &External<ChangesHandle>,
-    expected: Object,
+    expected: Option<WitnessIn>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    submit_change_set(env, db, changes, &expected, callback, WriteMode::Apply)
+    submit_change_set(env, db, changes, expected, callback, WriteMode::Apply)
 }
 
+/// Judge a sealed change set against the current state without committing.
 #[napi]
 pub fn runtime_db_judge(
     env: Env,
     db: &External<crate::DbHandle>,
     changes: &External<ChangesHandle>,
-    expected: Object,
+    expected: Option<WitnessIn>,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    submit_change_set(env, db, changes, &expected, callback, WriteMode::Judge)
+    submit_change_set(env, db, changes, expected, callback, WriteMode::Judge)
 }
 
 fn submit_change_set(
     env: Env,
     db: &crate::DbHandle,
     changes: &ChangesHandle,
-    expected: &Object,
+    expected: Option<WitnessIn>,
     callback: Function<(), ()>,
     mode: WriteMode,
 ) -> napi::Result<External<OperationHandle>> {
     let owner = db.owner();
-    let runtime = Arc::clone(owner.runtime());
-    if changes.identity != identity() {
+    let runtime = owner.runtime();
+    if !Arc::ptr_eq(runtime, changes.0.runtime()) {
         return Err(thrown(env, RuntimeError::ForeignRuntime));
     }
-    if !Arc::ptr_eq(&runtime, &changes.shared.runtime) {
-        return Err(thrown(env, RuntimeError::ForeignRuntime));
-    }
-    let expected = {
-        let kind: String = marshal::req(expected, "kind", "write expected")?;
-        match kind.as_str() {
-            "any" => ExpectedOwned::Any,
-            "exact" => ExpectedOwned::Exact {
-                store: marshal::req::<String>(expected, "store", "write expected")?,
-                generation: marshal::u64_in(
-                    &marshal::req::<BigInt>(expected, "generation", "write expected")?,
-                    "write expected",
-                )?,
-            },
-            other => {
-                return Err(marshal::err(format!(
-                    "bumbledb marshal: unknown expected kind `{other}`"
-                )));
-            }
-        }
-    };
-    let lease = db.owner().access().map_err(|error| thrown(env, error))?;
-    let cap = changes.shared.cap;
+    let expected = expected
+        .map(|witness| {
+            Ok::<_, RuntimeError>(Expected {
+                store: witness.store,
+                generation: marshal::u64_in(&witness.generation, "expected generation")?,
+            })
+        })
+        .transpose()
+        .map_err(|error| thrown(env, error))?;
+    let lease = owner.access().map_err(|error| thrown(env, error))?;
     let operation = runtime
         .submit_payload(
-            cap,
+            changes.0.cap(),
             WorkContext::new(),
             notification(callback)?,
             move |context| {
                 context.checkpoint()?;
-                Ok(Box::new(move |context, payload, _publication| {
+                Ok(Box::new(move |context, payload, _| {
                     let opened = changes_from_payload(payload)?;
                     context.checkpoint()?;
-                    match mode {
-                        WriteMode::Apply => {
-                            apply_change_set(&lease, &opened.changes, &expected, context)
-                        }
-                        WriteMode::Judge => {
-                            judge_change_set(&lease, &opened.changes, &expected, context)
-                        }
-                    }
+                    decide_change_set(&lease, &opened.changes, expected.as_ref(), context, mode)
                 }))
             },
         )
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
-}
-
-fn witness_wire(env: &Env, store: String, generation: u64) -> napi::Result<Object<'_>> {
-    let mut wire = Object::new(env)?;
-    wire.set("store", store)?;
-    wire.set("generation", BigInt::from(generation))?;
-    Ok(wire)
+    Ok(operation_handle(runtime, operation))
 }
 
 #[napi]
 pub fn runtime_judge_take(
     env: Env,
     handle: &External<OperationHandle>,
-) -> napi::Result<Object<'_>> {
-    let mut object = Object::new(&env)?;
-    let application = match take_output(env, handle)? {
-        Output::Judge(JudgeOutcomeOwned::Admitted {
-            store,
-            generation,
-            application,
-        }) => {
-            object.set("tag", "admitted")?;
-            object.set("base", witness_wire(&env, store, generation)?)?;
-            Some(application)
-        }
-        Output::Judge(JudgeOutcomeOwned::Rejected {
-            store,
-            generation,
-            application,
-            violations,
-        }) => {
-            object.set("tag", "invariant-rejected")?;
-            object.set("base", witness_wire(&env, store, generation)?)?;
-            object.set("violations", violations)?;
-            Some(application)
-        }
-        Output::Judge(JudgeOutcomeOwned::Moved {
-            store,
-            witnessed,
-            current,
-        }) => {
-            object.set("tag", "moved")?;
-            object.set("witnessed", witness_wire(&env, store.clone(), witnessed)?)?;
-            object.set("current", witness_wire(&env, store, current)?)?;
-            None
-        }
-        _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
-    };
-    if let Some(application) = application {
-        let mut changes = Object::new(&env)?;
-        changes.set("added", BigInt::from(application.added))?;
-        changes.set("removed", BigInt::from(application.removed))?;
-        object.set("changes", changes)?;
+) -> napi::Result<JudgeOutcome> {
+    match take_output(env, handle)? {
+        Output::Judge(outcome) => Ok(outcome),
+        _ => Err(wrong_output(env)),
     }
-    Ok(object)
 }
 
 #[napi]
 pub fn runtime_apply_take(
     env: Env,
     handle: &External<OperationHandle>,
-) -> napi::Result<Object<'_>> {
-    let mut object = Object::new(&env)?;
+) -> napi::Result<ApplyOutcome> {
     match take_output(env, handle)? {
-        Output::Apply(ApplyOutcomeOwned::Accepted { store, generation }) => {
-            object.set("tag", "accepted")?;
-            object.set("witness", witness_wire(&env, store, generation)?)?;
-        }
-        Output::Apply(ApplyOutcomeOwned::NoChange { store, generation }) => {
-            object.set("tag", "no-change")?;
-            object.set("witness", witness_wire(&env, store, generation)?)?;
-        }
-        Output::Apply(ApplyOutcomeOwned::Rejected(violations)) => {
-            object.set("tag", "invariant-rejected")?;
-            object.set("violations", violations)?;
-        }
-        Output::Apply(ApplyOutcomeOwned::Moved {
-            store,
-            witnessed,
-            current,
-        }) => {
-            object.set("tag", "moved")?;
-            object.set("witnessed", witness_wire(&env, store.clone(), witnessed)?)?;
-            object.set("current", witness_wire(&env, store, current)?)?;
-        }
-        _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
+        Output::Apply(outcome) => Ok(outcome),
+        _ => Err(wrong_output(env)),
     }
-    Ok(object)
 }
 
-// ---------------------------------------------------------------------------
-// Bounded inspection.
-// ---------------------------------------------------------------------------
-
+/// Drop the database's derived query caches.
 #[napi]
 pub fn runtime_db_clear_cache(
     env: Env,
@@ -979,7 +758,7 @@ pub fn runtime_db_clear_cache(
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let owner = db.owner();
-    let runtime = Arc::clone(owner.runtime());
+    let runtime = owner.runtime();
     let lease = owner.access().map_err(|error| thrown(env, error))?;
     let operation = runtime
         .submit_db(
@@ -995,7 +774,7 @@ pub fn runtime_db_clear_cache(
             },
         )
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
+    Ok(operation_handle(runtime, operation))
 }
 
 #[napi]
@@ -1005,7 +784,7 @@ pub fn runtime_db_inspect(
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let owner = db.owner();
-    let runtime = Arc::clone(owner.runtime());
+    let runtime = owner.runtime();
     let lease = owner.access().map_err(|error| thrown(env, error))?;
     let (owner_id, database_id) = owner.ids();
     let operation = runtime
@@ -1020,33 +799,21 @@ pub fn runtime_db_inspect(
             },
         )
         .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
+    Ok(operation_handle(runtime, operation))
 }
 
 #[napi]
 pub fn runtime_db_inspect_take(
     env: Env,
     handle: &External<OperationHandle>,
-) -> napi::Result<Object<'_>> {
+) -> napi::Result<DbInspection> {
     match take_output(env, handle)? {
-        Output::DbReport(report) => {
-            let mut object = Object::new(&env)?;
-            object.set("generation", BigInt::from(report.generation))?;
-            object.set("diskBytes", BigInt::from(report.disk_bytes))?;
-            object.set(
-                "retainedOperations",
-                BigInt::from(report.retained_operations),
-            )?;
-            Ok(object)
-        }
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        Output::DbReport(report) => Ok(report),
+        _ => Err(wrong_output(env)),
     }
 }
 
-// ---------------------------------------------------------------------------
-// Shared canonical row codec.
-// ---------------------------------------------------------------------------
-
+/// Encode `rows` rows of `relation` into the canonical change-set row codec.
 #[napi]
 pub fn runtime_encode_rows(
     env: Env,
@@ -1054,11 +821,11 @@ pub fn runtime_encode_rows(
     schema: &External<Arc<SchemaHandle>>,
     relation: u32,
     rows: BigInt,
-    cells: Array,
+    #[napi(ts_arg_type = "Array<CellValue>")] cells: Array,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let stated = marshal::u64_in(&rows, "encode rows")?;
+    let runtime = owner(handle);
+    let stated = marshal::u64_in(&rows, "encode rows").map_err(|error| thrown(env, error))?;
     let schema = Arc::clone(schema);
     let operation = runtime
         .submit(WorkContext::new(), notification(callback)?, |context| {
@@ -1081,20 +848,21 @@ pub fn runtime_bytes_take(
 ) -> napi::Result<QueuedBytes> {
     match take_output(env, handle)? {
         Output::Bytes(bytes) => Ok(bytes),
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+        _ => Err(wrong_output(env)),
     }
 }
 
+/// Decode canonical-codec bytes holding only additions of `relation`.
 #[napi]
 pub fn runtime_decode_rows(
     env: Env,
     handle: &External<RuntimeHandle>,
     schema: &External<Arc<SchemaHandle>>,
     relation: u32,
-    bytes: Unknown,
+    #[napi(ts_arg_type = "Uint8Array")] bytes: Unknown,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
+    let runtime = owner(handle);
     let bytes = unshared_input(env, bytes)?;
     let schema = Arc::clone(&schema.schema);
     let operation = runtime
@@ -1114,10 +882,6 @@ pub fn runtime_decode_rows(
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
-
-// ---------------------------------------------------------------------------
-// Engine-backed bridge tests.
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests;

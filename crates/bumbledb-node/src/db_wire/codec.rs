@@ -104,7 +104,7 @@ pub(crate) fn decode_rows_values(
         context.checkpoint()?;
         if record.relation != relation || record.kind != bumbledb::changes::ChangeKind::Add {
             return Err(RuntimeError::Engine {
-                kind: crate::tags::error_family::VALIDATION,
+                kind: crate::tags::error_family::VALIDATION.into(),
                 message: "decodeRows: the payload carries records outside the requested \
                           relation's adds"
                     .into(),
@@ -112,9 +112,9 @@ pub(crate) fn decode_rows_values(
         }
         let decoded = bumbledb::canonical::decode(fields, record.row, context).map_err(
             |error| match error {
-                bumbledb::canonical::RowError::Work(error) => RuntimeError::Work(error),
+                bumbledb::canonical::RowError::Work(error) => error.into(),
                 error => RuntimeError::Engine {
-                    kind: crate::tags::error_family::CORRUPTION,
+                    kind: crate::tags::error_family::CORRUPTION.into(),
                     message: format!("decodeRows: {error}"),
                 },
             },

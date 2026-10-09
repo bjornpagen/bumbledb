@@ -103,7 +103,7 @@ fn saturated_workers_still_report_incomplete_then_reclaim_late_success() {
     assert_eq!(runtime.inspect().retained, 0);
     assert!(matches!(
         runtime.take(&queued),
-        Err(RuntimeError::Work(WorkError::Cancelled))
+        Err(RuntimeError::Cancelled)
     ));
 }
 
@@ -162,10 +162,7 @@ fn queue_wait_does_not_expire_and_cancel_has_reserved_cleanup_capacity() {
     third_done.recv_timeout(Duration::from_secs(2)).unwrap();
     assert!(matches!(runtime.take(&first), Ok(Output::Ready)));
     assert!(matches!(runtime.take(&waiting), Ok(Output::Ready)));
-    assert!(matches!(
-        runtime.take(&third),
-        Err(RuntimeError::Work(WorkError::Cancelled))
-    ));
+    assert!(matches!(runtime.take(&third), Err(RuntimeError::Cancelled)));
     assert_eq!(close(&runtime), CloseReport::Closed);
 }
 
@@ -428,10 +425,7 @@ fn native_capacity_refuses_before_a_route_exists() {
         .collect();
     assert!(matches!(
         runtime.reserve_native_route(super::registry::NativeKind::Result),
-        Err(RuntimeError::ResourceLimit {
-            dimension: "nativeHandleCapacity",
-            ..
-        })
+        Err(RuntimeError::ResourceLimit { dimension, .. }) if dimension == "nativeHandleCapacity"
     ));
     assert_eq!(runtime.registry.route_count(), admissions.len());
     assert_eq!(close(&runtime), CloseReport::Closed);
