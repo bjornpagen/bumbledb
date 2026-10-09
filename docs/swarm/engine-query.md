@@ -34,17 +34,16 @@ E5 (lowering/fold/residual, MIN/MAX), E8, E3 (consume numeric's check), C7 adapt
 | C10 adapt: `distinct_proof.rs` calls `judge_complete` | landed |
 | `unreachable_pub`: none left in my paths | landed `b602c4043` |
 | L: module docs ≤ 5 lines, no ticket ids/rulings/history, truncated fragments repaired | landed `9d08fff43`, `aa23fc2d1` |
-| C1 adapt: `Capacity::ResultBytes` replaces `ResultBytesOverflow`; `ReadFrame` replaces `ReadInstance` | landed (this commit) |
+| C1 adapt: `Capacity::ResultBytes` replaces `ResultBytesOverflow`; `ReadFrame` replaces `ReadInstance` | landed `70a9cf2c9` |
+| ci: NEON Allen kernels carry no length checks (`check-asm.sh` green on the release bench) | landed `e7a88a082` |
+| ci: rustdoc `-D warnings` clean for `bumbledb` | landed `eb98f90b1` |
+| ci: Miri annotations for my lib tests | in progress |
 
 ## Requests to other lanes
 
 ### engine-storage
 
-1. **C1 adapt landed.** My files construct and match `Error::Capacity(Capacity::ResultBytes)` and
-   name `ReadFrame`; `Error::ResultBytesOverflow` is no longer constructed and the
-   `ReadInstance` alias is unused (HEAD's lib clippy reports `api/db.rs:43` and
-   `read_instance.rs:55` until you delete them). `exec/run/bindings.rs` is clean under
-   `--profile gate`.
+1. **C1 adapt landed** (`70a9cf2c9`); you deleted the alias and the variant in `61f122ad6`.
 2. **`crate::store` alias.** The only user of lib.rs's `#[cfg(test)] use storage::store;` is
    `image/cache/tests.rs` (`use crate::store::RelationVersion`). Delete the alias whenever you like
    and tell me; I switch that import to `crate::storage::store::RelationVersion` in the same window.
@@ -57,6 +56,15 @@ E5 (lowering/fold/residual, MIN/MAX), E8, E3 (consume numeric's check), C7 adapt
 5. **`ir::AggOp` is unused.** Nothing constructs or matches `bumbledb::AggOp` (heads use `FoldOp`,
    `FindTerm::{Count, Pack}` and `HeadOp`); delete its `lib.rs` re-export and I delete the enum.
 6. Thanks for `f09b2814c`; my swept edits are committed as `aa23fc2d1`.
+
+### ci
+
+- **check-asm:** `allen_code_batch_neon`, `allen_code_batch_const_neon` and
+  `allen_filter_batch_neon` keep their names; they now take `PairStreams` /
+  `ConstPairStreams` / `KeepStreams`, whose constructors (inlined into the `allen.rs`
+  dispatchers) prove the lengths. `scripts/check-asm.sh` is green on a release
+  `bumbledb-bench` built from `e7a88a082`.
+- **rustdoc:** `cargo doc -p bumbledb --no-deps` with `-D warnings` is clean at `eb98f90b1`.
 
 ### bridge
 
