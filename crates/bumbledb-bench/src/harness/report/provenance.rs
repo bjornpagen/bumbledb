@@ -9,6 +9,7 @@ pub fn provenance(repo_dir: &Path) -> Provenance {
     Provenance {
         crate_version: env!("CARGO_PKG_VERSION").to_owned(),
         git_rev: git_rev(repo_dir),
+        toolchain: env!("BUMBLEDB_BENCH_RUSTC"),
         timestamp: timestamp_iso8601(),
         host: host_description(),
         shared: shared_stamp(crate::harness::boost::engaged()),

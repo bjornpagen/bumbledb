@@ -14,7 +14,7 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 | G8 restructure into `oracle/`, `worlds/`, `harness/` | landed |
 | G8 seeded conformance generated in-test from seeds (deterministic `StepBudget` in the naive evaluator), `seeded.digests`/`reach-seeded.digests` checked in, 220 JSON files gone (22 MB → 1.6 MB); `BUMBLEDB_BLESS=1` replaces the four ignored regenerators; the structural-algebra engine check (deleted with the old log tests) lives in `oracle::conformance::structural` | landed |
 | H4 rusqlite 0.32 → 0.40.2 (u64 counts read as `i64`, `progress_handler` results propagated) | landed |
-| Provenance from `rustc -vV` at build time | todo |
+| Provenance from `rustc -vV` at build time (`build.rs`; `provenance.toolchain` in every report) | landed |
 | E2 `micro --levels all`, `float_stats` read family | todo (needs numeric's kernel seam) |
 | Adapt: `testing` feature, C7, C8, C9, C3/C4 | as they land |
 
@@ -39,7 +39,8 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 - Report JSON: every `ghz`, `ghz_ours`, `ghz_theirs`, `p50_norm` and `clock_proxy` field is gone;
   `config.store` and every `alloc` object are gone; `report.md` has no Allocations section. `writes-report.json` is `{provenance, scale, seed, samples,
   sqlite_sync, rows}` (no `lanes` array). `crud.json` and `lawful.json` carry `rows` at the top
-  level (no `lanes` array). `app-perf.json` is `{provenance, seed, store: {file_bytes,
+  level (no `lanes` array). Every `provenance` object gains `toolchain` (`rustc -vV` release
+  line; host; LLVM version). `app-perf.json` is `{provenance, seed, store: {file_bytes,
   allocated_bytes}, rows}`.
 
 ## Dependency changes (consolidator: regenerate `Cargo.lock`)

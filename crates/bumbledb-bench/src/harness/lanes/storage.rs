@@ -427,6 +427,7 @@ mod tests {
         Provenance {
             crate_version: "0.0.0-test".to_owned(),
             git_rev: "deadbeef".to_owned(),
+            toolchain: "rustc test",
             timestamp: "2026-07-19T00:00:00Z".to_owned(),
             host: "test-host".to_owned(),
             shared: None,

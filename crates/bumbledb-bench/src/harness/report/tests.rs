@@ -25,6 +25,7 @@ fn fixture() -> RunReport {
         provenance: Provenance {
             crate_version: "0.1.0".to_owned(),
             git_rev: "unknown".to_owned(),
+            toolchain: "rustc test",
             timestamp: "2026-01-01T00:00:00Z".to_owned(),
             host: "test-host".to_owned(),
             shared: None,
@@ -70,6 +71,7 @@ fn the_markdown_is_golden() {
 
 - crate version: 0.1.0
 - engine rev: unknown
+- toolchain: rustc test
 - timestamp: 2026-01-01T00:00:00Z
 - host: test-host
 - config: scale S, seed 1, 256 samples
@@ -227,6 +229,28 @@ fn write_artifacts_creates_exactly_the_three_files() {
     let queries = std::fs::read_to_string(dir.join("QUERIES.md")).expect("read");
     assert_eq!(queries, families::render_queries_md());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn provenance_names_the_compiling_toolchain() {
+    let stamped = provenance(std::path::Path::new("."));
+    assert!(
+        stamped.toolchain.starts_with("rustc "),
+        "{}",
+        stamped.toolchain
+    );
+    assert!(
+        stamped.toolchain.contains("; host "),
+        "{}",
+        stamped.toolchain
+    );
+    assert!(
+        to_json(&RunReport {
+            provenance: stamped.clone(),
+            ..fixture()
+        })
+        .contains(&format!("\"toolchain\":\"{}\"", stamped.toolchain))
+    );
 }
 
 #[test]

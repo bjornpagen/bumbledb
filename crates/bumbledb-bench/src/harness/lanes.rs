@@ -40,12 +40,13 @@ mod tests {
     use crate::harness::report::{Provenance, SharedMachine};
     use crate::json::{self, Value};
 
-    /// owner's 2026-07-20 shared-machine ruling), boost-off emits the
+    /// Boost-off emits no shared-machine fields; boost-on adds them.
     #[test]
     fn the_shared_machine_stamp_shape_is_pinned() {
         let base = Provenance {
             crate_version: "0.0.0-test".to_owned(),
             git_rev: "deadbeef".to_owned(),
+            toolchain: "rustc test",
             timestamp: "2026-07-19T00:00:00Z".to_owned(),
             host: "test-host".to_owned(),
             shared: None,
@@ -56,8 +57,9 @@ mod tests {
         assert_eq!(
             off,
             "{\"crate_version\":\"0.0.0-test\",\"git_rev\":\"deadbeef\",\
-             \"timestamp\":\"2026-07-19T00:00:00Z\",\"host\":\"test-host\"}",
-            "boost-off is the pre-boost block, byte for byte"
+             \"toolchain\":\"rustc test\",\"timestamp\":\"2026-07-19T00:00:00Z\",\
+             \"host\":\"test-host\"}",
+            "boost-off carries no shared-machine fields"
         );
 
         let boosted = Provenance {

@@ -28,6 +28,8 @@ pub(crate) fn push_provenance(out: &mut String, provenance: &Provenance) {
     json::push_str_lit(out, &provenance.crate_version);
     out.push_str(",\"git_rev\":");
     json::push_str_lit(out, &provenance.git_rev);
+    out.push_str(",\"toolchain\":");
+    json::push_str_lit(out, provenance.toolchain);
     out.push_str(",\"timestamp\":");
     json::push_str_lit(out, &provenance.timestamp);
     out.push_str(",\"host\":");

@@ -5,6 +5,8 @@ use crate::harness::Stats;
 pub struct Provenance {
     pub crate_version: String,
     pub git_rev: String,
+    /// The compiling `rustc -vV`: release line, host and LLVM version.
+    pub toolchain: &'static str,
 
     pub timestamp: String,
     pub host: String,

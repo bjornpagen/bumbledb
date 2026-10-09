@@ -12,6 +12,7 @@ fn markdown_header(out: &mut String, report: &RunReport) {
     let p = &report.provenance;
     let _ = writeln!(out, "- crate version: {}", p.crate_version);
     let _ = writeln!(out, "- engine rev: {}", p.git_rev);
+    let _ = writeln!(out, "- toolchain: {}", p.toolchain);
     let _ = writeln!(out, "- timestamp: {}", p.timestamp);
     let _ = writeln!(out, "- host: {}", p.host);
     if let Some(shared) = &p.shared {
