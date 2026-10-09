@@ -1,75 +1,95 @@
-//! Deliberately slow independent oracle: base-two digits and binary search
-//! between adjacent IEEE encodings. No production limb accumulator, rounding
-//! helper, floating arithmetic, or ordered-key codec participates.
+//! Independent exact float reduction: every finite input becomes an exact
+//! integer in units of 2^-1074, accumulated in plain base-2^64 limbs, and the
+//! result is found by binary search between adjacent IEEE encodings. No
+//! production accumulator, rounding helper, floating arithmetic or ordered-key
+//! codec participates.
 use bumbledb::F64;
 use std::cmp::Ordering;
 
-// 2098 input bits + 64 count bits + midpoint carry, with generous headroom.
-const DIGITS: usize = 2200;
-type Digits = Vec<u128>;
+/// 2098 value bits + 64 count bits + the midpoint carry, with headroom.
+const LIMBS: usize = 36;
+type Big = [u64; LIMBS];
 
-fn normalize(value: &mut [u128]) {
-    for index in 0..value.len() - 1 {
-        value[index + 1] += value[index] / 2;
-        value[index] %= 2;
-    }
-    assert!(value[value.len() - 1] < 2, "oracle digit bound");
+/// The low 64 bits of a limb sum.
+fn low_word(word: u128) -> u64 {
+    u64::try_from(word & u128::from(u64::MAX)).expect("masked to 64 bits")
 }
 
-fn scaled(bits: u64, count: u64) -> Digits {
+/// Adds `value << shift` into `acc`.
+fn add_shifted(acc: &mut Big, value: u128, shift: usize) {
+    let (limb, bit) = (shift / 64, shift % 64);
+    let shifted = value << bit;
+    let high = if bit == 0 { 0 } else { value >> (128 - bit) };
+    let words = [low_word(shifted), low_word(shifted >> 64), low_word(high)];
+    let mut carry = 0u128;
+    let mut index = limb;
+    for word in words {
+        let sum = u128::from(acc[index]) + u128::from(word) + carry;
+        acc[index] = low_word(sum);
+        carry = sum >> 64;
+        index += 1;
+    }
+    while carry != 0 {
+        let sum = u128::from(acc[index]) + carry;
+        acc[index] = low_word(sum);
+        carry = sum >> 64;
+        index += 1;
+    }
+    assert_eq!(acc[LIMBS - 1], 0, "oracle limb bound");
+}
+
+/// `count` copies of the encoding `bits` (sign ignored) in units of 2^-1074.
+/// The infinity encoding stands for 2^1024, the finite continuation above
+/// MAX used only for overflow rounding.
+fn scaled(bits: u64, count: u64) -> Big {
     let exponent = (bits >> 52) as usize;
     let fraction = bits & ((1 << 52) - 1);
-    let mut value = vec![0; DIGITS];
+    let mut value = [0; LIMBS];
     if exponent == 0x7ff {
-        // The finite continuation above MAX used only for overflow rounding.
-        value[2098] = u128::from(count);
+        add_shifted(&mut value, u128::from(count), 2098);
     } else {
         let (mantissa, shift) = if exponent == 0 {
             (fraction, 0)
         } else {
             (fraction | (1 << 52), exponent - 1)
         };
-        value[shift] = u128::from(mantissa) * u128::from(count);
+        add_shifted(&mut value, u128::from(mantissa) * u128::from(count), shift);
     }
-    normalize(&mut value);
     value
 }
 
-fn compare(left: &[u128], right: &[u128]) -> Ordering {
+fn compare(left: &Big, right: &Big) -> Ordering {
     left.iter().rev().cmp(right.iter().rev())
 }
 
-fn add(left: &mut [u128], right: &[u128]) {
+fn add(left: &mut Big, right: &Big) {
+    let mut carry = 0u128;
     for (left, right) in left.iter_mut().zip(right) {
-        *left += right;
+        let sum = u128::from(*left) + u128::from(*right) + carry;
+        *left = low_word(sum);
+        carry = sum >> 64;
     }
-    normalize(left);
+    assert_eq!(carry, 0, "oracle limb bound");
 }
 
-fn subtract(larger: &mut [u128], smaller: &[u128]) {
-    let mut borrow = 0;
+fn subtract(larger: &mut Big, smaller: &Big) {
+    let mut borrow = false;
     for (left, right) in larger.iter_mut().zip(smaller) {
-        let amount = right + borrow;
-        if *left < amount {
-            *left = *left + 2 - amount;
-            borrow = 1;
-        } else {
-            *left -= amount;
-            borrow = 0;
-        }
+        let (step, first) = left.overflowing_sub(*right);
+        let (step, second) = step.overflowing_sub(u64::from(borrow));
+        *left = step;
+        borrow = first || second;
     }
-    assert_eq!(borrow, 0);
+    assert!(!borrow, "subtract the smaller magnitude");
 }
 
 pub(crate) fn reduce(values: impl Iterator<Item = F64>, mean: bool) -> F64 {
-    let mut positive = vec![0; DIGITS];
-    let mut negative = vec![0; DIGITS];
+    let mut positive: Big = [0; LIMBS];
+    let mut negative: Big = [0; LIMBS];
     let mut count = 0u64;
-    let mut first = F64::NAN;
     let (mut nan, mut plus_inf, mut minus_inf) = (false, false, false);
     for value in values {
         count = count.checked_add(1).expect("oracle fixture cardinality");
-        first = value;
         let bits = value.to_bits();
         let magnitude = bits & !(1 << 63);
         match magnitude.cmp(&0x7ff0_0000_0000_0000) {
@@ -92,10 +112,6 @@ pub(crate) fn reduce(values: impl Iterator<Item = F64>, mean: bool) -> F64 {
         }
     }
     assert_ne!(count, 0, "no aggregate output for an empty group");
-    // The sum and the mean of one canonical value are that value exactly.
-    if count == 1 {
-        return first;
-    }
     if nan || (plus_inf && minus_inf) {
         return F64::NAN;
     }
@@ -124,7 +140,7 @@ pub(crate) fn reduce(values: impl Iterator<Item = F64>, mean: bool) -> F64 {
     }
     let mut midpoint = scaled(low, divisor);
     add(&mut midpoint, &scaled(high, divisor));
-    let doubled = total.clone();
+    let doubled = total;
     add(&mut total, &doubled);
     let rounded = match compare(&total, &midpoint) {
         Ordering::Less => low,
@@ -139,7 +155,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn independent_digit_search_agrees_with_python_fraction_fixtures() {
+    fn exact_reduction_agrees_with_python_fraction_fixtures() {
         let mut checked = 0;
         for line in include_str!("../../../../bumbledb/tests/fixtures/f64_reference.txt").lines() {
             let words: Vec<_> = line.split_whitespace().collect();
