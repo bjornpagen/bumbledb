@@ -365,16 +365,16 @@ fn typed_round_trip_through_fact_bytes() {
 
 #[test]
 fn id_constants_are_declaration_order_named_data() {
-    assert_eq!(Ledger::KIND, RelationId(0));
-    assert_eq!(Ledger::HOLDER, RelationId(1));
-    assert_eq!(Ledger::ACCOUNT, RelationId(2));
-    assert_eq!(Ledger::SAVINGS_TERMS, RelationId(3));
-    assert_eq!(Ledger::KIND_ID, FieldId(0));
-    assert_eq!(Ledger::HOLDER_ID, FieldId(0));
-    assert_eq!(Ledger::HOLDER_NAME, FieldId(1));
-    assert_eq!(Ledger::ACCOUNT_KIND, FieldId(2));
-    assert_eq!(Ledger::ACCOUNT_ACTIVE, FieldId(3));
-    assert_eq!(Ledger::SAVINGS_TERMS_RATE_BPS, FieldId(1));
+    assert_eq!(Ledger::Kind.relation(), RelationId(0));
+    assert_eq!(Ledger::Holder.relation(), RelationId(1));
+    assert_eq!(Ledger::Account.relation(), RelationId(2));
+    assert_eq!(Ledger::SavingsTerms.relation(), RelationId(3));
+    assert_eq!(Ledger::Kind.id, FieldId(0));
+    assert_eq!(Ledger::Holder.id, FieldId(0));
+    assert_eq!(Ledger::Holder.name, FieldId(1));
+    assert_eq!(Ledger::Account.kind, FieldId(2));
+    assert_eq!(Ledger::Account.active, FieldId(3));
+    assert_eq!(Ledger::SavingsTerms.rate_bps, FieldId(1));
 
     assert_eq!(Kind::Checking.id(), KindId(0));
     assert_eq!(Kind::Savings.id(), KindId(1));
@@ -387,10 +387,10 @@ fn the_manifest_is_the_constants_runtime_twin() {
     assert_eq!(manifest.relations.len(), 4);
     let account = &manifest.relations[2];
     assert_eq!(&*account.name, "Account");
-    assert_eq!(account.id, Ledger::ACCOUNT);
+    assert_eq!(account.id, Ledger::Account.relation());
     let kind = &account.fields[2];
     assert_eq!(&*kind.name, "kind");
-    assert_eq!(kind.id, Ledger::ACCOUNT_KIND);
+    assert_eq!(kind.id, Ledger::Account.kind);
 
     assert_eq!(kind.value_type, ValueType::U64);
     let vocabulary = &manifest.relations[0];
@@ -720,22 +720,22 @@ mod closed_relations {
         let source = &statement.source;
         let target = &statement.target;
 
-        assert_eq!(source.relation, Review::SUBMISSION);
-        assert_eq!(source.projection[..], [Review::SUBMISSION_KIND]);
+        assert_eq!(source.relation, Review::Submission.relation());
+        assert_eq!(source.projection[..], [Review::Submission.kind]);
         assert_eq!(
             source.selection[..],
             [(
-                Review::SUBMISSION_STATUS,
+                Review::Submission.status,
                 bumbledb::schema::LiteralSet::One(Value::U64(1))
             )]
         );
 
-        assert_eq!(target.relation, Review::KIND);
+        assert_eq!(target.relation, Review::Kind.relation());
         assert_eq!(target.projection[..], [FieldId(0)]);
         assert_eq!(
             target.selection[..],
             [(
-                Review::KIND_MASTERED,
+                Review::Kind.mastered,
                 bumbledb::schema::LiteralSet::One(Value::Bool(true))
             )]
         );
@@ -743,13 +743,13 @@ mod closed_relations {
 
     #[test]
     fn id_constants_address_the_sealed_field_list() {
-        assert_eq!(Review::STATUS, RelationId(0));
-        assert_eq!(Review::KIND, RelationId(1));
-        assert_eq!(Review::SUBMISSION, RelationId(2));
-        assert_eq!(Review::STATUS_ID, FieldId(0));
-        assert_eq!(Review::KIND_ID, FieldId(0));
-        assert_eq!(Review::KIND_MASTERED, FieldId(1));
-        assert_eq!(Review::SUBMISSION_STATUS, FieldId(1));
+        assert_eq!(Review::Status.relation(), RelationId(0));
+        assert_eq!(Review::Kind.relation(), RelationId(1));
+        assert_eq!(Review::Submission.relation(), RelationId(2));
+        assert_eq!(Review::Status.id, FieldId(0));
+        assert_eq!(Review::Kind.id, FieldId(0));
+        assert_eq!(Review::Kind.mastered, FieldId(1));
+        assert_eq!(Review::Submission.status, FieldId(1));
     }
 
     #[test]
@@ -1168,19 +1168,19 @@ mod extension_forms {
         assert_eq!(cap.lo, 1);
         assert_eq!(cap.hi.to_bound(), Some(Bound::Lit(3)));
         assert_eq!(cap.weight.to_weight(), Weight::Unit);
-        assert_eq!(cap.target.relation, Tracker::PARENT);
-        assert_eq!(cap.source.relation, Tracker::TASK);
+        assert_eq!(cap.target.relation, Tracker::Parent.relation());
+        assert_eq!(cap.source.relation, Tracker::Task.relation());
         assert_eq!(
             cap.source.selection[..],
             [(
-                Tracker::TASK_STATE,
+                Tracker::Task.state,
                 LiteralSet::Many(Box::new([Value::U64(1), Value::U64(2)]))
             )]
         );
         let star = &schema.capacities()[1];
         assert_eq!(star.lo, 2);
         assert_eq!(star.hi.to_bound(), None);
-        assert_eq!(star.weight.to_weight(), Weight::Field(Tracker::TASK_STATE));
+        assert_eq!(star.weight.to_weight(), Weight::Field(Tracker::Task.state));
         let exact = &schema.capacities()[2];
         assert_eq!(exact.lo, 4);
         assert_eq!(exact.hi.to_bound(), Some(Bound::Lit(4)));
@@ -1203,8 +1203,8 @@ mod extension_forms {
             panic!("the first declared statement is the capacity statement");
         };
         assert_eq!(*weight, Weight::Unit);
-        assert_eq!(target.relation, Tracker::PARENT);
-        assert_eq!(source.relation, Tracker::TASK);
+        assert_eq!(target.relation, Tracker::Parent.relation());
+        assert_eq!(source.relation, Tracker::Task.relation());
         assert!(matches!(source.selection[0].1, LiteralSet::Many(_)));
     }
 }
@@ -1243,46 +1243,46 @@ mod capacity_forms {
             [
                 StatementDescriptor::Capacity {
                     target: bumbledb::schema::Side {
-                        relation: Grid::POOL,
+                        relation: Grid::Pool.relation(),
                         projection: Box::new([FieldId(0)]),
                         selection: Box::new([]),
                     },
-                    weight: Weight::Field(Grid::DEVICE_WATTS),
+                    weight: Weight::Field(Grid::Device.watts),
                     lo: 0,
-                    hi: Some(Bound::TargetField(Grid::POOL_SUPPLY)),
+                    hi: Some(Bound::TargetField(Grid::Pool.supply)),
                     source: bumbledb::schema::Side {
-                        relation: Grid::DEVICE,
-                        projection: Box::new([Grid::DEVICE_POOL]),
+                        relation: Grid::Device.relation(),
+                        projection: Box::new([Grid::Device.pool]),
                         selection: Box::new([]),
                     },
                 },
                 StatementDescriptor::Capacity {
                     target: bumbledb::schema::Side {
-                        relation: Grid::POOL,
+                        relation: Grid::Pool.relation(),
                         projection: Box::new([FieldId(0)]),
                         selection: Box::new([]),
                     },
-                    weight: Weight::DurationOf(Grid::DEVICE_BOOKED),
+                    weight: Weight::DurationOf(Grid::Device.booked),
                     lo: 0,
                     hi: Some(Bound::Lit(720)),
                     source: bumbledb::schema::Side {
-                        relation: Grid::DEVICE,
-                        projection: Box::new([Grid::DEVICE_POOL]),
+                        relation: Grid::Device.relation(),
+                        projection: Box::new([Grid::Device.pool]),
                         selection: Box::new([]),
                     },
                 },
                 StatementDescriptor::Capacity {
                     target: bumbledb::schema::Side {
-                        relation: Grid::POOL,
+                        relation: Grid::Pool.relation(),
                         projection: Box::new([FieldId(0)]),
                         selection: Box::new([]),
                     },
-                    weight: Weight::Field(Grid::DEVICE_WATTS),
+                    weight: Weight::Field(Grid::Device.watts),
                     lo: 1,
                     hi: None,
                     source: bumbledb::schema::Side {
-                        relation: Grid::DEVICE,
-                        projection: Box::new([Grid::DEVICE_POOL]),
+                        relation: Grid::Device.relation(),
+                        projection: Box::new([Grid::Device.pool]),
                         selection: Box::new([]),
                     },
                 },
@@ -1294,11 +1294,11 @@ mod capacity_forms {
         assert_eq!(caps.len(), 3);
         assert_eq!(
             caps[0].hi.to_bound(),
-            Some(Bound::TargetField(Grid::POOL_SUPPLY))
+            Some(Bound::TargetField(Grid::Pool.supply))
         );
         assert_eq!(
             caps[1].weight.to_weight(),
-            Weight::DurationOf(Grid::DEVICE_BOOKED)
+            Weight::DurationOf(Grid::Device.booked)
         );
         assert_eq!(caps[2].lo, 1);
         assert_eq!(caps[2].hi.to_bound(), None);
@@ -1341,8 +1341,8 @@ mod duration_named_field {
         else {
             panic!("the declared capacity statement leads");
         };
-        assert_eq!(*weight, Weight::Field(Quota::ITEM_DURATION));
-        assert_eq!(*hi, Some(Bound::TargetField(Quota::BUCKET_DURATION)));
+        assert_eq!(*weight, Weight::Field(Quota::Item.Duration));
+        assert_eq!(*hi, Some(Bound::TargetField(Quota::Bucket.Duration)));
         descriptor.validate().expect("the theory seals");
     }
 }
@@ -1387,7 +1387,7 @@ mod radix_literals {
         assert_eq!(cap.hi.to_bound(), Some(Bound::Lit(4)));
         assert_eq!(
             cap.source.selection[..],
-            [(Radix::TASK_STATE, LiteralSet::One(Value::U64(15)))]
+            [(Radix::Task.state, LiteralSet::One(Value::U64(15)))]
         );
     }
 }
