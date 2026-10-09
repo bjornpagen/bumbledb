@@ -60,7 +60,7 @@ fn w(value: i64) -> u64 {
 }
 
 fn summary(bounds: &[(WordCmp, u64)]) -> RangeSummary {
-    let mut summary = RangeSummary::new();
+    let mut summary = RangeSummary::new(&ValueType::I64);
     for (op, word) in bounds {
         summary.narrow(*op, *word);
     }

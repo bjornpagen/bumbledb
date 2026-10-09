@@ -337,3 +337,171 @@ fn integer_and_float_variables_do_not_compare() {
     ));
     assert!(error.to_string().contains("toF64Exact"));
 }
+
+fn readings(values: &[f64]) -> Fix {
+    let schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Reading".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                },
+                FieldDescriptor {
+                    name: "a".into(),
+                    value_type: ValueType::F64,
+                },
+                FieldDescriptor {
+                    name: "b".into(),
+                    value_type: ValueType::F64,
+                },
+            ],
+        }],
+        statements: vec![],
+    };
+    let rows = values
+        .iter()
+        .enumerate()
+        .flat_map(|(i, a)| {
+            values.iter().enumerate().map(move |(j, b)| {
+                vec![
+                    Value::U64((i * values.len() + j) as u64),
+                    Value::F64(crate::F64::from(*a)),
+                    Value::F64(crate::F64::from(*b)),
+                ]
+            })
+        })
+        .collect();
+    Fix::heap(schema, &[(RelationId(0), rows)])
+}
+
+/// Equality under which NaN equals itself.
+fn same_value_zero(op: CmpOp, a: f64, b: f64) -> bool {
+    let equal = (a.is_nan() && b.is_nan()) || ieee_holds(CmpOp::Eq, a, b);
+    match op {
+        CmpOp::Eq => equal,
+        CmpOp::Ne => !equal,
+        _ => ieee_holds(op, a, b),
+    }
+}
+
+fn reading_ids(out: &Answers) -> Vec<u64> {
+    let mut ids: Vec<u64> = (0..out.len())
+        .map(|row| match out.get(row, 0) {
+            AnswerValue::U64(id) => id,
+            other => panic!("u64 ids, got {other:?}"),
+        })
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+const DENSE: [f64; 6] = [f64::NEG_INFINITY, -1.5, 0.0, 2.0, f64::INFINITY, f64::NAN];
+
+/// IEEE order on F64 (NaN orders against nothing) and equality under which
+/// NaN equals itself, for literals, parameters and variable pairs.
+#[test]
+fn f64_orders_exclude_nan_and_equality_matches_it() {
+    let fix = readings(&DENSE);
+    let rows: Vec<(u64, f64, f64)> = DENSE
+        .iter()
+        .enumerate()
+        .flat_map(|(i, a)| {
+            DENSE
+                .iter()
+                .enumerate()
+                .map(move |(j, b)| ((i * DENSE.len() + j) as u64, *a, *b))
+        })
+        .collect();
+    let rule = |condition: Comparison| {
+        Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(1))),
+                    (FieldId(2), Term::Var(VarId(2))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![ConditionTree::Leaf(condition)],
+        })
+    };
+    for op in MIXED_OPS {
+        let expected = |holds: &dyn Fn(f64, f64) -> bool| -> Vec<u64> {
+            rows.iter()
+                .filter(|(_, a, b)| holds(*a, *b))
+                .map(|(id, ..)| *id)
+                .collect()
+        };
+        let mut pair = fix
+            .prepare(&rule(Comparison {
+                op,
+                lhs: Term::Var(VarId(1)),
+                rhs: Term::Var(VarId(2)),
+            }))
+            .unwrap();
+        let got = reading_ids(&fix.execute(&mut pair, &[] as &[BindValue]).unwrap());
+        assert_eq!(
+            got,
+            expected(&|a, b| same_value_zero(op, a, b)),
+            "a {op:?} b"
+        );
+
+        let mut by_param = fix
+            .prepare(&rule(Comparison {
+                op,
+                lhs: Term::Var(VarId(1)),
+                rhs: Term::Param(crate::ir::ParamId(0)),
+            }))
+            .unwrap();
+        for constant in DENSE {
+            let mut by_literal = fix
+                .prepare(&rule(Comparison {
+                    op,
+                    lhs: Term::Var(VarId(1)),
+                    rhs: Term::Literal(Value::F64(crate::F64::from(constant))),
+                }))
+                .unwrap();
+            let want = expected(&|a, _| same_value_zero(op, a, constant));
+            let got = reading_ids(&fix.execute(&mut by_literal, &[] as &[BindValue]).unwrap());
+            assert_eq!(got, want, "a {op:?} literal {constant}");
+            let param = [BindValue::F64(crate::F64::from(constant))];
+            let got = reading_ids(&fix.execute(&mut by_param, &param).unwrap());
+            assert_eq!(got, want, "a {op:?} param {constant}");
+        }
+    }
+}
+
+#[test]
+fn a_nan_order_param_empties_the_rule_until_rebound() {
+    let fix = readings(&DENSE);
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(1), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![ConditionTree::Leaf(Comparison {
+            op: CmpOp::Lt,
+            lhs: Term::Var(VarId(1)),
+            rhs: Term::Param(crate::ir::ParamId(0)),
+        })],
+    });
+    let mut prepared = fix.prepare(&query).unwrap();
+    let nan = [BindValue::F64(crate::F64::NAN)];
+    let two = [BindValue::F64(crate::F64::from(2.0))];
+    for _ in 0..2 {
+        assert!(fix.execute(&mut prepared, &nan).unwrap().is_empty());
+        assert_eq!(
+            fix.execute(&mut prepared, &two).unwrap().len(),
+            3 * DENSE.len()
+        );
+    }
+}

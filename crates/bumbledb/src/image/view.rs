@@ -34,16 +34,25 @@ pub enum Const {
 
     Words(Box<[u64]>),
 
-    Interval { start: u64, end: u64 },
+    Interval {
+        start: u64,
+        end: u64,
+    },
 
     Param(crate::ir::ParamId),
+
+    /// An F64 parameter under an order operator: a NaN value orders against
+    /// nothing, so it resolves to the empty range.
+    DenseOrderParam(crate::ir::ParamId),
 
     ParamSet(crate::ir::ParamId),
 
     // Keep text ownership out of every scalar constant's inline footprint.
     WordSet(Box<ResolvedWords>),
 
-    PendingIntern { bytes: Box<[u8]> },
+    PendingIntern {
+        bytes: Box<[u8]>,
+    },
 }
 
 /// Column-form selection keys or set elements, with owners for any resident

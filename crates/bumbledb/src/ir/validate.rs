@@ -195,6 +195,8 @@ pub(crate) enum ClassifiedComparison {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SealedConst {
     Param(ParamId),
+    /// An F64 parameter under an order operator (NaN orders against nothing).
+    DenseOrderParam(ParamId),
     Literal(Value),
 }
 

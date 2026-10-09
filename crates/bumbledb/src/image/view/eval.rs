@@ -177,7 +177,9 @@ impl Operands for ImageRow<'_> {
 
 pub(crate) fn resolve<'a>(value: &'a Const, params: &'a [Const]) -> &'a Const {
     match value {
-        Const::Param(param) | Const::ParamSet(param) => &params[usize::from(param.0)],
+        Const::Param(param) | Const::DenseOrderParam(param) | Const::ParamSet(param) => {
+            &params[usize::from(param.0)]
+        }
         other => other,
     }
 }
@@ -198,6 +200,10 @@ pub(crate) const fn point_in(start: u64, end: u64, point: u64) -> bool {
 
 /// The dense line's `-Infinity` order key: the smallest canonical F64 key.
 pub(crate) const DENSE_NEG_INF_KEY: u64 = bumbledb_theory::F64::NEG_INFINITY.to_order_key();
+
+/// The dense line's `+Infinity` order key: every canonical F64 but NaN is at
+/// or below it, so `<= DENSE_POS_INF_KEY` is the order domain.
+pub(crate) const DENSE_POS_INF_KEY: u64 = bumbledb_theory::F64::INFINITY.to_order_key();
 
 /// The finite-probe guard for dense (F64) point membership: a nonfinite
 /// probe is an ordinary NONMATCH. Word order alone already
@@ -757,6 +763,16 @@ pub(crate) fn resolve_filter_into(
                         other => other.clone(),
                     }
                 }
+                Const::DenseOrderParam(param) => match &params[usize::from(param.0)] {
+                    Const::Word(word) if *word > DENSE_POS_INF_KEY => {
+                        if !negated {
+                            return Ok(false);
+                        }
+                        write_compare(dst, *field, WordCmp::Lt, Some(Const::Word(0)));
+                        return Ok(true);
+                    }
+                    other => other.clone(),
+                },
                 Const::ParamSet(param) => {
                     debug_assert_eq!(*op, WordCmp::Eq, "validated: sets only under Eq");
                     if missed[usize::from(param.0)] && !negated {

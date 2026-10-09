@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::{ClassifiedComparison, Context, ParamKind, SealedConst, TypeSlot};
 use crate::error::{AtomIndex, ValidationError};
 use crate::image::view::MaskConst;
@@ -860,7 +862,49 @@ impl Context {
                 value: SealedConst::Literal(literal),
             });
         }
+        self.dense_order_domain(&mut classified);
         Ok(classified)
+    }
+
+    /// IEEE order on F64: NaN orders against nothing. An order against a NaN
+    /// literal is the empty comparison; every F64 variable an order bounds
+    /// from below, or compares with another variable, is also bounded at
+    /// `+Infinity`, which excludes NaN rows.
+    fn dense_order_domain(&self, classified: &mut Vec<ClassifiedComparison>) {
+        use crate::ir::WordCmp;
+        let mut bounded = BTreeSet::new();
+        for comparison in classified.iter_mut() {
+            match comparison {
+                ClassifiedComparison::VarConst { op, var, value }
+                    if !matches!(op, WordCmp::Eq | WordCmp::Ne)
+                        && *self.resolved_var_type(*var) == ValueType::F64 =>
+                {
+                    if matches!(value, SealedConst::Literal(Value::F64(f)) if f.is_nan()) {
+                        let (never, bottom) = super::mixed::never(ValueType::F64);
+                        *op = never;
+                        *value = SealedConst::Literal(bottom);
+                    } else if matches!(op, WordCmp::Gt | WordCmp::Ge) {
+                        bounded.insert(*var);
+                    }
+                }
+                ClassifiedComparison::VarVar { op, lhs, rhs }
+                    if !matches!(op, WordCmp::Eq | WordCmp::Ne)
+                        && *self.resolved_var_type(*lhs) == ValueType::F64 =>
+                {
+                    bounded.extend([*lhs, *rhs]);
+                }
+                _ => {}
+            }
+        }
+        classified.extend(
+            bounded
+                .into_iter()
+                .map(|var| ClassifiedComparison::VarConst {
+                    op: WordCmp::Le,
+                    var,
+                    value: SealedConst::Literal(Value::F64(bumbledb_theory::F64::INFINITY)),
+                }),
+        );
     }
 
     /// An integer variable against an F64 literal, or an F64 variable against
@@ -1026,7 +1070,12 @@ impl Context {
                         refusal: ComparisonRefusal::IllegalTypes,
                     });
                 }
-                let value = self.check_const(index, constant, &var_type)?;
+                let value = match self.check_const(index, constant, &var_type)? {
+                    SealedConst::Param(param) if var_type == ValueType::F64 => {
+                        SealedConst::DenseOrderParam(param)
+                    }
+                    value => value,
+                };
                 Ok(ClassifiedComparison::VarConst {
                     op: (*op).into(),
                     var: *var,

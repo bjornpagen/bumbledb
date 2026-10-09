@@ -17,6 +17,7 @@ fn sealed_interval(constant: &SealedConst) -> IntervalConst {
 fn sealed_const(constant: &SealedConst) -> Const {
     match constant {
         SealedConst::Param(param) => Const::Param(*param),
+        SealedConst::DenseOrderParam(param) => Const::DenseOrderParam(*param),
         SealedConst::Literal(literal) => lower_literal(literal),
     }
 }
@@ -200,6 +201,9 @@ pub(super) fn place_comparisons(
                 let point = match point {
                     SealedConst::Param(param) => ViewWordSource::Param(*param),
                     SealedConst::Literal(value) => ViewWordSource::Word(point_word(value)),
+                    SealedConst::DenseOrderParam(_) => {
+                        unreachable!("validated: point probes are not order bounds")
+                    }
                 };
                 occurrences[occurrence]
                     .filters

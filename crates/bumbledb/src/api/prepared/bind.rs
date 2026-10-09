@@ -343,7 +343,11 @@ fn element_words(
             out.words.extend_from_slice(&words);
             words.len()
         }
-        Const::Param(_) | Const::ParamSet(_) | Const::WordSet(_) | Const::PendingIntern { .. } => {
+        Const::Param(_)
+        | Const::DenseOrderParam(_)
+        | Const::ParamSet(_)
+        | Const::WordSet(_)
+        | Const::PendingIntern { .. } => {
             unreachable!("convert_scalar resolves scalar kinds to inline column form")
         }
     }))
@@ -441,6 +445,7 @@ impl LiteralResolution<'_, '_> {
             Const::Interval { start, end } => out.words.extend([*start, *end]),
             Const::WordSet(_)
             | Const::Param(_)
+            | Const::DenseOrderParam(_)
             | Const::ParamSet(_)
             | Const::PendingIntern { .. } => {
                 unreachable!("bind resolved parameters to column form")
@@ -471,6 +476,7 @@ impl LiteralResolution<'_, '_> {
             }
 
             Const::WordSet(words) => out.clone_from(words),
+            Const::DenseOrderParam(_) => unreachable!("selections are equalities"),
             Const::PendingIntern { .. } => unreachable!("resolved above"),
         }
         Ok(true)

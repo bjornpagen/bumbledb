@@ -53,16 +53,26 @@ pub(super) fn fold(schema: &Schema, occurrences: &mut [Occurrence]) -> Option<St
     None
 }
 
+/// The `[lo, hi]` word range a conjunction of order filters admits. `floor`
+/// is the lowest word a value of the field can hold: F64 keys below
+/// `-Infinity` are never canonical.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RangeSummary {
+    floor: u64,
     lo: u64,
     hi: u64,
 }
 
 impl RangeSummary {
-    fn new() -> Self {
+    fn new(value_type: &ValueType) -> Self {
+        let floor = if *value_type == ValueType::F64 {
+            crate::image::view::DENSE_NEG_INF_KEY
+        } else {
+            0
+        };
         Self {
-            lo: 0,
+            floor,
+            lo: floor,
             hi: u64::MAX,
         }
     }
@@ -181,7 +191,7 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
         };
         let (summary, constituents) = ranges
             .entry(field)
-            .or_insert_with(|| (RangeSummary::new(), 0));
+            .or_insert_with(|| (RangeSummary::new(&relation.field(field).value_type), 0));
         summary.narrow(op, word);
         *constituents += 1;
     }
@@ -327,7 +337,7 @@ fn emit(
             replacements.insert(*field, Vec::new());
         } else if *constituents >= 2 {
             let mut emitted = Vec::with_capacity(2);
-            if summary.lo > 0 {
+            if summary.lo > summary.floor {
                 emitted.push(FilterPredicate::Compare {
                     field: (*field).into(),
                     op: WordCmp::Ge,
@@ -451,7 +461,9 @@ pub(crate) fn render_const(out: &mut String, value_type: &ValueType, value: &Con
             }
             out.push('}');
         }
-        Const::Param(_) | Const::ParamSet(_) => unreachable!("params never fold"),
+        Const::Param(_) | Const::DenseOrderParam(_) | Const::ParamSet(_) => {
+            unreachable!("params never fold")
+        }
     }
 }
 

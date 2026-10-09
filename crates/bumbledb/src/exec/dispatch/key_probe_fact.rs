@@ -60,6 +60,9 @@ fn const_words(
         Const::ParamSet(_) | Const::WordSet(_) => {
             unreachable!("classification: a set binding never reaches the key-probe path")
         }
+        Const::DenseOrderParam(_) => {
+            unreachable!("classification: an order bound never reaches the key-probe path")
+        }
         Const::PendingIntern { bytes } => {
             let text = std::str::from_utf8(bytes)
                 .expect("IR string literals are UTF-8 by construction (Value::String)");
