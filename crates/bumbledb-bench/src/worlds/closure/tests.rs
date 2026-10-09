@@ -12,12 +12,6 @@ const CFG: GenConfig = GenConfig {
     scale: Scale::Tiny,
 };
 
-fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = crate::fixture::scratch_path(format!("bumbledb-closure-{tag}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
-
 #[test]
 fn the_corpus_shape_is_closed_form() {
     let sizes = ClosSizes::of(Scale::Tiny);
@@ -36,7 +30,7 @@ fn the_corpus_shape_is_closed_form() {
 
 #[test]
 fn the_engine_agrees_with_the_naive_fixpoint() {
-    let dir = scratch("naive");
+    let dir = crate::fixture::TempDir::new("naive");
     let sizes = ClosSizes::of(CFG.scale);
     let db = Db::create(&dir, Reachability, crate::harness::bench_work())
         .expect("create")
@@ -98,24 +92,22 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
     }
     drop(prepared);
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn the_recursive_cte_mirror_is_row_identical() {
-    let dir = scratch("mirror");
+    let dir = crate::fixture::TempDir::new("mirror");
     let (db, conn) = load_stores(&dir, CFG).expect("stores");
     for family in all() {
         let draws = (family.params)(&CFG);
         super::verify_family(&db, &conn, family, &draws).expect("verify");
     }
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn closure_counts_match_the_shapes() {
-    let dir = scratch("counts");
+    let dir = crate::fixture::TempDir::new("counts");
     let sizes = ClosSizes::of(CFG.scale);
     let (db, _conn) = load_stores(&dir, CFG).expect("stores");
     let query = closure_query();
@@ -152,12 +144,11 @@ fn closure_counts_match_the_shapes() {
     );
     drop(prepared);
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn a_closure_query_digests_reach_rounds() {
-    let dir = scratch("digest");
+    let dir = crate::fixture::TempDir::new("digest");
     let sizes = ClosSizes::of(CFG.scale);
     let db = Db::create(&dir, Reachability, crate::harness::bench_work())
         .expect("create")
@@ -184,5 +175,4 @@ fn a_closure_query_digests_reach_rounds() {
     assert!(!answers.is_empty(), "the chain head emits");
     drop(prepared);
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }

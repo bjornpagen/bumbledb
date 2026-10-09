@@ -7,9 +7,8 @@ use crate::worlds::families::bind_values;
 
 use super::corpus::{SMOKE, TP_BASE, TP_HORIZON};
 
-fn smoke_store(name: &str) -> (Db<SchemaDescriptor>, std::path::PathBuf) {
-    let dir = crate::fixture::scratch_path(name);
-    let _ = std::fs::remove_dir_all(&dir);
+fn smoke_store(name: &str) -> (Db<SchemaDescriptor>, crate::fixture::TempDir) {
+    let dir = crate::fixture::TempDir::new(name);
     let db = Db::create(
         &dir,
         bumbledb::Theory::descriptor(super::Temporal),
@@ -58,16 +57,14 @@ fn spans_by_id() -> BTreeMap<u64, Interval<i64>> {
 
 #[test]
 fn temporal_smoke_gate_agrees_on_every_family() {
-    let dir = crate::fixture::scratch_path("bumbledb-temporal-smoke-gate");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("temporal-smoke-gate");
     crate::worlds::scenarios::gate_scenario(&dir, &super::scenario_smoke(), 7)
         .expect("every temporal family agrees with SQLite at smoke scale");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn ray_stab_answers_only_rays_at_smoke() {
-    let (db, dir) = smoke_store("bumbledb-temporal-ray-stab");
+    let (db, _dir) = smoke_store("temporal-ray-stab");
     let ray_ids: BTreeSet<u64> = spans_by_id()
         .into_iter()
         .filter_map(|(id, iv)| iv.is_ray().then_some(id))
@@ -88,12 +85,11 @@ fn ray_stab_answers_only_rays_at_smoke() {
         assert!(ray_ids.contains(id), "a non-ray answered past the horizon");
     }
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn planted_meets_and_during_answer_at_smoke() {
-    let (db, dir) = smoke_store("bumbledb-temporal-mixed-mask");
+    let (db, _dir) = smoke_store("temporal-mixed-mask");
     let by_id = spans_by_id();
     let answers = run_pairs(&db, &super::mixed_mask(), &[Value::U64(1)]);
     assert!(!answers.is_empty(), "the planted witnesses answer on key 1");
@@ -112,7 +108,6 @@ fn planted_meets_and_during_answer_at_smoke() {
     assert!(meets, "at least one answered pair abuts exactly (MEETS)");
     assert!(during, "at least one answered pair nests strictly (DURING)");
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -132,7 +127,7 @@ fn t5_pack_matches_naive_at_smoke() {
     naive
         .apply(&delta)
         .expect("smoke corpus satisfies the schema");
-    let (db, dir) = smoke_store("bumbledb-temporal-pack-naive");
+    let (db, _dir) = smoke_store("temporal-pack-naive");
     for params in super::key_params(7) {
         let param = match params.as_slice() {
             [value] => value.clone(),
@@ -150,7 +145,6 @@ fn t5_pack_matches_naive_at_smoke() {
         );
     }
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -61,24 +61,16 @@ pub(crate) fn sweep(n: u64) -> u64 {
     }
 }
 
-/// A scratch path unique to this test process, so concurrent test runs never
-/// share a store.
-#[cfg(test)]
-pub(crate) fn scratch_path(tag: impl std::fmt::Display) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("bumbledb-bench-{}-{tag}", std::process::id()))
-}
-
-/// A scratch directory removed on drop.
+/// A scratch directory under the system temp dir (or `BUMBLEDB_SCRATCH_DIR`),
+/// unique to this process and moment, removed on drop.
 pub(crate) struct TempDir(std::path::PathBuf);
 
 impl TempDir {
-    pub(crate) fn new(tag: &str) -> Self {
-        // Process id and clock keep concurrent and wedged runs off one LMDB lock.
+    pub(crate) fn new(tag: impl std::fmt::Display) -> Self {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock after epoch")
             .as_nanos();
-
         let root = std::env::var_os("BUMBLEDB_SCRATCH_DIR")
             .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
         let path = root.join(format!(
@@ -90,6 +82,20 @@ impl TempDir {
     }
 
     pub(crate) fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for TempDir {
+    type Target = std::path::Path;
+
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for TempDir {
+    fn as_ref(&self) -> &std::path::Path {
         &self.0
     }
 }

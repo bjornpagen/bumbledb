@@ -128,7 +128,7 @@ fn random_corpus(rng: &mut Lcg) -> Delta {
 fn randomized_claim_sets_agree_with_the_naive_model() {
     let descriptor = schema();
     for round in 0..crate::fixture::sweep(40) {
-        let dir = TempDir::new(&format!("differential-{round}"));
+        let dir = TempDir::new(format!("differential-{round}"));
         let db = Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
             .expect("create engine store")
             .expect("accepted");

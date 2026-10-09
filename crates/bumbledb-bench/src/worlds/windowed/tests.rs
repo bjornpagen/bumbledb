@@ -6,12 +6,6 @@ use crate::oracle::naive::{Delta, NaiveDb};
 
 use super::{Mass, baseline, ids, parent_kind, relation_rows, world};
 
-fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = crate::fixture::scratch_path(format!("bumbledb-windowed-{tag}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
-
 fn child(id: u64, parent: u64, flag: u64) -> (bumbledb::RelationId, Vec<Value>) {
     (
         ids::CHILD,
@@ -54,7 +48,7 @@ fn the_twin_theories_validate_and_differ_only_in_capacity_laws() {
 
 #[test]
 fn the_window_verdicts_agree_with_the_naive_model() {
-    let dir = scratch("naive");
+    let dir = crate::fixture::TempDir::new("naive");
     let mass = Mass::unit();
     let db = Db::create(&dir, world::WindowedWorld, crate::harness::bench_work())
         .expect("create")
@@ -99,5 +93,4 @@ fn the_window_verdicts_agree_with_the_naive_model() {
     let summary = differential::run(&db, &mut naive, &ops).expect("verdict parity");
     assert_eq!(summary.aborts, 2, "the over-cap burst and the exclusion");
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }

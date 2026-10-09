@@ -8,12 +8,6 @@ use super::{
     DispSizes, FORCED_MAP_DISTINCT, FORCED_MAP_POSITIONS, ForeignStream, forced_spoke_map_bytes,
 };
 
-fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = crate::fixture::scratch_path(format!("bumbledb-displaced-{tag}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
-
 #[test]
 fn the_schema_validates_and_the_registry_is_coherent() {
     let schema = super::DisplacedWorld
@@ -64,7 +58,7 @@ fn the_bench_shape_exceeds_the_l2_by_layout_arithmetic() {
 
 #[test]
 fn the_tiny_world_verifies_on_both_engines() {
-    let dir = scratch("parity");
+    let dir = crate::fixture::TempDir::new("parity");
     let cfg = GenConfig {
         seed: 7,
         scale: Scale::Tiny,
@@ -74,12 +68,11 @@ fn the_tiny_world_verifies_on_both_engines() {
         super::verify_family(&db, &conn, family).expect(family.name);
     }
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn the_folds_produce_their_group_masses() {
-    let dir = scratch("masses");
+    let dir = crate::fixture::TempDir::new("masses");
     let cfg = GenConfig {
         seed: 7,
         scale: Scale::Tiny,
@@ -104,7 +97,6 @@ fn the_folds_produce_their_group_masses() {
     .expect("execute");
     assert_eq!(buffer.len(), 1, "the ungrouped fold");
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The interleave harness runs the between-pass closure before every warmup and

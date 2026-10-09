@@ -16,8 +16,7 @@ const CFG: GenConfig = GenConfig {
 
 #[test]
 fn a_thousand_queries_validate_and_translate() {
-    let dir = crate::fixture::scratch_path("bumbledb-bench-querygen");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("querygen");
     let db = target::publish_admitted(&dir);
     let mut rng = Rng::new(SEED);
     let mut naive_routed = 0u64;
@@ -46,7 +45,6 @@ fn a_thousand_queries_validate_and_translate() {
     }
     assert!(naive_routed > 0, "the Pack shape reaches the naive route");
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -179,8 +177,7 @@ fn the_coverage_contract_holds_at_a_thousand() {
 fn grounding_shapes_eliminate_and_near_misses_refuse() {
     use super::GroundVariant;
     use super::construct::random_query_tagged;
-    let dir = crate::fixture::scratch_path("bumbledb-bench-querygen-grounding");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("querygen-grounding");
     let db = target::publish_admitted(&dir);
     let mut rng = Rng::new(SEED);
     let (mut eliminated, mut refused) = (0u32, 0u32);
@@ -208,7 +205,6 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
         "both an eliminated ({eliminated}) and a refused ({refused}) shape appear per run"
     );
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

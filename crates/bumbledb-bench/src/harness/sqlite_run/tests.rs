@@ -9,9 +9,8 @@ const CFG: GenConfig = GenConfig {
     scale: Scale::Tiny,
 };
 
-fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = crate::fixture::scratch_path(format!("bumbledb-bench-sqlite-run-{tag}"));
-    let _ = std::fs::remove_dir_all(&dir);
+fn scratch(tag: &str) -> crate::fixture::TempDir {
+    let dir = crate::fixture::TempDir::new(tag);
     std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
@@ -122,7 +121,6 @@ fn fairness_and_the_prepared_sample_contract() {
     assert!(err.contains("idx_posting_at"), "{err}");
     drop(prepared);
     drop(conn);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A zero cap has passed at the first progress callback, so the outcome is

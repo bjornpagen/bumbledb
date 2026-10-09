@@ -8,9 +8,8 @@ use crate::worlds::corpus_gen::Scale;
 use super::lanes::{self, MintCursor};
 use super::{CrudSizes, ids, ops};
 
-fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = crate::fixture::scratch_path(format!("bumbledb-crud-{tag}"));
-    let _ = std::fs::remove_dir_all(&dir);
+fn scratch(tag: &str) -> crate::fixture::TempDir {
+    let dir = crate::fixture::TempDir::new(tag);
     std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
@@ -52,7 +51,6 @@ fn the_twin_stores_load_value_identical_at_tiny() {
         poststate::assert_identical("crud", name, ours, theirs).expect(name);
     }
     drop((db, conn));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -68,7 +66,6 @@ fn the_parity_assertion_catches_a_mismatched_synchronous() {
         .expect_err("a weakened mirror is not a durable twin");
     assert!(err.contains("synchronous"), "{err}");
     drop(conn);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 const SEED: u64 = 1;
@@ -180,7 +177,6 @@ fn every_crud_write_family_leaves_the_twins_value_identical() {
 
     assert_twins_identical(&db, &conn);
     drop((db, conn));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The family battery on a second independently loaded twin pair: the
@@ -212,7 +208,6 @@ fn a_second_twin_pair_runs_the_same_families_identically() {
 
     assert_twins_identical(&db, &conn);
     drop((db, conn));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The delete lane's refusal contract, falsified from both sides: deleting the
@@ -246,7 +241,6 @@ fn the_delete_lane_refuses_a_missing_row() {
         "a refused delete must leave the store untouched"
     );
     drop((db, conn));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -271,7 +265,6 @@ fn the_upsert_follows_its_stream_through_hits_and_misses() {
     lanes::upsert_sqlite(&conn, proto, &stream).expect("upsert sqlite");
     assert_twins_identical(&db, &conn);
     drop((db, conn));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -341,7 +334,6 @@ fn a_colliding_seed_is_absorbed_by_the_counter_model() {
     lanes::upsert_sqlite(&conn, proto, &upsert).expect("upsert sqlite");
     assert_twins_identical(&db, &conn);
     drop((db, conn));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 const RUN_SEED: u64 = SEED;
@@ -373,7 +365,6 @@ fn the_crud_gate_refuses_a_divergent_oracle() {
     })
     .expect_err("a poisoned mirror must not be timed");
     assert!(err.contains("ENGINES DISAGREE"), "{err}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -409,7 +400,6 @@ fn the_full_crud_run_renders_every_family_and_parses() {
             .is_some_and(|p| p.get("host").is_some()),
         "the provenance stamp rides the artifact"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// An unknown `--only` name is refused before anything loads, and the refusal
@@ -423,7 +413,6 @@ fn an_unknown_only_name_is_refused() {
     assert!(err.contains("unknown family `nope`"), "{err}");
     assert!(err.contains("crud_read_point"), "{err}");
     assert!(err.contains("crud_mixed_90_10"), "{err}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -436,7 +425,6 @@ fn a_filtered_run_still_gates_the_read_query() {
     })
     .expect_err("the gate must run even when read_point is filtered out");
     assert!(err.contains("ENGINES DISAGREE"), "{err}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A one-row post-state divergence is loud: the error names the world and the

@@ -1011,12 +1011,6 @@ mod tests {
         }
     }
 
-    fn scratch(tag: &str) -> PathBuf {
-        let dir = crate::fixture::scratch_path(format!("bumbledb-bench-{tag}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
     fn tiny_args(dir: &Path, out: &Path) -> crate::cli::CurvesArgs {
         crate::cli::CurvesArgs {
             scales: vec![Scale::Tiny],
@@ -1136,7 +1130,7 @@ mod tests {
 
     #[test]
     fn tiny_scale_gates_then_reports() {
-        let dir = scratch("curves-tiny-e2e");
+        let dir = crate::fixture::TempDir::new("curves-tiny-e2e");
         let out = dir.join("out");
         let code = run(&tiny_args(&dir, &out)).expect("the lane runs");
         assert_eq!(code, 0);
@@ -1187,13 +1181,12 @@ mod tests {
         }
         assert!(!out.join("scratch").exists(), "scratch removed");
         assert!(out.join("curves-report.md").exists(), "markdown artifact");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A zero cap reports the point exceeded and never times it.
     #[test]
     fn zero_cap_reports_exceeded_and_skips_timing() {
-        let dir = scratch("curves-zero-cap");
+        let dir = crate::fixture::TempDir::new("curves-zero-cap");
         let out = dir.join("out");
         let mut args = tiny_args(&dir, &out);
         args.families = Some(vec!["busy_scan".to_owned()]);
@@ -1224,12 +1217,11 @@ mod tests {
             Some(&Json::Null),
             "never timed unverified"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn warmth_panel_reports_cold_warm_memoized() {
-        let dir = scratch("curves-warmth");
+        let dir = crate::fixture::TempDir::new("curves-warmth");
         let out = dir.join("out");
         let mut args = tiny_args(&dir, &out);
         args.families = Some(vec!["point".to_owned()]);
@@ -1260,7 +1252,6 @@ mod tests {
                 .expect(field);
             assert!(min > 0.0, "{field}: min must be positive, got {min}");
         }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1277,7 +1268,7 @@ mod tests {
     /// cannot reach a timer unverified.
     #[test]
     fn hand_twin_is_gated_before_timing() {
-        let dir = scratch("curves-hand-gate");
+        let dir = crate::fixture::TempDir::new("curves-hand-gate");
         let cfg = GenConfig {
             seed: 1,
             scale: Scale::Tiny,
@@ -1327,6 +1318,5 @@ mod tests {
         let hand = bundle.hand.as_ref().expect("busy_scan carries the twin");
         gate_lane(&conn, "busy_scan[hand]", hand, &bundle.draws, &ours, &types)
             .expect("the real twin agrees");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

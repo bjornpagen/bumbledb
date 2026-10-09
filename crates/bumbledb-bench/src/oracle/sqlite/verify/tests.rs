@@ -4,7 +4,7 @@ use crate::fixture::TempDir;
 use crate::worlds::corpus_gen::Scale;
 
 fn cfg(tag: &str) -> (VerifyConfig, TempDir) {
-    let scratch = TempDir::new(&format!("verify-{tag}"));
+    let scratch = TempDir::new(format!("verify-{tag}"));
     let config = VerifyConfig {
         corpus_gen: GenConfig {
             seed: 1,

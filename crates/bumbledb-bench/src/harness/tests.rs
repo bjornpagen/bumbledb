@@ -101,8 +101,7 @@ fn cold_touches_before_every_sample_and_bumps_generations() {
     assert_eq!(script.borrow().as_str(), "tftftftftf");
     assert_eq!(m.work, 3, "samples only");
 
-    let dir = crate::fixture::scratch_path("bumbledb-bench-harness-cold");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("harness-cold");
     let db = bumbledb::Db::create(
         &dir,
         crate::worlds::ledger::Ledger,
@@ -126,5 +125,4 @@ fn cold_touches_before_every_sample_and_bumps_generations() {
         "every touch bumps the generation: {generations:?}"
     );
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }

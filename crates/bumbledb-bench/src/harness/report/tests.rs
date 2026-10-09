@@ -211,8 +211,7 @@ fn verdict_and_budget_logic_is_table_tested() {
 
 #[test]
 fn write_artifacts_creates_exactly_the_three_files() {
-    let dir = crate::fixture::scratch_path("bumbledb-bench-report");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("report");
     write_artifacts(&fixture(), &dir).expect("writes");
     let mut names: Vec<String> = std::fs::read_dir(&dir)
         .expect("read dir")
@@ -228,7 +227,6 @@ fn write_artifacts_creates_exactly_the_three_files() {
     assert_eq!(names, ["QUERIES.md", "report.json", "report.md"]);
     let queries = std::fs::read_to_string(dir.join("QUERIES.md")).expect("read");
     assert_eq!(queries, families::render_queries_md());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

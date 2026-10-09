@@ -1,8 +1,7 @@
 #[test]
 fn runner_post_write_alternation_restores_the_loaded_state() {
     use crate::worlds::corpus_gen::{GenConfig, Scale};
-    let dir = crate::fixture::scratch_path("bumbledb-bench-appperf-postwrite");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("appperf-postwrite");
     let cfg = GenConfig {
         seed: 1,
         scale: Scale::Tiny,
@@ -38,14 +37,12 @@ fn runner_post_write_alternation_restores_the_loaded_state() {
         "alternating delete/insert restores the store"
     );
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn runner_large_result_reports_split_segments_below_end_to_end() {
     use crate::worlds::corpus_gen::{GenConfig, Scale};
-    let dir = crate::fixture::scratch_path("bumbledb-bench-appperf-large");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("appperf-large");
     let db = bumbledb::Db::create(
         &dir,
         crate::worlds::ledger::Ledger,
@@ -73,13 +70,11 @@ fn runner_large_result_reports_split_segments_below_end_to_end() {
     assert!(phases.execute_ns <= phases.end_to_end_ns);
     assert!(phases.deliver_ns <= phases.end_to_end_ns);
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn runner_tenant_churn_releases_descriptors_and_reports_latency() {
-    let dir = crate::fixture::scratch_path("bumbledb-bench-appperf-churn");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("appperf-churn");
     let row = super::tenant_churn(&dir, 3, 12, 7).expect("churn runs");
     assert_eq!(row.regime, super::Regime::TenantChurn);
     assert!(row.stats.p99 >= row.stats.p50);
@@ -89,14 +84,12 @@ fn runner_tenant_churn_releases_descriptors_and_reports_latency() {
             "activation churn must not accumulate descriptors, grew by {leaked}"
         );
     }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn runner_cold_open_times_open_plus_first_read() {
     use crate::worlds::corpus_gen::{GenConfig, Scale};
-    let dir = crate::fixture::scratch_path("bumbledb-bench-appperf-cold");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("appperf-cold");
     let db = bumbledb::Db::create(
         &dir,
         crate::worlds::ledger::Ledger,
@@ -119,18 +112,16 @@ fn runner_cold_open_times_open_plus_first_read() {
         row.work,
         2 * crate::worlds::corpus_gen::Sizes::of(Scale::Tiny).accounts
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn runner_refuses_existing_output_without_erasing_evidence() {
-    let dir =
-        crate::fixture::scratch_path(format!("bumbledb-appperf-existing-{}", std::process::id()));
+    let dir = crate::fixture::TempDir::new("appperf-existing");
     std::fs::create_dir(&dir).expect("fresh test root");
     let sentinel = dir.join("app-perf.json");
     std::fs::write(&sentinel, "previous evidence").expect("existing artifact");
     let args = crate::cli::AppPerfArgs {
-        out: Some(dir.clone()),
+        out: Some(dir.to_path_buf()),
         ..crate::cli::AppPerfArgs::default()
     };
     let error = super::run(&args).expect_err("never overwrite a previous run");
@@ -140,5 +131,4 @@ fn runner_refuses_existing_output_without_erasing_evidence() {
         "previous evidence"
     );
     assert!(!dir.join("scratch").exists());
-    std::fs::remove_dir_all(dir).expect("remove this test's artifacts");
 }

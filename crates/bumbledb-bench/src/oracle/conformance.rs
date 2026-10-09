@@ -105,7 +105,7 @@ pub fn build_world(seed: u64) -> World {
         seed,
         scale: Scale::Tiny,
     };
-    let dir = TempDir::new(&format!("conformance-{seed:08x}"));
+    let dir = TempDir::new(format!("conformance-{seed:08x}"));
     let db = target::publish_admitted(dir.path());
     let mut naive = NaiveDb::new(&target::descriptor());
     let mut delta = Delta::default();

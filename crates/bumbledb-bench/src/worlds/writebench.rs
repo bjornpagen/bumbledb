@@ -286,12 +286,6 @@ mod tests {
         scale: Scale::Tiny,
     };
 
-    fn scratch(tag: &str) -> std::path::PathBuf {
-        let dir = crate::fixture::scratch_path(format!("bumbledb-bench-write-{tag}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
     fn containment_target_db(dir: &Path) -> Db<Ledger> {
         let db = Db::create(dir, Ledger, crate::harness::bench_work())
             .expect("create")
@@ -311,7 +305,7 @@ mod tests {
     /// refuses, and the refusal commits NOTHING (the generation does not move).
     #[test]
     fn posting_swap_touch_is_delete_bearing_by_contract() {
-        let dir = scratch("swap-shape");
+        let dir = crate::fixture::TempDir::new("swap-shape");
         let db = containment_target_db(&dir);
         let sizes = Sizes::of(CFG.scale);
         let mut rng = Rng::new(CFG.seed ^ 0x0115_0004);
@@ -357,13 +351,12 @@ mod tests {
         let reprobed = PostingMint::probe(&db).expect("reprobe");
         assert_eq!(reprobed.0, after.id.0 + 1, "MAX(id) + 1 over live rows");
         drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// REVIEW-001: rejected admission must not produce a successful measurement.
     #[test]
     fn commit_single_rejected_admission_is_not_a_measured_success() {
-        let dir = scratch("commit-single-refusal");
+        let dir = crate::fixture::TempDir::new("commit-single-refusal");
         let db = Db::create(&dir, Ledger, crate::harness::bench_work())
             .expect("create")
             .expect("accepted");
@@ -375,6 +368,5 @@ mod tests {
             "reference violations reject; the old `.map(|_| 1)` path wrongly counted that as work"
         );
         drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

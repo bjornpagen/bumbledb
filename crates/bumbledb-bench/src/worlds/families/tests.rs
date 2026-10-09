@@ -25,8 +25,7 @@ fn golden_sets(family: &Family) -> Vec<(ParamId, Vec<Value>)> {
 
 #[test]
 fn all_sixteen_validate_and_prepare() {
-    let dir = crate::fixture::scratch_path("bumbledb-bench-families");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("families");
     let db = bumbledb::Db::create(
         &dir,
         crate::worlds::ledger::Ledger,
@@ -40,7 +39,6 @@ fn all_sixteen_validate_and_prepare() {
             .unwrap_or_else(|e| panic!("{} fails validation: {e:?}", family.name));
     }
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -238,8 +236,7 @@ fn equal_amount_slice() -> Vec<(bumbledb::RelationId, Vec<Value>)> {
 fn balance_counts_equal_amounts_separately() {
     let rows = equal_amount_slice();
 
-    let dir = crate::fixture::scratch_path("bumbledb-bench-true-balance");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("true-balance");
     let db = bumbledb::Db::create(
         &dir,
         crate::worlds::ledger::Ledger,
@@ -292,7 +289,6 @@ fn balance_counts_equal_amounts_separately() {
     assert_eq!(sum, 10, "the golden agrees");
 
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn s(text: &str) -> Value {

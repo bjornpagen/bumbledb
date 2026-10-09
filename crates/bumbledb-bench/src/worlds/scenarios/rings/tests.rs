@@ -3,9 +3,8 @@ use bumbledb::{AnswerValue, Answers, Db, Query, Value};
 
 use crate::worlds::families::bind_values;
 
-fn smoke_store(name: &str) -> (Db<SchemaDescriptor>, std::path::PathBuf) {
-    let dir = crate::fixture::scratch_path(name);
-    let _ = std::fs::remove_dir_all(&dir);
+fn smoke_store(name: &str) -> (Db<SchemaDescriptor>, crate::fixture::TempDir) {
+    let dir = crate::fixture::TempDir::new(name);
     let db = Db::create(
         &dir,
         bumbledb::Theory::descriptor(super::Rings),
@@ -45,11 +44,9 @@ fn run_count(db: &Db<SchemaDescriptor>, query: &Query, params: &[Value]) -> Opti
 
 #[test]
 fn rings_smoke_gate_agrees_on_every_family() {
-    let dir = crate::fixture::scratch_path("bumbledb-rings-smoke-gate");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::fixture::TempDir::new("rings-smoke-gate");
     crate::worlds::scenarios::gate_scenario(&dir, &super::scenario_smoke(), 7)
         .expect("every rings family agrees with SQLite at smoke scale");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -78,7 +75,7 @@ fn r2_tuned_param_slots_match_canonical() {
 
 #[test]
 fn bomb_answer_is_the_planted_triangle() {
-    let (db, dir) = smoke_store("bumbledb-rings-bomb-answer");
+    let (db, _dir) = smoke_store("rings-bomb-answer");
     assert_eq!(
         run_count(&db, &super::bomb_t1(), &[]),
         Some(3),
@@ -90,12 +87,11 @@ fn bomb_answer_is_the_planted_triangle() {
         "tier 2: exactly the planted triangle's rotations"
     );
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn planted_wash_ring_is_nonempty_at_smoke() {
-    let (db, dir) = smoke_store("bumbledb-rings-wash-ring");
+    let (db, _dir) = smoke_store("rings-wash-ring");
     let hit = run_count(&db, &super::wash_ring(), &[Value::I64(1000)])
         .expect("the planted ring clears the 1000 bar");
     assert!(hit >= 1, "r1 counts the planted ring");
@@ -108,5 +104,4 @@ fn planted_wash_ring_is_nonempty_at_smoke() {
         "the miss: an empty binding set is the empty answer set, not a zero row"
     );
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }

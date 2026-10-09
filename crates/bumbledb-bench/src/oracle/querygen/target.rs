@@ -984,8 +984,7 @@ mod tests {
             scale: Scale::Tiny,
         };
         let domains = Domains::of(cfg.scale);
-        let dir = crate::fixture::scratch_path("bumbledb-target-tag-budget");
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::fixture::TempDir::new("target-tag-budget");
         let db = publish_admitted(&dir);
         for rel in 0..TARGET_RELATIONS {
             let rel = bumbledb::RelationId(rel);
@@ -1031,7 +1030,6 @@ mod tests {
             "the swept corpus convicts nothing: {report:?}"
         );
         drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The closed-relation statement pins, re-derived from the materialized

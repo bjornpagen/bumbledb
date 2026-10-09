@@ -11,12 +11,6 @@ const CFG: GenConfig = GenConfig {
     scale: Scale::S,
 };
 
-fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = crate::fixture::scratch_path(format!("bumbledb-calendar-{tag}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
-
 #[test]
 fn the_schema_is_statement_complete() {
     let s = schema();
@@ -196,7 +190,7 @@ fn goldens_pin_the_translator() {
 
 #[test]
 fn every_family_has_witnesses_on_the_unit_corpus() {
-    let dir = scratch("unit-witnesses");
+    let dir = crate::fixture::TempDir::new("unit-witnesses");
     let sizes = CalSizes::unit();
     let db = Db::create(
         &dir.join("db.bdb"),
@@ -225,7 +219,6 @@ fn every_family_has_witnesses_on_the_unit_corpus() {
         );
     }
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The hand-written `free_busy` coalesce is row-identical to the engine's
@@ -233,7 +226,7 @@ fn every_family_has_witnesses_on_the_unit_corpus() {
 /// is ever timed.
 #[test]
 fn the_hand_coalesce_matches_pack() {
-    let dir = scratch("coalesce");
+    let dir = crate::fixture::TempDir::new("coalesce");
     let sizes = CalSizes::unit();
     let db = Db::create(
         &dir.join("db.bdb"),
@@ -276,12 +269,10 @@ fn the_hand_coalesce_matches_pack() {
     assert!(!ours.is_empty(), "a real coalesce");
     crate::oracle::compare::multisets(ours, theirs).expect("Pack == hand coalesce");
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn every_family_sql_prepares_on_the_mirror() {
-    let dir = scratch("sql-prepares");
     let sizes = CalSizes::unit();
     let conn = rusqlite::Connection::open_in_memory().expect("oracle");
     corpus::load_sqlite_into(&conn, CFG, sizes).expect("oracle load");
@@ -298,7 +289,6 @@ fn every_family_sql_prepares_on_the_mirror() {
             let _ = count;
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

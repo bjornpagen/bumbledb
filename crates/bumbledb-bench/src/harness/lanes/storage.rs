@@ -434,12 +434,6 @@ mod tests {
         }
     }
 
-    fn scratch(tag: &str) -> PathBuf {
-        let dir = crate::fixture::scratch_path(format!("bumbledb-bench-{tag}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
     #[test]
     fn report_json_shape_is_pinned() {
         let report = StorageReport {
@@ -529,12 +523,12 @@ mod tests {
 
     #[test]
     fn tiny_end_to_end_measures_both_engines() {
-        let dir = scratch("storage-lane-e2e");
+        let dir = crate::fixture::TempDir::new("storage-lane-e2e");
         let out = dir.join("out");
         let code = run(&StorageArgs {
             scales: vec![Scale::Tiny],
             seed: 1,
-            dir: dir.clone(),
+            dir: dir.to_path_buf(),
             out: Some(out.clone()),
         })
         .expect("the lane runs");
@@ -624,12 +618,11 @@ mod tests {
 
         assert!(!out.join("scratch").exists(), "scratch removed");
         assert!(out.join("storage-report.md").exists(), "markdown artifact");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn disk_size_equals_the_stat_path() {
-        let dir = scratch("storage-lane-disksize");
+        let dir = crate::fixture::TempDir::new("storage-lane-disksize");
         let store = dir.join("db.bdb");
         let db = Db::create(
             &store,
@@ -651,6 +644,5 @@ mod tests {
             file_bytes(&store.join("data.mdb")).expect("stat")
         );
         drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

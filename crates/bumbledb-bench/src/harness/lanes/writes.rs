@@ -595,12 +595,6 @@ mod tests {
         }
     }
 
-    fn scratch(tag: &str) -> PathBuf {
-        let dir = crate::fixture::scratch_path(format!("bumbledb-writes-lane-{tag}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
     #[test]
     fn report_json_shape_is_pinned() {
         let report = WritesReport {
@@ -691,12 +685,12 @@ mod tests {
 
     #[test]
     fn tiny_ladder_runs_and_verifies_post_state() {
-        let dir = scratch("tiny-ladder");
+        let dir = crate::fixture::TempDir::new("tiny-ladder");
         let out = dir.join("out");
         let code = run(&crate::cli::WritesArgs {
             scale: Scale::Tiny,
             seed: 1,
-            dir: dir.clone(),
+            dir: dir.to_path_buf(),
             batches: vec![1, 10],
             samples: Some(4),
             out: Some(out.clone()),
@@ -742,13 +736,12 @@ mod tests {
 
         assert!(!out.join("scratch").exists());
         assert!(out.join("writes-report.md").exists());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Deleting an absent posting refuses and commits nothing.
     #[test]
     fn delete_refuses_a_missing_row() {
-        let dir = scratch("delete-refusal");
+        let dir = crate::fixture::TempDir::new("delete-refusal");
         let cfg = GenConfig {
             seed: 1,
             scale: Scale::Tiny,
@@ -797,12 +790,11 @@ mod tests {
             "a refused delete leaves the store untouched"
         );
         drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn post_state_catches_a_divergence() {
-        let dir = scratch("post-state");
+        let dir = crate::fixture::TempDir::new("post-state");
         let cfg = GenConfig {
             seed: 1,
             scale: Scale::Tiny,
@@ -836,6 +828,5 @@ mod tests {
             "the divergent count is named: {err}"
         );
         drop((db, conn));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

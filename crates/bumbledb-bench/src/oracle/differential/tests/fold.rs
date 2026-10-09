@@ -197,7 +197,7 @@ fn the_fold_family_agrees_with_the_model_across_randomized_draws() {
     let descriptor = descriptor();
     let mut rng = Rng::new(0x0700_0001);
     for round in 0..6 {
-        let dir = TempDir::new(&format!("fold-round-{round}"));
+        let dir = TempDir::new(format!("fold-round-{round}"));
         let rows = 24 + rng.range(24);
         let (db, naive) = stores(dir.path(), &descriptor, corpus(&mut rng, rows));
         for rank in [10, 20, 30] {

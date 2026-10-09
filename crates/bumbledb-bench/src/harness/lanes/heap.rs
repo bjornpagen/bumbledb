@@ -384,20 +384,14 @@ mod tests {
     use crate::json::Value;
     use crate::worlds::corpus_gen::Scale;
 
-    fn scratch(tag: &str) -> PathBuf {
-        let dir = crate::fixture::scratch_path(format!("bumbledb-heap-lane-{tag}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
     #[test]
     fn tiny_ladder_emits_the_three_lanes() {
-        let dir = scratch("tiny");
+        let dir = crate::fixture::TempDir::new("tiny");
         let out = dir.join("out");
         let code = run(&HeapArgs {
             scale: Scale::Tiny,
             seed: 1,
-            dir: dir.clone(),
+            dir: dir.to_path_buf(),
             samples: Some(4),
             prefixes: vec![64, 256],
             out: Some(out.clone()),
@@ -424,6 +418,5 @@ mod tests {
             assert!(row.get("wall_ns").is_some(), "wall_ns");
         }
         assert!(out.join("heap-report.md").exists());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

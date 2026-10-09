@@ -344,17 +344,14 @@ mod tests {
 
     #[test]
     fn keyed_get_smoke_gate_agrees() {
-        let dir = crate::fixture::scratch_path("bumbledb-points-keyed-get-smoke");
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::fixture::TempDir::new("points-keyed-get-smoke");
         crate::worlds::scenarios::gate_scenario(&dir, &scenario_smoke(), 7)
             .expect("p5 agrees with SQLite at smoke scale");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn keyed_get_returns_the_exact_fact() {
-        let dir = crate::fixture::scratch_path("bumbledb-points-keyed-get-exact");
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::fixture::TempDir::new("points-keyed-get-exact");
         let db = bumbledb::Db::create(
             &dir,
             bumbledb::Theory::descriptor(Points),
@@ -397,6 +394,5 @@ mod tests {
             .expect("get_dyn");
         assert!(absent.is_none(), "a never-interned key proves the miss");
         drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

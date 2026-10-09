@@ -6,12 +6,6 @@ use crate::oracle::naive::{Delta, NaiveDb};
 
 use super::{Mass, calendar, calendar_rows, ids, power, power_baseline, power_rows};
 
-fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = crate::fixture::scratch_path(format!("bumbledb-capacity-{tag}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
-
 fn pool(id: u64, supply: u64) -> (bumbledb::RelationId, Vec<Value>) {
     (ids::PARENT, vec![Value::U64(id), Value::U64(supply)])
 }
@@ -138,7 +132,7 @@ fn power_stream(mass: Mass) -> Vec<Op> {
 
 #[test]
 fn the_power_budget_verdicts_agree_with_the_naive_model() {
-    let dir = scratch("power-naive");
+    let dir = crate::fixture::TempDir::new("power-naive");
     let mass = Mass::unit();
     let db = Db::create(&dir, power::PowerWorld, crate::harness::bench_work())
         .expect("create")
@@ -151,12 +145,11 @@ fn the_power_budget_verdicts_agree_with_the_naive_model() {
         "the burst, the lowered bound, the watt over"
     );
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn the_calendar_verdicts_agree_with_the_naive_model() {
-    let dir = scratch("calendar-naive");
+    let dir = crate::fixture::TempDir::new("calendar-naive");
     let mass = Mass::unit();
     let db = Db::create(
         &dir,
@@ -178,7 +171,6 @@ fn the_calendar_verdicts_agree_with_the_naive_model() {
     let summary = differential::run(&db, &mut naive, &ops).expect("verdict parity");
     assert_eq!(summary.aborts, 1, "the overspent room");
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// One power-stream delta against the `SQLite` twin: deletes then inserts
@@ -245,7 +237,7 @@ fn sqlite_verdict(conn: &rusqlite::Connection, delta: &Delta) -> bool {
 /// only).
 #[test]
 fn the_sqlite_sum_trigger_agrees_with_the_engine() {
-    let dir = scratch("power-sqlite");
+    let dir = crate::fixture::TempDir::new("power-sqlite");
     let mass = Mass::unit();
     let db = Db::create(&dir, power::PowerWorld, crate::harness::bench_work())
         .expect("create")
@@ -275,5 +267,4 @@ fn the_sqlite_sum_trigger_agrees_with_the_engine() {
     }
     assert_eq!(aborts, 3, "the stream exercises both verdicts");
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }

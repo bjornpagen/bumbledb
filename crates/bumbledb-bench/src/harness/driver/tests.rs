@@ -3,19 +3,6 @@ use super::*;
 use crate::cli::{BenchArgs, CorpusArgs};
 use crate::worlds::corpus_gen::Scale;
 
-fn scratch(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_nanos();
-    let dir = crate::fixture::scratch_path(format!(
-        "bumbledb-bench-driver-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
-
 const CFG: GenConfig = GenConfig {
     seed: 1,
     scale: Scale::Tiny,
@@ -23,7 +10,7 @@ const CFG: GenConfig = GenConfig {
 
 #[test]
 fn the_digest_directory_is_reused() {
-    let dir = scratch("reuse");
+    let dir = crate::fixture::TempDir::new("reuse");
     let mut loads = 0;
     let mut loader = |paths: &CorpusPaths| {
         loads += 1;
@@ -42,7 +29,6 @@ fn the_digest_directory_is_reused() {
         },
     );
     assert_ne!(first.root, other.root);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -61,12 +47,12 @@ fn the_refusal_messages_substitute_the_flags() {
 
 #[test]
 fn bench_refuses_without_a_stamp() {
-    let dir = scratch("refuse");
+    let dir = crate::fixture::TempDir::new("refuse");
     let args = BenchArgs {
         corpus: CorpusArgs {
             scale: CFG.scale,
             seed: 1,
-            dir: dir.clone(),
+            dir: dir.to_path_buf(),
         },
         families: Some(vec!["point".to_owned()]),
         samples: Some(8),
@@ -76,42 +62,39 @@ fn bench_refuses_without_a_stamp() {
     };
     let err = cmd_bench(&args).unwrap_err();
     assert!(err.contains("bumbledb-bench verify"), "{err}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn verify_store_exits_zero_on_a_clean_corpus() {
-    let dir = scratch("verify-store-clean");
+    let dir = crate::fixture::TempDir::new("verify-store-clean");
     let corpus = CorpusArgs {
         scale: CFG.scale,
         seed: 1,
-        dir: dir.clone(),
+        dir: dir.to_path_buf(),
     };
     cmd_gen(&corpus).expect("gen");
     assert_eq!(cmd_verify_store(&corpus).expect("verify-store"), 0);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn verify_store_refusal_names_gen() {
-    let dir = scratch("verify-store-missing");
+    let dir = crate::fixture::TempDir::new("verify-store-missing");
     let corpus = CorpusArgs {
         scale: CFG.scale,
         seed: 1,
-        dir: dir.clone(),
+        dir: dir.to_path_buf(),
     };
     let err = cmd_verify_store(&corpus).unwrap_err();
     assert!(err.contains("bumbledb-bench gen"), "{err}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn the_full_sequence_runs_at_tiny() {
-    let dir = scratch("e2e");
+    let dir = crate::fixture::TempDir::new("e2e");
     let corpus = CorpusArgs {
         scale: CFG.scale,
         seed: 1,
-        dir: dir.clone(),
+        dir: dir.to_path_buf(),
     };
     cmd_gen(&corpus).expect("gen");
     let paths = corpus_paths(&dir, CFG);
@@ -163,5 +146,4 @@ fn the_full_sequence_runs_at_tiny() {
     cmd_bench(&lying).expect("bench --i-am-lying");
     let md = std::fs::read_to_string(dir.join("lying-out").join("report.md")).expect("read");
     assert!(md.contains("UNVERIFIED"), "{md}");
-    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -15,12 +15,6 @@ use super::{
     enforcement, ids,
 };
 
-fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = crate::fixture::scratch_path(format!("bumbledb-lawful-{tag}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
-
 #[test]
 fn the_lawful_schema_validates_and_carries_every_statement_family() {
     let schema = super::schema();
@@ -111,7 +105,7 @@ fn the_enforcement_map_is_total_over_the_materialized_statements() {
 #[test]
 fn the_lawful_twins_load_value_identical_at_tiny() {
     let sizes = LawSizes::of(Scale::Tiny);
-    let dir = scratch("twin");
+    let dir = crate::fixture::TempDir::new("twin");
     let (db, conn) = super::load::load_stores(&dir, 7, sizes).expect("load");
     for (rel, expected) in [
         (ids::TASK, sizes.tasks),
@@ -129,12 +123,11 @@ fn the_lawful_twins_load_value_identical_at_tiny() {
         poststate::assert_identical("lawful", name, ours, theirs).expect(name);
     }
     drop((db, conn));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn the_lawful_verdicts_agree_with_the_naive_model() {
-    let dir = scratch("naive");
+    let dir = crate::fixture::TempDir::new("naive");
     let sizes = LawSizes::of(Scale::Tiny);
     let db = Db::create(&dir, LawfulWorld, crate::harness::bench_work())
         .expect("create")
@@ -219,7 +212,6 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
         "the key, the containment, the capacity law, and the ψ selection"
     );
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The tiny per-family protocol: 1 warmup + 2 measured samples = 3 closure
@@ -250,7 +242,7 @@ fn assert_twins_identical(db: &Db<LawfulWorld>, conn: &rusqlite::Connection) {
 #[test]
 fn every_lawful_commit_family_leaves_the_twins_value_identical() {
     let sizes = LawSizes::of(Scale::Tiny);
-    let dir = scratch("legal-families");
+    let dir = crate::fixture::TempDir::new("legal-families");
     let (db, conn) = super::load::load_stores(&dir, 7, sizes).expect("load");
     let mut ours_cursor = LawCursor::at_base(sizes);
     let mut theirs_cursor = LawCursor::at_base(sizes);
@@ -276,7 +268,6 @@ fn every_lawful_commit_family_leaves_the_twins_value_identical() {
 
     assert_twins_identical(&db, &conn);
     drop((db, conn));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Every rejection lane refuses on BOTH engines and commits NOTHING: after the
@@ -288,7 +279,7 @@ fn every_lawful_commit_family_leaves_the_twins_value_identical() {
 #[test]
 fn every_rejection_lane_refuses_on_both_engines_and_commits_nothing() {
     let sizes = LawSizes::of(Scale::Tiny);
-    let dir = scratch("rejections");
+    let dir = crate::fixture::TempDir::new("rejections");
     let (db, conn) = super::load::load_stores(&dir, 7, sizes).expect("load");
     let mut ours_cursor = LawCursor::at_base(sizes);
     let mut theirs_cursor = LawCursor::at_base(sizes);
@@ -356,12 +347,11 @@ fn every_rejection_lane_refuses_on_both_engines_and_commits_nothing() {
 
     assert_twins_identical(&db, &conn);
     drop((db, conn));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn the_rejection_shapes_cite_the_expected_violation_kinds() {
-    let dir = scratch("citations");
+    let dir = crate::fixture::TempDir::new("citations");
     let sizes = LawSizes::of(Scale::Tiny);
     let db = Db::create(&dir, LawfulWorld, crate::harness::bench_work())
         .expect("create")
@@ -448,12 +438,11 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
         "expected a Containment citation on the ψ statement: {cited:?}"
     );
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn the_full_lawful_run_renders_the_enforcement_map_and_every_family() {
-    let dir = scratch("full-run");
+    let dir = crate::fixture::TempDir::new("full-run");
     let (markdown, json) = super::run::run_with(&dir, 7, LawSizes::of(Scale::Tiny), Some(2), None)
         .expect("the tiny lawful run");
     assert!(markdown.contains("enforcement map"), "{markdown}");
@@ -481,5 +470,4 @@ fn the_full_lawful_run_renders_the_enforcement_map_and_every_family() {
             .is_some_and(|p| p.get("host").is_some()),
         "the provenance stamp rides the artifact"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }

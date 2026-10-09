@@ -346,8 +346,7 @@ mod tests {
 
     #[test]
     fn the_arm_reaches_both_verdict_classes() {
-        let dir = crate::fixture::scratch_path("bumbledb-bench-irgen");
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::fixture::TempDir::new("irgen");
         let db = target::publish_admitted(&dir);
         let mut accepted = 0u32;
         let mut rejected = 0u32;
@@ -363,7 +362,6 @@ mod tests {
             }
         }
         drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(accepted > 0, "no accepted query in 512 seeds");
         assert!(rejected > 0, "no rejected query in 512 seeds");
         assert!(saw_interiors, "no interiors-bearing query in 512 seeds");

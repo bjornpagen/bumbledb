@@ -1118,7 +1118,7 @@ pub(super) fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
 /// On an engine-vs-naive disagreement, a refused base commit, or a
 /// closed-relation write in a fixture.
 fn render_fixture(fixture: &JudgmentFixture) -> String {
-    let dir = TempDir::new(&format!("judgment-{}", fixture.name));
+    let dir = TempDir::new(format!("judgment-{}", fixture.name));
     let db = Db::create(
         dir.path(),
         fixture.schema.clone(),
