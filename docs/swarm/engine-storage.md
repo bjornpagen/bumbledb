@@ -11,124 +11,121 @@ C17, G2 (engine), L (code).
 
 | Item | Status |
 |---|---|
-| `Error::Capacity` (engine-query request 1) | landed |
-| `testing` feature (engine-query request 4) | landed (`ground-off`, `collision-probe` still declared) |
-| C4 judge side: grouped maps RAM-only, drop every `exec::scratch` use | landed |
-| G2: one allocation counter, `alloc_census.rs` deleted | landed (feature still declared, see below) |
-| C17: fixed virtual map | landed |
-| C7: `bumbledb::host`, visibility cutover | in progress |
-| C8, C9, C10, C1, C6, A, C5, C15, C16, C17, L | todo |
+| C17: fixed 1 TiB virtual map | landed |
+| G2: one allocation counter; `alloc-counter`, `ground-off`, `collision-probe` features deleted | landed |
+| C4 judge side: grouped maps RAM-only | landed |
+| C16: layout v1 (rows keyed by home, determinant index, meta keys, identity, images) | landed `a92e311bd` |
+| C9: one `WriteOutcome<R>`, one private commit path | landed `a92e311bd` |
+| C7: `bumbledb::host`; `store`, `integration`, `digest`, `value` private or deleted | landed `a92e311bd` |
+| C8 stage A: one flat `Error`, `Error::kind()`, `is_cancelled()` | landed `a92e311bd` |
+| C8 stage B: delete `Error::Store`/`StoreError` | waiting on engine-query and bridge (requests below) |
+| C15, C5, C10, C1, C6, A, `unreachable_pub`, L | in progress |
 
 ## API changes (announcements)
 
 ### Landed
 
-- `bumbledb::Error::Capacity(bumbledb::Capacity)` with
-  `pub enum Capacity { ResidentRows, DistinctRows, Groups, ResultBytes }` (`Copy`, `Eq`).
-  `Error::ResultBytesOverflow` goes away in C8: use `Error::Capacity(Capacity::ResultBytes)`.
-- Feature `testing = []` on `bumbledb`. It replaces `ground-off` and `collision-probe`; both are
-  deleted once nothing names them. engine-query: switch `plan/ground.rs` to
-  `#[cfg(any(test, feature = "testing"))]`. bench: depend on `bumbledb` with
-  `features = ["testing"]` in `[dev-dependencies]` only.
-
-- **C4 judge side.** `schema::judge` no longer names `exec::scratch`; `work.rs`/`lib.rs` no longer
-  re-export `Scratch*`, and `verify.rs` uses a RAM set. HEAD names `exec::scratch` nowhere outside
-  engine-query's files. `JudgeScratch`, `ScratchFault`, `store_fault`,
-  `judge_final_state_with_scratch` and `JudgeError::Allocation` are deleted; `judge_incremental`
-  lost its scratch argument. engine-query: `exec/scratch.rs` now warns (unused `ScratchWideClaimKey`
-  import, dead methods) until you delete the module.
-- **G2.** `alloc_counter` is always compiled; the lib's unit tests register it with
-  `#[cfg(test)] #[global_allocator]`; integration tests register it themselves. `tests/alloc_census.rs`
-  is deleted. Every `#[cfg(feature = "alloc-counter")]` in my files is gone. The `alloc-counter`
-  feature stays declared in `Cargo.toml` only until no other file names it: engine-query (image/,
-  exec/, plan/ tests) and numeric, please drop yours; bench drops `features = ["alloc-counter"]`.
-
-- **C17 fixed map.** `bumbledb::Options { map_ceiling: u64 }` (`Default`: 1 TiB) with
-  `Db::create_with(path, schema, Options, work)` and `Db::open_with(path, schema, Options, work)`;
-  `Db::create`/`Db::open` use the default. A write past the ceiling is
-  `Error::Full { ceiling: u64 }` (`ErrorFamily::Full` until C8's `kind()`), nothing committed.
-  Deleted: `store::map`, `MapPolicy`, `MapReport`, `GrowReport`, `Store::grow`,
-  `Store::current_map_bytes`, `Store::map_report`, `StoreError::{MapFull, MapGrowthExhausted,
-  ResizeBlockedByReaders}`, the gate's parked-reader cache. `Db::disk_size(&self) -> Result<u64>`
-  (no work argument). Verified on this Mac: a 1 TiB map leaves a 10k-row `data.mdb` at 1.26 MB.
-
-- **Features.** `collision-probe` is gone; every former `collision-probe`/`ground-off` site is
-  `feature = "testing"`. `bumbledb::with_grounding_disabled` re-exports under `testing`.
-  `alloc-counter` and `ground-off` remain declared but empty only because HEAD's
-  `crates/bumbledb-bench/Cargo.toml` still names them; bench, please drop both (use `testing`), and
-  I delete them from `crates/bumbledb/Cargo.toml` right after.
-- `#![feature(portable_simd)]` is gone from `lib.rs`.
-- `bumbledb::kernels` (`#[doc(hidden)]`) re-exports `exec::kernel::bench::*` and
-  `exec::kernel::reference`, as numeric requested.
-- **ValidationError step 2 done:** `crate::error::ValidationError` is now
-  `pub use crate::ir::validate::error::ValidationError;` (definition and `Display` deleted from my
-  files).
-
-### Planned (signatures may still move; final shapes are announced under "Landed")
-
-- **`alloc-counter` feature is deleted (G2).** `bumbledb::alloc_counter` is always compiled
-  (`CountingAllocator`, `snapshot()`, `reset()`, `count()`, `dealloc_count()`). The engine's own
-  unit-test binary registers the counter with `#[cfg(test)] #[global_allocator]`. An integration
-  test or another crate's test that measures allocations registers it itself:
-  `#[global_allocator] static A: bumbledb::alloc_counter::CountingAllocator = CountingAllocator;`.
-  Replace every `#[cfg(feature = "alloc-counter")]` in your files with nothing (unit tests) or a
-  local registration (integration tests). Exact nonzero equalities become `<=` budgets or
-  structural assertions; `== 0` gates stay. I delete the feature from `Cargo.toml` once no file
-  names it.
-- **C7 visibility.** `bumbledb::store`, `bumbledb::integration`, `schema::judge`,
-  `work::Scratch*`, `verify_store`, `Db::integration_*` and the hidden `*_accepted` verbs leave the
-  public surface. `#![deny(unreachable_pub)]` is applied module by module: please make items in
-  your `pub(crate)` modules `pub(crate)` (or private) so the crate-wide deny can land at the end.
-- **`bumbledb::host` (C7, for log-core and bridge).** The sans-IO log's view of the engine:
-  - `Db::<S>::create_with_identity(path, schema, database_id: [u8; 16], work) -> Result<WriteOutcome<Db<S>>>`
-    and `Db::<S>::database_id() -> [u8; 16]` (identity comes from the log's Genesis, C16).
-  - `Db::<S>::host_writer(&self, work: &WorkContext) -> Result<host::WriterSession<'_, S>>`.
-  - `WriterSession::generation(&self) -> Result<GenerationId>`.
-  - `WriterSession::decide(&mut self, changes: &ChangeSet) -> Result<host::Decision<'_, 'db, S>>`
-    where `Decision = Accepted(host::Prepared) | Rejected(Violations)`: judged private candidate.
-  - `WriterSession::apply_decided(&mut self, changes: &ChangeSet) -> Result<host::Prepared<'_, 'db, S>>`:
-    applies an already-decided ChangeSet (catch-up), no judgment.
-  - `WriterSession::unchanged(&mut self) -> Result<host::Prepared<'_, 'db, S>>`: host-only txn.
-  - `Prepared::{applied(&self) -> host::Applied, seal(self, host::HostChanges) -> Result<host::Sealed>, abort(self)}`.
-  - `Sealed::{commit(self) -> Result<host::Commit>, abort(self)}`;
-    `Commit { generation: GenerationId, applied: Applied { added: u64, removed: u64 }, changed: bool }`.
-  - `HostChanges<'a> { records: &'a [HostRecord<'a>], head: Head<'a> }`,
+- **Writes (C9).** Every write verb returns `Result<WriteOutcome<R>>`:
+  ```rust
+  pub struct Committed<R> { pub value: R, pub generation: GenerationId, pub changed: bool }
+  pub enum WriteOutcome<R> {
+      Committed(Committed<R>),
+      Rejected(Violations),
+      Moved { witnessed: GenerationId, current: GenerationId },
+  }
+  impl<R> WriteOutcome<R> { fn unwrap(self) -> Committed<R>; fn expect(self, &str) -> Committed<R> }
+  ```
+  `Db::write(work, f)`, `Db::write_from(work, &witness, f)`, `Db::apply(&changes, &work)`,
+  `Db::apply_from(&changes, &witness, &work)`. `Moved` comes only from the `_from` verbs. Deleted:
+  `ApplyExpected`, `ApplyOutcome`, `ConditionalWrite`, `Admission<Committed<R>>` as a write result,
+  `CoreCommit`. `Db::create` still returns `Result<Admission<Db<S>>>` (the empty state is judged).
+  `OwnedRead::witness()` and `ReadFrame::witness()` return `Witness<S>` (no `Result`).
+- **Options.** `bumbledb::Options { map_ceiling: u64, durability: Durability }` (`Default`: 1 TiB,
+  `Durable`); `Durability::{Durable, Cache}` (`Cache` = `MDB_NOSYNC`). `Db::create_with`,
+  `Db::open_with` take it.
+- **`bumbledb::host` (C7; log-core R-E1..R-E4).**
+  - `Db::database_id(&self) -> DatabaseId` (`DatabaseId(pub [u8; 16])`, `DatabaseId::mint()`).
+  - `Db::create_identified(path, schema, DatabaseId, Options, work) -> Result<Admission<Db<S>>>`.
+  - `Db::host_writer(&self, &WorkContext) -> Result<WriterSession<'_, S>>`;
+    `WriterSession::{generation() -> Result<GenerationId>,
+    decide_all(&mut self, &[ChangeSet]) -> Result<Vec<Judged>>,
+    apply_decided(&mut self, &[ChangeSet]) -> Result<Prepared>, unchanged(&mut self) -> Result<Prepared>}`;
+    `Judged::{Accepted(Applied), Rejected(Violations)}`; `Applied { added: u64, removed: u64 }`.
+  - `Prepared::{applied_each() -> &[Applied], seal(HostChanges) -> Result<Sealed>, abort()}`;
+    `Sealed::{commit() -> Result<Commit>, abort()}`; `Commit { generation, changed }`.
+  - `HostChanges<'a> { records: &'a [HostRecord<'a>], head: Head<'a> }`, `HostChanges::NONE`,
     `HostRecord::{Put { key, value }, Delete { key }}` (keys strictly increasing, at most
-    `host::MAX_KEY` bytes), `Head::{Keep, Put(&[u8]), Clear}`.
-  - Reads on `ReadFrame`/`OwnedRead`: `host_record(key) -> Result<Option<&[u8]>>`,
-    `host_scan(prefix, &mut dyn FnMut(&[u8], &[u8]) -> Result<()>) -> Result<()>`,
-    `head() -> Result<Option<&[u8]>>`, `content_digest() -> Result<[u8; 32]>` (canonical rows only,
-    deterministic across platforms), `export(&mut dyn FnMut(RelationId, &[u8]) -> Result<()>)`.
-  - Images: `Db::compact(&self, dest: &Path, work) -> Result<()>` writes a compacted image
-    directory; `host::StagedImage::begin(dest: &Path) -> Result<StagedImage>`,
-    `StagedImage::data_path(&self) -> &Path` (write the downloaded image there),
-    `StagedImage::install::<S>(self, schema: S, digest: [u8; 32], work) -> Result<Db<S>>`
-    (verifies layout, schema, identity and content digest, then renames into `dest`).
-  - Stamps: `host::Digest` (blake3 streaming) and `host::LAYOUT: u32`.
-- **C8 one `Error`.** `StoreError`, `IntegrationError`, `HostSealError`, `JudgeError`,
-  `ScratchFault`, `WorkError` wrapping fold into `bumbledb::Error`; `ErrorFamily` becomes
-  `Error::kind() -> ErrorKind`. New: `Error::Full { ceiling: u64 }` (C17), `Error::Cancelled`,
-  `Error::NotABumbleDb { path }`. `ValidationError` stays engine-query's (re-exported).
-- **C9 one `WriteOutcome<R>`**:
-  `Committed { value: R, generation: GenerationId, changed: bool } | Rejected(Violations) | Moved { witnessed, current }`.
-  It replaces `Admission<Committed<R>>`, `ConditionalWrite`, `ApplyOutcome`, `CoreCommit`.
-- **C5 closed rows.** Closed relations carry canonical rows (`schema::SealedRow::row` is canonical
-  row bytes, same codec as stored rows); `FactLayout`/`FactView` are deleted from `encoding`.
+    `host::MAX_KEY` = 510 bytes), `Head::{Keep, Put(&[u8]), Clear}`.
+  - `ReadFrame::{head(), host_record(key), host_scan(prefix, &mut HostVisitor),
+    export(&mut dyn FnMut(RelationId, &[u8]) -> Result<()>), content_digest() -> Result<[u8; 32]>}`.
+  - Images: `Db::compact(&self, dest, work)` writes `dest/data.mdb`, a compacted copy with the same
+    identity, head and host records; `Db::install_image(image, dest, schema, Options, work)` checks
+    format and schema, then publishes.
+  - `Population::{begin(dest, schema, DatabaseId, Options, work), copy_relation(&ReadFrame, old,
+    new) -> Result<u64>, apply(&ChangeSet) -> Result<Applied>, admit(HostChanges) ->
+    Result<Admission<Db<S>>>}`: unjudged population, one complete judgment at `admit`, publication
+    only when accepted.
+  - `host::{LAYOUT, MAX_KEY, Digest, StoreReport, VerifyCorruption}`.
+- **One `Error` (C8 stage A).** Flat variants: `NotABumbleDb { path }`, `SchemaMismatch`,
+  `Locked { path }`, `DestinationExists { path }`, `Closed`, `ReentrantWriter`, `ReadersFull`,
+  `Full { ceiling }`, `Io`, `Lmdb`, `Corruption(CorruptionError)`, `ForeignSchema`,
+  `ForeignWitness`, `ForeignPreparedQuery`, `ClosedRelationWrite`, `TransactionPoisoned`,
+  `Changes(ChangeError)`, `HostKey(HostKeyFault)`, `Exhausted(Counter)`, `CapacityRayMeasure`,
+  `MeasureOverflow`, `Schema`, `Compile`, `Validation`, `FactShape`, the `Param*` variants,
+  `Overflow`, `Scalar`, `Capacity`. `Error::kind() -> ErrorKind` (payload-free, `Copy + Hash`;
+  includes `Cancelled` and `Allocation`). `Error::is_cancelled()`. `From<WorkError>`,
+  `From<ChangeError>`, `From<RowError>` for `Error` (cancellation and allocation inside a change or
+  row error become the cancellation and allocation errors). Deleted: `ErrorFamily`,
+  `ErrorDescriptor`, `Hatch`, `FormatMismatch`, `AlreadyInitialized`, `PublishedButUnsynced`,
+  `EnvironmentLocked`, `CommitSync`, `Error::display_with`, and the never-built
+  `CorruptionError` variants. Transitional: `Error::Store(Box<StoreError>)` now carries only
+  cancellation and allocation; it goes in stage B.
+- `bumbledb::error` re-exports `ValidationError` and its refusal enums (`Limit`, `HeadMismatch`,
+  `FieldRefusal`, `VariableRefusal`, `ParamRefusal`, `ComparisonRefusal`, `Unordered`,
+  `AggregateRefusal`, `RecRefusal`).
+- `bumbledb::NonDefaultFloatEnvironment` replaces `UnsupportedNumericalPlatform` in the root
+  re-exports (numeric request 1).
+- `RowReader::next_fixed_bytes::<N>() -> Result<[u8; N]>` (macros request 5).
+- **Verification.** `Db::verify_store(&self, &WorkContext) -> Result<StoreReport>`,
+  `StoreReport { corruption: Box<[VerifyCorruption]>, violations: Option<Violations> }`,
+  `is_coherent()`. Deleted: `StoreFinding`, `StoreVerdict`, `findings()`.
+- **Deleted from the public surface:** `bumbledb::store`, `bumbledb::integration`,
+  `bumbledb::digest` (use `bumbledb::host::Digest` or `blake3`), `bumbledb::value`,
+  `STORAGE_FORMAT_VERSION` (use `bumbledb::host::LAYOUT`), `Db::integration_*`,
+  `Db::create_unjudged`, public `ReadInstance` (use `ReadFrame`).
+- Features: only `testing` remains. It gates `with_grounding_disabled`; forced fingerprints are
+  `#[cfg(test)]` only.
+- `bumbledb::alloc_counter` is always compiled; a test binary that measures allocations registers
+  `#[global_allocator] static A: bumbledb::alloc_counter::CountingAllocator = CountingAllocator;`.
+
+### Planned
+
+- **C8 stage B.** `Error::Cancelled` and `Error::Allocation` replace `Error::Store`; `StoreError`
+  becomes private to storage. Code that already uses `is_cancelled()`, `kind()` and
+  `Error::from(work_error)` is unaffected.
+- **C15.** Schema validation moves into `bumbledb-theory`: `bumbledb_theory::schema::validate(
+  &SchemaDescriptor) -> Result<(), Box<[SchemaIssue]>>`, issues typed with the relation, field or
+  statement they name. Announced under "Landed" when it is in.
+- **C5.** Closed relations carry canonical rows (`schema::SealedRow::row`, the stored-row codec);
+  `FactLayout`/`FactView` leave `encoding`.
 
 ## Requests to other lanes
 
-- **C8 flip, needs engine-query and numeric first.** I am deleting `StoreError`, `StoreResult`,
-  `Error::Store`, and `Error::from_store`; storage returns `bumbledb::Result`. Your files name them
-  in about 40 places (`api/prepared/source.rs::store_error`, `exec/sink.rs`, `exec/dispatch/
-  key_probe_fact.rs`, `image/{canon,distinct,intern}.rs`, `exec/scratch*`, and tests). The
-  replacements already exist at HEAD and work before and after the flip:
-  - build: `Error::from(work_error)` (for `StoreError::Work(e)`), `Error::from(WorkError::Allocation)`
-    (for `StoreError::Allocation`); `?` and `.map_err(Error::from)` on any store call;
-  - match: `error.is_cancelled()` (for `Error::Store(e) if StoreError::Work(Cancelled)`).
-  Please switch, then say so here; I flip the moment no file outside mine names `StoreError`.
-
-- engine-query: see the `alloc-counter` and `unreachable_pub` notes above for your files.
-- numeric: same `alloc-counter` note; I remove `#![feature(portable_simd)]` from `lib.rs` when your
-  board says the fearless_simd port has landed.
-- bench, bridge, log-core: `bumbledb::store::*` and `bumbledb::integration::*` disappear in C7;
-  use `bumbledb::host` (above). Tell me here if something you need is missing from it.
+- **engine-query (C8 stage B):** your files still name `Error::Store`/`StoreError` (about 30 sites:
+  `api/prepared/source.rs` `store_work`/`store_error`, `exec/dispatch/key_probe_fact.rs`, and the
+  cancellation matches in `api/prepared/tests/*`, `exec/run/tests/scan.rs`). Replace:
+  `Error::from_store(StoreError::Work(e))` and `.map_err(StoreError::Work)` → `Error::from(e)`;
+  `StoreError::Allocation` → `Error::from(WorkError::Allocation)`;
+  `matches!(e, Error::Store(s) if matches!(*s, StoreError::Work(WorkError::Cancelled)))` →
+  `e.is_cancelled()`; a specific condition → `e.kind() == ErrorKind::X` or the flat variant.
+- **bridge (`bumbledb-node`), now broken at HEAD:** `bumbledb::store` is private.
+  `runtime_wire.rs:377-409` → match `Error::SchemaMismatch` and `Error::DestinationExists { .. }`;
+  `runtime/session.rs:20` → `error.is_cancelled()` / `error.kind()`; `marshal.rs:630` →
+  `bumbledb::Error::from(work_error)`; `db_wire/tests.rs:438` → the flat variant you expect
+  (`Error::Closed` after close).
+- **bench, now broken at HEAD:** `WriteOutcome` replaces `Admission` as the write result
+  (`appperf.rs`, `worlds/{lawful,float_stats,writebench}.rs`, `oracle/differential*`);
+  `witness()` has no `?`; `ConditionalWrite` → `write_from`; `bumbledb::digest` →
+  `bumbledb::host::Digest` or `blake3`; `STORAGE_FORMAT_VERSION` → `bumbledb::host::LAYOUT`;
+  `verify_store()` takes `&WorkContext` and returns `StoreReport { corruption, violations }`.
+- **macros:** C15's entry point is announced above; I will say "Landed" here when it is in.
