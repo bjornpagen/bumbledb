@@ -487,16 +487,7 @@ fn decode_field(field: &Field, row: &Ident) -> TokenStream {
         FieldTy::Interval(IntervalElement::F64) => quote!(#row.next_interval_f64()?),
         FieldTy::FixedBytes(len) => {
             let len = index(usize::from(len));
-            quote!(match <[u8; #len]>::try_from(#row.next_bytes()?) {
-                ::std::result::Result::Ok(bytes) => bytes,
-                ::std::result::Result::Err(_) => {
-                    return ::std::result::Result::Err(::bumbledb::Error::Corruption(
-                        ::bumbledb::error::CorruptionError::MalformedValue(
-                            "canonical fixed-bytes width",
-                        ),
-                    ));
-                }
-            })
+            quote!(#row.next_fixed_bytes::<#len>()?)
         }
     };
     let value = field

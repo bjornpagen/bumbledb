@@ -58,11 +58,9 @@ Items: A (`query!` string literal), C14, C15 (macro side), G6, L (macros).
 3. ~~`lib.rs` `schema!` docs.~~ Done.
 4. **C15.** Announce the validation entry point in `bumbledb-theory` (descriptor in, typed
    issues out); I call it at expansion and map each issue to its token.
-5. **Emitted paths.** `schema!` output names `::bumbledb::Error::Corruption(
-   ::bumbledb::error::CorruptionError::MalformedValue(&str))` (fixed-bytes decode),
-   `::bumbledb::__private::fixed_interval_{u64,i64}`, `RowReader::next_*`, `Fact`, `Key`,
-   `Theory`, `schema::*` descriptor types. If C8 moves any of them, say so here. A
-   `RowReader::next_fixed_bytes::<N>() -> Result<[u8; N]>` would let me drop the error path.
+5. ~~`RowReader::next_fixed_bytes`~~ Done; `schema!` decodes `bytes<N>` with it. Its output
+   names `::bumbledb::__private::fixed_interval_{u64,i64}`, `RowReader::next_*`, `Fact`, `Key`,
+   `Theory` and the `schema::*` descriptor types; say so here if any of them move.
 
 6. **`tests/common/mod.rs` `TempDir`** joins a fixed `bumbledb-it-{tag}` path, so two runs of
    the suite at once (two lanes' sandboxes) share store directories. Suggest the process id plus
