@@ -251,6 +251,7 @@ impl ScalarEvaluator {
 /// Evaluates one binding. `float` is the checked environment, if any; F64
 /// arithmetic without one fails with
 /// [`ScalarError::NonDefaultFloatEnvironment`].
+#[cfg(test)]
 pub(crate) fn evaluate_binding(
     expression: &ScalarExpr,
     float: Option<DefaultFloatEnvironment>,
@@ -401,52 +402,58 @@ fn cast(kind: NumericCast, value: Value) -> Result<Value, ScalarError> {
 
 /// Fixed-width product, exact quotient/remainder, one final public range check.
 fn mul_div(a: Value, b: Value, divisor: Value, rounding: Rounding) -> Result<Value, ScalarError> {
-    fn quotient(product: u128, divisor: u128, rounding: Rounding) -> u128 {
-        let q = product / divisor;
-        let r = product % divisor;
-        let increment = match rounding {
-            Rounding::TowardZero => false,
-            Rounding::NearestTiesAwayFromZero => r != 0 && r >= divisor - r,
-            Rounding::NearestTiesToEven => {
-                r > divisor - r || (r == divisor - r && !q.is_multiple_of(2))
-            }
-        };
-        // Products of two 64-bit values leave room for this one increment.
-        q + u128::from(increment)
-    }
     match (a, b, divisor) {
         (Value::U64(a), Value::U64(b), Value::U64(d)) => {
-            if d == 0 {
-                return Err(ScalarError::DivisionByZero);
-            }
-            let rounded = quotient(u128::from(a) * u128::from(b), u128::from(d), rounding);
-            u64::try_from(rounded)
-                .map(Value::U64)
-                .map_err(|_| ScalarError::Overflow)
+            mul_div_u64(a, b, d, rounding).map(Value::U64)
         }
         (Value::I64(a), Value::I64(b), Value::I64(d)) => {
-            if d == 0 {
-                return Err(ScalarError::DivisionByZero);
-            }
-            if d < 0 {
-                return Err(ScalarError::NonPositiveDivisor);
-            }
-            let product = i128::from(a) * i128::from(b);
-            let magnitude = quotient(
-                product.unsigned_abs(),
-                u128::from(d.unsigned_abs()),
-                rounding,
-            );
-            // A signed 64-bit product magnitude is at most 2^126.
-            let rounded =
-                i128::try_from(magnitude).expect("64-bit product fits signed wide magnitude");
-            let signed = if product < 0 { -rounded } else { rounded };
-            i64::try_from(signed)
-                .map(Value::I64)
-                .map_err(|_| ScalarError::Overflow)
+            mul_div_i64(a, b, d, rounding).map(Value::I64)
         }
         _ => Err(ScalarError::TypeMismatch),
     }
+}
+
+/// `round(a * b / d)` over the exact 128-bit product.
+pub(crate) fn mul_div_u64(a: u64, b: u64, d: u64, rounding: Rounding) -> Result<u64, ScalarError> {
+    if d == 0 {
+        return Err(ScalarError::DivisionByZero);
+    }
+    let rounded = rounded_quotient(u128::from(a) * u128::from(b), u128::from(d), rounding);
+    u64::try_from(rounded).map_err(|_| ScalarError::Overflow)
+}
+
+/// `round(a * b / d)` over the exact 128-bit product; `d` must be positive.
+pub(crate) fn mul_div_i64(a: i64, b: i64, d: i64, rounding: Rounding) -> Result<i64, ScalarError> {
+    if d == 0 {
+        return Err(ScalarError::DivisionByZero);
+    }
+    if d < 0 {
+        return Err(ScalarError::NonPositiveDivisor);
+    }
+    let product = i128::from(a) * i128::from(b);
+    let magnitude = rounded_quotient(
+        product.unsigned_abs(),
+        u128::from(d.unsigned_abs()),
+        rounding,
+    );
+    // A signed 64-bit product magnitude is at most 2^126.
+    let rounded = i128::try_from(magnitude).expect("64-bit product fits signed wide magnitude");
+    let signed = if product < 0 { -rounded } else { rounded };
+    i64::try_from(signed).map_err(|_| ScalarError::Overflow)
+}
+
+fn rounded_quotient(product: u128, divisor: u128, rounding: Rounding) -> u128 {
+    let q = product / divisor;
+    let r = product % divisor;
+    let increment = match rounding {
+        Rounding::TowardZero => false,
+        Rounding::NearestTiesAwayFromZero => r != 0 && r >= divisor - r,
+        Rounding::NearestTiesToEven => {
+            r > divisor - r || (r == divisor - r && !q.is_multiple_of(2))
+        }
+    };
+    // Products of two 64-bit values leave room for this one increment.
+    q + u128::from(increment)
 }
 
 #[cfg(test)]

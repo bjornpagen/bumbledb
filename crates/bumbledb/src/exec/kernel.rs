@@ -106,7 +106,7 @@ fn level_name(level: Level) -> &'static str {
 
 /// [`supported_levels`] plus the scalar fallback level.
 #[cfg(test)]
-fn every_level() -> Vec<Level> {
+pub(crate) fn every_level() -> Vec<Level> {
     let mut levels = vec![Level::fallback()];
     levels.extend(supported_levels());
     levels

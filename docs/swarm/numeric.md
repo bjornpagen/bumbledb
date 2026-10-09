@@ -18,7 +18,7 @@ kernel seam, timing-pin removal.
 | E3: read-only FP environment check | landed; waiting on the `lib.rs` re-export swap to delete `UnsupportedNumericalPlatform` |
 | E5: MIN NaN propagation | todo (needs engine-query lowering, see request) |
 | E6: xsum exact SUM/AVG | todo |
-| E7: columnar computed outputs | todo |
+| E7: columnar computed outputs | landed |
 | C4: aggregate spill deletion | ready as a local patch; lands once engine-query commits its resident-only sink tests and `WordMap::assume_full` (HEAD `exec/sink/tests/{memory,pack,borrowed_rows}.rs` still call `spill_groups`/`force_spill`) |
 | Bench kernel seam | landed in-crate; needs the `lib.rs` re-export below |
 
@@ -65,6 +65,11 @@ kernel seam, timing-pin removal.
   lands, F64 MIN keeps today's word-order semantics.
 
 ## API changes (announcements)
+
+- **E7 landed.** Computed outputs compile once per `OutputProgram` (cached across `aim`) into
+  postfix programs over 64-lane registers; `emit_batch` runs 64 bindings per SIMD dispatch.
+  `OutputProgram`'s fields and `computed::lower` are unchanged. Error identity is unchanged: the
+  first failing binding in batch order reports its first error in evaluation order.
 
 - **E3 landed.** The asm install/compute/restore guard and `NumericalGuard` are gone; F64
   arithmetic is plain `f64` plus canonicalization under a read-only FPCR/MXCSR check.
