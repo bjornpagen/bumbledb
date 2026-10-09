@@ -48,7 +48,8 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
   run it locally for parity. Lanes so far:
   - `lint`: `cargo fmt --check`; clippy `-D warnings` default and `--all-features`;
     `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps`; `cargo bench --no-run --profile ci`;
-    the Python self-tests under `scripts/`; `pnpm --dir ts run lint` and `run typecheck`.
+    the Python self-tests under `scripts/`; `pnpm --dir ts run lint` and `run typecheck`;
+    `crates/bumbledb-node/dts.sh --check` (the committed `binding.d.ts` is current).
   - `test`: `cargo nextest run --workspace --cargo-profile ci --profile ci`;
     `cargo test --workspace --doc --profile ci`; tree-clean check (no modified tracked file, no
     unignored untracked file).

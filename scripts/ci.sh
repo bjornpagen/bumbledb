@@ -117,6 +117,7 @@ lane_lint() {
 	ts_install
 	pnpm --dir ts run lint
 	pnpm --dir ts run typecheck
+	crates/bumbledb-node/dts.sh --check
 }
 
 lane_test() {
