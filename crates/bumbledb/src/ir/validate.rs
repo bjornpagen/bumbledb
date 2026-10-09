@@ -18,6 +18,7 @@ use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 mod context;
 pub mod error;
 mod finds;
+mod mixed;
 #[expect(
     clippy::module_inception,
     reason = "the nested module owns the operation named by its parent"

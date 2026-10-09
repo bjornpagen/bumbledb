@@ -240,6 +240,17 @@ fn shaped_var_const(
     }
 }
 
+/// Two variables of different types: an integer against an F64 has no exact
+/// common order without an explicit conversion.
+fn mismatch_refusal(lhs: ValueType, rhs: ValueType) -> ComparisonRefusal {
+    let integer = |ty: ValueType| matches!(ty, ValueType::U64 | ValueType::I64);
+    if (integer(lhs) && rhs == ValueType::F64) || (lhs == ValueType::F64 && integer(rhs)) {
+        ComparisonRefusal::MixedNumeric
+    } else {
+        ComparisonRefusal::IllegalTypes
+    }
+}
+
 fn equals_mask(negated: bool) -> AllenMask {
     if negated {
         AllenMask::EQUALS.complement()
@@ -832,11 +843,56 @@ impl Context {
         &mut self,
         shaped: &[Shaped<'_>],
     ) -> Result<Vec<ClassifiedComparison>, ValidationError> {
-        shaped
-            .iter()
-            .enumerate()
-            .map(|(index, shape)| self.classify(index, shape))
-            .collect()
+        let mut classified = Vec::with_capacity(shaped.len());
+        for (index, shape) in shaped.iter().enumerate() {
+            let Some((var, var_type, rewritten)) = self.mixed_literal(index, shape)? else {
+                classified.push(self.classify(index, shape)?);
+                continue;
+            };
+            let (op, literal) = match rewritten {
+                super::mixed::Rewritten::Always => continue,
+                super::mixed::Rewritten::Never => super::mixed::never(var_type),
+                super::mixed::Rewritten::Compare(op, literal) => (op, literal),
+            };
+            classified.push(ClassifiedComparison::VarConst {
+                op,
+                var,
+                value: SealedConst::Literal(literal),
+            });
+        }
+        Ok(classified)
+    }
+
+    /// An integer variable against an F64 literal, or an F64 variable against
+    /// an integer literal: restated exactly in the variable's own type.
+    fn mixed_literal(
+        &self,
+        index: usize,
+        shape: &Shaped<'_>,
+    ) -> Result<Option<(VarId, ValueType, super::mixed::Rewritten)>, ValidationError> {
+        let (op, var, constant) = match shape {
+            Shaped::EqVarConst {
+                negated,
+                var,
+                constant,
+                ..
+            } => (equality_op(*negated), *var, constant),
+            Shaped::OrdVarConst {
+                op, var, constant, ..
+            } => ((*op).into(), *var, constant),
+            _ => return Ok(None),
+        };
+        let ConstSide::Literal(value) = constant else {
+            return Ok(None);
+        };
+        let var_type = *self.resolved_var_type(var);
+        let Some(rewritten) = super::mixed::rewrite(var_type, op, value) else {
+            return Ok(None);
+        };
+        if matches!(shape, Shaped::OrdVarConst { .. }) {
+            self.screen_order_closed(index, var)?;
+        }
+        Ok(Some((var, var_type, rewritten)))
     }
 
     fn classify(
@@ -847,10 +903,11 @@ impl Context {
         match shape {
             Shaped::EqVarVar { negated, lhs, rhs } => {
                 let lhs_type = *self.resolved_var_type(*lhs);
-                if *self.resolved_var_type(*rhs) != lhs_type {
+                let rhs_type = *self.resolved_var_type(*rhs);
+                if rhs_type != lhs_type {
                     return Err(ValidationError::Comparison {
                         index,
-                        refusal: ComparisonRefusal::IllegalTypes,
+                        refusal: mismatch_refusal(lhs_type, rhs_type),
                     });
                 }
                 Ok(if lhs_type.is_interval() {
@@ -925,10 +982,11 @@ impl Context {
                         refusal: ComparisonRefusal::IllegalTypes,
                     });
                 }
-                if *self.resolved_var_type(*rhs) != lhs_type {
+                let rhs_type = *self.resolved_var_type(*rhs);
+                if rhs_type != lhs_type {
                     return Err(ValidationError::Comparison {
                         index,
-                        refusal: ComparisonRefusal::IllegalTypes,
+                        refusal: mismatch_refusal(lhs_type, rhs_type),
                     });
                 }
                 Ok(ClassifiedComparison::VarVar {
