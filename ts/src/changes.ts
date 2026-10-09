@@ -1,6 +1,5 @@
 import type { Scope } from "effect"
 import { Effect, Exit, Option, Stream } from "effect"
-import { drainClose, releaseOwner } from "./close.ts"
 import { isClosedMember, membersAgree } from "./closed.ts"
 import type { SchemaId } from "./compile.ts"
 import { Schema as CoreSchema, schemaTables } from "./compile.ts"
@@ -8,10 +7,11 @@ import type { ChangeRecordWire, ChangesHandle, ChangesWire, DraftHandle } from "
 import { dbNative } from "./db-native.ts"
 import { SdkInvariantError } from "./errors.ts"
 import { lower } from "./lower.ts"
+import { call, drain, release } from "./native/op.ts"
 import { type AnyRelation, type Fact, relationFields } from "./relation.ts"
 import type { CellValue } from "./rows.ts"
 import { factCellsOf, factOfCells, hostCellCharge } from "./rows.ts"
-import { nativeOperationWith, runtimeHandle } from "./runtime.ts"
+import { runtimeHandle } from "./runtime.ts"
 import type { CloseReport } from "./runtime-errors.ts"
 import { argumentError, DbError } from "./runtime-errors.ts"
 import type { AnySchema, SchemaRelation } from "./schema.ts"
@@ -176,7 +176,7 @@ function spendAndDrain(state: DraftState, operation: string): Effect.Effect<void
 		// Tracked drain: join the native close transition; the report is
 		// diagnostic here (the ingestion failure itself is the caller's
 		// error), but native Closing accounting is never dropped.
-		return drainClose(operation, (callback) => dbNative.runtimeDraftClose(state.handle, callback)).pipe(Effect.asVoid)
+		return drain(operation, (callback) => dbNative.runtimeDraftClose(state.handle, callback)).pipe(Effect.asVoid)
 	})
 }
 
@@ -225,11 +225,12 @@ function ingest(
 						continue
 					}
 					yield* eventLoopTurn()
-					yield* nativeOperationWith(
+					yield* call(
 						operation,
 						(callback) => verb(state.handle, relationId, chunk.rows, chunk.cells, callback),
-						dbNative.runtimeReportTake,
-						() => undefined
+						(lease) => {
+							dbNative.runtimeReportTake(lease)
+						}
 					).pipe(
 						Effect.catch((error) =>
 							Effect.sync(() => {
@@ -280,22 +281,19 @@ function changeRecords<S extends AnySchema>(
 	return Stream.unwrap(
 		Effect.gen(function* () {
 			const cursor = yield* Effect.acquireRelease(
-				nativeOperationWith(
+				call(
 					"ChangeSet.records",
 					(callback) => dbNative.runtimeChangesCursor(handle, callback),
-					dbNative.runtimeChangesCursorTake,
-					(value) => value
+					dbNative.runtimeChangesCursorTake
 				),
-				(value) =>
-					releaseOwner("ChangeCursor.close", (callback) => dbNative.runtimeChangesCursorClose(value, callback)),
+				(value) => release("ChangeCursor.close", (callback) => dbNative.runtimeChangesCursorClose(value, callback)),
 				{ interruptible: true }
 			)
 			return Stream.paginate(undefined, () =>
-				nativeOperationWith(
+				call(
 					"ChangeSet.records",
 					(callback) => dbNative.runtimeChangesCursorNext(cursor, callback),
-					dbNative.runtimeChangePageTake,
-					(page) => page
+					dbNative.runtimeChangePageTake
 				).pipe(
 					Effect.map((page) =>
 						page === null
@@ -319,7 +317,7 @@ function acquireChanges<S extends AnySchema>(
 			Effect.suspend(() => {
 				const internal = changesInternals.get(changes)
 				if (internal === undefined) return Effect.void
-				return releaseOwner("ChangeSet.close", (callback) => dbNative.runtimeChangesClose(internal.handle, callback))
+				return release("ChangeSet.close", (callback) => dbNative.runtimeChangesClose(internal.handle, callback))
 			}),
 		{ interruptible: true }
 	)
@@ -337,11 +335,10 @@ function makeChangeSet<S extends AnySchema>(theory: S, wire: ChangesWire, schema
 			return changeRecords<S>(handle, relations)
 		},
 		toBytes() {
-			return nativeOperationWith(
+			return call(
 				"ChangeSet.toBytes",
 				(callback) => dbNative.runtimeChangesBytes(handle, callback),
-				dbNative.runtimeBytesTake,
-				(bytes) => bytes
+				dbNative.runtimeBytesTake
 			)
 		},
 		compose(other) {
@@ -352,17 +349,16 @@ function makeChangeSet<S extends AnySchema>(theory: S, wire: ChangesWire, schema
 				return acquireChanges(
 					theory,
 					schemaId,
-					nativeOperationWith(
+					call(
 						"ChangeSet.compose",
 						(callback) => dbNative.runtimeChangesCompose(handle, right.handle, callback),
-						dbNative.runtimeChangesTake,
-						(result) => result
+						dbNative.runtimeChangesTake
 					)
 				)
 			})
 		},
 		close() {
-			return drainClose("ChangeSet.close", (callback) => dbNative.runtimeChangesClose(handle, callback))
+			return drain("ChangeSet.close", (callback) => dbNative.runtimeChangesClose(handle, callback))
 		}
 	}
 	Object.freeze(value)
@@ -392,11 +388,10 @@ function makeDraft<S extends AnySchema>(theory: S, state: DraftState, schemaId: 
 					}
 					// Finish CONSUMES the draft, success or failure.
 					state.spent = true
-					return yield* nativeOperationWith(
+					return yield* call(
 						"ChangeDraft.finish",
 						(callback) => dbNative.runtimeDraftFinish(state.handle, callback),
-						dbNative.runtimeChangesTake,
-						(value) => value
+						dbNative.runtimeChangesTake
 					)
 				})
 			)
@@ -404,7 +399,7 @@ function makeDraft<S extends AnySchema>(theory: S, state: DraftState, schemaId: 
 		close() {
 			return Effect.suspend(() => {
 				state.spent = true
-				return drainClose("ChangeDraft.close", (callback) => dbNative.runtimeDraftClose(state.handle, callback))
+				return drain("ChangeDraft.close", (callback) => dbNative.runtimeDraftClose(state.handle, callback))
 			})
 		}
 	}
@@ -424,11 +419,10 @@ const builder = Effect.fn("ChangeSet.builder")(function* <S extends AnySchema>(s
 	const spec = lower(compiled.schema)
 	return yield* Effect.acquireRelease(
 		Effect.gen(function* () {
-			const draftHandle = yield* nativeOperationWith(
+			const draftHandle = yield* call(
 				"ChangeSet.builder",
 				(callback) => dbNative.runtimeDraftOpen(handle, spec, callback),
-				dbNative.runtimeDraftTake,
-				(value) => value
+				dbNative.runtimeDraftTake
 			)
 			const state: DraftState = {
 				handle: draftHandle,
@@ -450,7 +444,7 @@ const builder = Effect.fn("ChangeSet.builder")(function* <S extends AnySchema>(s
 				// transition; the finalizer runs it unconditionally so an
 				// abandoned draft is always drained.
 				state.spent = true
-				return releaseOwner("ChangeDraft.close", (callback) => dbNative.runtimeDraftClose(state.handle, callback))
+				return release("ChangeDraft.close", (callback) => dbNative.runtimeDraftClose(state.handle, callback))
 			}),
 		{ interruptible: true }
 	)
@@ -471,11 +465,10 @@ const fromBytes = Effect.fn("ChangeSet.fromBytes")(function* <S extends AnySchem
 	return yield* acquireChanges(
 		compiled.schema,
 		compiled.schemaId,
-		nativeOperationWith(
+		call(
 			"ChangeSet.fromBytes",
 			(callback) => dbNative.runtimeChangesParse(handle, lower(compiled.schema), ownedBytes, callback),
-			dbNative.runtimeChangesTake,
-			(wire) => wire
+			dbNative.runtimeChangesTake
 		)
 	)
 })

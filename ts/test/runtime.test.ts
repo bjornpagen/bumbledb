@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime } from "effect"
+import { call, release } from "../src/native/op.ts"
 import { native } from "../src/native.ts"
 import type { NativeRuntimeOptions } from "../src/runtime.ts"
-import { finalizeClose, hashChunk, NativeRuntime, nativeOperation } from "../src/runtime.ts"
+import { NativeRuntime, runtimeHandle } from "../src/runtime.ts"
 import { CloseFailure, DbError, dbError, runtimeErrorCodes } from "../src/runtime-errors.ts"
 import type { CloseWire, OptionsWire, RuntimeHandle } from "../src/runtime-native.ts"
 import { runtimeNative } from "../src/runtime-native.ts"
@@ -19,6 +20,12 @@ const configuration: NativeRuntimeOptions = {
 const wire: OptionsWire = { ...configuration, cleanupTimeoutMs: 1000 }
 const close = (handle: RuntimeHandle) =>
 	new Promise<CloseWire>((resolve) => runtimeNative.runtimeClose(handle, resolve))
+
+const hashChunk = (input: Uint8Array) =>
+	Effect.gen(function* () {
+		const handle = yield* runtimeHandle()
+		return yield* call("hashChunk", (done) => runtimeNative.runtimeHash(handle, input, done), runtimeNative.runtimeTake)
+	})
 
 test("native error roster matches; structured backpressure preserves exact counters", async () => {
 	assert.deepEqual(runtimeNative.runtimeErrorCodes(), runtimeErrorCodes)
@@ -187,14 +194,14 @@ test("Effect interruption cancels and joins native work before the fiber finishe
 	try {
 		for (let count = 0; count < 25; count++) {
 			const started = Promise.withResolvers<void>()
-			const effect = nativeOperation(
+			const effect = call(
 				"interruption-test",
-				(callback) => {
-					const lease = runtimeNative.runtimeHash(handle, input, callback)
+				(done) => {
+					const lease = runtimeNative.runtimeHash(handle, input, done)
 					started.resolve()
 					return lease
 				},
-				(value) => value
+				runtimeNative.runtimeTake
 			)
 			const fiber = Effect.runFork(effect)
 			await started.promise
@@ -232,18 +239,20 @@ test("incomplete finalization remains a structured defect alongside a known resu
 		Effect.scoped(
 			Effect.gen(function* () {
 				yield* Effect.acquireRelease(Effect.void, () =>
-					finalizeClose("test.close", {
-						kind: "incomplete",
-						outstanding: {
-							phase: "closing",
-							active: 1n,
-							queued: 0n,
-							retained: 1n,
-							owners: 0n,
-							databases: 0n,
-							natives: 0n
-						}
-					})
+					release("test.close", (done) =>
+						done({
+							kind: "incomplete",
+							outstanding: {
+								phase: "closing",
+								active: 1n,
+								queued: 0n,
+								retained: 1n,
+								owners: 0n,
+								databases: 0n,
+								natives: 0n
+							}
+						})
+					)
 				)
 				observed = receipt
 				return receipt
@@ -256,7 +265,7 @@ test("incomplete finalization remains a structured defect alongside a known resu
 		assert.ok(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect instanceof CloseFailure))
 })
 
-test("callback interrupt cleanup joins without replacing the interrupt Cause", async () => {
+test("an interrupted operation whose cancel drain is incomplete keeps the interrupt and adds CloseFailure", async () => {
 	const outstanding = {
 		phase: "closing" as const,
 		queued: 0n,
@@ -266,26 +275,16 @@ test("callback interrupt cleanup joins without replacing the interrupt Cause", a
 		databases: 0n,
 		natives: 1n
 	}
-	const report = { kind: "incomplete" as const, outstanding }
 	const started = Promise.withResolvers<void>()
 	const effect = Effect.callback<never>(() => {
 		started.resolve()
-	}).pipe(
-		Effect.onExit((exit) => {
-			if (!Exit.hasInterrupts(exit)) {
-				return Effect.void
-			}
-			return Effect.die(new CloseFailure({ operation: "test.cancel", report }))
-		})
-	)
+		return release("test.cancel", (done) => done({ kind: "incomplete", outstanding }))
+	})
 	const fiber = Effect.runFork(effect)
 	await started.promise
 	await Effect.runPromise(Fiber.interrupt(fiber))
 	const exit = await Effect.runPromise(Fiber.await(fiber))
-	assert.equal(Exit.hasInterrupts(exit), true, "the original interrupt Cause remains")
+	assert.equal(Exit.hasInterrupts(exit), true)
 	assert.ok(Exit.isFailure(exit))
-	assert.ok(
-		exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect instanceof CloseFailure),
-		"incomplete drain is a CloseFailure defect beside the interrupt"
-	)
+	assert.ok(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect instanceof CloseFailure))
 })

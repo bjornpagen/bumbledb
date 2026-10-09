@@ -228,6 +228,4 @@ interface DbBridge {
 	): OperationHandle
 }
 
-// The fresh-addon roster test pins this private declaration exactly as it
-// pins #runtime-native.ts's; the two casts re-type the SAME single binding.
 export const dbNative = native as typeof native & DbBridge

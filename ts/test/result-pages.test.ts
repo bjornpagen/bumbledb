@@ -18,15 +18,15 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Cause, Deferred, Effect, Exit, Fiber, ManagedRuntime, Stream } from "effect"
 import { ChangeSet } from "../src/changes.ts"
-import { drainClose } from "../src/close.ts"
 import { Db } from "../src/db.ts"
 import { dbNative } from "../src/db-native.ts"
 import { bytes, f64, i64, interval, str, u64, uuid } from "../src/fields.ts"
+import { call, drain } from "../src/native/op.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
 import { type CompleteResult, internalResult } from "../src/result.ts"
-import { NativeRuntime, nativeOperationWith, runtimeHandle } from "../src/runtime.ts"
+import { NativeRuntime, runtimeHandle } from "../src/runtime.ts"
 import { DbError } from "../src/runtime-errors.ts"
 import { runtimeNative } from "../src/runtime-native.ts"
 import { schema } from "../src/schema.ts"
@@ -389,31 +389,24 @@ test("non-terminal cursor refusal does not take Page/Rows; same cursor retries a
 					assert.ok(resultHandle, "sealed result still has a native handle")
 					const runtime = yield* runtimeHandle()
 					const cursor = yield* Effect.acquireRelease(
-						nativeOperationWith(
+						call(
 							"cursor.open",
 							(callback) => dbNative.runtimeResultCursor(resultHandle, callback),
-							dbNative.runtimeCursorTake,
-							(taken) => taken
+							dbNative.runtimeCursorTake
 						),
 						(taken) =>
-							drainClose("cursor.close", (callback) => dbNative.runtimeCursorClose(taken, callback)).pipe(Effect.asVoid)
+							drain("cursor.close", (callback) => dbNative.runtimeCursorClose(taken, callback)).pipe(Effect.asVoid)
 					)
 					runtimeNative.runtimeArmPublicationCancel(runtime)
 					const refused = yield* Effect.exit(
-						nativeOperationWith(
-							"cursor.refused",
-							(callback) => dbNative.runtimeCursorNext(cursor, callback),
-							dbNative.runtimePageTake,
-							(page) => page
-						)
+						call("cursor.refused", (callback) => dbNative.runtimeCursorNext(cursor, callback), dbNative.runtimePageTake)
 					)
 					assert.equal(refused._tag, "Failure", "predelivery cancel returns no page")
 					assert.equal(takes, 0, "the completion probe throws its refusal; no Page/Rows payload is adopted")
-					const retry = yield* nativeOperationWith(
+					const retry = yield* call(
 						"cursor.retry",
 						(callback) => dbNative.runtimeCursorNext(cursor, callback),
-						dbNative.runtimePageTake,
-						(page) => page
+						dbNative.runtimePageTake
 					)
 					assert.equal(retry?.length, 3, "same cursor retries all three rows without skipping")
 				})

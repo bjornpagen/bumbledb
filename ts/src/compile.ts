@@ -5,9 +5,10 @@ import { SdkInvariantError } from "./errors.ts"
 import { isImmutable, snapshotData } from "./immutable.ts"
 import type { SchemaClasses } from "./law.ts"
 import { lower } from "./lower.ts"
+import { call } from "./native/op.ts"
 import type { SealedDescriptor } from "./native.ts"
 import type { AnyRelation } from "./relation.ts"
-import { nativeOperationWith, runtimeHandle } from "./runtime.ts"
+import { runtimeHandle } from "./runtime.ts"
 import { argumentError } from "./runtime-errors.ts"
 import type { AnySchema, Schema as SchemaDeclaration, SchemaRelations } from "./schema.ts"
 import { schemaDescriptor } from "./schema.ts"
@@ -126,11 +127,10 @@ const compile = Effect.fn("Schema.compile")(function* <S extends AnySchema>(sche
 	})
 	const spec = yield* Effect.try({ try: () => lower(owned), catch: (cause) => argumentError("Schema.compile", cause) })
 	const handle = yield* runtimeHandle()
-	const descriptor = yield* nativeOperationWith(
+	const descriptor = yield* call(
 		"Schema.compile",
 		(callback) => dbNative.runtimeSchemaCompile(handle, spec, callback),
-		dbNative.runtimeSchemaTake,
-		(value) => value
+		dbNative.runtimeSchemaTake
 	)
 	const ownedDescriptor = snapshotData(descriptor)
 	const compiled: CompiledSchema<S> = Object.freeze({

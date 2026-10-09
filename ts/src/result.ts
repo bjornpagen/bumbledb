@@ -1,11 +1,10 @@
 import { Effect, Option, Stream } from "effect"
-import { drainClose, releaseOwner } from "./close.ts"
 import type { CursorHandle, ResultHandle } from "./db-native.ts"
 import { dbNative } from "./db-native.ts"
+import { call, drain, release } from "./native/op.ts"
 import type { FindColumn } from "./query/atom.ts"
 import { decodeAnswers } from "./query/run.ts"
 import type { CellValue } from "./rows.ts"
-import { nativeOperationWith } from "./runtime.ts"
 import type { CloseReport, DbError } from "./runtime-errors.ts"
 
 /**
@@ -49,11 +48,10 @@ function makeCompleteResult<A>(handle: ResultHandle, finds: readonly FindColumn[
 	const value: CompleteResult<A> = {
 		collect() {
 			return Effect.suspend(() =>
-				nativeOperationWith(
+				call(
 					"CompleteResult.collect",
 					(callback) => dbNative.runtimeResultCollect(handle, callback),
-					dbNative.runtimeRowsTake,
-					(rows) => decodePage<A>(finds, rows)
+					(lease) => ((rows) => decodePage<A>(finds, rows))(dbNative.runtimeRowsTake(lease))
 				)
 			)
 		},
@@ -61,21 +59,19 @@ function makeCompleteResult<A>(handle: ResultHandle, finds: readonly FindColumn[
 			return Stream.unwrap(
 				Effect.gen(function* () {
 					const cursor: CursorHandle = yield* Effect.acquireRelease(
-						nativeOperationWith(
+						call(
 							"CompleteResult.pages",
 							(callback) => dbNative.runtimeResultCursor(handle, callback),
-							dbNative.runtimeCursorTake,
-							(taken) => taken
+							dbNative.runtimeCursorTake
 						),
-						(taken) => releaseOwner("ResultCursor.close", (callback) => dbNative.runtimeCursorClose(taken, callback)),
+						(taken) => release("ResultCursor.close", (callback) => dbNative.runtimeCursorClose(taken, callback)),
 						{ interruptible: true }
 					)
 					return Stream.paginate(undefined, () =>
-						nativeOperationWith(
+						call(
 							"CompleteResult.page",
 							(callback) => dbNative.runtimeCursorNext(cursor, callback),
-							dbNative.runtimePageTake,
-							(page) => page
+							dbNative.runtimePageTake
 						).pipe(
 							Effect.map((page) => {
 								if (page === null) {
@@ -89,7 +85,7 @@ function makeCompleteResult<A>(handle: ResultHandle, finds: readonly FindColumn[
 			)
 		},
 		close() {
-			return drainClose("CompleteResult.close", (callback) => dbNative.runtimeResultClose(handle, callback))
+			return drain("CompleteResult.close", (callback) => dbNative.runtimeResultClose(handle, callback))
 		}
 	}
 	Object.freeze(value)

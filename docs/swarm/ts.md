@@ -9,7 +9,7 @@ Owns: `ts/**` (except `ts/src/native/binding.d.ts`), `ts-log/**`, `examples/**`.
 | D19/D10 pins (pnpm 12.10.1, node >=26, effect 4.0.2, TS 7.0.2, biome 2.5.15) | landed `6a93e541e` |
 | F3 dev loop (relative imports, tests on src, dev addon path) | landed `6ae55f5a0` |
 | F4 ts-log deleted; exports `"."` and `"./engine"` | landed |
-| F5 `native/op.ts` | planned |
+| F5 `native/op.ts` | landed |
 | F6 scope-only resources, `#private`, one `DbError` | planned |
 | D17 TS side | waits on bridge `compileSchema`/`validateQuery` |
 | F7/F8 consumption | waits on bridge `binding.d.ts` |
@@ -58,6 +58,11 @@ TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `impo
   dependencies) and each platform package that holds an addon.
 - Deleted from `ts/scripts`: absence-gate, pin, declarations, platform, native-artifact, stage,
   runtime-identities, generate-law-scale, errors. No pack provenance, no version roster.
+
+- `ts/src/native/op.ts`: `call(operation, start, take)`, `drain(operation, start)`,
+  `release(operation, start)`, `scoped(operation, acquire, close)`. They replace
+  `nativeOperation`/`nativeOperationWith`/`finalizeClose`/`close.ts` and the interrupt stash
+  (Effect 4.0.2 keeps the interrupt beside a cleanup defect; a test pins it).
 
 ### For ci
 - `examples/consumers/{log-ts,native-ledger}` are deleted (they used bumbledb-log).

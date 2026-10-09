@@ -5,10 +5,11 @@ import { dbNative } from "./db-native.ts"
 import { AuthoringError } from "./errors.ts"
 import { type AnyField, fieldDescriptor, type Infer } from "./fields.ts"
 import { lower } from "./lower.ts"
+import { call } from "./native/op.ts"
 import { type AnyRelation, type Fact, relationDescriptor, relationFields } from "./relation.ts"
 import type { CellValue } from "./rows.ts"
 import { factOfCells, flatRowsOf } from "./rows.ts"
-import { nativeOperationWith, runtimeHandle } from "./runtime.ts"
+import { runtimeHandle } from "./runtime.ts"
 import { argumentError, DbError } from "./runtime-errors.ts"
 import type { AnySchema } from "./schema.ts"
 import { schemaDescriptor } from "./schema.ts"
@@ -290,11 +291,10 @@ const encodeRows = Effect.fn("encodeRows")(function* <R extends AnyRelation>(
 		try: () => flatRowsOf(relation, rows as Iterable<object>),
 		catch: (cause) => argumentError("encodeRows", cause)
 	})
-	return yield* nativeOperationWith(
+	return yield* call(
 		"encodeRows",
 		(callback) => dbNative.runtimeEncodeRows(runtime, spec, relationId, flat.rows, flat.cells, callback),
-		dbNative.runtimeBytesTake,
-		(bytes) => bytes
+		dbNative.runtimeBytesTake
 	)
 })
 
@@ -307,11 +307,13 @@ const decodeRows = Effect.fn("decodeRows")(function* <R extends AnyRelation>(sha
 	if (!(input instanceof Uint8Array) || !(input.buffer instanceof ArrayBuffer)) {
 		return yield* Effect.fail(invalid("decodeRows"))
 	}
-	return yield* nativeOperationWith(
+	return yield* call(
 		"decodeRows",
 		(callback) => dbNative.runtimeDecodeRows(runtime, spec, relationId, input, callback),
-		dbNative.runtimeRowsTake,
-		(rows) => Object.freeze(rows.map((row) => factOfCells(relation, row as readonly CellValue[])))
+		(lease) =>
+			((rows) => Object.freeze(rows.map((row) => factOfCells(relation, row as readonly CellValue[]))))(
+				dbNative.runtimeRowsTake(lease)
+			)
 	)
 })
 

@@ -7,13 +7,14 @@ import { Db } from "../src/db.ts"
 import { dbNative } from "../src/db-native.ts"
 import { bool, bytes, f64, i64, interval, literalOf, str, u64, uuid } from "../src/fields.ts"
 import { lower } from "../src/lower.ts"
+import { call } from "../src/native/op.ts"
 import { lowerQuery, query } from "../src/query/lower.ts"
 import { wireParams } from "../src/query/run.ts"
 import { v } from "../src/query/scope.ts"
 import type { Fact } from "../src/relation.ts"
 import { relation } from "../src/relation.ts"
 import { cellOf, flatRowsOf } from "../src/rows.ts"
-import { NativeRuntime, nativeOperationWith, runtimeHandle } from "../src/runtime.ts"
+import { NativeRuntime, runtimeHandle } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { key } from "../src/statements.ts"
 import { I64_MAX, I64_MIN, U64_MAX } from "../src/values.ts"
@@ -244,11 +245,10 @@ function nativeEncode(row: Readonly<Record<string, unknown>>) {
 		const runtime = yield* runtimeHandle()
 		// Deliberately bypass host validation to test the native domain independently.
 		const cells = Object.keys(Row.fields).map((name) => row[name])
-		return yield* nativeOperationWith(
+		return yield* call(
 			"native value conformance",
 			(callback) => dbNative.runtimeEncodeRows(runtime, lower(Theory), 0, 1n, cells as never, callback),
-			dbNative.runtimeBytesTake,
-			(value) => value
+			dbNative.runtimeBytesTake
 		)
 	})
 }
@@ -302,7 +302,7 @@ test("native names and query parameters reject lossy Unicode conversion", async 
 					const handle = yield* runtimeHandle()
 					for (const name of ["well-formed 🐝", "bad\ud800"]) {
 						const result = yield* Effect.result(
-							nativeOperationWith(
+							call(
 								"native name text",
 								(callback) =>
 									dbNative.runtimeSchemaCompile(
@@ -313,8 +313,7 @@ test("native names and query parameters reject lossy Unicode conversion", async 
 										},
 										callback
 									),
-								dbNative.runtimeSchemaTake,
-								(value) => value
+								dbNative.runtimeSchemaTake
 							)
 						)
 						assert.equal(Result.isSuccess(result), name.isWellFormed())

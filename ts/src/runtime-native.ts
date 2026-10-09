@@ -1,5 +1,3 @@
-/** Exact-version internal bridge, shared by core and log. Not a public API. */
-
 import type { DbHandle, Violation } from "./native.ts"
 import { native } from "./native.ts"
 import type { SchemaSpec } from "./spec.ts"
@@ -72,13 +70,7 @@ interface RuntimeNative {
 	runtimeCancel(operation: OperationHandle, callback: (report: CloseWire) => void): void
 	runtimeClose(runtime: RuntimeHandle, callback: (report: CloseWire) => void): void
 	runtimeInspect(runtime: RuntimeHandle): InspectionWire
-	/**
-	 * L12 request (D12/D25): one-shot arm. Next `dispatch_payload_message`
-	 * must cancel after `work()` returns and the post-work `checkpoint()`
-	 * (`runtime.rs` ~860–862), before `complete_operation` writes
-	 * `operation.output`. A local `QueuedOutput` is not registration.
-	 * Predelivery: no JS take; cursor stays on row1 so retry does not skip.
-	 */
+	/** Test hook: the next payload delivery is cancelled after its work runs and before its output is published. */
 	runtimeArmPublicationCancel(runtime: RuntimeHandle): void
 	runtimeDirectoryAcquire(runtime: RuntimeHandle, path: string, callback: () => void): OperationHandle
 	runtimeDirectoryTake(operation: OperationHandle): DirectoryHandle
@@ -97,5 +89,4 @@ interface RuntimeNative {
 	runtimeManagedDbClose(db: DbHandle, callback: (report: CloseWire) => void): void
 }
 
-// The checked source/fresh-addon roster test pins this private declaration.
 export const runtimeNative = native as typeof native & RuntimeNative
