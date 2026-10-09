@@ -774,6 +774,18 @@ pub fn check(world: &World) -> Vec<State> {
             (Ask::Sync, Settled::Synced(seq)) => {
                 assert!(usize::try_from(seq.get()).unwrap() <= states.len());
             }
+            (Ask::Freeze, Settled::Frozen(seq)) => {
+                assert!(
+                    matches!(entry_at(world, &states, *seq).body, Body::Freeze(_)),
+                    "a settled freeze is the log's"
+                );
+            }
+            (Ask::Migrate, Settled::Migrated(seq)) => {
+                assert!(
+                    matches!(entry_at(world, &states, *seq).body, Body::Migration(_)),
+                    "a settled migration is the log's"
+                );
+            }
             _ => {}
         }
     }
@@ -815,6 +827,22 @@ pub fn check(world: &World) -> Vec<State> {
         );
     }
     states
+}
+
+/// The entry at `seq`, parsed at the schema of the head before it.
+fn entry_at(world: &World, states: &[State], seq: Seq) -> Entry {
+    let index = usize::try_from(seq.get()).unwrap() - 1;
+    let bundle = world.bundle();
+    let schema = match index.checked_sub(1) {
+        None => &bundle.initial().schema,
+        Some(before) => {
+            &bundle
+                .by_schema(states[before].head.schema)
+                .expect("bundled")
+                .schema
+        }
+    };
+    Entry::parse(schema, &world.log_entries()[index]).expect("an entry")
 }
 
 /// Checkpoint keys in the store, newest first.
