@@ -13,7 +13,7 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
 |---|---|
 | G3: cargo profiles `ci`/`gate`/`addon-ci`; nextest `ci`/`deep`/`default-miri`, `disk` group | landed |
 | G13/L: delete release bureaucracy scripts and config; musl image on alpine 3.24.2 + prebuilt nextest 0.9.148 | landed |
-| G1: `ci.yml` + `scripts/ci.sh <lane>` | todo |
+| G1: `ci.yml` + `scripts/ci.sh <lane>` | landed (rustdoc gate red on other lanes' docs, see requests) |
 | G5: `.config/deny.toml`, cargo-shear, Dependabot | todo |
 | G4: SeaweedFS and AWS S3 lanes | todo |
 | G10: `deep.yml` | todo |
@@ -44,7 +44,30 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
   probe, the all-feature workspace tests (`--cargo-profile ci`) and the release-mode engine tests
   (`-p bumbledb --cargo-profile gate`, which is where the allocation gates run).
 
+- **`scripts/ci.sh <lane>` replaces `battery.sh` and `check.sh`.** Every CI job body is one lane;
+  run it locally for parity. Lanes so far:
+  - `lint`: `cargo fmt --check`; clippy `-D warnings` default and `--all-features`;
+    `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps`; `cargo bench --no-run --profile ci`;
+    the Python self-tests under `scripts/`; `pnpm --dir ts run lint` and `run typecheck`.
+  - `test`: `cargo nextest run --workspace --cargo-profile ci --profile ci`;
+    `cargo test --workspace --doc --profile ci`; tree-clean check (no modified tracked file, no
+    unignored untracked file).
+  - `addon`: `cargo build -p bumbledb-node --profile ${BUMBLEDB_ADDON_PROFILE:-addon-ci}`, copied
+    to `target/addon/bumbledb.<platform>-<arch>.node` and `ts/bumbledb.<platform>-<arch>.node`
+    (the dev addon `ts/src/native/load.ts` prefers); `pnpm --dir ts test`; tree-clean.
+- `ci.yml` (pull requests, `main`, and `workflow_call` from release): `lint` once on ubuntu-24.04;
+  `test` on macos-26, ubuntu-24.04, ubuntu-24.04-arm; `addon` on linux-x64 (`addon-ci`) for pull
+  requests and on all three platforms (`release`, fat LTO) otherwise, uploading
+  `bumbledb.<platform>.node` artifacts. Linux addons build in `amazonlinux:2023` (glibc 2.34).
+- Deleted: `scripts/battery.sh`, `scripts/check.sh`, `.github/workflows/bumbledb-log.yml`.
+
 ## Requests to other lanes
+
+### all Rust lanes
+- `cargo doc --workspace --no-deps` runs with `-D warnings` in lint. Today it fails in
+  `crates/bumbledb-node` (bridge: public docs link private items in `db_wire.rs` and `lib.rs`) and
+  `crates/bumbledb-bench` (bench: `space/census.rs` links the missing `crate::largefix`).
+- Tests that write outside a temp dir fail the tree-clean check.
 
 ### ts
 - `ts/scripts/stage.ts` and `ts/scripts/build.ts` call `scripts/release-results.mjs`

@@ -1,59 +1,99 @@
-# One correctness/native build per platform. Performance is measured locally.
-# Miri's two targets run independently; manual Miri-only dispatch avoids
-# repeating the full platform battery after a push.
 name: ci
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
-  workflow_dispatch:
-    inputs:
-      miri_only:
-        description: Run only the two Miri targets
-        type: boolean
-        default: false
-  schedule:
-    - cron: "17 9 * * *"
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ inputs.miri_only || false }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
 
 jobs:
-  check:
-    if: github.event_name != 'schedule' && !inputs.miri_only
-    uses: ./.github/workflows/bumbledb-log.yml
-    secrets:
-      BUMBLEDB_S3_SMOKE_BUCKET: ${{ secrets.BUMBLEDB_S3_SMOKE_BUCKET }}
-      BUMBLEDB_S3_SMOKE_REGION: ${{ secrets.BUMBLEDB_S3_SMOKE_REGION }}
-      BUMBLEDB_S3_SMOKE_ENDPOINT: ${{ secrets.BUMBLEDB_S3_SMOKE_ENDPOINT }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          package_json_file: ts/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: ts/pnpm-lock.yaml
+      - run: scripts/ci.sh lint
 
-  static-linux-arm64:
-    if: github.event_name != 'schedule' && !inputs.miri_only
-    uses: ./.github/workflows/static-linux-arm64.yml
-
-  miri:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+  test:
     strategy:
       fail-fast: false
       matrix:
-        target: [aarch64-apple-darwin, x86_64-unknown-linux-gnu]
-    runs-on: macos-latest
-    timeout-minutes: 90
+        os: [macos-26, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
-      - name: Install the pinned toolchain
-        run: rustup show
-      - uses: actions/cache@v5
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: taiki-e/install-action@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: miri-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
-          restore-keys: |
-            miri-${{ matrix.target }}-
-      - run: scripts/miri.sh "${{ matrix.target }}"
+          tool: nextest@0.9.148
+      - run: scripts/ci.sh test
+
+  # Pull requests build linux-x64 with addon-ci; main and releases build every
+  # platform with fat LTO and keep the binaries for release.yml.
+  addon:
+    name: addon (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux-x64, linux-arm64, darwin-arm64]
+        event: ["${{ github.event_name }}"]
+        exclude:
+          - { event: pull_request, platform: linux-arm64 }
+          - { event: pull_request, platform: darwin-arm64 }
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-24.04","linux-arm64":"ubuntu-24.04-arm","darwin-arm64":"macos-26"}')[matrix.platform] }}
+    # Linux addons link against glibc 2.34 (Amazon Linux 2023), the oldest supported runtime.
+    container: ${{ startsWith(matrix.platform, 'linux-') && 'amazonlinux:2023' || '' }}
+    timeout-minutes: 60
+    env:
+      BUMBLEDB_ADDON_PROFILE: ${{ github.event_name == 'pull_request' && 'addon-ci' || 'release' }}
+    steps:
+      - name: Install the Amazon Linux build tools
+        if: startsWith(matrix.platform, 'linux-')
+        run: |
+          dnf -y install --allowerasing gcc gcc-c++ make git tar gzip xz findutils diffutils curl
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v7
+      - name: Trust the checkout inside the container
+        if: startsWith(matrix.platform, 'linux-')
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          package_json_file: ts/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: ts/pnpm-lock.yaml
+      - run: scripts/ci.sh addon
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: bumbledb.${{ matrix.platform }}.node
+          path: target/addon/bumbledb.${{ matrix.platform }}.node
+          if-no-files-found: error
