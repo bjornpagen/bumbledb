@@ -7,7 +7,7 @@ import { Db } from "../src/db.ts"
 import { on } from "../src/face.ts"
 import { i64, interval, u64 } from "../src/fields.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { capacity, key } from "../src/statements.ts"
 import { runtimeOptions, storeDir } from "./fixtures/learning.ts"
@@ -28,7 +28,7 @@ for (const element of [u64, i64]) {
 				within: within(0n, ref("cents"))
 			})
 		])
-		const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+		const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 		try {
 			await runtime.runPromise(
 				Effect.scoped(

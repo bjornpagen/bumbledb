@@ -5,7 +5,7 @@ import type { DriverOptions, MachinePort, Step } from "../src/database/driver.ts
 import { Driver } from "../src/database/driver.ts"
 import type { IoRequest, IoResponse, ObjectStore } from "../src/database/io.ts"
 import { MemStore } from "../src/database/mem.ts"
-import { DbError } from "../src/runtime-errors.ts"
+import { DbError } from "../src/errors.ts"
 
 type Submit = { readonly bytes: Uint8Array }
 type Settled = { readonly _tag: "Decided"; readonly seq: number } | { readonly _tag: "Closed" }

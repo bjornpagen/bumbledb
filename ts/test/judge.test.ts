@@ -1,13 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { Effect, Exit, Fiber, ManagedRuntime, Option, Result } from "effect"
+import { Effect, Exit, Fiber, ManagedRuntime, Option, Result, Scope } from "effect"
 import { ChangeSet } from "../src/changes.ts"
 import type { WriteOptions } from "../src/db.ts"
 import { Db } from "../src/db.ts"
 import { dbNative } from "../src/db-native.ts"
 import { str, u64 } from "../src/fields.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { key } from "../src/statements.ts"
 import { Attempt, Learning, runtimeOptions, Student, storeDir } from "./fixtures/learning.ts"
@@ -26,7 +26,7 @@ const delta = (add: readonly { id: bigint; text: string }[], remove: readonly { 
 	})
 
 test("judge and apply share final-state admission, including net counts and add-wins", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(
@@ -91,7 +91,7 @@ test("judge and apply share final-state admission, including net counts and add-
 })
 
 test("moved is unjudged; foreign witnesses, schemas, and malformed intent are operational errors", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(
@@ -138,7 +138,7 @@ test("moved is unjudged; foreign witnesses, schemas, and malformed intent are op
 })
 
 test("containment and capacity rejection agree with apply and preserve the base", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(
@@ -170,7 +170,7 @@ test("containment and capacity rejection agree with apply and preserve the base"
 })
 
 test("cancelled judgment delivery releases the writer and retains no mutation", { timeout: 10000 }, async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	const original = dbNative.runtimeDbJudge
 	try {
 		await runtime.runPromise(
@@ -178,7 +178,8 @@ test("cancelled judgment delivery releases the writer and retains no mutation", 
 				Effect.gen(function* () {
 					const db = yield* Db.create(storeDir("judge-cancel"), Theory)
 					const before = yield* db.snapshot()
-					const changes = yield* delta([{ id: 1n, text: "one" }])
+					const changesScope = yield* Scope.make()
+					const changes = yield* delta([{ id: 1n, text: "one" }]).pipe(Scope.provide(changesScope))
 					const completed = Promise.withResolvers<() => void>()
 					dbNative.runtimeDbJudge = (db, changes, expected, callback) =>
 						original(db, changes, expected, () => completed.resolve(callback))
@@ -195,7 +196,7 @@ test("cancelled judgment delivery releases the writer and retains no mutation", 
 						changes: { added: 1n, removed: 0n }
 					})
 					assert.equal((yield* db.apply(changes, { expected: { kind: "exact", at: before.witness } })).kind, "accepted")
-					yield* changes.close()
+					yield* Scope.close(changesScope, Exit.void)
 					assert.ok(Result.isFailure(yield* Effect.result(db.judge(changes, any))))
 				})
 			)

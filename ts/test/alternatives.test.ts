@@ -10,7 +10,7 @@ import { on } from "../src/face.ts"
 import { i64, interval, str, u64 } from "../src/fields.ts"
 import { lower } from "../src/lower.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { select } from "../src/selection.ts"
 import { contained, key, mirrors } from "../src/statements.ts"
@@ -113,7 +113,7 @@ test("native expansion refusals cite both actual directions at their current sta
 	const selected = on(select(Parent, { kind: "Imported" }), "id")
 	const inward = contained(on(Imported, "parent"), selected)
 	const outward = contained(selected, on(Imported, "parent"))
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		for (const [laws, rejected, earlier] of [
 			[[...keys, ...expansion, inward], 12, 7],
@@ -146,7 +146,7 @@ test("native expansion refusals cite both actual directions at their current sta
 
 test("ordinary native admission enforces payloads and accepts an atomic arm switch", async () => {
 	const { Parent, Imported, Electronic, Postal, Theory, members, keys, manual, expansion } = declarations()
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(

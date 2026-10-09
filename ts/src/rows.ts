@@ -1,4 +1,4 @@
-import { AuthoringError, SdkInvariantError } from "./errors.ts"
+import { AuthoringError, internalError } from "./errors.ts"
 /**
  * The row codec: fact object ⇄ positional cell array by field
  * ordinal, schema-directed, in ONE place. The write side lowers named host
@@ -141,7 +141,7 @@ function decodeCell(context: string, field: AnyField, cell: unknown): unknown {
 	try {
 		return fieldValue(context, field, cell)
 	} catch (cause) {
-		if (cause instanceof AuthoringError) throw new SdkInvariantError({ message: cause.message })
+		if (cause instanceof AuthoringError) throw internalError(cause.message)
 		throw cause
 	}
 }
@@ -162,24 +162,22 @@ function isCompleteFact<R extends AnyRelation>(
 function factOfCells<R extends AnyRelation>(relation: R, row: readonly unknown[]): Fact<R> {
 	const data = relation
 	if (row.length !== relationFields(data).length) {
-		throw new SdkInvariantError({
-			message: `relation ${data.name}: row arity ${row.length} does not match the ${relationFields(data).length} declared fields`
-		})
+		throw internalError(
+			`relation ${data.name}: row arity ${row.length} does not match the ${relationFields(data).length} declared fields`
+		)
 	}
 	const decoded: Record<string, unknown> = {}
 	relationFields(data).forEach(function decodeOne(declared, ordinal) {
 		const cell = row[ordinal]
 		if (cell === undefined) {
-			throw new SdkInvariantError({
-				message: `relation ${data.name}: row cell ${ordinal} (${declared.name}) is absent`
-			})
+			throw internalError(`relation ${data.name}: row cell ${ordinal} (${declared.name}) is absent`)
 		}
 		const value = decodeCell(`relation ${data.name} field ${declared.name}`, declared.field, cell)
 		setOwnField(decoded, declared.name, value)
 	})
 	Object.freeze(decoded)
 	if (!isCompleteFact(relation, decoded)) {
-		throw new SdkInvariantError({ message: `relation ${data.name}: decoded row is not a complete fact` })
+		throw internalError(`relation ${data.name}: decoded row is not a complete fact`)
 	}
 	return decoded
 }

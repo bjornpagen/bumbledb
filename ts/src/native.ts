@@ -1,4 +1,3 @@
-import { NativeOperationError, NativeReportedError } from "./errors.ts"
 import { loadAddon } from "./native/load.ts"
 import type { SchemaSpec, ValueSpec, ValueTypeSpec } from "./spec.ts"
 
@@ -336,37 +335,6 @@ function nativeBindingIsLoaded(): boolean {
 	return binding !== undefined
 }
 
-function isEngineThrow(value: unknown): value is { kind: ErrorFamilyKind; message: string } {
-	if (typeof value !== "object" || value === null) {
-		return false
-	}
-	const rec = value as { kind?: unknown; message?: unknown }
-	return typeof rec.kind === "string" && typeof rec.message === "string"
-}
-
-function errorFromThrow(caught: unknown): Error {
-	if (caught instanceof Error) {
-		return caught
-	}
-	if (isEngineThrow(caught)) {
-		return new NativeReportedError({
-			kind: caught.kind,
-			message: `bumbledb ${caught.kind}: ${caught.message}`,
-			cause: caught
-		})
-	}
-	return new NativeReportedError({ kind: "Unknown", message: String(caught), cause: caught })
-}
-
-function bridged<T>(context: string, run: () => T): T {
-	try {
-		return run()
-	} catch (caught) {
-		if (caught instanceof Error) throw caught
-		throw new NativeOperationError({ operation: context, cause: caught })
-	}
-}
-
 export type {
 	AdmissionTag,
 	AggOpIr,
@@ -405,4 +373,4 @@ export type {
 	ViolationFact,
 	WriteTag
 }
-export { bridged, errorFromThrow, native, nativeBindingIsLoaded }
+export { native, nativeBindingIsLoaded }

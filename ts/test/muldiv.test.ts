@@ -9,14 +9,14 @@ import { describeQuery, queryFromDescription } from "../src/query/description.ts
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { runtimeOptions, storeDir } from "./fixtures/learning.ts"
 
 test("native mulDiv keeps exact wide products and explicit signed rounding across the bridge", async () => {
 	const Input = relation("Input", { signed: i64, unsigned: u64 })
 	const Theory = schema("MulDiv", { Input }, [])
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(

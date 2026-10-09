@@ -11,18 +11,18 @@ import assert from "node:assert/strict"
 import { statSync } from "node:fs"
 import { join } from "node:path"
 import { test } from "node:test"
-import { Cause, Effect, Exit, Fiber, ManagedRuntime, Option } from "effect"
+import { Cause, Effect, Exit, Fiber, ManagedRuntime, Option, Scope } from "effect"
 import { ChangeSet } from "../src/changes.ts"
 import { decodeRows, encodeRows, rowShape } from "../src/codec.ts"
 import type { ApplyOutcome, CoreWitness, Db as DbValue, Snapshot } from "../src/db.ts"
 import { Db } from "../src/db.ts"
 import { dbNative } from "../src/db-native.ts"
+import { DbError } from "../src/errors.ts"
 import { str, uuid } from "../src/fields.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
-import { DbError } from "../src/runtime-errors.ts"
+import { Bumble } from "../src/runtime.ts"
 import type { AnySchema } from "../src/schema.ts"
 import { schema } from "../src/schema.ts"
 import type { Uuid } from "../src/uuid.ts"
@@ -37,7 +37,7 @@ const attemptsFor = query(Learning).rule((r) => {
 })
 
 function runtime() {
-	return ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	return ManagedRuntime.make(Bumble.layer(runtimeOptions))
 }
 
 const newId = () => Effect.runPromise(Effect.sync(() => crypto.randomUUID()))
@@ -210,25 +210,27 @@ test("scoped preparation reuses parameters and closes independently of snapshots
 					const db = yield* Db.create(storeDir("prepared-ownership"), Learning)
 					const changes = yield* seeded(studentId, attemptId)
 					yield* db.apply(changes, { expected: { kind: "any" } })
-					const snapshot = yield* db.snapshot()
-					const first = yield* snapshot.prepare(attemptsFor)
-					const second = yield* snapshot.prepare(attemptsFor)
+					const snapshotScope = yield* Scope.make()
+					const firstScope = yield* Scope.make()
+					const secondScope = yield* Scope.make()
+					const snapshot = yield* db.snapshot().pipe(Scope.provide(snapshotScope))
+					const first = yield* snapshot.prepare(attemptsFor).pipe(Scope.provide(firstScope))
+					const second = yield* snapshot.prepare(attemptsFor).pipe(Scope.provide(secondScope))
 					const retained = yield* first.execute({ student: studentId })
 					yield* first.releaseMemory()
 					yield* first.releaseMemory()
 					yield* db.clearCache()
 					const reused = yield* first.execute({ student: studentId })
 					assert.equal((yield* reused.collect())[0]?.id, attemptId)
-					assert.equal((yield* first.close()).kind, "closed")
-					assert.equal((yield* first.close()).kind, "closed")
+					yield* Scope.close(firstScope, Exit.void)
 					const closed = yield* Effect.exit(first.execute({ student: studentId }))
 					assert.ok(Exit.isFailure(closed))
 					assert.ok(Exit.isFailure(yield* Effect.exit(first.releaseMemory())))
 					assert.ok(Option.isSome(yield* snapshot.get(StudentById, { id: studentId })))
 					const late = yield* seeded(absentId, lateAttemptId)
 					assert.equal((yield* db.apply(late, { expected: { kind: "any" } })).kind, "accepted")
-					// A preparation shares the pinned version, not the snapshot's close authority.
-					assert.equal((yield* snapshot.close()).kind, "closed")
+					// A preparation pins the snapshot's version on its own; closing the snapshot leaves it usable.
+					yield* Scope.close(snapshotScope, Exit.void)
 					for (let i = 0; i < 16; i += 1) {
 						yield* second.releaseMemory()
 						yield* Effect.scoped(
@@ -240,10 +242,9 @@ test("scoped preparation reuses parameters and closes independently of snapshots
 							})
 						)
 					}
-					assert.equal((yield* second.close()).kind, "closed")
+					yield* Scope.close(secondScope, Exit.void)
 					const rows = yield* retained.collect()
 					assert.equal(rows[0]?.id, attemptId)
-					// Ordinary scope release, not just explicit close, spends the plan.
 					const fresh = yield* db.snapshot()
 					assert.ok(Option.isSome(yield* fresh.get(StudentById, { id: absentId })))
 					const escaped = yield* Effect.scoped(fresh.prepare(attemptsFor))
@@ -374,9 +375,6 @@ test("methods are lazy: construction dispatches nothing, and a scope-escaped han
 		}
 		const lateInspect = await rt.runPromiseExit(escapedDb.inspect())
 		assert.equal(lateInspect._tag, "Failure")
-		// Early close on an already scope-closed owner is idempotent and honest.
-		const report = await rt.runPromise(escapedDb.close())
-		assert.ok(report.kind === "closed" || report.kind === "failed")
 	} finally {
 		await Effect.runPromise(rt.disposeEffect)
 	}

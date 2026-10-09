@@ -11,7 +11,7 @@ import { ref, weigh, within } from "../../src/capacity.ts"
 import { on } from "../../src/face.ts"
 import { f64, i64, interval, str, u64, uuid } from "../../src/fields.ts"
 import { relation } from "../../src/relation.ts"
-import type { NativeRuntimeOptions } from "../../src/runtime.ts"
+import type { BumbleOptions } from "../../src/runtime.ts"
 import { schema } from "../../src/schema.ts"
 import { capacity, contained, key } from "../../src/statements.ts"
 
@@ -38,7 +38,7 @@ export const Learning = schema("Learning", { Student, Attempt }, [
 	})
 ])
 
-export const runtimeOptions: NativeRuntimeOptions = {
+export const runtimeOptions: BumbleOptions = {
 	workers: 2,
 	queueCapacity: 16,
 	cleanupCapacity: 16,

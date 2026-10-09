@@ -10,7 +10,7 @@ import { describeQuery, queryFromDescription } from "../src/query/description.ts
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { key } from "../src/statements.ts"
 import { runtimeOptions, storeDir } from "./fixtures/learning.ts"
@@ -133,7 +133,7 @@ test("pack widens fixed intervals before imported difference and measurement sta
 		const row = v(pieces)
 		return r.match(pieces, row).find({ span: row.span, width: Compute.measure(row.span) })
 	})
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(
@@ -169,7 +169,7 @@ test("pack widens fixed intervals before imported difference and measurement sta
 })
 
 test("native marginal bands derive slices, preserve equal contributions, and round once", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(
@@ -237,7 +237,7 @@ test("native marginal bands derive slices, preserve equal contributions, and rou
 })
 
 test("difference emits products, dense measures and fixed intervals use native meanings", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(

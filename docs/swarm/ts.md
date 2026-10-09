@@ -10,7 +10,7 @@ Owns: `ts/**` (except `ts/src/native/binding.d.ts`), `ts-log/**`, `examples/**`.
 | F3 dev loop (relative imports, tests on src, dev addon path) | landed `6ae55f5a0` |
 | F4 ts-log deleted; exports `"."` and `"./engine"` | landed |
 | F5 `native/op.ts` | landed |
-| F6 scope-only resources, `#private`, one `DbError` | planned |
+| F6 scope-only resources, `#private`, one `DbError`, `Bumble` layer, branded `SchemaId` | landed |
 | D17 TS side | waits on bridge `compileSchema`/`validateQuery` |
 | F7/F8 consumption | waits on bridge `binding.d.ts` |
 | D6 stores (MemStore with faults, FsStore, S3Store), I/O executor, machine driver | landed |
@@ -87,6 +87,13 @@ TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `impo
 - `pnpm --dir ts run test:s3` runs the ObjectStore conformance suite against the CI S3 contract
   (`BUMBLEDB_S3_*`); the regular suite runs the same conformance against MemStore, FsStore and
   S3Store over an in-process fake S3.
+
+- F6: `NativeRuntime` is renamed `Bumble` (`Bumble.layer(options)`, `BumbleOptions`); its service
+  has `inspect()` only. No resource has `close()`: Db, Snapshot, PreparedQuery, CompleteResult,
+  ChangeSet and ChangeDraft are released by their scope. Errors live in `ts/src/errors.ts`:
+  `AuthoringError`, `NativeLoadError`, `DbError { operation, reason }`, `CloseFailure` (all
+  `Schema.TaggedError`); `SdkInvariantError`, `NativeOperationError` and `NativeReportedError` are
+  gone (contradictions are `DbError` with reason `Internal`). `SchemaId` is a branded string.
 
 ### For ci
 - `examples/consumers/{log-ts,native-ledger}` are deleted (they used bumbledb-log).

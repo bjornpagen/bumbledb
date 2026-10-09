@@ -2,7 +2,7 @@ import { Effect, Schema as EffectSchema, Result } from "effect"
 import { membersAgree } from "./closed.ts"
 import { schemaTables } from "./compile.ts"
 import { dbNative } from "./db-native.ts"
-import { AuthoringError } from "./errors.ts"
+import { AuthoringError, argumentError, DbError } from "./errors.ts"
 import { type AnyField, fieldDescriptor, type Infer } from "./fields.ts"
 import { lower } from "./lower.ts"
 import { call } from "./native/op.ts"
@@ -10,7 +10,6 @@ import { type AnyRelation, type Fact, relationDescriptor, relationFields } from 
 import type { CellValue } from "./rows.ts"
 import { factOfCells, flatRowsOf } from "./rows.ts"
 import { runtimeHandle } from "./runtime.ts"
-import { argumentError, DbError } from "./runtime-errors.ts"
 import type { AnySchema } from "./schema.ts"
 import { schemaDescriptor } from "./schema.ts"
 import type { Rel } from "./shape.ts"
@@ -26,7 +25,7 @@ import { fieldValue, recordValue } from "./values.ts"
  * 1. The CANONICAL native row codec: `encodeRows`/`decodeRows` run the
  *    same native implementation the engine, log and migrations
  *    share (owned bytes in, owned typed rows out; untrusted input cannot
- *    inject native capabilities). Effect-only, `NativeRuntime` required.
+ *    inject native capabilities). Effect-only, `Bumble` required.
  * 2. The schema-tagged JSON VALUE form for HTTP/export boundaries
  *    (chapter 30): every `f64` — finite included — is
  *    `{"$f64":"<16 lowercase hex digits>"}` of canonical binary64 bits;
@@ -282,7 +281,7 @@ const encodeRows = Effect.fn("encodeRows")(function* <R extends AnyRelation>(
 	shape: RowShape<R>,
 	rows: Iterable<Fact<R>>
 ) {
-	const runtime = yield* runtimeHandle()
+	const runtime = yield* runtimeHandle
 	const { relation, relationId, spec } = yield* Effect.try({
 		try: () => checkedRowShape("encodeRows", shape),
 		catch: (cause) => argumentError("encodeRows", cause)
@@ -299,7 +298,7 @@ const encodeRows = Effect.fn("encodeRows")(function* <R extends AnyRelation>(
 })
 
 const decodeRows = Effect.fn("decodeRows")(function* <R extends AnyRelation>(shape: RowShape<R>, input: Uint8Array) {
-	const runtime = yield* runtimeHandle()
+	const runtime = yield* runtimeHandle
 	const { relation, relationId, spec } = yield* Effect.try({
 		try: () => checkedRowShape("decodeRows", shape),
 		catch: (cause) => argumentError("decodeRows", cause)

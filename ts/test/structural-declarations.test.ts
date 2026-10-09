@@ -13,7 +13,7 @@ import { lower } from "../src/lower.ts"
 import { lowerQuery, query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema, schemaDescriptor, schemasAgree } from "../src/schema.ts"
 import { contained, key, statementDescriptor } from "../src/statements.ts"
 import { runtimeOptions, storeDir } from "./fixtures/learning.ts"
@@ -177,7 +177,7 @@ test("checked schema reuse requires an immutable graph and validates classes and
 
 test("compilation and live resources own schema metadata; malformed schemas fail in the Effect channel", async () => {
 	const { Theory, Item, ById } = declarations()
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(
@@ -245,7 +245,7 @@ test("equivalent declarations work across codecs, writes, keys, query unions, im
 	const parameter = query(original.Theory)
 		.rule((r) => r.match(original.Item, { kind: r.param("kind") }).find({ count: r.count() }))
 		.rule((r) => r.match(equivalent.Item, { kind: r.param("kind") }).find({ count: r.count() }))
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(

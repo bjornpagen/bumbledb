@@ -1,97 +1,82 @@
 import { Effect, Option, Stream } from "effect"
 import type { CursorHandle, ResultHandle } from "./db-native.ts"
 import { dbNative } from "./db-native.ts"
-import { call, drain, release } from "./native/op.ts"
+import type { DbError } from "./errors.ts"
+import { call, scoped } from "./native/op.ts"
 import type { FindColumn } from "./query/atom.ts"
 import { decodeAnswers } from "./query/run.ts"
 import type { CellValue } from "./rows.ts"
-import type { CloseReport, DbError } from "./runtime-errors.ts"
 
 /**
- * One complete answer set, sealed after evaluation and independent of its
- * source snapshot. collect() explicitly materializes all rows into JS and
- * leaves the result available. pages() consumes it once through bounded
- * delivery batches; it does not stream query execution.
- *
- * The stream owns its cursor through Effect scope. Early termination,
- * failure, interruption and EOF close/drain it. Creating the stream does
- * not spend the result; running it twice fails with SpentHandle.
+ * One complete answer set, sealed after evaluation and independent of its snapshot. `collect`
+ * reads every row and leaves the result readable. `pages` spends the result once through
+ * bounded batches; the stream owns its cursor, so ending it early releases the cursor, and
+ * running it a second time fails with `SpentHandle`.
  */
 interface CompleteResult<A> {
 	collect(): Effect.Effect<ReadonlyArray<A>, DbError>
 	pages(): Stream.Stream<ReadonlyArray<A>, DbError>
-	close(): Effect.Effect<CloseReport>
-}
-
-interface ResultInternal {
-	readonly handle: ResultHandle
-}
-
-const resultInternals = new WeakMap<object, ResultInternal>()
-
-/** Private cross-module accessor (scope finalizers in db.ts reach the handle). */
-function internalResult(value: object): ResultInternal | undefined {
-	return resultInternals.get(value)
 }
 
 function decodePage<A>(finds: readonly FindColumn[], rows: readonly (readonly CellValue[])[]): ReadonlyArray<A> {
-	// Owned ordinary records in declared column order — the same fields and
-	// shapes on every page (stable row shape; no Proxy, no per-row fiber).
 	return Object.freeze(decodeAnswers<A>(finds, rows))
 }
 
-/**
- * Internal constructor: `db.ts` publishes results through this after
- * execution completes. Each delivery has independent cooperative cancellation.
- */
-function makeCompleteResult<A>(handle: ResultHandle, finds: readonly FindColumn[]): CompleteResult<A> {
-	const value: CompleteResult<A> = {
-		collect() {
-			return Effect.suspend(() =>
-				call(
-					"CompleteResult.collect",
-					(callback) => dbNative.runtimeResultCollect(handle, callback),
-					(lease) => ((rows) => decodePage<A>(finds, rows))(dbNative.runtimeRowsTake(lease))
+class CompleteResultLive<A> implements CompleteResult<A> {
+	readonly #handle: ResultHandle
+	readonly #finds: readonly FindColumn[]
+
+	constructor(handle: ResultHandle, finds: readonly FindColumn[]) {
+		this.#handle = handle
+		this.#finds = finds
+	}
+
+	collect(): Effect.Effect<ReadonlyArray<A>, DbError> {
+		const handle = this.#handle
+		const finds = this.#finds
+		return call(
+			"CompleteResult.collect",
+			(done) => dbNative.runtimeResultCollect(handle, done),
+			(lease) => decodePage<A>(finds, dbNative.runtimeRowsTake(lease))
+		).pipe(Effect.withSpan("CompleteResult.collect"))
+	}
+
+	pages(): Stream.Stream<ReadonlyArray<A>, DbError> {
+		const handle = this.#handle
+		const finds = this.#finds
+		return Stream.unwrap(
+			Effect.gen(function* () {
+				const cursor: CursorHandle = yield* scoped(
+					"ResultCursor.release",
+					call(
+						"CompleteResult.pages",
+						(done) => dbNative.runtimeResultCursor(handle, done),
+						dbNative.runtimeCursorTake
+					),
+					(owned) => (done) => dbNative.runtimeCursorClose(owned, done)
 				)
-			)
-		},
-		pages() {
-			return Stream.unwrap(
-				Effect.gen(function* () {
-					const cursor: CursorHandle = yield* Effect.acquireRelease(
-						call(
-							"CompleteResult.pages",
-							(callback) => dbNative.runtimeResultCursor(handle, callback),
-							dbNative.runtimeCursorTake
-						),
-						(taken) => release("ResultCursor.close", (callback) => dbNative.runtimeCursorClose(taken, callback)),
-						{ interruptible: true }
-					)
-					return Stream.paginate(undefined, () =>
-						call(
-							"CompleteResult.page",
-							(callback) => dbNative.runtimeCursorNext(cursor, callback),
-							dbNative.runtimePageTake
-						).pipe(
-							Effect.map((page) => {
-								if (page === null) {
-									return [[], Option.none<undefined>()] as const
-								}
-								return [[decodePage<A>(finds, page)], Option.some(undefined)] as const
-							})
+				return Stream.paginate(undefined, () =>
+					call(
+						"CompleteResult.page",
+						(done) => dbNative.runtimeCursorNext(cursor, done),
+						dbNative.runtimePageTake
+					).pipe(
+						Effect.map((page) =>
+							page === null
+								? ([[], Option.none<undefined>()] as const)
+								: ([[decodePage<A>(finds, page)], Option.some(undefined)] as const)
 						)
 					)
-				})
-			)
-		},
-		close() {
-			return drain("CompleteResult.close", (callback) => dbNative.runtimeResultClose(handle, callback))
-		}
+				)
+			})
+		).pipe(Stream.withSpan("CompleteResult.pages"))
 	}
-	Object.freeze(value)
-	resultInternals.set(value, { handle })
-	return value
+
+	/** The native result behind `value`, when `value` is a result this SDK made. */
+	static handle(value: object): ResultHandle | undefined {
+		return #handle in value ? (value as CompleteResultLive<unknown>).#handle : undefined
+	}
 }
 
 export type { CompleteResult }
-export { internalResult, makeCompleteResult }
+export { CompleteResultLive }

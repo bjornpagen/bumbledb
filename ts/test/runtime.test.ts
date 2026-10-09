@@ -1,15 +1,15 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime } from "effect"
+import { CloseFailure, DbError, dbError, runtimeErrorCodes } from "../src/errors.ts"
 import { call, release } from "../src/native/op.ts"
 import { native } from "../src/native.ts"
-import type { NativeRuntimeOptions } from "../src/runtime.ts"
-import { NativeRuntime, runtimeHandle } from "../src/runtime.ts"
-import { CloseFailure, DbError, dbError, runtimeErrorCodes } from "../src/runtime-errors.ts"
+import type { BumbleOptions } from "../src/runtime.ts"
+import { Bumble, runtimeHandle } from "../src/runtime.ts"
 import type { CloseWire, OptionsWire, RuntimeHandle } from "../src/runtime-native.ts"
 import { runtimeNative } from "../src/runtime-native.ts"
 
-const configuration: NativeRuntimeOptions = {
+const configuration: BumbleOptions = {
 	workers: 2,
 	queueCapacity: 8,
 	cleanupCapacity: 16,
@@ -23,7 +23,7 @@ const close = (handle: RuntimeHandle) =>
 
 const hashChunk = (input: Uint8Array) =>
 	Effect.gen(function* () {
-		const handle = yield* runtimeHandle()
+		const handle = yield* runtimeHandle
 		return yield* call("hashChunk", (done) => runtimeNative.runtimeHash(handle, input, done), runtimeNative.runtimeTake)
 	})
 
@@ -48,9 +48,9 @@ test("native error roster matches; structured backpressure preserves exact count
 		Effect.catchReason("DbError", "ResourceLimit", (reason) => Effect.succeed(reason.limit))
 	)
 	assert.equal(await Effect.runPromise(recovered), exact)
-	const runtime = ManagedRuntime.make(NativeRuntime.layer({ workers: 0 }))
+	const runtime = ManagedRuntime.make(Bumble.layer({ workers: 0 }))
 	try {
-		const exit = await runtime.runPromiseExit(NativeRuntime)
+		const exit = await runtime.runPromiseExit(Bumble)
 		assert.ok(Exit.isFailure(exit))
 		const reason = exit.cause.reasons.find(Cause.isFailReason)
 		assert.ok(reason?.error instanceof DbError)
@@ -61,7 +61,7 @@ test("native error roster matches; structured backpressure preserves exact count
 })
 
 test("layer and hash effects are lazy, repeatable and accept independently owned input", async () => {
-	const layer = NativeRuntime.layer(configuration)
+	const layer = Bumble.layer(configuration)
 	const input = new Uint8Array([1, 2, 3])
 	const effect = hashChunk(input)
 	// Merely constructing the layer/effect has not opened the singleton.
@@ -78,7 +78,7 @@ test("layer and hash effects are lazy, repeatable and accept independently owned
 		assert.notDeepEqual(first, second)
 		const inspection = await runtime.runPromise(
 			Effect.gen(function* () {
-				return yield* (yield* NativeRuntime).inspect()
+				return yield* (yield* Bumble).inspect()
 			})
 		)
 		assert.equal(inspection.retained, 0n)
@@ -89,14 +89,14 @@ test("layer and hash effects are lazy, repeatable and accept independently owned
 })
 
 test("one reused Layer shares the runtime, independent layers refuse", async () => {
-	const layer = NativeRuntime.layer(configuration)
+	const layer = Bumble.layer(configuration)
 	const runtime = ManagedRuntime.make(Layer.merge(layer, layer))
 	try {
-		const [left, right] = await Promise.all([runtime.runPromise(NativeRuntime), runtime.runPromise(NativeRuntime)])
+		const [left, right] = await Promise.all([runtime.runPromise(Bumble), runtime.runPromise(Bumble)])
 		assert.equal(left, right)
-		const other = ManagedRuntime.make(NativeRuntime.layer(configuration))
+		const other = ManagedRuntime.make(Bumble.layer(configuration))
 		try {
-			const exit = await other.runPromiseExit(NativeRuntime)
+			const exit = await other.runPromiseExit(Bumble)
 			assert.equal(exit._tag, "Failure")
 			if (exit._tag === "Failure") {
 				const reason = exit.cause.reasons.find(Cause.isFailReason)
@@ -157,7 +157,7 @@ test("scheduling defaults work, invalid counts refuse, and hash inputs have no c
 	for (const workers of [-1, 0, 1.5, Number.NaN, 0x100000000]) {
 		assert.throws(() => runtimeNative.runtimeOpen({ workers }), { _tag: "InvalidArgument" })
 	}
-	const runtime = ManagedRuntime.make(NativeRuntime.layer())
+	const runtime = ManagedRuntime.make(Bumble.layer())
 	try {
 		const input = new Uint8Array(1_000_001).fill(17)
 		assert.deepEqual(await runtime.runPromise(hashChunk(input)), native.blake3Hash(input))
@@ -176,7 +176,7 @@ test("interruption during actual native runtime acquisition reclaims late succes
 			return handle
 		}
 		try {
-			const fiber = Effect.runFork(Effect.scoped(Layer.build(NativeRuntime.layer(configuration))))
+			const fiber = Effect.runFork(Effect.scoped(Layer.build(Bumble.layer(configuration))))
 			await started.promise
 			await Effect.runPromise(Fiber.interrupt(fiber))
 			assert.equal(Exit.hasInterrupts(await Effect.runPromise(Fiber.await(fiber))), true)
@@ -220,12 +220,11 @@ test("Effect interruption cancels and joins native work before the fiber finishe
 test("scope close reclaims workers with wrappers retained and permits a successor", async () => {
 	const retained = []
 	for (let count = 0; count < 30; count++) {
-		const runtime = ManagedRuntime.make(NativeRuntime.layer(configuration))
-		const service = await runtime.runPromise(NativeRuntime)
+		const runtime = ManagedRuntime.make(Bumble.layer(configuration))
+		const service = await runtime.runPromise(Bumble)
 		retained.push(service)
 		await runtime.runPromise(hashChunk(new Uint8Array([count])))
 		await Effect.runPromise(runtime.disposeEffect)
-		assert.equal((await Effect.runPromise(service.close())).kind, "closed")
 		const exit = await Effect.runPromiseExit(service.inspect())
 		assert.equal(exit._tag, "Failure")
 	}

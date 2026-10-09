@@ -1,7 +1,7 @@
-import { Effect } from "effect"
+import { Effect, Schema as EffectSchema } from "effect"
 import { isClosedMember, membersAgree } from "./closed.ts"
 import { dbNative } from "./db-native.ts"
-import { SdkInvariantError } from "./errors.ts"
+import { argumentError, internalError } from "./errors.ts"
 import { isImmutable, snapshotData } from "./immutable.ts"
 import type { SchemaClasses } from "./law.ts"
 import { lower } from "./lower.ts"
@@ -9,17 +9,15 @@ import { call } from "./native/op.ts"
 import type { SealedDescriptor } from "./native.ts"
 import type { AnyRelation } from "./relation.ts"
 import { runtimeHandle } from "./runtime.ts"
-import { argumentError } from "./runtime-errors.ts"
 import type { AnySchema, Schema as SchemaDeclaration, SchemaRelations } from "./schema.ts"
 import { schemaDescriptor } from "./schema.ts"
 import { type KeyStatement, type Statement, statementDescriptor } from "./statements.ts"
 
-/**
- * `SchemaId` — the engine's canonical schema fingerprint as lowercase hex.
- * Independent of database identity; ordinary structural text. Native
- * boundaries verify the fingerprint wherever it grants admission.
- */
-type SchemaId = string
+/** The engine's schema fingerprint: 64 lowercase hex digits, independent of any database. */
+const SchemaId = EffectSchema.String.check(EffectSchema.isPattern(/^[0-9a-f]{64}$/)).pipe(
+	EffectSchema.brand("SchemaId")
+)
+type SchemaId = typeof SchemaId.Type
 
 /**
  * `CompiledSchema<S>` — bounded detached immutable descriptor data plus the
@@ -105,18 +103,19 @@ function declaredKey(
 	return undefined
 }
 
+const decodeSchemaId = EffectSchema.decodeUnknownOption(SchemaId)
+
 function admitSchemaId(fingerprint: string): SchemaId {
-	if (typeof fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(fingerprint)) {
-		throw new SdkInvariantError({ message: "Schema.compile: the engine returned no canonical fingerprint" })
-	}
-	return fingerprint
+	const id = decodeSchemaId(fingerprint)
+	if (id._tag === "None") throw internalError("Schema.compile: the engine returned no canonical fingerprint")
+	return id.value
 }
 
 /**
  * Effectful native schema admission/compilation: a
  * schema declaration is pure metadata and never a claim its theory has been
  * admitted. Runs on the shared executor, requires the
- * acquired {@link NativeRuntime}, and yields detached immutable descriptor
+ * acquired {@link Bumble}, and yields detached immutable descriptor
  * data plus the canonical schema identity. No database is opened and no
  * native finalizer is created.
  */
@@ -126,7 +125,7 @@ const compile = Effect.fn("Schema.compile")(function* <S extends AnySchema>(sche
 		catch: (cause) => argumentError("Schema.compile", cause)
 	})
 	const spec = yield* Effect.try({ try: () => lower(owned), catch: (cause) => argumentError("Schema.compile", cause) })
-	const handle = yield* runtimeHandle()
+	const handle = yield* runtimeHandle
 	const descriptor = yield* call(
 		"Schema.compile",
 		(callback) => dbNative.runtimeSchemaCompile(handle, spec, callback),

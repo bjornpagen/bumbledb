@@ -33,7 +33,7 @@ import {
 	interval,
 	key,
 	mirrors,
-	NativeRuntime,
+	Bumble,
 	on,
 	query,
 	queryFromDescription,
@@ -93,7 +93,7 @@ void [Learning, scoreIsNumber, unitsAreExact]
 
 ## 2. One runtime layer; explicit create and open
 
-`NativeRuntime.layer()` acquires the single native runtime
+`Bumble.layer()` acquires the single native runtime
 with scope; reuse ONE layer value so Effect's memoization shares it.
 Optional configuration controls workers, outstanding jobs/handles, and cleanup
 reporting. Defaults are up to four workers, 128 queued jobs, 128 cleanup reports,
@@ -127,7 +127,7 @@ const createOnce = Effect.scoped(
 )
 
 // One boundary; an Effect app provides the layer in its own graph instead.
-const layer = NativeRuntime.layer()
+const layer = Bumble.layer()
 void [openExisting.pipe(Effect.provide(layer)), createOnce.pipe(Effect.provide(layer))]
 ```
 
@@ -505,28 +505,25 @@ const dense: FloatIntervalValue = { start: 0.25, end: 1.5 }
 void [Windows, discrete, dense]
 ```
 
-## 12. Scoped ownership and honest close
+## 12. Scoped ownership
 
-Every native resource is scoped; early `close()` is itself an Effect
-returning the honest `CloseReport`. A scope finalizer that cannot complete
-teardown surfaces a structured `CloseFailure` DEFECT in the Cause — never a
-silently swallowed failure, never falsely reclaimed resources.
+Every native resource belongs to the scope that acquired it: the database, snapshots, prepared
+queries, results and change sets are released when their scope closes, innermost first. There is
+no `close()`; to release something early, acquire it in a smaller scope. A release that cannot
+drain cleanly is a `CloseFailure` defect in the Cause, never a swallowed failure.
 
 ```ts
 const Item = relation("Item", { id: uuid, label: str })
 const Items = schema("Items", { Item }, [key(Item, ["id"])])
 
-const explicitClose = Effect.scoped(
+const shortLived = Effect.scoped(
 	Effect.gen(function* () {
 		const db = yield* Db.open(localPath, Items)
-		const report = yield* db.close()
-		// `closed` releases this capability's obligations; `incomplete` and
-		// `failed` retain native Closing accounting — they are never
-		// counted as reclaimed.
-		return report.kind
+		const generation = yield* Effect.scoped(Effect.map(db.snapshot(), (snapshot) => snapshot.witness.generation))
+		return generation
 	})
 )
-void explicitClose
+void shortLived
 ```
 
 ## 13. Derive slices, measure them, and round the total

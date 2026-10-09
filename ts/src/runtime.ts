@@ -1,11 +1,12 @@
 import { Context, Duration, Effect, Layer } from "effect"
-import { call, drain, scoped } from "./native/op.ts"
-import type { CloseReport, OutstandingWork } from "./runtime-errors.ts"
-import { DbError, dbError } from "./runtime-errors.ts"
+import type { OutstandingWork } from "./errors.ts"
+import { DbError, dbError } from "./errors.ts"
+import { call, scoped } from "./native/op.ts"
 import type { OptionsWire, RuntimeHandle } from "./runtime-native.ts"
 import { runtimeNative } from "./runtime-native.ts"
 
-export interface NativeRuntimeOptions {
+/** Sizing for the native runtime. The addon validates every count and picks the defaults. */
+export interface BumbleOptions {
 	readonly workers?: number
 	readonly queueCapacity?: number
 	readonly cleanupCapacity?: number
@@ -14,79 +15,59 @@ export interface NativeRuntimeOptions {
 	readonly cleanupTimeout?: Duration.Input
 }
 
-interface RuntimeService {
-	readonly close: () => Effect.Effect<CloseReport>
-	readonly inspect: () => Effect.Effect<OutstandingWork, DbError>
-}
-
-const owners = new WeakMap<RuntimeService, RuntimeHandle>()
-
-function invalid(operation: string): DbError {
-	return new DbError({ operation, reason: { _tag: "InvalidArgument" } })
-}
-
-function count(value: number, operation: string): number {
-	if (!Number.isSafeInteger(value) || value <= 0 || value > 0xffffffff) throw invalid(operation)
-	return value
-}
-
-function millis(value: Duration.Input, operation: string): number {
-	const duration = Duration.toMillis(value)
-	if (!Number.isFinite(duration) || duration < 0 || duration > 0xffffffff) throw invalid(operation)
-	return Math.ceil(duration)
-}
-
-function options(value: NativeRuntimeOptions): OptionsWire {
-	const operation = "NativeRuntime.acquire"
+function wire(options: BumbleOptions): OptionsWire {
+	const timeout = options.cleanupTimeout === undefined ? undefined : Duration.toMillis(options.cleanupTimeout)
+	if (timeout !== undefined && !Number.isFinite(timeout)) {
+		throw new DbError({ operation: "Bumble.layer", reason: { _tag: "InvalidArgument" } })
+	}
 	return {
-		workers: value.workers === undefined ? undefined : count(value.workers, operation),
-		queueCapacity: value.queueCapacity === undefined ? undefined : count(value.queueCapacity, operation),
-		cleanupCapacity: value.cleanupCapacity === undefined ? undefined : count(value.cleanupCapacity, operation),
-		ownerCapacity: value.ownerCapacity === undefined ? undefined : count(value.ownerCapacity, operation),
-		nativeHandleCapacity:
-			value.nativeHandleCapacity === undefined ? undefined : count(value.nativeHandleCapacity, operation),
-		cleanupTimeoutMs:
-			value.cleanupTimeout === undefined ? undefined : count(millis(value.cleanupTimeout, operation), operation)
+		workers: options.workers,
+		queueCapacity: options.queueCapacity,
+		cleanupCapacity: options.cleanupCapacity,
+		ownerCapacity: options.ownerCapacity,
+		nativeHandleCapacity: options.nativeHandleCapacity,
+		cleanupTimeoutMs: timeout === undefined ? undefined : Math.ceil(timeout)
 	}
 }
 
-const acquire = Effect.fn("NativeRuntime.acquire")(function* (configuration: NativeRuntimeOptions) {
-	const wire = yield* Effect.try({
-		try: () => options(configuration),
-		catch: (cause) => dbError("NativeRuntime.acquire", cause)
-	})
-	const owner = yield* scoped(
-		"NativeRuntime.release",
-		Effect.try({
-			try: () => runtimeNative.runtimeOpen(wire),
-			catch: (cause) => dbError("NativeRuntime.acquire", cause)
-		}),
-		(handle) => (done) => runtimeNative.runtimeClose(handle, done)
-	)
-	yield* call("NativeRuntime.acquire", (done) => runtimeNative.runtimeReady(owner, done), runtimeNative.runtimeTake)
-	const service: RuntimeService = {
-		close: () => drain("NativeRuntime.close", (done) => runtimeNative.runtimeClose(owner, done)),
-		inspect: Effect.fn("NativeRuntime.inspect")(function* () {
-			yield* call("NativeRuntime.inspect", (done) => runtimeNative.runtimeReady(owner, done), runtimeNative.runtimeTake)
-			return runtimeNative.runtimeInspect(owner)
+/** The live native runtime: one worker pool and handle registry per process. */
+export class Runtime {
+	readonly #handle: RuntimeHandle
+	/** The runtime's outstanding native work, after every operation queued before it settles. */
+	readonly inspect: () => Effect.Effect<OutstandingWork, DbError>
+
+	constructor(handle: RuntimeHandle) {
+		this.#handle = handle
+		this.inspect = Effect.fn("Bumble.inspect")(function* () {
+			yield* call("Bumble.inspect", (done) => runtimeNative.runtimeReady(handle, done), runtimeNative.runtimeTake)
+			return runtimeNative.runtimeInspect(handle)
 		})
 	}
-	owners.set(service, owner)
-	return service
-})
 
-export class NativeRuntime extends Context.Service<NativeRuntime, RuntimeService>()(
-	"@bjornpagen/bumbledb/NativeRuntime"
-) {
-	static layer(options: NativeRuntimeOptions = {}): Layer.Layer<NativeRuntime, DbError> {
-		return Layer.effect(NativeRuntime, acquire(options))
+	static handle(runtime: Runtime): RuntimeHandle {
+		return runtime.#handle
 	}
 }
 
-/** Private core/log integration: captures the already acquired shared service. */
-export const runtimeHandle = Effect.fn("NativeRuntime.handle")(function* () {
-	const runtime = yield* NativeRuntime
-	const handle = owners.get(runtime)
-	if (handle === undefined) return yield* Effect.fail(invalid("NativeRuntime.handle"))
-	return handle
+const acquire = Effect.fn("Bumble.layer")(function* (options: BumbleOptions) {
+	const input = yield* Effect.try({ try: () => wire(options), catch: (cause) => dbError("Bumble.layer", cause) })
+	const handle = yield* scoped(
+		"Bumble.release",
+		Effect.try({ try: () => runtimeNative.runtimeOpen(input), catch: (cause) => dbError("Bumble.layer", cause) }),
+		(owner) => (done) => runtimeNative.runtimeClose(owner, done)
+	)
+	yield* call("Bumble.layer", (done) => runtimeNative.runtimeReady(handle, done), runtimeNative.runtimeTake)
+	return new Runtime(handle)
+})
+
+/** The native runtime as an Effect service. Provide `Bumble.layer()` once in the application graph. */
+export class Bumble extends Context.Service<Bumble, Runtime>()("@bjornpagen/bumbledb/Bumble") {
+	static layer(options: BumbleOptions = {}): Layer.Layer<Bumble, DbError> {
+		return Layer.effect(Bumble, acquire(options))
+	}
+}
+
+/** The provided runtime's native handle. */
+export const runtimeHandle: Effect.Effect<RuntimeHandle, never, Bumble> = Effect.gen(function* () {
+	return Runtime.handle(yield* Bumble)
 })

@@ -6,8 +6,8 @@
  */
 import type { Scope } from "effect"
 import { Effect } from "effect"
-import type { CloseReport, DbError } from "../runtime-errors.ts"
-import { CloseFailure, dbError } from "../runtime-errors.ts"
+import type { CloseReport, DbError } from "../errors.ts"
+import { CloseFailure, dbError } from "../errors.ts"
 import type { CloseWire, OperationHandle } from "../runtime-native.ts"
 import { runtimeNative } from "../runtime-native.ts"
 

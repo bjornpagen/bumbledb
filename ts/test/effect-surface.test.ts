@@ -1,10 +1,3 @@
-/**
- * The Effect-only public surface (API-12 declaration/export gate, the
- * authored half): every database operation constructs a LAZY Effect —
- * no Promise, thenable, synchronous or disposal twin exists anywhere on
- * the public values — and pure schema/query/scalar construction performs
- * no native work (chapter 35's pure-descriptions table).
- */
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Effect, type Stream } from "effect"
@@ -15,7 +8,7 @@ import { f64, str, u64, uuid } from "../src/fields.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { key } from "../src/statements.ts"
 import { type Attempt, Learning, type Student } from "./fixtures/learning.ts"
@@ -48,7 +41,7 @@ test("every core entry point constructs a lazy Effect (or Stream) — nothing ru
 })
 
 test("the layer value is inert data until provided into a running scope", function layerInert() {
-	const layer = NativeRuntime.layer({
+	const layer = Bumble.layer({
 		workers: 1,
 		queueCapacity: 1,
 		cleanupCapacity: 1,
@@ -56,7 +49,7 @@ test("the layer value is inert data until provided into a running scope", functi
 		nativeHandleCapacity: 1,
 		cleanupTimeout: "1 second"
 	})
-	assertNoTwin("NativeRuntime.layer", layer)
+	assertNoTwin("Bumble.layer", layer)
 })
 
 test("pure schema/query metadata construction touches no native work and no I/O", function pureMetadata() {
@@ -93,7 +86,7 @@ test("a CompleteResult's pages is a Stream value, and no cursor/AsyncIterable tw
 	assert.ok(pinned)
 })
 
-test("get/execute/prepare/close on typed handles are declared Effect-returning (compile-time pins)", function methodPins() {
+test("get/execute/prepare on typed handles are declared Effect-returning (compile-time pins)", function methodPins() {
 	type SnapshotValue = import("../src/db.ts").Snapshot<typeof Learning>
 	type GetResult = ReturnType<SnapshotValue["get"]>
 	const getIsEffect: GetResult extends Effect.Effect<unknown, unknown, unknown> ? true : false = true
@@ -103,24 +96,5 @@ test("get/execute/prepare/close on typed handles are declared Effect-returning (
 		? true
 		: false = true
 	assert.ok(prepareIsScoped)
-	type CloseResult = ReturnType<SnapshotValue["close"]>
-	const closeIsEffect: CloseResult extends Effect.Effect<unknown, never, never> ? true : false = true
-	assert.ok(closeIsEffect)
 	void ({} as { attempt: typeof Attempt; student: typeof Student })
-})
-
-test("internal/log ships Capability and QueryReader types; no writer ABI remains", function internalSeam() {
-	type Cap = import("../src/runtime-native.ts").Capability
-	type Reader = import("../src/db.ts").QueryReader<typeof Learning>
-	const cap: Cap = { runtime: 1n, worker: 0, kind: "snapshot", id: 1n, generation: 1n }
-	assert.equal(cap.kind, "snapshot")
-	type NativeApi = typeof import("../src/runtime-native.ts").runtimeNative
-	type HasWriter = "runtimeDbWriter" extends keyof NativeApi ? true : false
-	const noWriter: HasWriter = false
-	assert.ok(!noWriter)
-	type Get = Reader["get"]
-	const getIsEffect: Get extends (...args: never) => import("effect").Effect.Effect<unknown, unknown, unknown>
-		? true
-		: false = true
-	assert.ok(getIsEffect)
 })

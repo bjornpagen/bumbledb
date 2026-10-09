@@ -3,6 +3,7 @@ import { test } from "node:test"
 import { Effect, ManagedRuntime, Result } from "effect"
 import { Db } from "../src/engine.ts"
 import {
+	Bumble,
 	bool,
 	ChangeSet,
 	Compute,
@@ -13,7 +14,6 @@ import {
 	interval,
 	key,
 	lowerQuery,
-	NativeRuntime,
 	on,
 	type QueryRuleScope,
 	query,
@@ -228,7 +228,7 @@ test("a bare arm cannot hide incompatible carriers in any three-arm order", () =
 })
 
 test("mixed heads execute through imports and preserve sets, zero groups, intervals, and overflow", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(
@@ -317,7 +317,7 @@ function typeChecks() {
 void typeChecks
 
 test("mixed projection adapters survive empty and pruned arms in either order", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(

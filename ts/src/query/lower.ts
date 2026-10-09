@@ -1,5 +1,5 @@
 import { membersAgree, sealedFieldsOf } from "../closed.ts"
-import { AuthoringError, SdkInvariantError } from "../errors.ts"
+import { AuthoringError, internalError } from "../errors.ts"
 import type { AnyClosedRoster, AnyField, IntervalField } from "../fields.ts"
 import {
 	assertDeclarationOrderKey,
@@ -1501,7 +1501,7 @@ function makeQueryRuleScope<Rels extends SchemaRelations, Classes extends Schema
 ): QueryRuleScope<Rels, Classes> {
 	const raw = makeRawScope({ kind: "query", classes: theory.classes, theory, ...env })
 	if (!isTypedScope<QueryRuleScope<Rels, Classes>>(raw)) {
-		throw new SdkInvariantError({ message: "query rule builder construction incomplete" })
+		throw internalError("query rule builder construction incomplete")
 	}
 	return raw
 }
@@ -1513,7 +1513,7 @@ function makeInteriorRuleScope<Rels extends SchemaRelations, Classes extends Sch
 ): InteriorRuleScope<Rels, Classes> {
 	const raw = makeRawScope({ kind: "interior", self, classes: theory.classes, theory, ...env })
 	if (!isTypedScope<InteriorRuleScope<Rels, Classes>>(raw)) {
-		throw new SdkInvariantError({ message: "interior rule builder construction incomplete" })
+		throw internalError("interior rule builder construction incomplete")
 	}
 	return raw
 }
@@ -1553,7 +1553,7 @@ function makeRecRuleScope<Rels extends SchemaRelations, Classes extends SchemaCl
 					...env
 				})
 	if (!isTypedScope<RecRuleScope<Rels, Classes>>(raw)) {
-		throw new SdkInvariantError({ message: "rec rule builder construction incomplete" })
+		throw internalError("rec rule builder construction incomplete")
 	}
 	return raw
 }

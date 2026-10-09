@@ -18,19 +18,19 @@
  */
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { Cause, Effect, ManagedRuntime, Option, Result, Stream } from "effect"
-import { ChangeSet, internalChanges } from "../src/changes.ts"
+import { Cause, Effect, Exit, ManagedRuntime, Option, Result, Scope, Stream } from "effect"
+import { ChangeSet } from "../src/changes.ts"
 import { Db } from "../src/db.ts"
+import { DbError } from "../src/errors.ts"
 import { bytes, str } from "../src/fields.ts"
 import type { Fact } from "../src/relation.ts"
 import { cellOf, hostCellCharge } from "../src/rows.ts"
-import { NativeRuntime } from "../src/runtime.ts"
-import { DbError } from "../src/runtime-errors.ts"
+import { Bumble } from "../src/runtime.ts"
 import type { Uuid } from "../src/uuid.ts"
 import { Attempt, AttemptById, Learning, runtimeOptions, Student, StudentById, storeDir } from "./fixtures/learning.ts"
 
 function runtime() {
-	return ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	return ManagedRuntime.make(Bumble.layer(runtimeOptions))
 }
 
 const newId = () => Effect.runPromise(Effect.sync(() => crypto.randomUUID()))
@@ -46,11 +46,11 @@ test("native ChangeSet ownership rejects all reads and both composition position
 			Effect.scoped(
 				Effect.gen(function* () {
 					const db = yield* Db.create(storeDir("closed-changes"), Learning)
-					const left = yield* (yield* ChangeSet.builder(Learning)).finish()
+					const scope = yield* Scope.make()
+					const left = yield* (yield* ChangeSet.builder(Learning)).finish().pipe(Scope.provide(scope))
 					const right = yield* (yield* ChangeSet.builder(Learning)).finish()
-					const before = yield* (yield* NativeRuntime).inspect()
-					assert.equal((yield* left.close()).kind, "closed")
-					assert.deepEqual(Object.keys(internalChanges(left) ?? {}).sort(), ["handle", "schemaId"])
+					const before = yield* (yield* Bumble).inspect()
+					yield* Scope.close(scope, Exit.void)
 					for (const effect of [
 						left.toBytes().pipe(Effect.asVoid),
 						Stream.runCollect(left.records()).pipe(Effect.asVoid),
@@ -63,7 +63,7 @@ test("native ChangeSet ownership rejects all reads and both composition position
 						assert.equal(outcome.failure.code, "ClosedHandle")
 					}
 					assert.ok((yield* right.toBytes()).byteLength > 0)
-					const after = yield* (yield* NativeRuntime).inspect()
+					const after = yield* (yield* Bumble).inspect()
 					assert.equal(after.natives, before.natives - 1n)
 					assert.equal(after.retained, before.retained)
 				})

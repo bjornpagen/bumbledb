@@ -6,14 +6,14 @@ import { ChangeSet } from "../src/changes.ts"
 import { Db } from "../src/db.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { Uuid } from "../src/uuid.ts"
 import { Learning, runtimeOptions, Student, storeDir } from "./fixtures/learning.ts"
 
 const CANONICAL = "00112233-4455-6677-8899-aabbccddeeff"
 
 test("UUID native persistence and ordered predicates preserve both halves", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	const ids: Uuid[] = [
 		"00000000-0000-0000-0000-000000000000",
 		"00000000-0000-0000-0000-000000000001",

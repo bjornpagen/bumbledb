@@ -1,6 +1,6 @@
 import type { AnyClosed } from "../closed.ts"
 import { memberDescriptor, sealedFieldsOf } from "../closed.ts"
-import { AuthoringError, SdkInvariantError } from "../errors.ts"
+import { AuthoringError, internalError } from "../errors.ts"
 import type { AnyField, Infer, SignatureOf } from "../fields.ts"
 import { rosterOf, signaturesAgree } from "../fields.ts"
 import type { Same, SameLen } from "../judgment.ts"
@@ -203,7 +203,7 @@ function v(owner: MatchOwner | ImportedSource): Readonly<Record<string, AnyVar>>
 		for (const [columnName, column] of facade.columns) {
 			const slot = column.slot
 			if (slot === undefined) {
-				throw new SdkInvariantError({ message: `v(query): facade column ${columnName} lost its slot` })
+				throw internalError(`v(query): facade column ${columnName} lost its slot`)
 			}
 			const variable: AnyVar = Object.freeze({
 				[term]: "var" as const,
@@ -230,7 +230,7 @@ function v(owner: MatchOwner | ImportedSource): Readonly<Record<string, AnyVar>>
 	}
 	Object.freeze(record)
 	if (!varsMinted(member, record)) {
-		throw new SdkInvariantError({ message: `v(${member.name}): variable-record minting incomplete` })
+		throw internalError(`v(${member.name}): variable-record minting incomplete`)
 	}
 	return record
 }

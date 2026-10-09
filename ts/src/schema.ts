@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util"
-import { AuthoringError, SdkInvariantError } from "./errors.ts"
+import { AuthoringError, internalError } from "./errors.ts"
 /**
  * `schema` — assembles relations and statements into a theory value (the
  * `Theory` analog; what `Db.create`/`Db.open` take). Construction-time
@@ -414,7 +414,7 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 	verifyTargetKeys(name, ownedStatements, implied.roster)
 	const classes = computeClasses(name, ownedRelations, ownedStatements)
 	if (!classesComplete<EvaluatedClasses<ClassesOf<Rels, Stmts>>>(classes, ownedRelations)) {
-		throw new SdkInvariantError({ message: `schema ${name}: class-map construction incomplete` })
+		throw internalError(`schema ${name}: class-map construction incomplete`)
 	}
 	return Object.freeze({ name, relations: ownedRelations, statements: Object.freeze(ownedStatements), classes })
 }

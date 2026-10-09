@@ -16,18 +16,18 @@
  */
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { Cause, Deferred, Effect, Exit, Fiber, ManagedRuntime, Stream } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, ManagedRuntime, Scope, Stream } from "effect"
 import { ChangeSet } from "../src/changes.ts"
 import { Db } from "../src/db.ts"
 import { dbNative } from "../src/db-native.ts"
+import { DbError } from "../src/errors.ts"
 import { bytes, f64, i64, interval, str, u64, uuid } from "../src/fields.ts"
 import { call, drain } from "../src/native/op.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
-import { type CompleteResult, internalResult } from "../src/result.ts"
-import { NativeRuntime, runtimeHandle } from "../src/runtime.ts"
-import { DbError } from "../src/runtime-errors.ts"
+import { type CompleteResult, CompleteResultLive } from "../src/result.ts"
+import { Bumble, runtimeHandle } from "../src/runtime.ts"
 import { runtimeNative } from "../src/runtime-native.ts"
 import { schema } from "../src/schema.ts"
 import type { Uuid } from "../src/uuid.ts"
@@ -41,7 +41,7 @@ const allAttempts = query(Learning).rule((r) => {
 type Row = { readonly id: Uuid; readonly score: number }
 
 function runtime() {
-	return ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	return ManagedRuntime.make(Bumble.layer(runtimeOptions))
 }
 
 /** Seeds one student with `count` attempts and returns an executed result. */
@@ -85,7 +85,7 @@ test("collect leaves the result available; cancellation leaves the sealed backin
 					assert.equal(again.length, count)
 
 					// A publication cancellation leaves the backing sealed.
-					runtimeNative.runtimeArmPublicationCancel(yield* runtimeHandle())
+					runtimeNative.runtimeArmPublicationCancel(yield* runtimeHandle)
 					const capped = yield* Effect.exit(result.collect())
 					assert.equal(capped._tag, "Failure")
 					if (capped._tag === "Failure") {
@@ -262,9 +262,10 @@ test("borrowed native delivery preserves exact values and independent byte owner
 					yield* draft.insert(Record, expected)
 					const changes = yield* draft.finish()
 					yield* db.apply(changes, { expected: { kind: "any" } })
-					const snapshot = yield* db.snapshot()
+					const snapshotScope = yield* Scope.make()
+					const snapshot = yield* db.snapshot().pipe(Scope.provide(snapshotScope))
 					const result = yield* snapshot.execute(all, {})
-					yield* snapshot.close()
+					yield* Scope.close(snapshotScope, Exit.void)
 					const first = yield* result.collect()
 					assert.deepEqual(first, expected)
 					first[0]?.raw.fill(255)
@@ -347,7 +348,7 @@ test("publication-boundary cancel delivers nothing; retry starts at row1 (D12/D2
 			Effect.scoped(
 				Effect.gen(function* () {
 					const { result } = yield* seededResult("publication-cancel", 3)
-					const handle = yield* runtimeHandle()
+					const handle = yield* runtimeHandle
 					// L12 probe: cancel after work returns, before operation.output.
 					runtimeNative.runtimeArmPublicationCancel(handle)
 					const refused = yield* Effect.exit(result.collect())
@@ -385,9 +386,9 @@ test("non-terminal cursor refusal does not take Page/Rows; same cursor retries a
 			Effect.scoped(
 				Effect.gen(function* () {
 					const { result } = yield* seededResult("cursor-refusal", 3)
-					const resultHandle = internalResult(result)?.handle
+					const resultHandle = CompleteResultLive.handle(result)
 					assert.ok(resultHandle, "sealed result still has a native handle")
-					const runtime = yield* runtimeHandle()
+					const runtime = yield* runtimeHandle
 					const cursor = yield* Effect.acquireRelease(
 						call(
 							"cursor.open",

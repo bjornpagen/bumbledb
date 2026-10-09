@@ -6,7 +6,7 @@
  */
 import type { Duration } from "effect"
 import { Effect, Schedule } from "effect"
-import { DbError } from "../runtime-errors.ts"
+import { DbError } from "../errors.ts"
 
 /** `Log` is the commit log (`log/`, an S3 Express directory bucket); `Checkpoints` holds `ckpt/` and `mig/`. */
 type Bucket = "Log" | "Checkpoints"

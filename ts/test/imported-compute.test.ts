@@ -11,7 +11,7 @@ import type { QueryRow } from "../src/query/lower.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { contained, key } from "../src/statements.ts"
 import { runtimeOptions, storeDir } from "./fixtures/learning.ts"
@@ -58,7 +58,7 @@ test("imported computed/aggregate columns retain numeric kinds through native co
 		{ group: 1n, amount: 2n },
 		{ group: 2n, amount: 1n }
 	]
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(

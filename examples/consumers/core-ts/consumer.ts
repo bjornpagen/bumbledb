@@ -18,8 +18,8 @@ import {
 	uuid,
 	interval,
 	key,
-	NativeRuntime,
-	type NativeRuntimeOptions,
+	Bumble,
+	type BumbleOptions,
 	on,
 	query,
 	queryFromDescription,
@@ -107,7 +107,7 @@ export const readAttempts = Effect.fn("readAttempts")(
 	Effect.scoped
 )
 
-export const runtimePolicy: NativeRuntimeOptions = {
+export const runtimePolicy: BumbleOptions = {
 	workers: 2,
 	queueCapacity: 16,
 	cleanupCapacity: 16,
@@ -119,7 +119,7 @@ export const runtimePolicy: NativeRuntimeOptions = {
 
 
 /** One process-lifetime runtime. Request code must not construct another. */
-export const makeConsumerRuntime = () => ManagedRuntime.make(NativeRuntime.layer(runtimePolicy))
+export const makeConsumerRuntime = () => ManagedRuntime.make(Bumble.layer(runtimePolicy))
 
 export const coreProgram = (localPath: string) =>
 	Effect.scoped(
@@ -130,13 +130,11 @@ export const coreProgram = (localPath: string) =>
 			const changes = yield* newAttempt(studentId, attemptId)
 			const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
 			if (outcome.kind !== "accepted" && outcome.kind !== "no-change") {
-				const closed = yield* db.close()
-				return { outcome, rows: [] as const, closed }
+				return { outcome, rows: [] as const }
 			}
 			const snapshot = yield* db.snapshot()
 			const rows = yield* readAttempts(snapshot, studentId)
-			const closed = yield* db.close()
-			return { outcome, rows, closed }
+			return { outcome, rows }
 		})
 	)
 
@@ -158,9 +156,7 @@ export const correctScore = (localPath: string, attemptId: Uuid) =>
 			yield* draft.delete(Attempt, [observed.previous])
 			yield* draft.insert(Attempt, [{ ...observed.previous, score: 0.95 }])
 			const changes = yield* draft.finish()
-			const outcome = yield* db.apply(changes, { expected: { kind: "exact", at: observed.at } })
-			const closed = yield* db.close()
-			return { outcome, closed }
+			return yield* db.apply(changes, { expected: { kind: "exact", at: observed.at } })
 		})
 	)
 

@@ -4,6 +4,7 @@ import { Effect, ManagedRuntime } from "effect"
 import { Db } from "../src/engine.ts"
 import {
 	alternatives,
+	Bumble,
 	ChangeSet,
 	Compute,
 	closed,
@@ -11,7 +12,6 @@ import {
 	describeQuery,
 	interval,
 	key,
-	NativeRuntime,
 	query,
 	queryFromDescription,
 	relation,
@@ -78,7 +78,7 @@ function importedTypeChecks() {
 void importedTypeChecks
 
 test("alternatives and imported interval stages compose through atomic arm switches", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(

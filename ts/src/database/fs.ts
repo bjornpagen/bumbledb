@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { Effect } from "effect"
-import { DbError } from "../runtime-errors.ts"
+import { DbError } from "../errors.ts"
 import type { Body, Bucket, Created, Deleted, Fetched, Listed, ObjectStore, Reply, Target } from "./io.ts"
 
 function code(cause: unknown): string | undefined {

@@ -10,7 +10,7 @@ import { on } from "../src/face.ts"
 import { i64, interval, str, u64 } from "../src/fields.ts"
 import type { Fact } from "../src/relation.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import type { Key } from "../src/shape.ts"
 import { key, mirrors } from "../src/statements.ts"
@@ -75,7 +75,7 @@ test("a key owns its projection without freezing or retaining the caller's array
 })
 
 test("every declared key reads the same snapshot with its own projection and native statement id", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	const item = { id: 1n, tenant: 2n, code: "A", description: "first" }
 	const booking = { room: 3n, during: { start: -10n, end: 20n }, label: "reserved" }
 	try {

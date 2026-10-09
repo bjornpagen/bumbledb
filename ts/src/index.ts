@@ -58,13 +58,15 @@ export type { Fault, MemStoreOptions } from "./database/mem.ts"
 export { MemStore } from "./database/mem.ts"
 export type { S3StoreOptions } from "./database/s3.ts"
 export { S3Store } from "./database/s3.ts"
+export type { CloseReport, OutstandingWork } from "./errors.ts"
 export {
 	AuthoringDiagnostic,
 	AuthoringError,
+	CloseFailure,
+	DbError,
+	dbError,
 	NativeLoadError,
-	NativeOperationError,
-	NativeReportedError,
-	SdkInvariantError
+	runtimeErrorCodes
 } from "./errors.ts"
 export type {
 	AnyFace,
@@ -181,10 +183,8 @@ export { relation } from "./relation.ts"
 export type { CompleteResult } from "./result.ts"
 export type { CellValue } from "./rows.ts"
 export { cellOf, factOfCells, flatRowsOf, keyCellsOf } from "./rows.ts"
-export type { NativeRuntimeOptions } from "./runtime.ts"
-export { NativeRuntime } from "./runtime.ts"
-export type { CloseReport, OutstandingWork } from "./runtime-errors.ts"
-export { CloseFailure, DbError, dbError, runtimeErrorCodes } from "./runtime-errors.ts"
+export type { BumbleOptions } from "./runtime.ts"
+export { Bumble } from "./runtime.ts"
 export type {
 	IntervalKind,
 	NumericCast,

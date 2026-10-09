@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises"
 import { Effect } from "effect"
-import { DbError } from "../runtime-errors.ts"
+import { DbError } from "../errors.ts"
 import type { Body, Bucket, Created, Deleted, Fetched, Listed, Millis, ObjectStore, Reply, Target } from "./io.ts"
 
 type Verb = "get" | "putIfAbsent" | "list" | "delete"

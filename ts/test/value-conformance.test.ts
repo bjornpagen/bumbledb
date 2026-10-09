@@ -14,7 +14,7 @@ import { v } from "../src/query/scope.ts"
 import type { Fact } from "../src/relation.ts"
 import { relation } from "../src/relation.ts"
 import { cellOf, flatRowsOf } from "../src/rows.ts"
-import { NativeRuntime, runtimeHandle } from "../src/runtime.ts"
+import { Bumble, runtimeHandle } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { key } from "../src/statements.ts"
 import { I64_MAX, I64_MIN, U64_MAX } from "../src/values.ts"
@@ -242,7 +242,7 @@ test("query bindings and result records reject getters and explicit undefined fi
 
 function nativeEncode(row: Readonly<Record<string, unknown>>) {
 	return Effect.gen(function* () {
-		const runtime = yield* runtimeHandle()
+		const runtime = yield* runtimeHandle
 		// Deliberately bypass host validation to test the native domain independently.
 		const cells = Object.keys(Row.fields).map((name) => row[name])
 		return yield* call(
@@ -254,7 +254,7 @@ function nativeEncode(row: Readonly<Record<string, unknown>>) {
 }
 
 test("host admission matches the real native codec; rejected facts do not enter a database", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		const native = await runtime.runPromise(nativeEncode(good))
 		assert.deepEqual(await runtime.runPromise(decodeRows(shape, native)), [good])
@@ -282,7 +282,7 @@ test("host admission matches the real native codec; rejected facts do not enter 
 })
 
 test("native names and query parameters reject lossy Unicode conversion", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	const original = dbNative.runtimeSnapshotExecute
 	try {
 		await runtime.runPromise(
@@ -299,7 +299,7 @@ test("native names and query parameters reject lossy Unicode conversion", async 
 						assert.equal(Result.isSuccess(result), text.isWellFormed())
 					}
 					dbNative.runtimeSnapshotExecute = original
-					const handle = yield* runtimeHandle()
+					const handle = yield* runtimeHandle
 					for (const name of ["well-formed 🐝", "bad\ud800"]) {
 						const result = yield* Effect.result(
 							call(
@@ -336,7 +336,7 @@ test("prototype-sensitive field and result names are ordinary owned data", async
 		const fields = v(Special)
 		return r.match(Special, fields).find(fields)
 	})
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(

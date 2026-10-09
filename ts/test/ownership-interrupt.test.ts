@@ -12,7 +12,7 @@ import { Db } from "../src/db.ts"
 import { dbNative } from "../src/db-native.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { Attempt, Learning, runtimeOptions, Student, storeDir } from "./fixtures/learning.ts"
 
 const allAttempts = query(Learning).rule((r) => {
@@ -21,7 +21,7 @@ const allAttempts = query(Learning).rule((r) => {
 })
 
 function runtime() {
-	return ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	return ManagedRuntime.make(Bumble.layer(runtimeOptions))
 }
 
 test("interrupt after directory acquire and before db output adoption drains both owners (D18)", async function directoryThenDb() {
@@ -46,22 +46,6 @@ test("interrupt after directory acquire and before db output adoption drains bot
 		} finally {
 			original.runtimeDirectoryDbOpen = open
 		}
-	} finally {
-		await Effect.runPromise(rt.disposeEffect)
-	}
-})
-
-test("retained JS tokens cannot prevent native drain; repeated close joins (D18)", async function retainedTokens() {
-	const rt = runtime()
-	const kept = []
-	try {
-		const db = await rt.runPromise(Effect.scoped(Db.create(storeDir("retained-tokens"), Learning)))
-		kept.push(db)
-		const first = await rt.runPromise(db.close())
-		const second = await rt.runPromise(db.close())
-		assert.equal(first.kind, "closed")
-		assert.equal(second.kind, "closed")
-		assert.equal(kept.length, 1, "the wrapper stayed reachable through both closes")
 	} finally {
 		await Effect.runPromise(rt.disposeEffect)
 	}
@@ -101,14 +85,14 @@ test("abort after publication drains without take; retained wrappers cannot pin 
 					kept.push(snapshot)
 					const result = yield* snapshot.execute(allAttempts, {})
 					kept.push(result)
-					const before = yield* (yield* NativeRuntime).inspect()
+					const before = yield* (yield* Bumble).inspect()
 					const fiber = yield* Effect.forkChild(result.collect())
 					const lateCallback = yield* Effect.promise(() => published.promise)
 					yield* Fiber.interrupt(fiber)
 					const exit = yield* Fiber.await(fiber)
 					assert.ok(Exit.hasInterrupts(exit), "interruption is Cause")
 					lateCallback()
-					const after = yield* (yield* NativeRuntime).inspect()
+					const after = yield* (yield* Bumble).inspect()
 					assert.equal(after.retained, before.retained, "queued output reclaimed without JS take")
 				})
 			)

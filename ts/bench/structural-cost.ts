@@ -13,7 +13,7 @@ import { Compute } from "../src/query/compute.ts"
 import { query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { key } from "../src/statements.ts"
 import { runtimeOptions, storeDir } from "../test/fixtures/learning.ts"
@@ -40,7 +40,7 @@ const checked = query(Theory).rule((r) => {
 		.match(Row, row)
 		.find({ id: row.id, value: Compute.divide(Compute.multiply(row.id, Compute.u64(2n)), Compute.u64(3n)) })
 })
-const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 const paths: string[] = []
 const median = (samples: number[]) => samples.toSorted((a, b) => a - b)[Math.floor(samples.length / 2)]
 const sourceHash = createHash("sha256")

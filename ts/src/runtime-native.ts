@@ -12,21 +12,6 @@ export interface DirectoryHandle {
 	readonly __directory: unique symbol
 }
 
-/** Resource kinds installed in native worker tables. */
-export type NativeKind = "snapshot" | "prepared" | "result" | "cursor" | "draft" | "changes" | "repository-lock"
-
-/**
- * Checked capability into the native registry. JS tokens validate
- * these five fields; native re-judges kind/generation/owner on every verb.
- */
-export interface Capability {
-	readonly runtime: bigint
-	readonly worker: number
-	readonly kind: NativeKind
-	readonly id: bigint
-	readonly generation: bigint
-}
-
 export type ManagedDbOutcome =
 	| { readonly tag: "accepted"; readonly db: DbHandle }
 	| { readonly tag: "rejected"; readonly violations: readonly Violation[] }
@@ -34,7 +19,7 @@ export type ManagedDbOutcome =
 			readonly tag: "refused"
 			readonly kind: "schemaError" | "newtypeMismatch" | "fingerprintMismatch" | "destinationExists"
 			readonly message: string
-			readonly diagnostic?: Extract<import("./runtime-errors.ts").DbError["reason"], { _tag: "Engine" }>["diagnostic"]
+			readonly diagnostic?: Extract<import("./errors.ts").DbError["reason"], { _tag: "Engine" }>["diagnostic"]
 	  }
 
 export interface OptionsWire {

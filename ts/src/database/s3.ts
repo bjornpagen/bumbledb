@@ -4,7 +4,7 @@ import type { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import type { S3Client } from "@aws-sdk/client-s3"
 import { Effect } from "effect"
-import { DbError } from "../runtime-errors.ts"
+import { DbError } from "../errors.ts"
 import type { Body, Bucket, Created, Deleted, Fetched, Listed, Millis, ObjectStore, Reply, Target } from "./io.ts"
 
 type Sdk = typeof import("@aws-sdk/client-s3")

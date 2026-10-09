@@ -71,7 +71,7 @@ import {
 	uuid,
 	interval,
 	key,
-	NativeRuntime,
+	Bumble,
 	on,
 	query,
 	ref,
@@ -152,7 +152,7 @@ const program = Effect.scoped(
 
 // One boundary for this script; an Effect app supplies the layer in its
 // own application graph instead.
-void Effect.runPromise(program.pipe(Effect.provide(NativeRuntime.layer())))
+void Effect.runPromise(program.pipe(Effect.provide(Bumble.layer())))
 ```
 
 Every `ts` fence in this README is extracted and type-checked against the
@@ -181,7 +181,7 @@ and query representations.
   measurement range, and `weigh` chooses a numeric field or interval
   duration. Harmless equivalent window spellings lower to one canonical
   law; genuinely different meanings still refuse.
-- `NativeRuntime.layer()` owns the shared native runtime with sensible defaults;
+- `Bumble.layer()` owns the shared native runtime with sensible defaults;
   provide it once in the app graph. `Db.create` and `Db.open` are scoped
   Effects over that runtime; `open` never creates and `create` refuses
   existing authority. `db.apply(changes, { expected })` judges one

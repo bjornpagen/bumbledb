@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { Effect, Exit, Fiber, ManagedRuntime, Option, Stream } from "effect"
+import { Effect, Exit, Fiber, ManagedRuntime, Option, Scope, Stream } from "effect"
 import { type ChangeRecord, ChangeSet } from "../src/changes.ts"
 import { closed, closedId } from "../src/closed.ts"
 import { Db } from "../src/db.ts"
@@ -8,7 +8,7 @@ import { dbNative } from "../src/db-native.ts"
 import { on } from "../src/face.ts"
 import { bool, bytes, f64, i64, interval, str, u64, uuid } from "../src/fields.ts"
 import { type Fact, relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { contained, key } from "../src/statements.ts"
 import { runtimeOptions, storeDir } from "./fixtures/learning.ts"
@@ -25,8 +25,8 @@ const build = Effect.fn(function* (adds: readonly Fact<typeof Item>[], removes: 
 	return yield* draft.finish()
 })
 
-async function run(body: Effect.Effect<void, unknown, import("effect").Scope.Scope | NativeRuntime>) {
-	const rt = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+async function run(body: Effect.Effect<void, unknown, Scope.Scope | Bumble>) {
+	const rt = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await rt.runPromise(Effect.scoped(body))
 	} finally {
@@ -179,7 +179,7 @@ test("inspection is bounded, repeatable and releases early-terminated cursors", 
 		Effect.gen(function* () {
 			const rows = Array.from({ length: 10_000 }, (_, i) => ({ id: BigInt(i), label: "x" }))
 			const changes = yield* build(rows)
-			const service = yield* NativeRuntime
+			const service = yield* Bumble
 			const before = yield* service.inspect()
 			let copied = 0
 			let pulls = 0
@@ -254,20 +254,20 @@ test("inspection uses the shared field codec for all scalars, intervals and clos
 test("lazy operations and retained wrappers obey closure, including an open cursor's independent share", () =>
 	run(
 		Effect.gen(function* () {
-			const changes = yield* build([{ id: 1n, label: "one" }])
+			const scope = yield* Scope.make()
+			const changes = yield* build([{ id: 1n, label: "one" }]).pipe(Scope.provide(scope))
 			const bytes = yield* changes.toBytes()
 			const laterBytes = changes.toBytes()
 			const laterCompose = changes.compose(changes)
 			const laterRecords = changes.records()
-			const close = changes.close()
-			assert.deepEqual(yield* laterBytes, bytes, "constructing close is inert")
-			// Opening a cursor retains the immutable source; later source close does not revoke it.
+			const close = Scope.close(scope, Exit.void)
+			assert.deepEqual(yield* laterBytes, bytes)
+			// An open cursor holds its own share of the source; closing the source's scope does not revoke it.
 			const seen = yield* Stream.runCollect(changes.records().pipe(Stream.tap(() => close)))
 			assert.equal(seen.length, 1)
 			assert.ok(Exit.isFailure(yield* Effect.exit(laterBytes)))
 			assert.ok(Exit.isFailure(yield* Effect.exit(laterCompose)))
 			assert.ok(Exit.isFailure(yield* Effect.exit(Stream.runCollect(laterRecords))))
-			assert.equal((yield* close).kind, "closed")
 			const decoded = yield* Effect.scoped(ChangeSet.fromBytes(Theory, bytes))
 			assert.ok(Exit.isFailure(yield* Effect.exit(decoded.toBytes())))
 		})
@@ -282,7 +282,7 @@ test("cancelled composition delivery cannot leak a native handle or consume its 
 			dbNative.runtimeChangesCompose = (left, right, callback) =>
 				original(left, right, () => completed.resolve(callback))
 			try {
-				const service = yield* NativeRuntime
+				const service = yield* Bumble
 				const before = yield* service.inspect()
 				const child = yield* Effect.forkChild(Effect.scoped(changes.compose(changes)))
 				const lateCallback = yield* Effect.promise(() => completed.promise)

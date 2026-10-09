@@ -3,6 +3,7 @@ import { test } from "node:test"
 import { Effect, ManagedRuntime, Result } from "effect"
 import { Db } from "../src/engine.ts"
 import {
+	Bumble,
 	ChangeSet,
 	Compute,
 	closed,
@@ -11,7 +12,6 @@ import {
 	describeQuery,
 	i64,
 	interval,
-	NativeRuntime,
 	on,
 	query,
 	queryFromDescription,
@@ -61,7 +61,7 @@ test("generated descriptions execute, prepare, compose and infer their checked r
 	})
 	// Mutating the input description after construction cannot alter execution.
 	generated.ir.rules.length = 0
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(
@@ -142,7 +142,7 @@ test("descriptions preserve recursion and interval/closed-reference domains", as
 		})
 	const described = queryFromDescription(Graph, describeQuery(built), Edge.fields)
 	assert.deepEqual(lowerQuery(described), lowerQuery(built))
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(

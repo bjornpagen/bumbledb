@@ -1,4 +1,4 @@
-import { AuthoringError, SdkInvariantError } from "../errors.ts"
+import { AuthoringError, internalError } from "../errors.ts"
 import type { QueryParam, TaggedValue } from "../native.ts"
 import type { CellValue } from "../rows.ts"
 import { decodeCell, handleOf, setOwnField } from "../rows.ts"
@@ -63,15 +63,13 @@ function isAnswerRow<Row>(
 function decodeAnswers<Row>(finds: readonly FindColumn[], rows: readonly (readonly CellValue[])[]): Row[] {
 	return rows.map(function decodeRow(row) {
 		if (row.length !== finds.length) {
-			throw new SdkInvariantError({
-				message: `query answer arity ${row.length} does not match the ${finds.length} find columns`
-			})
+			throw internalError(`query answer arity ${row.length} does not match the ${finds.length} find columns`)
 		}
 		const decoded: Record<string, unknown> = {}
 		finds.forEach(function decodeColumn(column, ordinal) {
 			const cell = row[ordinal]
 			if (cell === undefined) {
-				throw new SdkInvariantError({ message: `query answer cell ${ordinal} (${column.name}) is absent` })
+				throw internalError(`query answer cell ${ordinal} (${column.name}) is absent`)
 			}
 			if (column.slot !== undefined) {
 				setOwnField(decoded, column.name, decodeCell(`query answer column ${column.name}`, column.slot.field, cell))
@@ -85,7 +83,7 @@ function decodeAnswers<Row>(finds: readonly FindColumn[], rows: readonly (readon
 		})
 		Object.freeze(decoded)
 		if (!isAnswerRow<Row>(finds, decoded)) {
-			throw new SdkInvariantError({ message: "query answer row is not a complete find record" })
+			throw internalError("query answer row is not a complete find record")
 		}
 		return decoded
 	})

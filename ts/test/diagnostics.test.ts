@@ -5,11 +5,11 @@ import { ChangeSet } from "../src/changes.ts"
 import { closed } from "../src/closed.ts"
 import { decodeBoundaryRows, decodeRows, encodeBoundaryRows, encodeRows, rowShape } from "../src/codec.ts"
 import { Db } from "../src/db.ts"
+import type { DbError } from "../src/errors.ts"
 import { str, u64 } from "../src/fields.ts"
 import { query } from "../src/query/lower.ts"
 import { relation } from "../src/relation.ts"
-import { NativeRuntime } from "../src/runtime.ts"
-import type { DbError } from "../src/runtime-errors.ts"
+import { Bumble } from "../src/runtime.ts"
 import { schema } from "../src/schema.ts"
 import { key } from "../src/statements.ts"
 import { runtimeOptions, storeDir } from "./fixtures/learning.ts"
@@ -46,7 +46,7 @@ test("JSON codecs preserve missing, extra and invalid-field diagnostics", () => 
 })
 
 test("typed writes, keys and both query execution forms retain authoring detail", async () => {
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
 			Effect.scoped(
@@ -106,7 +106,7 @@ test("native schema refusal retains its engine family and detail instead of Inte
 	// The native theory disallows str payload columns on a closed relation.
 	const Invalid = closed("Invalid", ["Only"], { label: str }, { Only: { label: "sensitive content" } })
 	const invalidTheory = schema("InvalidTheory", { Invalid, Row }, [ById])
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		const result = await runtime.runPromise(Effect.result(encodeRows(rowShape(invalidTheory, Row), [])))
 		assert.ok(Result.isFailure(result))

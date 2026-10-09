@@ -6,7 +6,7 @@
  */
 import type { Scope } from "effect"
 import { Deferred, Effect, Fiber, FiberSet, Queue, Semaphore } from "effect"
-import { DbError } from "../runtime-errors.ts"
+import { DbError } from "../errors.ts"
 import type { ExecutorOptions, IoRequest, IoResponse, ObjectStore } from "./io.ts"
 import { defaultExecutorOptions, execute } from "./io.ts"
 
