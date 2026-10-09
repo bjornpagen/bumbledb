@@ -40,10 +40,8 @@ pub(crate) fn field_columns(field: &FieldDescriptor) -> Vec<(String, &'static st
 
 /// The SQLite rowid alias for a relation: closed relations alias their
 /// auto-handle column; ordinary relations alias the field of their FIRST
-/// declared single-column u64 key, in statement order (the successor's
-/// declared-key reality — chapter 10: keys are declared statements only;
-/// the retired fresh auto-keys are gone, so an id column is a PRIMARY KEY
-/// alias exactly when the schema DECLARES it a key).
+/// declared single-column u64 key, in statement order: an id column is a
+/// PRIMARY KEY alias exactly when the schema declares it a key.
 fn rowid_alias<'a>(
     schema: &'a Schema,
     relation_id: RelationId,
@@ -516,13 +514,9 @@ mod tests {
                 },
             ],
             statements: vec![
-                // Declared id keys first (the successor's declared-key
-                // reality — these were fresh auto-keys before; Span's id
-                // stays keyless on purpose, so a keyless id column gets no
-                // PRIMARY KEY alias): the rowid aliases derive from THESE
-                // statements, and putting them at the head keeps every
-                // later declared statement id at its historical position
-                // (closed autos now lead the materialized order).
+                // Declared id keys first: the rowid aliases derive from
+                // these statements. Span's id stays keyless on purpose, so a
+                // keyless id column gets no PRIMARY KEY alias.
                 StatementDescriptor::Functionality {
                     relation: RelationId(0),
                     projection: Box::new([FieldId(0)]),
@@ -579,12 +573,10 @@ mod tests {
         }
     }
 
-    /// Statement numbering (successor materialized order): the Kind closed
-    /// auto-handle key leads (s0), then the declared list — the two
-    /// declared id keys (s1, s2 — rowid-covered so no index), the code key
-    /// (s3), the containments and the pointwise key (s4..s7). The ids
-    /// match the historical goldens because the id keys sit at the
-    /// declared head, exactly where the fresh autos used to count.
+    /// Statement numbering in materialized order: the Kind closed
+    /// auto-handle key (s0), then the declared list: the two declared id
+    /// keys (s1, s2, rowid-covered so no index), the code key (s3), the
+    /// containments and the pointwise key (s4..s7).
     #[test]
     fn ddl_is_golden() {
         let schema = mini_schema();

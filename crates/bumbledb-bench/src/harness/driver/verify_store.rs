@@ -49,9 +49,6 @@ fn render_report(schema: &Schema, report: &StoreReport) -> String {
         }
         out.push('\n');
     }
-    // The immortal-dictionary leak line is gone with the dictionary itself
-    // (ENG-006): the successor store persists inline canonical text, so
-    // there is no intern namespace left to leak.
     if report.findings().is_empty() {
         let _ = writeln!(out, "verify-store OK: namespaces coherent, judgments hold");
     } else {
@@ -107,9 +104,5 @@ mod tests {
         };
         let rendered = render_report(schema, &clean);
         assert!(rendered.contains("verify-store OK"), "{rendered}");
-        assert!(
-            !rendered.contains("intern"),
-            "the dictionary leak line is gone with the dictionary (ENG-006): {rendered}"
-        );
     }
 }

@@ -478,13 +478,10 @@ pub fn descriptor() -> SchemaDescriptor {
     }
 }
 
-/// The declared statements: the seven id keys FIRST (the successor's
-/// declared-key reality — these were fresh auto-keys before, and sitting at
-/// the declared head they occupy exactly the slots the autos used to count,
-/// so no later statement id shifts), then `ImportBatch`'s key, the ledger's
-/// nine containments (`60-validation.md`'s block, in its source order), the
-/// DU pair as its two containments (mirror-detected at sealing), and —
-/// appended last so no earlier statement id shifts — the bytes<32> key
+/// The declared statements: the seven id keys first, then `ImportBatch`'s
+/// key, the ledger's nine containments, the DU pair as its two containments
+/// (mirror-detected at sealing), and, last so no earlier statement id
+/// shifts, the bytes<32> key
 /// `Transfer(extref) -> Transfer`: every corpus load writes an
 /// adversarial-digest determinant per transfer, and an `Eq` extref binding is
 /// key-covering (the key-probe fast path over a multi-word key).
@@ -510,7 +507,7 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
         }
     };
     vec![
-        // The seven declared id keys (E-NO-RESERVE), in relation order.
+        // The seven declared id keys, in relation order.
         id_key(ids::HOLDER, ids::holder::ID),
         id_key(ids::ACCOUNT, ids::account::ID),
         id_key(ids::INSTRUMENT, ids::instrument::ID),
@@ -611,9 +608,8 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
                 &[(ids::currency::MINOR_UNITS, Value::U64(0))],
             ),
         ),
-        // The capacity ledger entry (C13: the randomized lane's world
-        // carries the extension form from day one) — appended last, so
-        // no earlier statement id shifts. The weighted law holds by
+        // The capacity ledger entry, appended last so no earlier statement
+        // id shifts. The weighted law holds by
         // construction: [`posting_tag`] gives an even posting `p`
         // exactly the tag pair `(p % 3, (p + 1) % 3)` — the tag-ordinal
         // sum is 1, 2, or 3 — and odd postings none, so the `{0..3}`
@@ -630,11 +626,9 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
     ]
 }
 
-/// The closed-relation statement ids, pinned (successor materialized order:
-/// four closed auto-keys first (including `FloatValue`), then the declared
-/// list, which leads with the seven declared id keys — so every declared
-/// statement past the id keys sits at its historical id; asserted by
-/// `the_closed_statement_pins_hold`).
+/// The closed-relation statement ids, pinned: the materialized order is the
+/// four closed auto-keys (including `FloatValue`), then the declared list
+/// led by the seven id keys. Asserted by `the_closed_statement_pins_hold`.
 pub const VOCAB_CURRENCY: bumbledb::StatementId = bumbledb::StatementId(24);
 /// `JournalEntry(source) <= Source(id)`.
 pub const VOCAB_SOURCE: bumbledb::StatementId = bumbledb::StatementId(25);
@@ -1010,10 +1004,8 @@ mod tests {
         scale: Scale::S,
     };
 
-    /// The generated corpus satisfies the tag-budget capacity law end
-    /// to end (C13: the randomized lane's world carries the law from
-    /// day one, so this is the seam that proves it loads): the full
-    /// Tiny corpus inserts under the live schema — the weighted `R`
+    /// The generated corpus satisfies the tag-budget capacity law end to
+    /// end: the full Tiny corpus inserts under the live schema — the weighted `R`
     /// edges written at load — and the offline sweeper, the
     /// weight-desync sweep included, finds nothing.
     #[test]
@@ -1023,7 +1015,7 @@ mod tests {
             scale: Scale::Tiny,
         };
         let domains = Domains::of(cfg.scale);
-        let dir = std::env::temp_dir().join("bumbledb-target-tag-budget");
+        let dir = crate::fixture::scratch_path("bumbledb-target-tag-budget");
         let _ = std::fs::remove_dir_all(&dir);
         let db = publish_admitted(&dir);
         for rel in 0..TARGET_RELATIONS {
@@ -1072,11 +1064,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The closed-relation statement pins: successor materialized order is
-    /// the four closed auto-keys, then the declared list (led by the seven
-    /// declared id keys, which occupy the retired fresh autos' count) —
-    /// re-derived here so the differential's typed verdicts name real
-    /// statements, never guessed ids.
+    /// The closed-relation statement pins, re-derived from the materialized
+    /// order so the differential's typed verdicts name real statements.
     #[test]
     fn the_closed_statement_pins_hold() {
         let schema = schema();

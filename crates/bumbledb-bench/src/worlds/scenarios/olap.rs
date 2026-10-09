@@ -44,9 +44,7 @@ bumbledb::schema! {
     };
     closed relation Segment as OSegmentId = { Consumer, Smb, Enterprise, Public };
 
-    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
-    // are ordinary declared statements now, at the head so the later
-    // declared statement ids keep their historical slots.
+    // Id keys first: statement ids below are cited by number.
     Store(id)    -> Store;
     Product(id)  -> Product;
     Customer(id) -> Customer;

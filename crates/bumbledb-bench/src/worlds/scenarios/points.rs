@@ -25,9 +25,7 @@ bumbledb::schema! {
 
     closed relation Class as PClassId = { Hot, Warm, Cold, Frozen };
 
-    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
-    // are ordinary declared statements now, at the head so the later
-    // declared statement ids keep their historical slots.
+    // Id keys first: statement ids below are cited by number.
     Bucket(id) -> Bucket;
     Doc(id)    -> Doc;
 
@@ -348,7 +346,7 @@ mod tests {
 
     #[test]
     fn keyed_get_smoke_gate_agrees() {
-        let dir = std::env::temp_dir().join("bumbledb-points-keyed-get-smoke");
+        let dir = crate::fixture::scratch_path("bumbledb-points-keyed-get-smoke");
         let _ = std::fs::remove_dir_all(&dir);
         crate::worlds::scenarios::gate_scenario(&dir, &scenario_smoke(), 7)
             .expect("p5 agrees with SQLite at smoke scale");
@@ -357,7 +355,7 @@ mod tests {
 
     #[test]
     fn keyed_get_returns_the_exact_fact() {
-        let dir = std::env::temp_dir().join("bumbledb-points-keyed-get-exact");
+        let dir = crate::fixture::scratch_path("bumbledb-points-keyed-get-exact");
         let _ = std::fs::remove_dir_all(&dir);
         let db = bumbledb::Db::create(
             &dir,

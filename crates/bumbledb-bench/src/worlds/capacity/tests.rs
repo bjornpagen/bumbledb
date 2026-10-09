@@ -7,7 +7,7 @@ use crate::oracle::naive::{Delta, NaiveDb};
 use super::{Mass, calendar, calendar_rows, ids, power, power_baseline, power_rows};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("bumbledb-capacity-{tag}"));
+    let dir = crate::fixture::scratch_path(format!("bumbledb-capacity-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }

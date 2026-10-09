@@ -1,12 +1,8 @@
-//! The `SQLite` enforcement map AS DATA: one [`Enforcement`] row per
-//! MATERIALIZED engine statement (closed auto-keys first, then the declared
-//! statements in source order — the engine's materialized order,
-//! `SchemaDescriptor::materialized_statements`; the retired fresh auto-keys
-//! are now ordinary DECLARED id keys over application-owned ids), and the
-//! twin DDL assembled
-//! FROM the table ([`ddl`]) — an engine law without a `SQLite` enforcement row
-//! is a failing totality test, never where no declarative constraint form
-//! exists), appended after the
+//! The `SQLite` enforcement map as data: one [`Enforcement`] row per
+//! materialized engine statement (closed auto-keys first, then the declared
+//! statements in source order, as `SchemaDescriptor::materialized_statements`
+//! orders them), and the twin DDL assembled from the table ([`ddl`]). An
+//! engine law without an enforcement row fails the totality test.
 use bumbledb::schema::ValueType;
 
 use super::{ids, schema};

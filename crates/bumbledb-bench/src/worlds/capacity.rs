@@ -23,9 +23,7 @@ pub mod power {
             watts: u64,
         }
 
-        // Declared id keys first (E-NO-RESERVE): the retired fresh
-        // auto-keys are ordinary declared statements now, at the head so
-        // the later declared statement ids keep their historical slots.
+        // Id keys first: statement ids below are cited by number.
         Pool(id)   -> Pool;
         Device(id) -> Device;
 
@@ -75,8 +73,8 @@ pub mod calendar {
     }
 }
 
-/// The application-owned child-id mint base for the measured commit
-/// families (E-NO-RESERVE): the corpus is dense from 0 (at most
+/// The first child id the measured commit families insert: the corpus is
+/// dense from 0 (at most
 /// `parents x children_per_parent` rows), so cursors seeded here can
 /// never collide with a loaded row; each family owns one cursor that
 /// persists across warmups and measured samples.

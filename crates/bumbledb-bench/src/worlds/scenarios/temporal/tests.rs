@@ -8,7 +8,7 @@ use crate::worlds::families::bind_values;
 use super::corpus::{SMOKE, TP_BASE, TP_HORIZON};
 
 fn smoke_store(name: &str) -> (Db<SchemaDescriptor>, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(name);
+    let dir = crate::fixture::scratch_path(name);
     let _ = std::fs::remove_dir_all(&dir);
     let db = Db::create(
         &dir,
@@ -58,7 +58,7 @@ fn spans_by_id() -> BTreeMap<u64, Interval<i64>> {
 
 #[test]
 fn temporal_smoke_gate_agrees_on_every_family() {
-    let dir = std::env::temp_dir().join("bumbledb-temporal-smoke-gate");
+    let dir = crate::fixture::scratch_path("bumbledb-temporal-smoke-gate");
     let _ = std::fs::remove_dir_all(&dir);
     crate::worlds::scenarios::gate_scenario(&dir, &super::scenario_smoke(), 7)
         .expect("every temporal family agrees with SQLite at smoke scale");

@@ -4,7 +4,7 @@ use bumbledb::{AnswerValue, Answers, Db, Query, Value};
 use crate::worlds::families::bind_values;
 
 fn smoke_store(name: &str) -> (Db<SchemaDescriptor>, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(name);
+    let dir = crate::fixture::scratch_path(name);
     let _ = std::fs::remove_dir_all(&dir);
     let db = Db::create(
         &dir,
@@ -45,7 +45,7 @@ fn run_count(db: &Db<SchemaDescriptor>, query: &Query, params: &[Value]) -> Opti
 
 #[test]
 fn rings_smoke_gate_agrees_on_every_family() {
-    let dir = std::env::temp_dir().join("bumbledb-rings-smoke-gate");
+    let dir = crate::fixture::scratch_path("bumbledb-rings-smoke-gate");
     let _ = std::fs::remove_dir_all(&dir);
     crate::worlds::scenarios::gate_scenario(&dir, &super::scenario_smoke(), 7)
         .expect("every rings family agrees with SQLite at smoke scale");

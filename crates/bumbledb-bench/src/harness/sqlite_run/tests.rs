@@ -10,7 +10,7 @@ const CFG: GenConfig = GenConfig {
 };
 
 fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("bumbledb-bench-sqlite-run-{tag}"));
+    let dir = crate::fixture::scratch_path(format!("bumbledb-bench-sqlite-run-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
     dir

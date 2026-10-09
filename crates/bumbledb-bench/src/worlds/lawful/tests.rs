@@ -16,7 +16,7 @@ use super::{
 };
 
 fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("bumbledb-lawful-{tag}"));
+    let dir = crate::fixture::scratch_path(format!("bumbledb-lawful-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }
@@ -48,10 +48,6 @@ fn the_lawful_schema_validates_and_carries_every_statement_family() {
         "the three declared application-owned id keys plus the four \
          declared composite keys — no fresh auto-keys exist"
     );
-    // No generated field CAN remain: `FieldDescriptor` no longer carries a
-    // generation attribute at all (compile-time truth — the fresh mint was
-    // deleted with its mechanism, E-NO-RESERVE). Identity is
-    // application-owned data.
     let closed_autos = descriptor
         .relations
         .iter()

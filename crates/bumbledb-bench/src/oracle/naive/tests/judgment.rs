@@ -93,8 +93,6 @@ fn matrix_schema() -> SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 extension: None,
-                // The successor has no generated field: `id` is ordinary
-                // application-owned data (E-NO-RESERVE).
                 name: "Target".into(),
                 fields: vec![field("id", ValueType::U64)],
             },

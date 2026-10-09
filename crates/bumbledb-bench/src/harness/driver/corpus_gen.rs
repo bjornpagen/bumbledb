@@ -41,7 +41,7 @@ pub fn cmd_verify(corpus: &CorpusArgs, cases: u32) -> Result<i32, String> {
     match verify::run_prepared(&vcfg, &db, &conn, &cal_db, &cal_conn, |_| None) {
         Ok(report) => {
             std::fs::write(paths.root.join(CASES_FILE), cases.to_string())
-                .map_err(|e| format!("cases sidecar: {e}"))?;
+                .map_err(|e| format!("cases file: {e}"))?;
             println!("verify OK: {} cases, stamp {}", report.cases, report.stamp);
             Ok(0)
         }

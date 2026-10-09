@@ -137,8 +137,6 @@ fn union_fold(rng: &mut Rng, domains: &Domains) -> Query {
             op: FoldOp::Sum,
             over: VarId(1),
         },
-
-        // the typed `CountAcrossRules` refusal now (ruled 2026-07-23,
         1 => FindTerm::Aggregate {
             op: FoldOp::Min,
             over: VarId(1),

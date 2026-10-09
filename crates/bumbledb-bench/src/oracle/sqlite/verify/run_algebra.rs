@@ -79,8 +79,8 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
             posting_arm(AT_BASE + span / 4, vec![FindTerm::Var(VarId(0))]),
             posting_arm(AT_BASE + span / 2, vec![FindTerm::Var(VarId(0))]),
         ])),
-        // (ruled 2026-07-23, R1 — `CountAcrossRules`); the flipped
-        // refusal row lives in [`error_parity`].
+        // Count across rules is the `CountAcrossRules` refusal; its row
+        // lives in [`error_parity`].
         query(assemble(vec![
             posting_arm(
                 AT_BASE,

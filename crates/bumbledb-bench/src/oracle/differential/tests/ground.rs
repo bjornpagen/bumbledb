@@ -137,8 +137,8 @@ fn the_existence_walk_agrees_with_the_model_on_both_sinks() {
 /// Grading(id u64 — application-owned, declared key; kind u64 — 0 = Det,
 /// 1 = Custom); Det(grading u64, rate i64) with the declared key
 /// Det(grading) -> Det and the pair `Grading(id | kind == Det) ==
-/// Det(grading)` as its two containments — statements 1, 2, 3 after
-/// Grading's declared id key, preserving the historical numbering.
+/// Det(grading)` as its two containments: statements 1, 2, 3 after
+/// Grading's declared id key.
 fn du_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![

@@ -27,11 +27,8 @@ const COUNTER_SELECT: &str = "SELECT \"val\" FROM \"Counter\" WHERE \"key\" = ?1
 
 const DOC_DELETE: &str = "DELETE FROM \"Doc\" WHERE \"id\" = ?1";
 
-/// The application-owned Doc-id authority (E-NO-RESERVE): both engines
-/// share the mint base after load (`docs + delete_pool`, the corpus being
-/// dense from 0) and the cursor IS the id — the successor engine has no
-/// generator to consult or drift from. One cursor per engine per run,
-/// advanced one per mint.
+/// The next Doc id. Both engines start at `docs + delete_pool` (the corpus is
+/// dense from 0), one cursor per engine per run, advanced one per insert.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MintCursor(pub u64);
 
@@ -93,8 +90,6 @@ fn mint_doc(
     seed: u64,
     cursor: &mut MintCursor,
 ) -> bumbledb::Result<()> {
-    // Application-owned identity: the shared cursor IS the id authority —
-    // there is no engine mint left to drift from (E-NO-RESERVE).
     let id = CrudDocId(cursor.0);
     tx.insert([&Doc {
         id,

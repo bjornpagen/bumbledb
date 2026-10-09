@@ -7,7 +7,7 @@ use crate::oracle::naive::{Delta, NaiveDb};
 use super::{Mass, baseline, ids, parent_kind, relation_rows, world};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("bumbledb-windowed-{tag}"));
+    let dir = crate::fixture::scratch_path(format!("bumbledb-windowed-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }

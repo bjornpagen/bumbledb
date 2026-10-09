@@ -25,9 +25,7 @@ bumbledb::schema! {
         val: i64,
     }
 
-    // Declared id key first (E-NO-RESERVE): the retired fresh auto-key is
-    // an ordinary declared statement now, at the head so the later
-    // declared statement ids keep their historical slots.
+    // Id keys first: statement ids below are cited by number.
     Doc(id) -> Doc;
 
     Doc(key) -> Doc;

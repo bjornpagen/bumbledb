@@ -235,9 +235,7 @@ pub fn run(args: &HeapArgs) -> Result<i32, String> {
 
     let publish_dir = scratch.join("from-instance");
     let publish_start = Instant::now();
-    // ENG-008: the no-sync publish surface is deleted; the heap-arm ladder
-    // publishes durably (publish_ns prices the durable path — recorded in
-    // the artifact by construction).
+    // `publish_ns` prices the durable publish path.
     let db = Db::from_instance(&publish_dir, &heap, crate::harness::bench_work())
         .map_err(|e| format!("from_instance: {e:?}"))?;
     let publish_ns = u64::try_from(publish_start.elapsed().as_nanos()).expect("fits");
@@ -389,7 +387,7 @@ mod tests {
     use crate::worlds::corpus_gen::Scale;
 
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("bumbledb-heap-lane-{tag}"));
+        let dir = crate::fixture::scratch_path(format!("bumbledb-heap-lane-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

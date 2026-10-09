@@ -120,8 +120,6 @@ fn mint_attempt(
     op: AttemptOp,
     cursor: &mut LawCursor,
 ) -> bumbledb::Result<LawAttemptId> {
-    // Application-owned identity: the shared cursor IS the id authority —
-    // the successor has no database generator to consult or drift from.
     let id = LawAttemptId(cursor.attempt);
     tx.insert([&Attempt {
         id,

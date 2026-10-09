@@ -82,7 +82,7 @@ pub fn claim_qos() -> Result<(), String> {
         ) -> core::ffi::c_int;
     }
     // SAFETY: an FFI call with no pointers; it changes only the calling
-
+    // thread's QoS class.
     let rc = unsafe { pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0) };
     if rc != 0 {
         return Err(format!("pthread_set_qos_class_self_np returned {rc}"));
@@ -162,8 +162,8 @@ pub fn loadavg() -> [f64; 3] {
         fn getloadavg(loadavg: *mut f64, nelem: core::ffi::c_int) -> core::ffi::c_int;
     }
     let mut load = [-1.0f64; 3];
-    // SAFETY: the pointer names a live 3-slot f64 buffer and nelem is
-
+    // SAFETY: the pointer names a live 3-slot f64 buffer and nelem is 3, so
+    // getloadavg writes at most the buffer's length.
     let _filled = unsafe { getloadavg(load.as_mut_ptr(), 3) };
 
     load
@@ -179,6 +179,7 @@ pub fn loadavg() -> [f64; 3] {
 mod tests {
     use super::*;
 
+    /// Unset, empty and `0` mean off, `1` means on, anything else is a
     /// refusal naming the variable.
     #[test]
     fn the_switch_semantics_are_pinned() {
@@ -191,7 +192,7 @@ mod tests {
         assert!(err.contains("yes"), "{err}");
     }
 
-    /// success on macOS (rc 0 asserted; no timing behavior). Each test
+    /// The `QoS` claim succeeds on macOS (the return code, not any timing).
     #[test]
     #[cfg(target_os = "macos")]
     fn the_qos_claim_succeeds() {
@@ -215,26 +216,5 @@ mod tests {
                 "slot {slot} is neither a sample nor the -1.0 marker"
             );
         }
-    }
-
-    #[test]
-    fn the_night_script_parses_and_names_shared() {
-        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/bench-night.sh");
-        let parsed = std::process::Command::new("bash")
-            .args(["-n", script])
-            .status()
-            .expect("bash runs");
-        assert!(parsed.success(), "bash -n rejects bench-night.sh");
-        let help = std::process::Command::new("bash")
-            .args([script, "--help"])
-            .output()
-            .expect("bash runs");
-        assert!(help.status.success(), "--help exits 0");
-        let text = String::from_utf8_lossy(&help.stdout).into_owned()
-            + &String::from_utf8_lossy(&help.stderr);
-        assert!(
-            text.contains("--shared"),
-            "usage never names --shared: {text}"
-        );
     }
 }

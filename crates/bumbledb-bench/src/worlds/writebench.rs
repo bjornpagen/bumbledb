@@ -11,14 +11,10 @@ use crate::worlds::ledger::{
     AccountId, InstrumentId, JournalEntryId, Ledger, Posting, PostingId, ids,
 };
 
-/// Application-owned posting-id authority (E-NO-RESERVE): the successor
-/// engine mints nothing — entity identity is application data — so each
-/// write family derives its next id from the store itself, `MAX(id) + 1`
-/// over the live postings: exactly the mint the SQLite twin has always
-/// used (`lanes::writes::next_posting_id`). Probed once per family entry
-/// (untimed setup — an O(n) decode at bench scales, never inside a timed
-/// window), then advanced locally. A refused commit leaves a gap in the
-/// id space, which is ordinary application data, not a burn.
+/// The next posting id, `MAX(id) + 1` over the live postings, as the SQLite
+/// twin computes it (`lanes::writes::next_posting_id`). Probed once per family
+/// entry outside any timed window, then advanced locally. A refused commit
+/// leaves a gap in the id space.
 pub(crate) struct PostingMint(u64);
 
 impl PostingMint {
@@ -179,8 +175,8 @@ pub fn insert_stream_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurem
 }
 
 /// First read after an unrelated Org insert, excluded from the timed window.
-/// The historical "cold" name does not imply image invalidation: relation
-/// versions let this query keep its Posting/Account/Holder images warm.
+/// "Cold" does not imply image invalidation: relation versions keep the
+/// Posting/Account/Holder images warm.
 /// # Errors
 /// # Panics
 pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
@@ -307,7 +303,7 @@ mod tests {
     };
 
     fn scratch(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("bumbledb-bench-write-{tag}"));
+        let dir = crate::fixture::scratch_path(format!("bumbledb-bench-write-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

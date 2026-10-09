@@ -26,12 +26,9 @@ pub fn consulted(statement: &StatementDescriptor) -> Vec<RelationId> {
     }
 }
 
-/// **The mutable consulted support**: consulted relations that are not
-/// closed. A closed (ground-axiom) relation denotes a theory constant and
-/// contributes no mutable edge — the retired braid model's
-/// `ComponentClosed` premise over ALL consulted relations (closed targets
-/// included) is exactly what this replaces.
-/// C-G03-mutable-support — consulted relations that are not closed.
+/// The mutable consulted support: consulted relations that are not closed.
+/// A closed (ground-axiom) relation denotes a theory constant and contributes
+/// no mutable edge.
 #[must_use]
 pub fn mutable_support(
     descriptor: &SchemaDescriptor,
@@ -175,7 +172,6 @@ mod tests {
         (B, vec![Value::U64(y), Value::U64(0)])
     }
 
-    /// C-G03-mutable-support
     #[test]
     fn judgment_stable_under_untouched_relations() {
         let descriptor = descriptor();
@@ -245,7 +241,6 @@ mod tests {
         );
     }
 
-    /// C-G03-add-wins
     #[test]
     fn same_command_tie_rule_add_wins() {
         let descriptor = descriptor();
@@ -284,7 +279,6 @@ mod tests {
         assert_eq!(db.generation(), before);
     }
 
-    /// C-G03-raw-commute
     #[test]
     fn raw_commutation_does_not_commute_admission() {
         let descriptor = descriptor();

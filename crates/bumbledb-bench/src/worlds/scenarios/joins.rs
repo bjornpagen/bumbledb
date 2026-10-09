@@ -61,9 +61,7 @@ bumbledb::schema! {
         Actor, Actress, Director, Producer, Writer, Composer, Editor, Extra,
     };
 
-    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
-    // are ordinary declared statements now, at the head so the later
-    // declared statement ids keep their historical slots.
+    // Id keys first: statement ids below are cited by number.
     Kind(id)    -> Kind;
     Company(id) -> Company;
     Person(id)  -> Person;

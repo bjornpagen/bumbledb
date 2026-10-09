@@ -51,7 +51,7 @@ pub enum Answers {
     Overflow,
 
     /// A computed head refused (type mismatch, integer overflow, division
-    /// by zero, inexact cast) — the whole answer is withheld, chapter 12.
+    /// by zero, inexact cast); the whole answer is withheld.
     Scalar,
 }
 

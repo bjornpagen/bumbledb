@@ -1,5 +1,4 @@
-//! The independent dense float-interval oracle (P11, chapters 10 §2 and
-//! 11 §5; gate `F-INTERVAL`).
+//! The independent dense float-interval oracle.
 //!
 //! `Interval<F64>` denotes a half-open range on a DENSE numeric line, not a
 //! set of representable machine floats. This oracle models exactly the

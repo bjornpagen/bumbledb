@@ -1,7 +1,7 @@
 #[test]
 fn runner_post_write_alternation_restores_the_loaded_state() {
     use crate::worlds::corpus_gen::{GenConfig, Scale};
-    let dir = std::env::temp_dir().join("bumbledb-bench-appperf-postwrite");
+    let dir = crate::fixture::scratch_path("bumbledb-bench-appperf-postwrite");
     let _ = std::fs::remove_dir_all(&dir);
     let cfg = GenConfig {
         seed: 1,
@@ -44,7 +44,7 @@ fn runner_post_write_alternation_restores_the_loaded_state() {
 #[test]
 fn runner_large_result_reports_split_segments_below_end_to_end() {
     use crate::worlds::corpus_gen::{GenConfig, Scale};
-    let dir = std::env::temp_dir().join("bumbledb-bench-appperf-large");
+    let dir = crate::fixture::scratch_path("bumbledb-bench-appperf-large");
     let _ = std::fs::remove_dir_all(&dir);
     let db = bumbledb::Db::create(
         &dir,
@@ -78,7 +78,7 @@ fn runner_large_result_reports_split_segments_below_end_to_end() {
 
 #[test]
 fn runner_tenant_churn_releases_descriptors_and_reports_latency() {
-    let dir = std::env::temp_dir().join("bumbledb-bench-appperf-churn");
+    let dir = crate::fixture::scratch_path("bumbledb-bench-appperf-churn");
     let _ = std::fs::remove_dir_all(&dir);
     let row = super::tenant_churn(&dir, 3, 12, 7).expect("churn runs");
     assert_eq!(row.regime, super::Regime::TenantChurn);
@@ -95,7 +95,7 @@ fn runner_tenant_churn_releases_descriptors_and_reports_latency() {
 #[test]
 fn runner_cold_open_times_open_plus_first_read() {
     use crate::worlds::corpus_gen::{GenConfig, Scale};
-    let dir = std::env::temp_dir().join("bumbledb-bench-appperf-cold");
+    let dir = crate::fixture::scratch_path("bumbledb-bench-appperf-cold");
     let _ = std::fs::remove_dir_all(&dir);
     let db = bumbledb::Db::create(
         &dir,
@@ -125,7 +125,7 @@ fn runner_cold_open_times_open_plus_first_read() {
 #[test]
 fn runner_refuses_existing_output_without_erasing_evidence() {
     let dir =
-        std::env::temp_dir().join(format!("bumbledb-appperf-existing-{}", std::process::id()));
+        crate::fixture::scratch_path(format!("bumbledb-appperf-existing-{}", std::process::id()));
     std::fs::create_dir(&dir).expect("fresh test root");
     let sentinel = dir.join("app-perf.json");
     std::fs::write(&sentinel, "previous evidence").expect("existing artifact");

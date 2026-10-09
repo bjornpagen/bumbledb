@@ -211,7 +211,7 @@ fn verdict_and_budget_logic_is_table_tested() {
 
 #[test]
 fn write_artifacts_creates_exactly_the_three_files() {
-    let dir = std::env::temp_dir().join("bumbledb-bench-report");
+    let dir = crate::fixture::scratch_path("bumbledb-bench-report");
     let _ = std::fs::remove_dir_all(&dir);
     write_artifacts(&fixture(), &dir).expect("writes");
     let mut names: Vec<String> = std::fs::read_dir(&dir)

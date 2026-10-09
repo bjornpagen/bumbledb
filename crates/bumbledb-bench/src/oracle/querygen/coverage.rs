@@ -380,11 +380,9 @@ impl Coverage {
                     continue;
                 }
             };
-            // Key-covered: some DECLARED key statement of the negated
+            // Key-covered: some declared key statement of the negated
             // relation has its whole projection bound in the atom, so at
-            // most one witness can match (the successor's declared-key
-            // reality — the retired fresh generation attribute is gone;
-            // chapter 10: keys are declared statements only).
+            // most one witness can match.
             let key_covered = target::schema().keys().iter().any(|statement| {
                 statement.relation == rel_id
                     && !statement.form().is_pointwise()

@@ -8,7 +8,7 @@ fn scratch(tag: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock after epoch")
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
+    let dir = crate::fixture::scratch_path(format!(
         "bumbledb-bench-driver-{tag}-{}-{nanos}",
         std::process::id()
     ));

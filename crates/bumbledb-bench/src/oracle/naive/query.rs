@@ -76,7 +76,7 @@ pub enum QueryError {
 
 /// Independent evaluation of one computed head over one binding row.
 ///
-/// The model's own semantics, from chapters 11/12: exact checked integer
+/// The model's own semantics: exact checked integer
 /// arithmetic (widened through `i128`, narrowed back or refused), IEEE
 /// binary64 operations canonicalized per node (`F64::from_bits`
 /// renormalizes every zero and NaN encoding), exact-or-refused casts, and
@@ -179,7 +179,7 @@ pub(super) fn eval_scalar(
 }
 
 /// One canonical binary64 value: `F64::from_bits` renormalizes every zero
-/// and NaN encoding, the per-node canonicalization chapter 11 requires.
+/// and NaN encoding after every operation.
 fn canonical_float(value: f64) -> Value {
     Value::F64(F64::from_bits(value.to_bits()))
 }

@@ -101,7 +101,7 @@ fn cold_touches_before_every_sample_and_bumps_generations() {
     assert_eq!(script.borrow().as_str(), "tftftftftf");
     assert_eq!(m.work, 3, "samples only");
 
-    let dir = std::env::temp_dir().join("bumbledb-bench-harness-cold");
+    let dir = crate::fixture::scratch_path("bumbledb-bench-harness-cold");
     let _ = std::fs::remove_dir_all(&dir);
     let db = bumbledb::Db::create(
         &dir,

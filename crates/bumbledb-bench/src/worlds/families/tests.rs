@@ -25,7 +25,7 @@ fn golden_sets(family: &Family) -> Vec<(ParamId, Vec<Value>)> {
 
 #[test]
 fn all_sixteen_validate_and_prepare() {
-    let dir = std::env::temp_dir().join("bumbledb-bench-families");
+    let dir = crate::fixture::scratch_path("bumbledb-bench-families");
     let _ = std::fs::remove_dir_all(&dir);
     let db = bumbledb::Db::create(
         &dir,
@@ -238,7 +238,7 @@ fn equal_amount_slice() -> Vec<(bumbledb::RelationId, Vec<Value>)> {
 fn balance_counts_equal_amounts_separately() {
     let rows = equal_amount_slice();
 
-    let dir = std::env::temp_dir().join("bumbledb-bench-true-balance");
+    let dir = crate::fixture::scratch_path("bumbledb-bench-true-balance");
     let _ = std::fs::remove_dir_all(&dir);
     let db = bumbledb::Db::create(
         &dir,

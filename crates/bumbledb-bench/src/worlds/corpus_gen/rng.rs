@@ -115,7 +115,7 @@ mod tests {
         assert_ne!(first, artifacts(&other), "bytes steer generation");
     }
 
-    /// `range(n)` is sound for any bound (ruled 2026-07-23, R20).
+    /// `range(n)` is sound for any bound.
     #[test]
     fn the_seeded_arm_emits_full_width_words() {
         let mut rng = Rng::new(1);

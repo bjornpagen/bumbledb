@@ -131,13 +131,11 @@ pub struct LawFamily {
     pub protocol: Protocol,
 }
 
-/// The ordering is load-bearing: the legal lanes' shared APPLICATION-OWNED id
-/// cursors must see the store the window setup left (task 0 saturated, both
-/// engines' counters in lockstep). Ids are ordinary supplied values — the
-/// successor has no fresh generator, reservation or burn semantics — and the
-/// rejection lanes deliberately choose ids at [`lanes::REJECT_ID_BASE`], far
-/// above every legal cursor, so a rejected attempt can never collide with a
-/// later legal insert.
+/// The ordering is load-bearing: the legal lanes' shared id cursors must see
+/// the store the window setup left (task 0 saturated, both engines' counters
+/// in lockstep). The rejection lanes choose ids at [`lanes::REJECT_ID_BASE`],
+/// far above every legal cursor, so a rejected attempt can never collide with
+/// a later legal insert.
 #[must_use]
 pub fn families() -> &'static [LawFamily] {
     &[

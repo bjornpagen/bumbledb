@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn the_arm_reaches_both_verdict_classes() {
-        let dir = std::env::temp_dir().join("bumbledb-bench-irgen");
+        let dir = crate::fixture::scratch_path("bumbledb-bench-irgen");
         let _ = std::fs::remove_dir_all(&dir);
         let db = target::publish_admitted(&dir);
         let mut accepted = 0u32;

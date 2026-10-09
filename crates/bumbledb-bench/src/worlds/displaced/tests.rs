@@ -9,7 +9,7 @@ use super::{
 };
 
 fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("bumbledb-displaced-{tag}"));
+    let dir = crate::fixture::scratch_path(format!("bumbledb-displaced-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }

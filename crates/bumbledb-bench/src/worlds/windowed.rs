@@ -23,9 +23,7 @@ pub mod world {
             flag: u64,
         }
 
-        // Declared id keys first (E-NO-RESERVE): the retired fresh
-        // auto-keys are ordinary declared statements now, at the head so
-        // the later declared statement ids keep their historical slots.
+        // Id keys first: statement ids below are cited by number.
         WParent(id) -> WParent;
         WChild(id)  -> WChild;
 
@@ -87,9 +85,8 @@ impl Mass {
 
 pub const PARENTS: u64 = Mass::BENCH.parents;
 
-/// The application-owned child-id mint base for the measured commit
-/// families (E-NO-RESERVE): corpus child ids are dense from 0, below this
-/// base. Each family owns one cursor across warmups and measured samples.
+/// The first child id the measured commit families insert: corpus child ids
+/// are dense from 0, below this base. Each family owns one cursor across warmups and measured samples.
 pub const MINT_BASE: u64 = 1 << 24;
 
 #[must_use]

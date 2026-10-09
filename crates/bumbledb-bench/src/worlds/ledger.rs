@@ -50,11 +50,7 @@ bumbledb::schema! {
     closed relation Source as SourceId = { Manual, Import, System };
     closed relation Tag as TagId = { Fee, Rebate, Adjustment };
 
-    // Declared id keys FIRST (E-NO-RESERVE): the retired fresh auto-keys
-    // become ordinary declared statements. Materialized order is now
-    // closed auto-handle keys, then this declared list — putting the six
-    // id keys at the head keeps every later declared statement id at its
-    // historical position.
+    // Id keys first: statement ids below are cited by number.
     Holder(id)       -> Holder;
     Account(id)      -> Account;
     Instrument(id)   -> Instrument;

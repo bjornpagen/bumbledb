@@ -356,8 +356,8 @@ impl NaiveDb {
         }
     }
 
-    /// The plan-phase ray refusal (C17's write-time strengthening of
-    /// weight position is a ray refuses the whole commit before a
+    /// An insert whose capacity weight position holds a ray refuses the
+    /// whole commit before any judgment.
     fn ray_weight_refusal(&self, delta: &Delta) -> Option<Violation> {
         for (rel, fact) in &delta.inserts {
             let fact = Tuple(fact.clone());
@@ -642,9 +642,8 @@ fn satisfies_selection(
 /// instance, the u64 field value for `[field]`, and the interval measure `end −
 /// start` for `[Duration(field)]` — validation guarantees the encodings (a
 /// signed weight field is gate-refused; polarity), so a mismatch is a fixture
-/// bug, panicked not tolerated. A ray has no finite measure (C10 — the R6
-/// precedent): the model refuses it the way the engine's typed commit refusal
-/// does, loudly.
+/// bug, panicked not tolerated. A ray has no finite measure: the model refuses
+/// it the way the engine's typed commit refusal does.
 fn child_weight(weight: Weight, child: &Tuple) -> u128 {
     match weight {
         Weight::Unit => 1,
@@ -673,7 +672,7 @@ fn is_ray(value: &Value) -> bool {
         Value::IntervalI64(interval) => interval.is_ray(),
         Value::IntervalF64(_) => panic!(
             "float-duration capacity weights are refused at schema \
-             validation (chapter 11 §5); the model must never fold one"
+             validation; the model must never fold one"
         ),
         other => panic!("a Duration weight/bound must be interval-encoded, got {other:?}"),
     }
@@ -684,7 +683,7 @@ fn is_ray(value: &Value) -> bool {
 /// rays at the plan phase, bound rays ahead of the statement's walk), so a ray
 /// reaching this fold is a model bug, panicked not tolerated.
 fn duration_measure(value: &Value) -> u128 {
-    assert!(!is_ray(value), "a ray has no finite measure (C10)");
+    assert!(!is_ray(value), "a ray has no finite measure");
     let (start, end) = endpoints(value);
     u128::try_from(end - start).expect("interval measure is non-negative")
 }

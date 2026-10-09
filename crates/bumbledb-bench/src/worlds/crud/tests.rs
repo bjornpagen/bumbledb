@@ -9,7 +9,7 @@ use super::lanes::{self, MintCursor};
 use super::{CrudSizes, ids, ops};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("bumbledb-crud-{tag}"));
+    let dir = crate::fixture::scratch_path(format!("bumbledb-crud-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
@@ -183,10 +183,8 @@ fn every_crud_write_family_leaves_the_twins_value_identical() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The family battery on a second independently-loaded durable twin pair:
-/// the lockstep-cursor protocol is store-instance independent (the old
-/// second durability lane is gone — ENG-008; this keeps the second-instance
-/// coverage the nosync twin used to provide).
+/// The family battery on a second independently loaded twin pair: the
+/// lockstep-cursor protocol does not depend on the store instance.
 #[test]
 fn a_second_twin_pair_runs_the_same_families_identically() {
     let sizes = CrudSizes::of(Scale::Tiny);

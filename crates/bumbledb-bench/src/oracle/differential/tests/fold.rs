@@ -22,8 +22,6 @@ fn descriptor() -> SchemaDescriptor {
                 extension: None,
                 name: "Reading".into(),
                 fields: vec![
-                    // Application-owned id with a declared key below: the
-                    // successor has no fresh generation attribute.
                     field("id", ValueType::U64),
                     field("kind", ValueType::U64),
                     field("value", ValueType::I64),
@@ -53,8 +51,6 @@ fn descriptor() -> SchemaDescriptor {
             },
         ],
         statements: vec![
-            // The declared id key replaces the retired fresh auto-key at
-            // the same materialized position.
             StatementDescriptor::Functionality {
                 relation: READING,
                 projection: Box::new([FieldId(0)]),

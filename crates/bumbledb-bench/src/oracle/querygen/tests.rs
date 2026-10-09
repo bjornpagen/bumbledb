@@ -16,7 +16,7 @@ const CFG: GenConfig = GenConfig {
 
 #[test]
 fn a_thousand_queries_validate_and_translate() {
-    let dir = std::env::temp_dir().join("bumbledb-bench-querygen");
+    let dir = crate::fixture::scratch_path("bumbledb-bench-querygen");
     let _ = std::fs::remove_dir_all(&dir);
     let db = target::publish_admitted(&dir);
     let mut rng = Rng::new(SEED);
@@ -181,7 +181,7 @@ fn the_coverage_contract_holds_at_a_thousand() {
 fn grounding_shapes_eliminate_and_near_misses_refuse() {
     use super::GroundVariant;
     use super::construct::random_query_tagged;
-    let dir = std::env::temp_dir().join("bumbledb-bench-querygen-grounding");
+    let dir = crate::fixture::scratch_path("bumbledb-bench-querygen-grounding");
     let _ = std::fs::remove_dir_all(&dir);
     let db = target::publish_admitted(&dir);
     let mut rng = Rng::new(SEED);

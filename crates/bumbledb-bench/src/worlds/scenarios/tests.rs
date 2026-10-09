@@ -3,7 +3,8 @@ use crate::oracle::sqlite::translate::translate;
 
 #[test]
 fn native_profile_gates_prepared_and_keyed_reads_before_sampling() {
-    let root = std::env::temp_dir().join(format!("bumbledb-native-oracle-{}", std::process::id()));
+    let root =
+        crate::fixture::scratch_path(format!("bumbledb-native-oracle-{}", std::process::id()));
     std::fs::create_dir(&root).expect("fresh test root");
     let scenario = Scenario {
         rows: |_| {
@@ -68,7 +69,8 @@ fn native_profile_gates_prepared_and_keyed_reads_before_sampling() {
 #[test]
 fn every_scenario_query_prepares_and_translates() {
     for scenario in all() {
-        let dir = std::env::temp_dir().join(format!("bumbledb-scenario-check-{}", scenario.name));
+        let dir =
+            crate::fixture::scratch_path(format!("bumbledb-scenario-check-{}", scenario.name));
         let _ = std::fs::remove_dir_all(&dir);
         let schema = (scenario.schema)();
         let db = Db::create(&dir, (scenario.descriptor)(), crate::harness::bench_work())

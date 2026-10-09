@@ -1,17 +1,9 @@
-//! The independent binary64 oracle (P11, chapter 11 / gates `F-CANON`,
-//! `F-ORDER`, `F-ARITH`, `F-AGG`).
-//!
-//! Everything here is computed from raw `u64` bit patterns with integer and
-//! rational arithmetic ONLY: no production canonicalization, comparison,
-//! hashing or accumulator helper is consulted, and no host floating-point
-//! operation participates in an expected value. Host `f64` appears solely as
-//! the SUBJECT of the differential tests (the hardware side `F-ARITH`
-//! qualifies), never as the oracle.
-//!
-//! The independent model implements: canonical quotient (one zero, one NaN), total order
-//! key, exact scaled-integer decomposition (units of 2^-1074), the exact
-//! sum/mean accumulator with the canonical merge table, and one final
-//! round-to-nearest-ties-to-even of the exact dyadic rational.
+//! The independent binary64 model, computed from raw `u64` bit patterns with
+//! integer and rational arithmetic only: canonical quotient (one zero, one
+//! NaN), total order key, exact scaled-integer decomposition (units of
+//! 2^-1074), the exact sum/mean accumulator with its merge table, and one
+//! final round-to-nearest-ties-to-even. No production helper or host float
+//! operation contributes to an expected value.
 
 /// The canonical quiet-NaN payload.
 pub const NAN: u64 = 0x7ff8_0000_0000_0000;

@@ -50,6 +50,13 @@ pub(crate) fn string(text: &str) -> Value {
     Value::String(text.into())
 }
 
+/// A scratch path unique to this test process, so concurrent test runs never
+/// share a store.
+#[cfg(test)]
+pub(crate) fn scratch_path(tag: impl std::fmt::Display) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("bumbledb-bench-{}-{tag}", std::process::id()))
+}
+
 #[cfg(test)]
 pub(crate) struct TempDir(std::path::PathBuf);
 

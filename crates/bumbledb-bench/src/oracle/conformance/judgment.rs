@@ -1196,7 +1196,7 @@ fn render_fixture(fixture: &JudgmentFixture) -> String {
     };
     assert_eq!(
         engine, model,
-        "TROPHY (engine vs naive) on judgment case {}: triage per the fuzzing charter",
+        "engine and naive disagree on judgment case {}",
         fixture.name
     );
     let verdict = lane_verdict(fixture.name, &engine);

@@ -28,10 +28,9 @@ where
     })
 }
 
-/// The invalidation touch: one committed Org row per round. Application-owned
-/// ids (E-NO-RESERVE): the cursor seeds from `MAX(id) + 1` over the live Org
-/// rows at closure creation (Org corpora are tiny — the probe is setup, never
-/// timed) and advances locally per touch.
+/// The invalidation touch: one committed Org row per round. The id cursor
+/// starts at `MAX(id) + 1` over the live Org rows (an untimed probe; Org
+/// corpora are tiny) and advances locally per touch.
 pub fn org_touch(
     db: &bumbledb::Db<crate::worlds::ledger::Ledger>,
 ) -> impl FnMut() -> Result<(), String> + '_ {

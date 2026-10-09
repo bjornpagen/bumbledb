@@ -482,7 +482,7 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
         assert_eq!(
             engine,
             crate::oracle::differential::Answers::Ok(expected),
-            "TROPHY (engine vs naive) on the interval-interior {name} face"
+            "engine and naive disagree on the interval-interior {name} face"
         );
         assert_eq!(
             sqlite_expressible_on(&LaneCase::Query(query), &schema),

@@ -12,7 +12,7 @@ const CFG: GenConfig = GenConfig {
 };
 
 fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("bumbledb-calendar-{tag}"));
+    let dir = crate::fixture::scratch_path(format!("bumbledb-calendar-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }

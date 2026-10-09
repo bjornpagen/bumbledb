@@ -88,7 +88,7 @@ pub enum Cmd {
     /// `float_stats` families.
     Micro(crate::harness::micro::MicroArgs),
 
-    /// The APP-* regime lane over the ledger corpus (report-class; F3 only).
+    /// The app-perf regime lane over the ledger corpus (report-class).
     AppPerf(AppPerfArgs),
 }
 

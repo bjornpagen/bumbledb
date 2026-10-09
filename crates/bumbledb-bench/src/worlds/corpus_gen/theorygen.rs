@@ -260,7 +260,7 @@ fn random_weight(rng: &mut Rng, relations: &[RelationDescriptor], source: Relati
 
 /// A structurally-free ceiling: literal, dependent u64 field, or dependent
 /// Duration off the TARGET's row — dependent bounds are hi-slot only by
-/// representation (C6: the descriptor's `lo` is a bare literal), so only the
+/// representation (the descriptor's `lo` is a bare literal), so only the
 /// ceiling draws the ident forms; the span is one past the target's so the
 /// dangling-field refusal stays reachable.
 fn random_bound(rng: &mut Rng, relations: &[RelationDescriptor], target: RelationId) -> Bound {
