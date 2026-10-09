@@ -516,12 +516,14 @@ impl<F: Fn(VarId) -> Option<(usize, ValueType)>> Compiler<F> {
     }
 }
 
+/// Order keys below 2^63 flip every bit, the others only the sign.
 fn order_key_to_bits(key: u64) -> u64 {
-    if key & SIGN == 0 { !key } else { key ^ SIGN }
+    key ^ ((key >> 63).wrapping_sub(1) | SIGN)
 }
 
+/// Nonnegative bits flip only the sign, negative bits every bit.
 fn bits_to_order_key(bits: u64) -> u64 {
-    if bits & SIGN == 0 { bits ^ SIGN } else { !bits }
+    bits ^ ((bits >> 63).wrapping_neg() | SIGN)
 }
 
 /// One NaN and one zero.

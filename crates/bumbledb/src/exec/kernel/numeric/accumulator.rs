@@ -129,11 +129,11 @@ impl ExactF64Accumulator {
         };
         let mut lanes = [Chunks::new(), Chunks::new(), Chunks::new(), Chunks::new()];
         let mut special: Option<Total> = None;
-        for (i, key) in keys.enumerate() {
+        let mut add = |lane: &mut Chunks, key: u64| {
             let bits = order_key_to_bits(key);
             if bits & EXPONENT == EXPONENT {
                 let value = Total::special(bits);
-                special = Some(match special {
+                special = Some(match special.take() {
                     None => value,
                     Some(mut total) => {
                         total.merge(&value);
@@ -141,7 +141,16 @@ impl ExactF64Accumulator {
                     }
                 });
             } else {
-                lanes[i & 3].add_finite(bits);
+                lane.add_finite(bits);
+            }
+        };
+        let mut keys = keys;
+        'keys: loop {
+            for lane in &mut lanes {
+                let Some(key) = keys.next() else {
+                    break 'keys;
+                };
+                add(lane, key);
             }
         }
         let [mut total, b, c, d] = lanes;
