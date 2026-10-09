@@ -48,8 +48,7 @@ fn the_bench_shape_exceeds_the_l2_by_layout_arithmetic() {
     }
     let distinct = u64::try_from(seen.iter().filter(|s| **s).count()).expect("fits u64");
     assert_eq!(distinct, FORCED_MAP_DISTINCT, "1 - e^-2 of 2^19, exactly");
-    // The forced spoke map alone: 2^18 buckets → 2 MiB ctrl + 32 MiB
-
+    // The forced spoke map alone: 2^18 buckets → 2 MiB ctrl + 32 MiB buckets.
     let map = forced_spoke_map_bytes(FORCED_MAP_POSITIONS, FORCED_MAP_DISTINCT);
     assert_eq!(map, (1 << 18) * 8 + (1 << 18) * 16 * 8, "2^18 buckets");
     assert!(map >= 32 << 20, "the forced map is the >= 32 MiB claim");

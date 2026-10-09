@@ -301,7 +301,7 @@ fn set_elements(
 }
 
 /// # Panics
-/// On a programmer-invariant violation: an unanchored param (validation
+/// On a param no atom anchors (validation refuses such queries).
 #[must_use]
 pub fn params_for(query: &Query, rng: &mut Rng, cfg: GenConfig) -> Vec<ParamDraw> {
     let domains = Domains::of(cfg.scale);

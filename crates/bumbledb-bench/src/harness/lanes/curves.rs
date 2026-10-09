@@ -618,8 +618,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
         measured.stats
     };
 
-    // Theirs, symmetric: per round drop the connection, reopen, prepare
-
+    // Theirs, symmetric: per round drop the connection, reopen and prepare.
     let mut cold = Vec::with_capacity(WARMTH_ROUNDS);
     let mut warm = Vec::with_capacity(WARMTH_ROUNDS);
     for round in 0..(WARMTH_DISCARDED + WARMTH_ROUNDS) {
@@ -670,7 +669,7 @@ struct WorldStores<S> {
 }
 
 impl<S> WorldStores<S> {
-    /// reopen rounds need the store CLOSED first (one LMDB environment
+    /// Closes both stores: the reopen rounds need them closed first.
     fn into_paths(self) -> (PathBuf, PathBuf) {
         let Self {
             db,
@@ -1192,7 +1191,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// excluded before entry, and an unverified point is never timed
+    /// A zero cap reports the point exceeded and never times it.
     #[test]
     fn zero_cap_reports_exceeded_and_skips_timing() {
         let dir = scratch("curves-zero-cap");

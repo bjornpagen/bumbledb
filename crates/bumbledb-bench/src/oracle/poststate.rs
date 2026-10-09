@@ -1,7 +1,6 @@
-//! "Verified by post-state comparison" is a fold both worlds reuse, never
-//! per-family prose: scan the engine, `SELECT` the mirror in field-declaration
-//! order, and judge the multisets through the same of the writebench pattern:
-//! after a write lane runs on both twins,
+//! Post-state comparison after a write lane runs on both twins: scan the
+//! engine, `SELECT` the mirror in field-declaration order, and compare the
+//! multisets.
 use bumbledb::schema::Relation;
 use bumbledb::{Db, RelationId, Value};
 use rusqlite::Connection;

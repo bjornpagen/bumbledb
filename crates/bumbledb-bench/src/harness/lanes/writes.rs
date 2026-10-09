@@ -748,7 +748,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// same body again REFUSES — and the refusal commits NOTHING (the
+    /// Deleting an absent posting refuses and commits nothing.
     #[test]
     fn delete_refuses_a_missing_row() {
         let dir = scratch("delete-refusal");

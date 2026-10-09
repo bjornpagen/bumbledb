@@ -288,7 +288,7 @@ fn slot_scan_params(cfg: &GenConfig) -> Vec<Draw> {
         scalar_draw(vec![window(CAL_BASE + span / 8, width)]),
         scalar_draw(vec![window(CAL_BASE + span / 2, width)]),
         scalar_draw(vec![window(CAL_BASE + span * 7 / 8, width)]),
-        // The pre-epoch miss: no slot starts before CAL_BASE, and the
+        // The pre-epoch miss: no slot starts before CAL_BASE.
         scalar_draw(vec![window(CAL_BASE - 2 * HOUR, HOUR)]),
     ]
 }

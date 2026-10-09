@@ -19,8 +19,9 @@ use super::run_empty_store::run_empty_store;
 use super::run_naive::run_naive_slice;
 
 /// # Errors
+/// The mismatch bundles of a failed run.
 /// # Panics
-/// On tool-level invariant violations (scratch I/O, either store
+/// On scratch I/O failure or a store that cannot be built.
 pub fn run(cfg: &VerifyConfig) -> Result<VerifyReport, VerifyFailure> {
     run_with_sql_override(cfg, |_| None)
 }

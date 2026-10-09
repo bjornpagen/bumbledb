@@ -1,4 +1,5 @@
-//! The dangling relation/field ids, head/rule misalignment, unsafe negation,
+//! Random query IR, valid and invalid: dangling relation/field ids, head/rule
+//! misalignment, unsafe negation and the other shapes validation refuses.
 use bumbledb::{
     AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, FoldOp,
     Interior, InteriorId, NonEmpty, ParamId, ProjectionRule, Query, Rec, RecRule, RecStep,

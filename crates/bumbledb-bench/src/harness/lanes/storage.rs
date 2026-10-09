@@ -216,8 +216,7 @@ fn measure_world<S: bumbledb::Theory + Copy>(
     let sqlite_tableonly_bytes = file_bytes(&tableonly_file)?;
     let sqlite_tableonly_wal_bytes = wal_bytes(&tableonly_file)?;
 
-    // COUNT CROSS-CHECK: every lane against the generator, before any
-
+    // Every lane's row counts against the generator, before recording.
     for (rel, expected) in spec.expected.iter().enumerate() {
         let name = spec
             .schema

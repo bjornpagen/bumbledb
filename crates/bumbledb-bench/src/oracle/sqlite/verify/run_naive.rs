@@ -124,8 +124,7 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 inserts: vec![(ids::POSTING, posting)],
             }
         }),
-        // A write naming the closed vocabulary: refused before the
-        // delta on the engine, before applying on the model — the same
+        // A write naming the closed vocabulary is refused on both sides.
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(ids::CURRENCY, vec![Value::U64(5)])],

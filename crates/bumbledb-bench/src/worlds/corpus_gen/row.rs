@@ -23,7 +23,7 @@ fn tag_pair(seed: u64, pair: u64) -> (u64, u64) {
 }
 
 /// # Panics
-/// Only on programmer-invariant violations: an unknown relation id, or
+/// On an unknown relation id.
 #[must_use]
 pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value> {
     let mut rng = Rng::new(mix(cfg.seed, rel, i));

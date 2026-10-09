@@ -70,10 +70,9 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
     Ok((paths, verified))
 }
 
+/// The timing run, in one fixed order: read families, the closure and
+/// displaced worlds, write families, then the report.
 /// # Errors
-/// # Panics
-/// Only on tool-invariant violations.
-// the run is one linear protocol: reads, closure lane, writes, report
 pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     let cfg = gen_config(&args.corpus);
     let (paths, verified) = bench_preflight(args, cfg)?;

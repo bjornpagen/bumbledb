@@ -1,10 +1,7 @@
-//! The recursion/closure lane — the roster extension's measurement: a third
-//! corpus world whose EDGE SHAPES are the point — one deep chain (the depth
-//! axis: one new tuple per round, the round-overhead price) and one wide tree
-//! (the fanout axis: frontier width, few rounds) — driven through `Db::prepare`
-//! (`AtomSource::Interior`, the reach pipeline, row-identical across engines
-//! before a single timed sample — inline lives outside the stamped family
-//! registry), the exact warm protocol,
+//! The recursion world: one deep chain (one new tuple per round, pricing the
+//! round overhead) and one wide tree (frontier width over few rounds), queried
+//! through the reach pipeline. Every family is row-identical to the `SQLite`
+//! mirror before a timed sample, under the warm protocol.
 use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
 

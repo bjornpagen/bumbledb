@@ -342,8 +342,7 @@ fn pack_ops() -> (Vec<Op>, u64) {
         negated: vec![],
         conditions: vec![],
     }]);
-    // The multi-rule Pack: per-org arms whose claims union before the
-
+    // The multi-rule Pack: per-org arms whose claims union before packing.
     let org_arm = |org: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {

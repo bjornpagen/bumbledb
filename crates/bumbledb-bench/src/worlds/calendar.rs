@@ -1,9 +1,7 @@
-//! The calendar theory — the benchmark's **second** schema/corpus/family world:
-//! ledger-adjacent scheduling from the workload census, the measured form
-//! (fully-indexed `SQLite`, fullfsync parity, warm medians, verify before
-//! time), a second theory: accounts of persons, per-person calendars, events
-//! with bounded and ray horizons, attendance with RSVP arms (the the algebra's
-//! vocabulary exists for. Same protocol as the ledger
+//! The calendar world: accounts of persons, per-person calendars, events with
+//! bounded and ray horizons, rooms and bookings, working hours, and attendance
+//! with RSVP arms. Measured under the ledger's protocol and verified before
+//! it is timed.
 use bumbledb::schema::ValidateDescriptor as _;
 pub mod corpus;
 pub mod corpus_gen;
@@ -125,7 +123,7 @@ pub mod ids {
     pub const RSVP: RelationId = RelationId(10);
     pub const CLAIM_ARM: RelationId = RelationId(11);
 
-    /// 10..12) sit after every ordinary relation by declaration: they
+    /// The ordinary relations; the closed ones (10 and 11) follow them.
     pub const RELATIONS: u32 = 10;
 
     pub mod account {

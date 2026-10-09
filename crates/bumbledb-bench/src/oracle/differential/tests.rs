@@ -573,8 +573,7 @@ fn fixed_200_op_stream_agrees_with_the_engine() {
     );
     for (index, delta) in deltas.into_iter().enumerate() {
         ops.push(Op::Write(delta));
-        // The full query battery after every 5th write and after the
-
+        // The full query battery after every fifth write and after the last.
         if (index + 1) % 5 == 0 || index == 199 {
             for (query, params) in &fixed_queries {
                 ops.push(Op::Query {

@@ -28,7 +28,8 @@ pub fn write_families() -> &'static [WriteFamily] {
                 samples: 32,
             },
         },
-        // `crate::worlds::windowed`): commit_single's protocol against the twin
+        // The windowed and capacity families (`crate::worlds::windowed`,
+        // `crate::worlds::capacity`) run commit_single's protocol.
         WriteFamily {
             name: "commit_window_baseline",
             kind: Kind::Report,

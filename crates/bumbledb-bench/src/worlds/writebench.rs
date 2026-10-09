@@ -356,8 +356,7 @@ mod tests {
             refusal.is_err(),
             "a swap whose delete is a no-op must refuse"
         );
-        // The refusal aborts the transaction whole: no stray insert-only
-
+        // The refusal aborts the whole transaction.
         assert_eq!(
             db.generation(crate::harness::bench_work())
                 .expect("generation"),

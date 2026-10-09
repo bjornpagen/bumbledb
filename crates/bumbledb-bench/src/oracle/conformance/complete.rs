@@ -375,7 +375,7 @@ mod tests {
         assert!(satisfied.contains("\"verdict\":\"accept\""), "{satisfied}");
     }
 
-    /// Unrelated ordinary facts do not hide a closed-source miss — the
+    /// Unrelated ordinary facts do not hide a closed-source miss.
     #[test]
     fn unrelated_ordinary_facts_do_not_discharge_closed_source() {
         let document = replay_complete_case("complete-closed-source-unrelated-note");

@@ -660,8 +660,7 @@ fn an_interval_find_projects_both_halves() {
 
 #[test]
 fn every_scalar_construct_translates() {
-    // Gate atom → EXISTS; literal escaping (string and bytes); same-atom
-
+    // Gate atom → EXISTS; literal escaping (string and bytes).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![

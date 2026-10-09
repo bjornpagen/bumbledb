@@ -1,8 +1,6 @@
-//! Every generator is a pure function of families multiply per-commit work
-//! internally, never the stream length) — and `model` is the lane's ONE
-//! evolving [`CounterModel`], `(seed, sizes, count, model)` where `count =
-//! protocol.warmups + protocol.samples` — the runner's total closure
-//! invocations (batch
+//! The crud op streams. Every generator is a pure function of `(seed, sizes,
+//! count, model)`, where `count` is the protocol's warmups plus samples and
+//! `model` is the run's one evolving [`CounterModel`].
 use std::collections::HashMap;
 
 use bumbledb::Value;
@@ -21,9 +19,8 @@ pub const READ_SALT: u64 = 0xC24D_0004;
 
 pub const INSERT_SALT: u64 = 0xC24D_0005;
 
-/// loaded corpus, and the no-collision condition between the seeded streams
-/// lived in prose and hand-picked seeds — seed 1 under the Before the model,
-/// each generator privately assumed the pristine
+/// The counters' values as the op streams have left them, so every generator
+/// draws against the store's current state rather than the loaded corpus.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CounterModel {
     counters: u64,

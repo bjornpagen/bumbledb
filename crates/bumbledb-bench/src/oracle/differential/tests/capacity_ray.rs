@@ -125,8 +125,7 @@ fn a_ray_weight_refuses_with_one_agreed_verdict() {
         "the delete side never derives a weight slot"
     );
 
-    // The plan-phase refusal preempts the judgment whole: the same
-
+    // The ray refusal preempts the judgment of the whole delta.
     assert_eq!(
         agreed(
             &db,

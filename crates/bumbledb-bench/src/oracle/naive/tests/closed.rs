@@ -128,7 +128,7 @@ fn closed_writes_are_refused_typed() {
             deletes: vec![(SEVERITY, vec![Value::U64(1), Value::Bool(true)])],
             inserts: vec![],
         },
-        // A mixed delta: the closed delete is refused even though the
+        // A mixed delta: the closed delete is refused with its ordinary insert.
         Delta {
             deletes: vec![(SEVERITY, vec![Value::U64(0), Value::Bool(false)])],
             inserts: vec![(ALERT, vec![Value::U64(300)])],

@@ -434,8 +434,6 @@ fn variables_are_rule_scoped_in_the_model_too() {
 
 #[test]
 fn a_multi_rule_aggregate_folds_over_the_union_projected_to_the_head() {
-    // and 8 contribute {100, 250} ∪ {100} = {100, 250} → 350 (the
-
     let db = db(vec![
         posting(1, 7, 100),
         posting(2, 7, 250),

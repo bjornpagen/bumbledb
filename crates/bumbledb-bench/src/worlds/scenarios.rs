@@ -1,7 +1,8 @@
-//! Every scenario runs under the `synchronous=FULL`, fully indexed, prepared
-//! statements reused, `ANALYZE`, DISTINCT in the timed SQL, median-of-samples),
-//! and every ledger benchmark's exact protocol (`SQLite` file-backed, WAL,
-//! query is **oracle-gated before it is timed**: each query × param set
+//! The non-ledger worlds (joins, graph, olap, points, rings, temporal). Every
+//! scenario runs under the ledger's protocol (`SQLite` file-backed, WAL,
+//! `synchronous=FULL`, fully indexed, `ANALYZE`, prepared statements reused,
+//! medians of samples), and every query is checked against the mirror for each
+//! parameter set before it is timed.
 pub mod graph;
 pub mod joins;
 pub mod olap;

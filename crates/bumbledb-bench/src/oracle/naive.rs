@@ -37,14 +37,10 @@ pub struct Delta {
 }
 
 /// One citation of a refused write, identified exactly as the engine's commit
-/// errors identify it: a statement the final state fails (the statement id,
-/// plus the direction for a containment), or a delta operation naming a closed
-/// relation — ground axioms are not data, and the refusal is typed identically
-/// on both oracles (verdict parity including the typed identity, the
-/// direction-divergence lesson applied at birth). A rejection is the COMPLETE
-/// `Vec<Violation>` — every violated statement, once, in citation order
-/// (statement id ascending, source before target within one statement) — the
-/// same
+/// errors identify it: a statement the final state fails (with the direction
+/// for a containment), or a delta operation naming a closed relation. A
+/// rejection is the complete `Vec<Violation>`: every violated statement, once,
+/// in citation order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Violation {
     Functionality {
@@ -61,7 +57,7 @@ pub enum Violation {
 
         measure: u128,
     },
-    /// A delete or insert named a closed relation — refused before the
+    /// A delete or insert named a closed relation, refused before any judgment.
     ClosedRelationWrite {
         relation: RelationId,
     },
@@ -72,8 +68,9 @@ pub enum Violation {
 }
 
 impl Violation {
-    /// before source (1) before target (2). `ClosedRelationWrite` is
-    /// refused before any judgment and never sorts beside statement
+    /// The citation order: statement id, then the whole statement (0) before
+    /// source (1) before target (2). `ClosedRelationWrite` sorts after every
+    /// statement citation.
     fn citation(self) -> (u16, u8, u32) {
         match self {
             Self::Functionality { statement } | Self::Capacity { statement, .. } => {
@@ -91,7 +88,6 @@ impl Violation {
                 0,
             ),
             Self::ClosedRelationWrite { relation } => (u16::MAX, u8::MAX, relation.0),
-            // A refusal, never sorted beside statement citations (the
             Self::CapacityRayMeasure { statement } => (statement.0, 3, 0),
         }
     }
@@ -135,8 +131,6 @@ impl NaiveDb {
                 })
             })
             .collect();
-
-        // seeded once, write-refused forever, so queries and judgments
 
         let relations = extensions
             .iter()
@@ -312,8 +306,7 @@ impl NaiveDb {
         Ok(())
     }
 
-    /// order; source before target within one statement), deduplicated.
-    /// states): a delta op naming a closed relation is refused before
+    /// Every statement `delta` would violate, in citation order, deduplicated.
     #[must_use]
     pub fn violations(&self, delta: &Delta) -> Vec<Violation> {
         self.judged(delta).err().unwrap_or_default()
@@ -544,7 +537,7 @@ impl NaiveDb {
         })
     }
 
-    /// engine's compiled member set — the model must not share the
+    /// The target side's facts: a closed relation's axioms or the stored rows.
     fn target_facts<'a>(
         &'a self,
         state: &'a [BTreeSet<Tuple>],

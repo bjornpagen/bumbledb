@@ -31,7 +31,7 @@ pub enum FuzzOp {
     ViewRead {
         relation: RelationId,
     },
-    /// Drop the environment and reopen the store from disk (the pending
+    /// Drop the environment and reopen the store from disk.
     Reopen,
 
     VerifyStore,
@@ -439,8 +439,8 @@ mod tests {
         }
     }
 
-    /// chain WITH reads between — at least three commits after the seed
-    /// reopen verb anywhere. That is the append-on-append stress: each
+    /// The streak variant reaches insert-only commit chains with reads
+    /// between: at least three commits after the seed with no reopen.
     #[test]
     fn the_streak_variant_reaches_long_read_interleaved_append_chains() {
         let streaks = (0..256u64)

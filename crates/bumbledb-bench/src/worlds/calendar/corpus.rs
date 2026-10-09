@@ -1,7 +1,7 @@
-//! The engine load respects the statements it is judged under: containment
-//! targets precede their sources (accounts → persons → the `Attendance ==
-//! Claim` discriminated-union cluster loads through calendars → events; working
-//! hours before the claims they cover), and
+//! The calendar corpus. The engine load orders relations so containment
+//! targets precede their sources: accounts, persons, calendars, events, the
+//! `Attendance == Claim` cluster, and working hours before the claims they
+//! cover.
 use std::path::Path;
 use std::time::Instant;
 
@@ -84,7 +84,7 @@ fn flush(
 
 /// # Errors
 /// # Panics
-/// Only on programmer-invariant violations (WAL refused; corpus values
+/// When WAL does not engage.
 pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection, LoadStats)> {
     let conn = Connection::open(path)?;
     configure_sqlite(&conn)?;

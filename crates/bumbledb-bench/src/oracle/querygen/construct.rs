@@ -60,8 +60,6 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::Rules => unreachable!("multi-rule queries assemble their own query"),
     }
 
-    // would flip an eliminable shape to a refusal (or blur the counted
-
     if !matches!(
         shape,
         Shape::ExistenceWalk

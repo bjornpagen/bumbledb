@@ -52,7 +52,7 @@ pub fn schema() -> &'static bumbledb::Schema {
     })
 }
 
-/// application-owned minting after load therefore starts at `docs + delete_pool` on
+/// Corpus sizes; inserts after load start at id `docs + delete_pool`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CrudSizes {
     pub docs: u64,
@@ -80,7 +80,7 @@ impl CrudSizes {
     }
 }
 
-/// one-line description, and the registered protocol. The protocol is
+/// One crud family: its name, a one-line description, and its protocol.
 #[derive(Debug, Clone, Copy)]
 pub struct CrudFamily {
     pub name: &'static str,
@@ -88,10 +88,9 @@ pub struct CrudFamily {
     pub protocol: Protocol,
 }
 
-/// The eleven crud families in THE run order — reads before writes, before any
-/// write family mutates it, and the registry order IS the registered write
-/// protocol (8 + 64 = 72 invocations) with room — the pool-size ≥
-/// warmups+samples invariant, re-asserted at runner
+/// The eleven crud families in run order: the read before any write family
+/// mutates the store. The delete pool holds more rows than one write
+/// protocol's warmups and samples consume.
 #[must_use]
 pub fn families() -> &'static [CrudFamily] {
     &[

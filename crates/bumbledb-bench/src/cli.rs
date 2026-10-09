@@ -81,7 +81,7 @@ pub enum Cmd {
 
     Curves(CurvesArgs),
 
-    /// The heap-arm ladder: frozen-vs-LMDB point reads and admission
+    /// The heap-arm ladder: frozen-vs-LMDB point reads and admission prefixes.
     Heap(HeapArgs),
 
     /// Kernels at every SIMD level against their scalar twins, and the

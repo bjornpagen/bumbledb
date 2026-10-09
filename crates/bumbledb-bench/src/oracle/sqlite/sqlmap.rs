@@ -402,7 +402,7 @@ pub fn from_sql_value(
 }
 
 /// # Errors
-/// half for a U64 element, or `start >= end` — the stored invariant, so
+/// On a column class that is not the element's, or `start >= end`.
 pub fn interval_from_sql(
     start: &rusqlite::types::Value,
     end: &rusqlite::types::Value,

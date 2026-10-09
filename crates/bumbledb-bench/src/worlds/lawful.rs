@@ -123,7 +123,7 @@ impl LawSizes {
     }
 }
 
-/// one-line description, and the registered protocol. The protocol is
+/// One lawful family: its name, a one-line description, and its protocol.
 #[derive(Debug, Clone, Copy)]
 pub struct LawFamily {
     pub name: &'static str,

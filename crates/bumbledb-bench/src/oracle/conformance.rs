@@ -151,8 +151,6 @@ pub fn build_world(seed: u64) -> World {
             delta.inserts.push((rel, fact));
         }
     }
-    // The fixed-width Lane (`interval<i64, 5>`) sits after the closed
-
     db.write(crate::harness::bench_work(), |tx| {
         tx.insert_dyn(
             target::ids::LANE,

@@ -125,10 +125,8 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("cross_residuals", cov.cross_residuals),
         ("bytes_hits", cov.bytes_hits),
         ("bytes_misses", cov.bytes_misses),
-        // paths must never cap): all-scalar width and the
         ("wide_scalar", cov.wide_scalar),
         ("wide_interval", cov.wide_interval),
-        // (existence walks and both DU `==` directions) and a refused
         ("ground_eliminable", cov.ground_eliminable),
         ("ground_extra_field", cov.ground_extra_field),
         ("ground_missing_phi", cov.ground_missing_phi),

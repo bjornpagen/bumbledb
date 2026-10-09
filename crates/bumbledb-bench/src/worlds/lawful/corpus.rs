@@ -1,8 +1,8 @@
-//! Every seeded row is legal under the full law roster: task kinds cycle the
-//! closed `TaskKind` roster, attempts sit far under the window's cap, steers
-//! alternate Observe/Repartition, and scope rows ride only under Repartition
-//! steers (the ψ-selected (LAW-2) fills task 0 to the window's cap of 8 before
-//! sampling
+//! The lawful corpus. Every seeded row is legal under the full law roster:
+//! task kinds cycle the closed `TaskKind` roster, attempts sit far under the
+//! window's cap, steers alternate Observe/Repartition, and scope rows exist
+//! only under Repartition steers. The window lane fills task 0 to the cap of 8
+//! before sampling.
 use bumbledb::{RelationId, Value};
 
 use super::{LawSizes, ids};

@@ -1,5 +1,5 @@
-//! Both engines touch every value; decoding into `compare::Owned` is `SQLite`
-//! measured under exactly the engine's protocol, with the
+//! `SQLite` measured under exactly the engine's protocol: prepared statements
+//! reused, every value decoded, and the fairness pragmas checked first.
 use bumbledb::Value;
 use bumbledb::schema::ValueType;
 
@@ -69,7 +69,7 @@ pub fn bind_args(
         .collect()
 }
 
-/// The fairness contract as code — run before measuring, so a
+/// The fairness contract as code, checked before measuring.
 pub struct FairnessCheck;
 
 pub(crate) const POSTING_INSERT: &str = "INSERT INTO \"Posting\" VALUES (?1, ?2, ?3, ?4, ?5, ?6)";

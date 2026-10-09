@@ -1,9 +1,8 @@
 //! Every variable placed in a negated atom is drawn from the positive atoms'
-//! anchors by provenance — a negated atom binds nothing, only rejects — and the
-//! binding shapes sweep the space: key-covered (a declared key's whole
-//! projection bound; at most one
-//! witness) and open (non-key bindings over the multiply- witnessed relations —
-//! rejection must not depend on witness count),
+//! anchors (a negated atom binds nothing, only rejects). The binding shapes
+//! sweep key-covered atoms (a declared key's whole projection bound: at most
+//! one witness) and open ones (non-key bindings over the multiply-witnessed
+//! relations, where rejection must not depend on witness count).
 use bumbledb::{Term, Value};
 
 use crate::oracle::querygen::Builder;

@@ -280,7 +280,6 @@ pub struct Coverage {
     pub rules_overlap: u64,
     pub rules_aggregate: u64,
 
-    /// the multiply-witnessed relations (rejection must not depend on
     pub negations: u64,
     pub negation_key_covered: u64,
     pub negation_open: u64,

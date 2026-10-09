@@ -96,7 +96,7 @@ pub fn load_sqlite_relation(
 
 /// # Errors
 /// # Panics
-/// Only on programmer-invariant violations (WAL refused; corpus values
+/// When WAL does not engage.
 pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection, LoadStats)> {
     let conn = Connection::open(path)?;
     configure_sqlite(&conn)?;

@@ -243,8 +243,6 @@ pub(super) fn run_query(
         let mut family = PreparedFamily::new(&stores.conn, translated, types.clone())?;
         let outcome = match sq.cap {
             None => {
-                // Uncapped: exactly the pre-cap protocol, no handler ever
-
                 let mut rotation = Rotation::new(sets.clone());
                 let theirs = harness::measure(proto, || {
                     crate::harness::sqlite_run::sample(&mut family, rotation.next_set())

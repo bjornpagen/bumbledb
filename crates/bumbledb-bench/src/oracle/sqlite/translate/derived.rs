@@ -1,4 +1,4 @@
-//! No CTE after the rec —
+//! Derived stages as SQL CTEs: interiors in order, then the recursive CTE.
 use bumbledb::ir::{FindTerm, Rec, RecRule, RecStep};
 use bumbledb::{AtomSource, InteriorId, ParamId, Query, Rule, Schema, Term, Value};
 

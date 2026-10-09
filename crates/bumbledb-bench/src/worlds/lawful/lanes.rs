@@ -66,7 +66,7 @@ pub struct LawCursor {
 }
 
 impl LawCursor {
-    /// The mint base after load: the seeded corpus is dense from 0, so
+    /// The first ids inserted after load: the seeded corpus is dense from 0.
     #[must_use]
     pub fn at_base(sizes: LawSizes) -> Self {
         Self {
@@ -204,7 +204,7 @@ pub fn fill_window_target_sqlite(
 }
 
 /// # Errors
-/// Engine errors, stringified; a stream/protocol length mismatch or a
+/// Engine errors, stringified, or a stream that does not match the protocol.
 pub fn commit_attempt_engine(
     db: &Db<LawfulWorld>,
     proto: Protocol,
@@ -257,7 +257,7 @@ pub fn commit_attempt_sqlite(
 }
 
 /// # Errors
-/// Engine errors, stringified; a stream/protocol length mismatch or a
+/// Engine errors, stringified, or a stream that does not match the protocol.
 pub fn commit_cluster_engine(
     db: &Db<LawfulWorld>,
     proto: Protocol,

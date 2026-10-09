@@ -165,7 +165,7 @@ pub fn insert_sqlite(
 }
 
 /// # Errors
-/// Engine errors, stringified; a stream/protocol length mismatch or a
+/// Engine errors, stringified, or a stream that does not match the protocol.
 pub fn update_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -205,7 +205,7 @@ pub fn update_bumbledb(
 }
 
 /// # Errors
-/// `SQLite` errors, stringified; a stream/protocol length mismatch or
+/// `SQLite` errors, stringified, or a stream that does not match the protocol.
 pub fn update_sqlite(
     conn: &Connection,
     proto: Protocol,
@@ -247,7 +247,7 @@ pub fn update_sqlite(
 }
 
 /// # Errors
-/// Engine errors, stringified; a stream/protocol length mismatch or a
+/// Engine errors, stringified, or a stream that does not match the protocol.
 pub fn upsert_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -292,7 +292,7 @@ pub fn upsert_bumbledb(
 }
 
 /// # Errors
-/// `SQLite` errors, stringified; a stream/protocol length mismatch,
+/// `SQLite` errors, stringified, or a stream that does not match the protocol.
 pub fn upsert_sqlite(
     conn: &Connection,
     proto: Protocol,
@@ -317,7 +317,7 @@ pub fn upsert_sqlite(
 }
 
 /// # Errors
-/// Engine errors, stringified; a stream/protocol length mismatch or a
+/// Engine errors, stringified, or a stream that does not match the protocol.
 pub fn rmw_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -347,7 +347,7 @@ pub fn rmw_bumbledb(
 }
 
 /// # Errors
-/// `SQLite` errors, stringified; a stream/protocol length mismatch, a
+/// `SQLite` errors, stringified, or a stream that does not match the protocol.
 pub fn rmw_sqlite(conn: &Connection, proto: Protocol, keys: &[u64]) -> Result<Measurement, String> {
     check_stream("crud_rmw", keys.len(), proto)?;
     let mut iter = keys.iter();
@@ -392,7 +392,7 @@ pub fn rmw_sqlite(conn: &Connection, proto: Protocol, keys: &[u64]) -> Result<Me
 }
 
 /// # Errors
-/// Engine errors, stringified; a stream/protocol length mismatch or a
+/// Engine errors, stringified, or a stream that does not match the protocol.
 pub fn delete_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -421,7 +421,7 @@ pub fn delete_bumbledb(
 }
 
 /// # Errors
-/// `SQLite` errors, stringified; a stream/protocol length mismatch or a
+/// `SQLite` errors, stringified, or a stream that does not match the protocol.
 pub fn delete_sqlite(
     conn: &Connection,
     proto: Protocol,

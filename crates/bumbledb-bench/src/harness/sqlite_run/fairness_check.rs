@@ -37,8 +37,7 @@ impl FairnessCheck {
             ));
         }
 
-        // every macOS commit; SQLite must too, or the write comparison
-
+        // LMDB issues F_FULLFSYNC on every macOS commit; SQLite must too.
         for pragma in ["fullfsync", "checkpoint_fullfsync"] {
             let on: i64 = conn
                 .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))

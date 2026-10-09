@@ -125,7 +125,7 @@ pub fn forced_spoke_map_bytes(positions: u64, distinct: u64) -> u64 {
     u64::try_from(ctrl + buckets).expect("fits u64")
 }
 
-/// `1 − e^-2` occupancy; seed-invariant for seeds < 2^20, where the
+/// Positions in the forced spoke map: `1 − e^-2` occupancy.
 pub const FORCED_MAP_POSITIONS: u64 = 1 << 20;
 
 pub const FORCED_MAP_DISTINCT: u64 = 453_241;
@@ -284,8 +284,7 @@ pub fn all() -> &'static [DisplacedFamily] {
     ]
 }
 
-/// The lane's default protocol (a `--samples` override still applies — the
-/// percentile machinery's needs (the cold protocol's 16-sample
+/// The lane's default protocol; `--samples` overrides the samples.
 pub const PROTO: Protocol = Protocol {
     warmups: 3,
     samples: 12,
@@ -379,7 +378,6 @@ pub fn verify_family(
 /// runs between passes on BOTH arms (the mirror is displaced exactly like the
 /// engine), report-only rows beside the read families.
 /// # Errors
-// one lane's full protocol, linear
 pub fn bench_families(
     cfg: GenConfig,
     scratch: &Path,

@@ -1,9 +1,7 @@
-//! : the slice against the `SQLite` mirror (the `free_busy` hand coalesce
-//! included — the translator-unpaired case is checked, never skipped), and a
-//! unit-scale naive differential slice replaying the corpus stream, six
-//! judgment-violating deltas (one per statement family: room exclusion, `==`
-//! totality, `==` arm validity, working-hours second corpus joins the stamp's
-//! evidence **before any timing** —
+//! The calendar world's verify slice: every calendar family against the
+//! `SQLite` mirror (the `free_busy` hand coalesce included), and a unit-scale
+//! naive differential replaying the corpus stream plus one judgment-violating
+//! delta per statement family. It joins the stamp's evidence before any timing.
 use super::{Case, Db, Run, VerifyConfig};
 
 use bumbledb::{RelationId, Value};
@@ -193,7 +191,7 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                 ],
             })
         },
-        // A write naming the closed `Rsvp` vocabulary: refused before
+        // A write naming the closed `Rsvp` vocabulary is refused.
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(ids::RSVP, vec![Value::U64(7)])],

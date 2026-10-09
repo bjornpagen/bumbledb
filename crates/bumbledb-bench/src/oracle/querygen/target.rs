@@ -266,11 +266,8 @@ pub fn schema() -> &'static Schema {
     })
 }
 
-/// The declared target ledger, as the raw descriptor — the value the
-/// naive model and the mirror's extension INSERTs consume beside the
-/// sealed schema (the closed-relation differential and the `ops` fuzz
-/// runner both build their [`crate::oracle::naive::NaiveDb`] from it).
-// the declared ledger, one relation per block
+/// The declared target ledger as the raw descriptor, which the naive model
+/// and the mirror's extension INSERTs consume beside the sealed schema.
 #[must_use]
 pub fn descriptor() -> SchemaDescriptor {
     {
@@ -581,9 +578,8 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
             side(ids::POSTING_TAG, ids::posting_tag::TAG, &[]),
             side(ids::TAG, bumbledb::FieldId(0), &[]),
         ),
-        // The closed-relation write surface — appended last, so
-        // no earlier statement id shifts:
-        // the key the domain quantification probes,
+        // The closed-relation write surface, appended last so no earlier
+        // statement id shifts: the key the domain quantification probes,
         StatementDescriptor::Functionality {
             relation: ids::CURRENCY_BACKING,
             projection: Box::new([ids::currency_backing::CURRENCY]),
@@ -593,8 +589,8 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
             side(ids::CURRENCY_BACKING, ids::currency_backing::CURRENCY, &[]),
             side(ids::CURRENCY, ids::currency::ID, &[]),
         ),
-        // domain quantification: every currency has a backing — judged
-        // at backing-delete time via the extension scan,
+        // domain quantification (every currency has a backing, judged at
+        // backing-delete time via the extension scan),
         containment(
             side(ids::CURRENCY, ids::currency::ID, &[]),
             side(ids::CURRENCY_BACKING, ids::currency_backing::CURRENCY, &[]),
@@ -808,7 +804,6 @@ pub fn posting_at(row: u64) -> i64 {
 /// `¬PostingTag(posting = v)` must reject a doubly-tagged posting
 /// exactly as it rejects a singly-witnessed one, and must pass the
 /// tagless half.
-///
 #[must_use]
 pub fn posting_tag(row: u64) -> (u64, u64) {
     let posting = (row / 2) * 2;

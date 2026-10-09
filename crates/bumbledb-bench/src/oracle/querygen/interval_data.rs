@@ -29,8 +29,6 @@ fn offsets(seed: u64, group: u64, k: u64) -> (u64, u64, bool) {
     }
 }
 
-/// # Panics
-/// On a programmer-invariant violation only: the group-local offsets
 #[must_use]
 pub fn group_i64(seed: u64, group: u64, k: u64) -> (i64, i64) {
     let (lo, hi, sentinel) = offsets(seed, group, k);
