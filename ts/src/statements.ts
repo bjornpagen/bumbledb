@@ -46,7 +46,7 @@ function renderRosterSide(roster: AnyClosedRoster | undefined): string {
 }
 
 /**
- * The runtime twin of {@link SameArity} (cleanup-0.5.0 ruling 9): the two
+ * The runtime twin of {@link SameArity}: the two
  * faces must project equally many fields, judged at CONSTRUCTION for
  * untyped callers too — without it an arity-mismatched containment
  * silently truncates to the shorter projection (this module's positionwise
@@ -195,7 +195,7 @@ const checkedStatement = descriptorCache((raw): Statement => {
 	if (statement.kind === "capacity") {
 		const { weight, window } = statement
 		if (weight.kind === "unit" && window.kind === "range" && window.hi.kind === "durationField") {
-			throw new AuthoringError({ message: "a unit (count) window against a duration bound mixes dimensions (C18)" })
+			throw new AuthoringError({ message: "a unit (count) window against a duration bound mixes dimensions" })
 		}
 		assertWeightOnSource(weight, source, statement)
 		assertBoundsOnTarget(window, target, statement)

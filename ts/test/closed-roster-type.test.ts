@@ -1,15 +1,15 @@
 /**
- * H1 pins — the precise roster type. A closed reference descriptor carries
+ * The precise roster type. A closed reference descriptor carries
  * its vocabulary name AND handle tuple in the TYPE (`ClosedIdField<"Kind",
  * readonly ["DirectPass", "JudgedPass", "Failed"]>` — the name literal keeps two
- * same-shaped vocabularies distinct, 063), `Infer` yields the union as the
+ * same-shaped vocabularies distinct), `Infer` yields the union as the
  * column's VALUE TYPE, and
  * every `Infer`-reading surface (`Fact`) sees it. A wrong
  * string is a COMPILE error (real `@ts-expect-error` fail-probes), and a
- * bigint is no longer assignable to a closed-referencing column. The
+ * bigint is not assignable to a closed-referencing column. The
  * type-lie law's runtime twin: the precise type's carrier is the SAME
- * frozen declaration-order handles array that was always there — pinned
- * own-property by own-property at the bottom.
+ * frozen declaration-order handles array, checked own-property by
+ * own-property at the bottom.
  */
 
 import assert from "node:assert/strict"
@@ -137,10 +137,10 @@ function sharedHandleAssignsAcrossVocabularies(
 }
 
 function insertRefusals(): unknown[] {
-	// @ts-expect-error — H1: "DirectPas" is a typo off the roster — a wrong string is a compile error
+	// @ts-expect-error — "DirectPas" is a typo off the roster — a wrong string is a compile error
 	const typo: Fact<typeof Certificate> = { id: 1n, student: 7n, kind: "DirectPas" }
 
-	// @ts-expect-error — H1: a bigint no longer types a closed-referencing column — the value type is the handle union
+	// @ts-expect-error — a bigint does not type a closed-referencing column — the value type is the handle union
 	const forgedId: Fact<typeof Certificate> = { id: 1n, student: 7n, kind: 0n }
 	return [typo, forgedId]
 }
@@ -149,7 +149,7 @@ test("two same-shaped vocabularies are distinct at BOTH tiers — the roster slo
 	const Answer = closed("Answer", ["DirectPass", "JudgedPass", "Failed"])
 	const Cert = relation("Cert", { k: closedId(Kind) })
 	assert.throws(function crossVocabularyPairing() {
-		// @ts-expect-error — 063: a Kind reference cannot pair with Answer's id — the type-tier roster slot compares [name, handles], matching the runtime's roster-identity judgment
+		// @ts-expect-error — a Kind reference cannot pair with Answer's id — the type-tier roster slot compares [name, handles], matching the runtime's roster-identity judgment
 		contained(on(Cert, "k"), on(Answer, "id"))
 	}, /is a Kind reference but Answer\.id is a Answer reference/)
 })

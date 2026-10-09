@@ -1,5 +1,5 @@
 /**
- * D18 / TS-003: every partial acquisition is owned before the next
+ * Every partial acquisition is owned before the next
  * interruptible step. Directory acquire is finalized before Db open;
  * operation output is registered before the next yield. JS tokens stay
  * reachable.
@@ -24,7 +24,7 @@ function runtime() {
 	return ManagedRuntime.make(Bumble.layer(runtimeOptions))
 }
 
-test("interrupt after directory acquire and before db output adoption drains both owners (D18)", async function directoryThenDb() {
+test("interrupt after directory acquire and before db output adoption drains both owners", async function directoryThenDb() {
 	const rt = runtime()
 	try {
 		const original = (await import("../src/native/addon.ts")).addon
@@ -51,7 +51,7 @@ test("interrupt after directory acquire and before db output adoption drains bot
 	}
 })
 
-test("abort after publication drains without take; retained wrappers cannot pin output (D18)", async function abortAfterPublication() {
+test("abort after publication drains without take; retained wrappers cannot pin output", async function abortAfterPublication() {
 	const rt = runtime()
 	const kept: object[] = []
 	const collect = addon.runtimeResultCollect

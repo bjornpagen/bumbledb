@@ -380,11 +380,10 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 
 	test("an arity-mismatched pairing is a construction error — the SameArity runtime twin (untyped path)", function probeArityWall() {
 		/**
-		 * Ruling 9 (cleanup-0.5.0): SameArity's runtime seat. The type tier
-		 * already refuses these (the directives are real); before the twin an
-		 * UNTYPED caller's mismatch silently truncated to the shorter
-		 * projection (the positionwise walks skip unpaired positions) until
-		 * Db.create's colder engine refusal — now the statement itself judges.
+		 * SameArity's runtime seat. The type tier already refuses these (the
+		 * directives are real); without the runtime twin an UNTYPED caller's
+		 * mismatch would truncate to the shorter projection (the positionwise
+		 * walks skip unpaired positions), so the statement itself judges.
 		 */
 		const { Booking, Slot } = buildCalendar()
 		assert.throws(function truncatedContainment() {
@@ -416,7 +415,7 @@ function banTableIsUnwritable(): unknown[] {
 		within(-1n, 3n),
 		// @ts-expect-error — capacity bounds are u64: a negative ceiling is out of domain
 		within(1n, -3n),
-		// @ts-expect-error — a count of facts bounded by a span of time mixes dimensions (C18): the duration() bound is banned on the UNIT instance
+		// @ts-expect-error — a count of facts bounded by a span of time mixes dimensions: the duration() bound is banned on the UNIT instance
 		capacity(on(Room, "id"), { from: on(Booking, "room"), within: within(0n, duration("span")) }),
 		// @ts-expect-error — a path weight is refused: the vocabulary is closed at the row — pin the column
 		weigh("model.watts"),
@@ -428,12 +427,11 @@ function banTableIsUnwritable(): unknown[] {
 }
 
 /**
- * The spelling-ban tables are DELETED (C01, chapter 34): `{n..n}`, `{0..0}`,
- * unit floors `{1..*}`/`{N..*}` and the vacuous `{0..*}` are harmless
+ * `{n..n}`, `{0..0}`, unit floors `{1..*}`/`{N..*}` and the vacuous `{0..*}` are harmless
  * equivalent spellings that LOWER to the one canonical `(lo, hi)` law at
- * the mint, preserving authored-statement attribution. Compiling AND the
- * canonical render are the pins. Genuinely different semantics (negative,
- * inverted, C18 dimension mixing) still refuse above.
+ * the mint, preserving authored-statement attribution. Compiling and the
+ * canonical render check it. Genuinely different semantics (negative,
+ * inverted, dimension mixing) still refuse above.
  */
 function equivalentSpellingsLowerToTheCanonicalLaw(): unknown[] {
 	const { Pool, Device } = buildRacks()
@@ -448,10 +446,10 @@ function equivalentSpellingsLowerToTheCanonicalLaw(): unknown[] {
 }
 
 /**
- * The weight-sensitive split's POSITIVE probe (design § 6): `<=[w]{1..*}`
+ * The weight-sensitive split's POSITIVE probe: `<=[w]{1..*}`
  * COMPILES — on a weighted statement "positive total" admits zero-weight
  * rows and is a different, weaker law than containment.
- * Exported-but-uncalled; its compiling IS the pin.
+ * Never called; compiling is the check.
  */
 function weightedFloorOneCompiles(): unknown {
 	const { Pool, Device } = buildRacks()
@@ -500,9 +498,9 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 	}
 
 	test("computed equivalent spellings lower to the canonical law; only negatives refuse", function probeComputedBans() {
-		// `{0..*}` (vacuous) and `{n..n}`/`{0..0}` are ACCEPTED canonical
-		// spellings now — normalization preserves the authored statement
-		// instead of policing the style (C01, chapter 34).
+		// `{0..*}` (vacuous) and `{n..n}`/`{0..0}` are accepted canonical
+		// spellings: normalization preserves the authored statement instead
+		// of policing the style.
 		assert.deepEqual(within(computed(0n), "*"), {
 			kind: "floor",
 			lo: { kind: "lit", value: 0n }
@@ -526,7 +524,7 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		}, /inverted — no measure satisfies it/)
 	})
 
-	test("unit floors are accepted canonical laws now — the spelling police is deleted", function probeComputedFloorOne() {
+	test("unit floors are accepted canonical laws", function probeComputedFloorOne() {
 		const { Pool, Device } = buildRacks()
 		const unitFloorOne = capacity(on(Pool, "id"), {
 			from: on(Device, "pool"),
@@ -547,12 +545,12 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		assert.equal(renderStatement(weighted), "Pool(id) <=[watts]{1..*} Device(pool)")
 	})
 
-	test("the C18 dimension gate fires at the capacity() call — a unit window never takes a duration() bound (both tiers)", function probeUnitDimensionGate() {
+	test("the dimension gate fires at the capacity() call — a unit window never takes a duration() bound (both tiers)", function probeUnitDimensionGate() {
 		const { Room, Booking } = buildRacks()
 		assert.throws(function unitDurationBound() {
-			// @ts-expect-error — a count of facts bounded by a span of time mixes dimensions (C18): the type tier's ban row, with the construction wall behind it
+			// @ts-expect-error — a count of facts bounded by a span of time mixes dimensions: the type tier's ban row, with the construction wall behind it
 			return capacity(on(Room, "id"), { from: on(Booking, "room"), within: within(0n, duration("span")) })
-		}, /mixes dimensions \(C18\)/)
+		}, /mixes dimensions/)
 
 		const weighted = capacity(on(Room, "id"), {
 			from: on(Booking, "room"),
@@ -565,10 +563,10 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 	test("a computed path weight or bound is a construction refusal naming the pinned-column idiom", function probeComputedPaths() {
 		assert.throws(function computedPathWeight() {
 			weigh(computedName("model.watts"))
-		}, /closed at the row .* pin the column/)
+		}, /closed at the row: pin the column/)
 		assert.throws(function computedPathBound() {
 			ref(computedName("model.supply"))
-		}, /closed at the row .* pin the column/)
+		}, /closed at the row: pin the column/)
 	})
 
 	test("the weight and dependent-bound walls hold at construction for untyped callers", function probeCapacityRuntimeTwins() {
@@ -667,14 +665,13 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 		)
 	})
 
-	test("declared id keys are ordinary statements now — the fresh-implied key is deleted (E-NO-RESERVE)", function probeDeclaredIdKey() {
+	test("declared id keys are ordinary statements", function probeDeclaredIdKey() {
 		const { Kind, Holder, Account, SavingsTerms } = buildLedger()
-		// With no fresh mint there is no implied key to duplicate: an
-		// explicit `Account(id) -> Account` is the ONE way to key an id.
+		// An explicit `Account(id) -> Account` is the ONE way to key an id.
 		const keyed = schema("Keyed", { Kind, Holder, Account, SavingsTerms }, [key(Account, ["id"])])
 		assert.deepStrictEqual(lower(keyed).statements, [{ kind: "Fd", relation: "Account", projection: ["id"] }])
-		// A closed relation's key stays engine-materialized; an explicit one
-		// is still the duplicate it always was.
+		// A closed relation's key is engine-materialized; an explicit one is a
+		// duplicate.
 		assert.throws(function duplicateClosed() {
 			// @ts-expect-error — a closed relation is not a key() target; the construction wall agrees
 			key(Kind, ["id"])

@@ -218,11 +218,11 @@ describe("selection literal resolution", function describeSelections() {
 	test("where() rides the same machine: an ill-typed forged spelling still faces the roster", function probeWhereRoster() {
 		const { Account } = buildLedgerPieces()
 		assert.throws(function bigintForged() {
-			// @ts-expect-error — H1: a closed field's selection literal is the handle union; a bigint no longer typechecks
+			// @ts-expect-error — a closed field's selection literal is the handle union; a bigint does not typecheck
 			select(Account, { kind: 7n })
 		}, /expected a Kind handle/)
 		assert.throws(function outOfRoster() {
-			// @ts-expect-error — H1: "Frozen" is off the Kind roster — a wrong string is a compile error
+			// @ts-expect-error — "Frozen" is off the Kind roster — a wrong string is a compile error
 			select(Account, { kind: "Frozen" })
 		}, /expected a Kind handle/)
 		assert.throws(function emptyWhere() {

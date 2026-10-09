@@ -26,9 +26,8 @@ interface BannedWindow<Canonical extends string> {
 }
 
 /**
- * The path-weight refusal (ruling 6 — a boundary, not a deferral): the
- * verdict names the pinned-column idiom, the same diagnostic the macro
- * expansion and the spec resolver carry.
+ * The path-weight refusal: it names the pinned-column idiom, the same
+ * diagnostic the macro expansion and the spec resolver carry.
  */
 interface RefusedPath<Idiom extends string> {
 	readonly "path spelling refused — the vocabulary is closed at the row": Idiom
@@ -38,7 +37,7 @@ type IsNegative<N extends bigint> = `${N}` extends `-${string}` ? true : false
 
 /**
  * The dotted-name ban, both mints: a `a.b` spelling is a typed refusal
- * whose verdict names the composition idiom — pin the column with a
+ * naming the composition idiom — pin the column with a
  * two-column containment (`Device(model, watts) <= Model(id, watts)`) and
  * name the local field.
  */
@@ -55,7 +54,7 @@ type NegativeBan<N extends bigint> = bigint extends N
 		: unknown
 
 /**
- * The spelling-ban tables are DELETED: `{n..n}`, `{0..0}`,
+ * `{n..n}`, `{0..0}`,
  * unit floors `{1..*}`/`{N..*}` and the vacuous `{0..*}` are harmless
  * equivalent spellings that lower to the one canonical `(lo, hi)` law at
  * the mint. Genuinely different semantics still refuse: negative bounds
@@ -74,8 +73,8 @@ type RangeBan<Lo extends bigint, Hi extends bigint> = bigint extends Lo
 				: unknown
 
 /**
- * The C18 dimension gate's ban row, unit instance (the engine's
- * `CapacityDimensionMixing` twin, ruled 2026-07-24): a unit (count)
+ * The dimension gate's ban row, unit instance (the engine's
+ * `CapacityDimensionMixing` twin): a unit (count)
  * window against a `duration` bound counts facts against a span of
  * interval coordinates — a dimension error. Judged on the `capacity`
  * UNIT overload only. Explicit scalar and Duration measures may use
@@ -85,7 +84,7 @@ type RangeBan<Lo extends bigint, Hi extends bigint> = bigint extends Lo
 type UnitDimensionBan<W extends CapacityWindow> = W extends {
 	readonly hi: { readonly kind: "durationField" }
 }
-	? BannedWindow<"a count of facts bounded by a span of time mixes dimensions (C18) — weigh the source with weigh(duration(field)), or bound by a u64 field or literal">
+	? BannedWindow<"a count of facts bounded by a span of time mixes dimensions — weigh the source with weigh(duration(field)), or bound by a u64 field or literal">
 	: unknown
 
 type KindAt<S extends FaceSource, K extends string> =
@@ -170,7 +169,7 @@ function assertRowLocal<F extends string>(field: F, role: string): F {
 		throw new AuthoringError({ message: `${role}: expected a well-formed field name` })
 	if (field.includes(".")) {
 		throw new AuthoringError({
-			message: `${role} \`${field}\` walks a reference — the vocabulary is closed at the row (ruling 6): pin the column with a two-column containment (Source(ref, f) <= Catalog(id, f)) and name the local field`
+			message: `${role} \`${field}\` walks a reference — the vocabulary is closed at the row: pin the column with a two-column containment (Source(ref, f) <= Catalog(id, f)) and name the local field`
 		})
 	}
 	return field
@@ -195,7 +194,7 @@ function within<const Lo extends bigint>(
 ): CapacityWindow<{ readonly kind: "floor"; readonly lo: { readonly kind: "lit"; readonly value: Lo } }>
 /**
  * `{lo..field}` / `{lo..Duration(field)}` — the dependent ceiling, read
- * from the TARGET row per group (C6: hi slot only). The ref carries no
+ * from the TARGET row per group (hi slot only). The ref carries no
  * value, so no inversion judgment exists at construction — a per-row
  * inverted window is the judge's typed refusal.
  */
@@ -231,9 +230,9 @@ function within(lo: bigint, hi?: bigint | "*" | FieldRef | DurationRef): Capacit
 		return admitWindow({ kind: "exact", n: lit(lo) })
 	}
 	if (hi === "*") {
-		// `{0..*}` (vacuous) and `{N..*}` floors are ACCEPTED canonical laws
-		// (C01): normalization preserves authored statement attribution
-		// instead of policing the spelling.
+		// `{0..*}` (vacuous) and `{N..*}` floors are accepted canonical laws:
+		// normalization preserves authored statement attribution instead of
+		// policing the spelling.
 		return admitWindow({ kind: "floor", lo: lit(lo) })
 	}
 	if (typeof hi === "bigint") {
@@ -266,7 +265,7 @@ function admitWeight<S extends WeightSpec>(weight: S): CapacityWeight<S> {
 /**
  * `[field]` — the measure: a u64-encoded field of the SOURCE row summed
  * per target group. A dotted path is the typed refusal naming the
- * pinned-column idiom (ruling 6); `weigh(duration(field))` is the
+ * pinned-column idiom; `weigh(duration(field))` is the
  * interval-measure weight — calendar capacity as one statement.
  */
 function weigh<const F extends string>(
@@ -292,7 +291,7 @@ function ref<const F extends string>(field: F & PathBan<F>): FieldRef<F> {
  * in `within`'s hi slot it is the TARGET row's interval-measure bound
  * in the interval element's unit, not necessarily a clock unit.
  * Explicit u64 measures/bounds may carry that same unit; an unweighted
- * row count cannot be bounded by an interval measure (C18).
+ * row count cannot be bounded by an interval measure.
  */
 function duration<const F extends string>(field: F & PathBan<F>): DurationRef<F> {
 	return Object.freeze({ kind: "durationField", field: assertRowLocal(field, "Duration measure") })

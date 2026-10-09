@@ -105,10 +105,9 @@ describe("the generator authority after the fresh deletion — closed ids are th
 	const Right = relation("Right", { id: u64 })
 	const Vocab = closed("Vocab", ["Alpha", "Beta"])
 
-	test("unifying two ordinary id columns is LAWFUL now — no mint, no wall; least member names the class", function idsUnify() {
-		// With fresh deleted, an ordinary id is an application-owned value
-		// column like any other: pairing two of them is one class, not a
-		// two-mints collision (E-NO-RESERVE: the database issues no identity).
+	test("unifying two ordinary id columns is LAWFUL — no mint, no wall; least member names the class", function idsUnify() {
+		// An ordinary id is an application-owned value column like any other:
+		// pairing two of them is one class (the database issues no identity).
 		const direct = [key(Right, ["id"]), contained(on(Left, "id"), on(Right, "id"))] as const
 		type Verdict = LawfulStatements<{ Left: typeof Left; Right: typeof Right }, typeof direct>
 		const probeLawful: Equal<Verdict, unknown> = true

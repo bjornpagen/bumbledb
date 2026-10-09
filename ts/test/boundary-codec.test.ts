@@ -1,6 +1,5 @@
 /**
- * The schema-tagged boundary VALUE codec (chapter 30's HTTP/export form;
- * API-02/API-09 pure half): every f64 — finite included — crosses as
+ * The schema-tagged boundary VALUE codec (the HTTP/export form): every f64 — finite included — crosses as
  * `{"$f64":"<16 lowercase hex>"}` of canonical binary64 bits, integers as
  * canonical decimal strings, Uuid as canonical UUID, bytes as one strict
  * lowercase-hex encoding, intervals as `{start,end}` in their element
@@ -41,7 +40,7 @@ test("finite, infinite, NaN and negative-zero floats all cross as canonical $f64
 		{ $f64: "7ff0000000000000" },
 		// EVERY NaN payload canonicalizes to the one quiet NaN image.
 		{ $f64: "7ff8000000000000" },
-		// -0 canonicalizes to +0 (chapter 11).
+		// -0 canonicalizes to +0.
 		{ $f64: "0000000000000000" }
 	])
 	// Integers are canonical decimal strings — never JSON numbers.

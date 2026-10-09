@@ -44,8 +44,8 @@ test("the layer value is inert data until provided into a running scope", functi
 })
 
 test("a CompleteResult's pages is a Stream value, and no cursor/AsyncIterable twin exists on the type", function pagesIsStream() {
-	// Type-level pin: the ONLY streaming surface is `pages`; the historical
-	// cursor verbs are absent from the CompleteResult type.
+	// The ONLY streaming surface is `pages`; no cursor verbs exist on the
+	// CompleteResult type.
 	type Result = import("../src/result.ts").CompleteResult<unknown>
 	type HasCursor = "intoCursor" extends keyof Result ? true : false
 	type HasNext = "next" extends keyof Result ? true : false
@@ -54,7 +54,7 @@ test("a CompleteResult's pages is a Stream value, and no cursor/AsyncIterable tw
 	const noNext: HasNext = false
 	const noAsyncIterator: HasAsyncIterator = false
 	assert.ok(!noCursor && !noNext && !noAsyncIterator)
-	// And the pages type is Effect's Stream (compile-time assignability pin).
+	// And the pages type is Effect's Stream (checked at compile time).
 	type Pages = ReturnType<Result["pages"]>
 	const pinned: Pages extends Stream.Stream<ReadonlyArray<unknown>, unknown> ? true : false = true
 	assert.ok(pinned)

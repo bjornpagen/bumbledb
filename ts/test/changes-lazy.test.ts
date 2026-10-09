@@ -1,6 +1,5 @@
 /**
- * ChangeDraft/ChangeSet laziness, reruns and canonical ownership
- * (API-01/API-10; chapter 35 "Laziness, reruns and stable intent"):
+ * ChangeDraft/ChangeSet laziness, reruns and canonical ownership:
  *
  * - construction is INERT: a built insert effect reads its iterable only
  *   at execution, and each sequential rerun reads the then-current input

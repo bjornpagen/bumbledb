@@ -1,6 +1,5 @@
 /**
- * CompleteResult ownership and the ONE-SHOT page Stream (API-07/API-10;
- * chapter 35 "Streams replace the TypeScript cursor facade"):
+ * CompleteResult ownership and the ONE-SHOT page Stream:
  *
  * - collect materializes explicitly and leaves the result available;
  *   cancellation leaves its sealed backing intact for another delivery;
@@ -342,7 +341,7 @@ test("completed-result delivery needs no resource options", () => {
 	assert.deepEqual(pagesArgs, [])
 })
 
-test("publication-boundary cancel delivers nothing; retry starts at row1 (D12/D25)", async function publicationBoundaryCancel() {
+test("publication-boundary cancel delivers nothing; retry starts at row1", async function publicationBoundaryCancel() {
 	const rt = runtime()
 	try {
 		await rt.runPromise(
@@ -350,7 +349,7 @@ test("publication-boundary cancel delivers nothing; retry starts at row1 (D12/D2
 				Effect.gen(function* () {
 					const { result } = yield* seededResult("publication-cancel", 3)
 					const handle = yield* runtimeHandle
-					// L12 probe: cancel after work returns, before operation.output.
+					// Cancel after the work returns, before the operation's output.
 					addon.runtimeArmPublicationCancel(handle)
 					const refused = yield* Effect.exit(result.collect())
 					assert.equal(refused._tag, "Failure", "predelivery cancel returns no page")
@@ -373,7 +372,7 @@ test("publication-boundary cancel delivers nothing; retry starts at row1 (D12/D2
 	}
 })
 
-test("non-terminal cursor refusal does not take Page/Rows; same cursor retries at row1 (D25)", async function sameCursorAfterRefusal() {
+test("non-terminal cursor refusal does not take Page/Rows; same cursor retries at row1", async function sameCursorAfterRefusal() {
 	const rt = runtime()
 	const pageTake = addon.runtimePageTake
 	let takes = 0

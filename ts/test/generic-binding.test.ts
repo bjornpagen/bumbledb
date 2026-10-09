@@ -201,7 +201,7 @@ describe("the generic full-binding law", function suite() {
 		assert.equal(pins.length, 2)
 	})
 
-	test("an aliased extra-key record is refused at every full-binding site — ExactVars restores the pre-0.16.0 exactness", function aliasedExtraKey() {
+	test("an aliased extra-key record is refused at every full-binding site — ExactVars keeps bindings exact", function aliasedExtraKey() {
 		// general form refused it (CheckBindings → the unknown-field arm).
 
 		// refused at compile time AND by the construction twin (`relation R
@@ -284,7 +284,7 @@ describe("the generic full-binding law", function suite() {
 	})
 
 	test("r.match(A, v(B)) is refused — generic owners", function crossOwnerGeneric() {
-		// it as they always have. Never called: the pin is the compile refusal.
+		// Never called: the compile refusal is the check.
 		function fullForeignRecord<Rels extends SchemaRelations, R extends QueryRelation<Rels>>(
 			theory: Schema<Rels>,
 			rel: R
@@ -295,7 +295,7 @@ describe("the generic full-binding law", function suite() {
 			})
 		}
 		void fullForeignRecord
-		assert.ok(true, "the generic cross-owner refusal is a compile-time pin")
+		assert.ok(true, "the generic cross-owner refusal is checked at compile time")
 	})
 
 	test("a wrong concrete record still errors at the offending field", function misspelledField() {
@@ -309,14 +309,13 @@ describe("the generic full-binding law", function suite() {
 	})
 
 	test("the DELIBERATE exclusion: not() gains no full-binding form", function notExcluded() {
-		// rule; a full-fresh-var negation is a boundness refusal at
-
-		// recorded ruling). Never called: the pin is the compile refusal.
+		// A full-fresh-var negation is a boundness refusal. Never called: the
+		// compile refusal is the check.
 		function negatedFullBinding<Rels extends SchemaRelations, R extends QueryRelation<Rels>>(rel: R) {
 			// @ts-expect-error — not() keeps the general form only; VarsOf<R> stays unprovable there for generic R
 			return not(rel, v(rel))
 		}
 		void negatedFullBinding
-		assert.ok(true, "the exclusion is a compile-time pin")
+		assert.ok(true, "the exclusion is checked at compile time")
 	})
 })

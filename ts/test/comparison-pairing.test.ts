@@ -3,21 +3,21 @@
  * sides AS A PAIR, exactly the engine's same-type rule
  * (`bumbledb/crates/bumbledb/src/ir/validate/context.rs`, `classify`):
  * each side orderable is NOT enough. Pinned here, each `@ts-expect-error`
- * real: bool meets only bool (R3 made bool orderable, never
+ * real: bool meets only bool (bool is orderable, never
  * cross-orderable — a bool var against a numeric var or a bigint literal
  * is the engine's conviction), u64 and i64 never meet, the measure's
  * sibling lives in u64 (`OrdMeasureVar`: scalar ≠ U64) and two measures
  * never meet (`DurationBothSides`), `pointIn`'s point lives in the
- * interval's ELEMENT domain, `allen` takes two intervals of ONE element
- * (Q1), and a comparison with no VARIABLE side is constant-valued — a
+ * interval's ELEMENT domain, `allen` takes two intervals of ONE element,
+ * and a comparison with no VARIABLE side is constant-valued — a
  * param is a constant at execution — refused at the type tier AND at the
  * constructor (the engine's `ConstantComparison`, `comparison_shape`'s
  * last arm). The legal pairs stay legal: the measure against a u64 var, a
  * bigint literal, a param; bool against bool; open sides (params,
  * integer literals) typed by their siblings.
  *
- * D19 twin of the shared scalar grammar: query I64/U64 pairing refuses
- * here without any/casts; arithmetic mixing is authored in
+ * The shared scalar grammar's twin: query I64/U64 pairing refuses here
+ * without any/casts; arithmetic mixing is authored in
  * `scalar-algebra.test.ts` / `computed-find.test.ts`.
  */
 

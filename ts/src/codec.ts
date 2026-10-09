@@ -25,8 +25,8 @@ import { fieldValue, recordValue } from "./values.ts"
  *    same native implementation the engine, log and migrations
  *    share (owned bytes in, owned typed rows out; untrusted input cannot
  *    inject native capabilities). Effect-only, `Bumble` required.
- * 2. The schema-tagged JSON VALUE form for HTTP/export boundaries
- *    (chapter 30): every `f64` — finite included — is
+ * 2. The schema-tagged JSON VALUE form for HTTP/export boundaries:
+ *    every `f64` — finite included — is
  *    `{"$f64":"<16 lowercase hex digits>"}` of canonical binary64 bits;
  *    integers are canonical decimal strings; `Uuid` is canonical UUID;
  *    bytes use ONE strict lowercase-hex encoding; intervals are
@@ -270,7 +270,7 @@ function rowSchema<R extends AnyRelation>(relation: R) {
 }
 
 /**
- * The canonical native row codec (chapter 35 roster): owned bytes
+ * The canonical native row codec: owned bytes
  * out, owned typed rows back in — the same implementation log sealing and
  * migrations use. Binding parameters is ingestion: input must stay stable
  * through execution, and no native work starts before the checked owned

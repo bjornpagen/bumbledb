@@ -319,8 +319,8 @@ interface InteriorRuleChain<
 		bindings: B & CheckInteriorBindings<B>
 	): InteriorRuleChain<Rels, P, Classes>
 	/**
-	 * Nonrecursive derived stages emit aggregate/computed outputs too
-	 * (C05): only the RECURSIVE head stays projection-only.
+	 * Nonrecursive derived stages emit aggregate/computed outputs too; only
+	 * the RECURSIVE head stays projection-only.
 	 */
 	find<const F extends Readonly<Record<string, AnyVar>>>(
 		entries: F
@@ -345,7 +345,7 @@ interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClass
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): RecRuleChain<Rels, BindParamsShape<MatchFields<R>, B>, Classes>
-	/** Frozen finite nonrecursive imports may feed base/step (chapter 34). */
+	/** Frozen finite nonrecursive imports may feed base/step. */
 	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
 		imported: Q,
 		bindings: B
@@ -1111,8 +1111,8 @@ function interiorAdvance(
 }
 
 /**
- * Imported query templates as relation-expression sources (chapter 34's
- * nonrecursive composition). The imported CQ's whole body — its inner
+ * Imported query templates as relation-expression sources (nonrecursive
+ * composition). The imported CQ's whole body — its inner
  * interiors plus its main rules as one derived table — is SPLICED into the
  * consuming query's interior roster at assembly ({@link makeRawQuery});
  * naming does not materialize anything, and the imported template keeps its
@@ -1159,7 +1159,7 @@ function importEntryOf(context: ChainContext, imported: AnyQuery): ImportEntry {
 	const data = imported.data
 	if (data.kind === "reach") {
 		throw new AuthoringError({
-			message: `${contextLabel(context)}: a recursive query is not importable as a relation expression yet — declare the recursion on the consuming query (C05 boundary, recorded)`
+			message: `${contextLabel(context)}: a recursive query is not importable as a relation expression — declare the recursion on the consuming query`
 		})
 	}
 	const userParams = data.params.filter(function userSupplied(entry) {
@@ -1298,8 +1298,7 @@ function findColumns(context: ChainContext, entries: Readonly<Record<string, unk
 	const columns: FindColumn[] = []
 	queryRecord("query find", entries)
 	// Nonrecursive derived stages (interiors) may emit aggregate/computed
-	// outputs (C05: "do not leave Interior.rules projection only"); ONLY the
-	// recursive feedback cycle stays projection-only — no aggregate,
+	// outputs; ONLY the recursive feedback cycle stays projection-only — no aggregate,
 	// arithmetic-created value or negation flows through it.
 	const recName = context.kind === "rec-base" || context.kind === "rec-arm" ? context.self.name : undefined
 	for (const [name, entry] of Object.entries(entries)) {

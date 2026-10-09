@@ -1,8 +1,6 @@
 /**
- * sdk-kernel bug-hunt pins (found 2026-07-17), restated on the STRUCTURAL
- * surface. Each test pins one -confirmed defect at its fixed
- * behavior; the controls beside it pin the adjacent behavior that always
- * held.
+ * Structural-surface edge cases. Each test holds one behavior at an edge;
+ * the controls beside it hold the adjacent behavior.
  *
  * 1. pointIn with a literal interval operand — legal per the type
  * surface and per the IR (`ir::CmpOp::PointIn` is interval-left,
@@ -15,12 +13,11 @@
  * 2. The unused-param law, structural form: params are typed BY USE and
  * the registry is usage-derived, so a param VALUE no rule places
  * never registers — the query lowers, prepares, and executes under
- * exactly its inferred `Params` object (the old dead-declaration
- * refusal is obsolete: there is no declaration to leave dead).
+ * exactly its inferred `Params` object.
  * 3. closed mints handle constants and axiom rows with own-property
  * definition, so an object-protocol handle name ("__proto__") is a
  * fully working handle instead of a silent prototype swap — and the
- * constants are BARE bigints (no brand exists anywhere).
+ * constants are BARE bigints.
  */
 
 import assert from "node:assert/strict"

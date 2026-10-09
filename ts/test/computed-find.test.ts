@@ -1,13 +1,8 @@
 /**
- * Computed find terms (C05 `FindTerm::Compute`) — authoring walls, wire
- * lowering and row typing over the shared L15 scalar grammar. Pure
- * metadata throughout: nothing here touches the native runtime. The wire
- * spelling asserted below is the agreed C05 lane landed in `#native.ts`/
- * `ts/crate`: `FindTermIr` `{ kind: "compute", expr: ScalarExprIr }` and
- * `HeadTermIr` `{ kind: "compute" }`. Compute constructors are the query-var
- * scope of `#scalar.ts` — not a second roster.
- *
- * D19: known query I64/U64 mixing fails without any/casts.
+ * Computed find terms (`FindTerm::Compute`): authoring walls, wire
+ * lowering and row typing over the shared scalar grammar. Compute
+ * constructors are the query-var scope of `scalar.ts`, not a second roster.
+ * Known query I64/U64 mixing fails without any/casts.
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"

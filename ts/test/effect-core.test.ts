@@ -113,7 +113,7 @@ function seeded(studentId: Uuid, attemptId: Uuid) {
 	})
 }
 
-test("create/apply/snapshot/get/execute — the whole chapter 34 core flow, one scope", async function coreFlow() {
+test("create/apply/snapshot/get/execute — the whole core flow, one scope", async function coreFlow() {
 	const rt = runtime()
 	try {
 		const studentId = await newId()

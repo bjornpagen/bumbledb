@@ -1,18 +1,17 @@
 import { AuthoringError } from "./errors.ts"
 /**
- * The law-typing engine (owner ruling 2026-07-18, "option 2, zero debate"):
- * THE LAWS TYPE THE COLUMNS. Domains are declared nowhere — `schema`
+ * The law-typing engine: THE LAWS TYPE THE COLUMNS. Domains are declared nowhere — `schema`
  * computes every field's domain FROM the statement list, at BOTH the type
  * level (this module's type machinery, reading the statements tuple type)
  * and at runtime (a plain union-find over the same pairs), and the two
  * tiers are the same computation by construction.
  *
- * The three class laws (ratified; implemented exactly):
+ * The three class laws:
  *
  * 1. GENERATORS — a closed relation's synthetic id is a generator named
  * `"Kind.id"` (the vocabulary mints its own row ids). Ordinary relations
- * have no generator: the database issues no identity (`fresh` is deleted),
- * and identity fields are ordinary application-owned values.
+ * have no generator: the database issues no identity, and identity fields
+ * are ordinary application-owned values.
  * 2. GENERATOR-LESS classes are named by their least member coordinate
  * in relation-declaration × field-declaration order (readable off the
  * relation record and each member's frozen field list at the VALUE
@@ -277,16 +276,13 @@ type DecidableKeyData<D> = [D] extends [
  * widened owner, a widened or union projection each make the roster
  * UNKNOWABLE.
  *
- * Any failure is the tier's one forbidden verdict in waiting — a false
- * wall — so anything outside the whitelist degrades the WHOLE
- * {@link TargetKeyWall} to silent (the degradation law: best effort
+ * A wrong answer here would be a false wall, so anything outside the
+ * whitelist degrades the WHOLE {@link TargetKeyWall} to silent (best effort
  * degrades to silent, never to a wrong judgment), exactly as a widened
  * FACE already silences its own judgment; the value tier stays
- * authoritative. ONE recorded limit, pre-existing and outside this
- * detector's reach: a generic type parameter CONSTRAINED to a union of
- * tuples hangs tsc in the deferred-scan machinery before any verdict is
- * reached — a degenerate spelling no shipped surface writes, recorded
- * here as the tier's known boundary, not fixed.
+ * authoritative. Known limit: a generic type parameter CONSTRAINED to a
+ * union of tuples hangs tsc in the deferred-scan machinery; no shipped
+ * surface writes that spelling.
  */
 type DecidableRoster<Stmts extends readonly Statement[]> = [true] extends [IsMulti<Stmts>]
 	? false

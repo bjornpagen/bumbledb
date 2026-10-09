@@ -138,37 +138,6 @@ type Cases = [
 	Expect<Equal<(typeof Stay)["element"], "u64">>,
 	Expect<Equal<(typeof ActiveDuring)["width"], undefined>>,
 	Expect<Equal<(typeof ActiveDuring)["element"], "i64">>,
-	// The fresh mark is DELETED from the whole field roster: no field
-	// carries it, no builder mints it (E-NO-RESERVE; the database issues
-	// no identity).
-	Expect<Equal<"fresh" extends keyof typeof u64 ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof i64 ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof uuid ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof f64 ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof bool ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof str ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof RawBytes ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof RawInterval ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof ReturnType<typeof closedId<typeof Kind>> ? true : false, false>>,
-	Expect<Equal<"domain" extends keyof typeof u64 ? true : false, false>>,
-	Expect<Equal<"domain" extends keyof typeof i64 ? true : false, false>>,
-	Expect<Equal<"domain" extends keyof typeof bool ? true : false, false>>,
-	Expect<Equal<"domain" extends keyof typeof str ? true : false, false>>,
-	Expect<Equal<"domain" extends keyof typeof RawBytes ? true : false, false>>,
-	Expect<Equal<"domain" extends keyof typeof RawInterval ? true : false, false>>,
-	Expect<Equal<"domain" extends keyof ReturnType<typeof closedId<typeof Kind>> ? true : false, false>>,
-	Expect<Equal<"as" extends keyof typeof u64 ? true : false, false>>,
-	Expect<Equal<"as" extends keyof typeof i64 ? true : false, false>>,
-	Expect<Equal<"as" extends keyof typeof uuid ? true : false, false>>,
-	Expect<Equal<"as" extends keyof typeof RawBytes ? true : false, false>>,
-	Expect<Equal<"as" extends keyof typeof RawInterval ? true : false, false>>,
-	Expect<Equal<"as" extends keyof typeof bool ? true : false, false>>,
-	Expect<Equal<"as" extends keyof typeof str ? true : false, false>>,
-	Expect<Equal<"as" extends keyof ReturnType<typeof closedId<typeof Kind>> ? true : false, false>>,
-	Expect<Equal<"newtype" extends keyof typeof u64 ? true : false, false>>,
-	Expect<Equal<"newtype" extends keyof typeof i64 ? true : false, false>>,
-	Expect<Equal<"newtype" extends keyof typeof RawBytes ? true : false, false>>,
-	Expect<Equal<"newtype" extends keyof typeof RawInterval ? true : false, false>>,
 	Expect<Equal<(typeof Kind.handles)[number], "Checking" | "Savings">>,
 	Expect<
 		Equal<
@@ -192,54 +161,6 @@ type Cases = [
 	Expect<Equal<string extends Uuid ? true : false, false>>,
 	Expect<Equal<Uuid extends string ? true : false, true>>
 ]
-
-function asIsDeleted(): unknown[] {
-	return [
-		// @ts-expect-error — `.as` died with declared domains: schema() computes u64 domains from the statements
-		u64.as("HolderId"),
-		// @ts-expect-error — `.as` died with declared domains: schema() computes i64 domains from the statements
-		i64.as("Cents"),
-		// @ts-expect-error — `.as` died with declared domains: schema() computes bytes domains from the statements
-		bytes(4).as("Tag"),
-		// @ts-expect-error — `.as` died with declared domains: schema() computes interval domains from the statements
-		interval(i64).as("ActiveDuring"),
-		// @ts-expect-error — bool never carried `.as` (macro parity), and the property does not exist anywhere now
-		bool.as("Flag"),
-		// @ts-expect-error — str never carried `.as` (macro parity), and the property does not exist anywhere now
-		str.as("Note"),
-		// @ts-expect-error — a closed reference descriptor never carried `.as`
-		closedId(Kind).as("KindId")
-	]
-}
-
-function freshIsDeleted(): unknown[] {
-	return [
-		// @ts-expect-error — the fresh mint died with the reservation authority (E-NO-RESERVE)
-		u64.fresh,
-		// @ts-expect-error — the fresh mint died with the reservation authority (E-NO-RESERVE)
-		i64.fresh,
-		// @ts-expect-error — the fresh mint died with the reservation authority (E-NO-RESERVE)
-		uuid.fresh,
-		// @ts-expect-error — a closed reference field was never minted, and no field mints now
-		closedId(Kind).fresh
-	]
-}
-
-function newtypeIsGone(): unknown[] {
-	return [
-		// @ts-expect-error — `.newtype` died with the brand era, and no declared-domain spelling replaced it
-		u64.newtype("AccountId"),
-		// @ts-expect-error — `.newtype` died with the brand era
-		i64.newtype("Cents"),
-		// @ts-expect-error — `.newtype` died with the brand era
-		bytes(4).newtype("Tag"),
-		// @ts-expect-error — `.newtype` died with the brand era
-		interval(i64).newtype("ActiveDuring")
-	]
-}
-
-// @ts-expect-error — the brand module is deleted with the nominal era: no brand type exists to reference
-type BrandIsGone = typeof import("../src/brand.ts")
 
 /**
  * Order stays refused where the engine refuses it — REPRESENTATIONALLY: no
@@ -285,12 +206,5 @@ function orderStaysRefused(
 	]
 }
 
-export type { BrandIsGone, Cases, OrderCases }
-export {
-	asIsDeleted,
-	freshIsDeleted,
-	idsAreCheckedValuesNotStrings,
-	insertTakesCompleteFacts,
-	newtypeIsGone,
-	orderStaysRefused
-}
+export type { Cases, OrderCases }
+export { idsAreCheckedValuesNotStrings, insertTakesCompleteFacts, orderStaysRefused }

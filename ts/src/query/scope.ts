@@ -58,11 +58,10 @@ type VarsOf<R extends MatchOwner> = {
  * mintable variable inhabits. So an aliased or function-returned record
  * carrying an extra key (`{...v(Account), extra: otherVar }` — shapes
  * excess-property checking never sees, it covers inline literals only)
- * fails the intersection and falls to the general form's judgment: the
- * pre-0.16.0 compile refusal, restored. The identity record `v(rel)` still
- * unifies for GENERIC `R` — the judgment is intersections and index
- * constraints only, no deferred conditional anywhere, so the full-binding
- * law (50-generic-binding.md, "The ruling") stands untouched.
+ * fails the intersection and falls to the general form's compile refusal.
+ * The identity record `v(rel)` still unifies for GENERIC `R`: the judgment
+ * is intersections and index constraints only, with no deferred
+ * conditional, so the full-binding law holds.
  */
 type ExactVars<R extends MatchOwner, B> = {
 	readonly [K in keyof B]: Var<AnyField, R["name"], K & keyof MatchFields<R> & string>
@@ -94,7 +93,7 @@ function varsMinted<R extends MatchOwner>(owner: R, record: Readonly<Record<stri
  */
 /**
  * A schema-bound query template used as a relation-expression source
- * (chapter 34's nonrecursive composition): structurally, the query value's
+ * (nonrecursive composition): structurally, the query value's
  * own frozen data. Detection is structural so `scope.ts` needs no runtime
  * import of the query module.
  */

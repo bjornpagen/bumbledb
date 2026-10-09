@@ -83,7 +83,7 @@ const U64_MAX = (1n << 64n) - 1n
 const I64_MIN = -(1n << 63n)
 const I64_MAX = (1n << 63n) - 1n
 
-/** Constructor admissions only — not descendant visits. D27 construction-work pin. */
+/** Constructor admissions only, not descendant visits. */
 let authoringWork = 0
 
 function scalarAuthoringWork(): number {

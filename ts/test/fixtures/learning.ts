@@ -1,8 +1,6 @@
 /**
- * The chapter 34 `Learning` schema, transcribed for the Effect-core test
- * lanes, plus the shared measured policies. One fixture, every suite: the
- * same declarations the Rust `schema!` example spells, so cross-language
- * schema-identity checks (API-08, F-*) can pin one canonical fingerprint.
+ * The `Learning` schema shared by the Effect-core suites, plus the shared
+ * runtime policies: the same declarations the Rust `schema!` example spells.
  */
 import * as fs from "node:fs"
 import * as os from "node:os"
