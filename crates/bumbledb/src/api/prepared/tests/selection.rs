@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn selection_params_rotate_differentially() {
     let mut state = 0xDEAD_BEEF_u64;
     let mut next = move || {
