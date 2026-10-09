@@ -41,6 +41,23 @@ export {
 } from "./codec.ts"
 export type { CompiledSchema, SchemaId } from "./compile.ts"
 export { Schema } from "./compile.ts"
+export { FsStore } from "./database/fs.ts"
+export type {
+	Body,
+	Bucket,
+	ExecutorOptions,
+	IoRequest,
+	IoResponse,
+	IoResult,
+	Millis,
+	ObjectStore,
+	Reply,
+	Target
+} from "./database/io.ts"
+export type { Fault, MemStoreOptions } from "./database/mem.ts"
+export { MemStore } from "./database/mem.ts"
+export type { S3StoreOptions } from "./database/s3.ts"
+export { S3Store } from "./database/s3.ts"
 export {
 	AuthoringDiagnostic,
 	AuthoringError,

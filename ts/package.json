@@ -23,7 +23,8 @@
 		"build:dev": "node scripts/build.ts dev",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
-		"test": "node --test 'test/**/*.test.ts'"
+		"test": "node --test 'test/**/*.test.ts'",
+		"test:s3": "node --test 'test-s3/**/*.test.ts'"
 	},
 	"keywords": [
 		"database",
@@ -45,9 +46,16 @@
 		"arkregex": "0.0.13"
 	},
 	"peerDependencies": {
+		"@aws-sdk/client-s3": "^3.1148.0",
 		"effect": "^4.0.2"
 	},
+	"peerDependenciesMeta": {
+		"@aws-sdk/client-s3": {
+			"optional": true
+		}
+	},
 	"devDependencies": {
+		"@aws-sdk/client-s3": "3.1148.0",
 		"@biomejs/biome": "2.5.15",
 		"@effect/platform-node": "catalog:",
 		"@types/node": "26.6.4",
