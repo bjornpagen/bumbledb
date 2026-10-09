@@ -1,13 +1,8 @@
-//! Native operation ownership. No database semantics or JavaScript objects live here.
-//!
-//! Admission bounds outstanding jobs and native handles, not hypothetical
-//! allocation allowances. Payloads stay owned until taken or reclaimed.
-//! A separate supervisor delivers finite drain reports even when every worker is busy.
-//!
-//! Each configured worker owns a resource table as ordinary event-loop state.
-//! Capabilities route to `runtime/worker/kind/id/generation`. Jobs borrow one
-//! entry and return to the scheduler. Workers wake for every inbox, queue,
-//! close and cleanup source.
+//! Native operation ownership: admission bounds outstanding jobs and native
+//! handles, payloads stay owned until taken or reclaimed, and a separate
+//! supervisor delivers finite drain reports even when every worker is busy.
+//! Each worker owns a resource table; capabilities route to
+//! `runtime/worker/kind/id/generation`.
 use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

@@ -1,13 +1,8 @@
-//! Transactional delivery of completed results, not streaming execution.
-//!
-//! Borrowed rows convert directly into one private [`QueuedOutput`]. Collect
-//! leaves the sealed backing available. A page holds one [`DeliveryTicket`]
-//! from visitation through [`PublicationSink::accept`]; only acceptance
-//! commits its position. Cancellation or rejection drops the output and
-//! retries the same row. No second preview or full `Answers` copy is needed.
-//!
-//! Delivery batches bound the number of rows copied per pull, not the total
-//! query result. Terminal backing corruption stays failed, never EOF.
+//! Delivery of completed results. Rows convert directly into one
+//! [`QueuedOutput`]; a page holds one [`DeliveryTicket`] until
+//! [`PublicationSink::accept`] commits its position, so cancellation or
+//! rejection retries the same row. Terminal backing corruption stays failed,
+//! never end of results.
 
 use bumbledb::DeliveryTicket;
 use bumbledb::work::WorkContext;

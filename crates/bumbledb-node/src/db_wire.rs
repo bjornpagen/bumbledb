@@ -1,13 +1,8 @@
-//! Database verbs: coherent snapshots and their prepared plans, point
-//! reads, sealed completed results and their one-shot cursors, database-free
-//! change drafts, apply and judge of sealed change sets, inspection, and the
-//! canonical row codec.
-//!
-//! Every verb registers a bounded operation before any completion can run in
-//! JS, and each operation has its own `WorkContext`. Retained resources live
-//! in a worker table behind a capability; a JS wrapper is never the
-//! retention authority. Paging commits each `DeliveryTicket` exactly once
-//! through `PublicationSink::accept`; cancellation aborts it.
+//! Database verbs: snapshots and prepared plans, point reads, sealed results
+//! and their cursors, change drafts, apply and judge, inspection, and the
+//! row codec. Every verb registers a bounded operation with its own
+//! `WorkContext` before any completion runs in JS; retained resources live
+//! in a worker table behind a capability, never in the JS wrapper.
 
 use std::sync::Arc;
 
