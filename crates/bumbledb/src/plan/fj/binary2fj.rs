@@ -10,8 +10,7 @@ use std::collections::BTreeSet;
 /// probe subatom on its available variables, then opens a node with its
 /// remaining variables.
 /// # Panics
-/// occurrence the normalized query lacks.
-/// Only on programmer-invariant violations: `order` referencing an
+/// If `order` names an occurrence the normalized query lacks.
 #[must_use]
 pub(crate) fn binary2fj(normalized: &NormalizedQuery, order: &JoinOrder) -> FjPlan {
     let occurrence = |occ: OccId| {

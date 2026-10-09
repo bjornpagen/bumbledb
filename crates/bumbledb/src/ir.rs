@@ -236,7 +236,8 @@ pub enum HeadTerm {
 /// `classify(lhs, rhs)` is in the mask (`crate::allen`) — and interval
 /// `Eq`/`Ne` are its derived facts (normalization canonicalizes them to
 /// `EQUALS` / `¬EQUALS`, so exactly one interval-pair form reaches the
-/// planner). `PointIn` is point membership: an element-typed operand
+/// planner). `PointIn` is point membership: an element-typed operand lies
+/// within an interval operand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
     Eq,
@@ -351,9 +352,8 @@ pub struct Comparison {
 /// the engine never sees it: validation distributes every rule's trees to
 /// DNF, each disjunct becomes a rule ([`distribute`]), and the validated
 /// artifact carries only flat [`Comparison`] lists ([`LoweredRule`]).
-/// A cross-atom OR *as an execution concept* stays refused — OR is data
-/// or it is nothing; DNF lowering recovers the tangled middle as rules.
-/// Negated atoms and membership stay leaf-level: there is no OR over
+/// OR is data or it is nothing: there is no cross-atom OR at execution, and
+/// negated atoms stay outside the trees.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConditionTree {
     Leaf(Comparison),

@@ -756,7 +756,7 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
 
 #[test]
 fn same_atom_membership_variable_lowers_to_the_field_composition() {
-    // binding order must not matter (the membership binding comes first).
+    // Binding order must not matter: here the membership binding comes first.
     let query = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),

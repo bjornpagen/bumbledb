@@ -182,7 +182,8 @@ fn epoch_wrap_never_aliases_a_stale_cancellation() {
         "a later epoch never reads it"
     );
 
-    // recycled value must NOT resurrect the cancellation.
+    // Wrapping the epoch clears the stamps, so a recycled value cannot
+    // resurrect the cancellation.
     executor.advance_cancel_epoch();
     assert_eq!(executor.cancel_epoch, 0);
     executor.advance_cancel_epoch();

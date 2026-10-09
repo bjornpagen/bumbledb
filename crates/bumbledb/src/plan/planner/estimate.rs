@@ -20,7 +20,7 @@ pub(super) fn estimate(
             .filter(|(bit, _)| bit & join_vars != 0)
             .map(|(_, distinct)| (r.rows / (*distinct).clamp(1, r.rows.max(1))).max(1))
             .min()
-            // pessimistic product, exactly as before this model existed —
+            // No join variable has a distinct estimate: the pessimistic product.
             .unwrap_or_else(|| r.rows.max(1));
         prefix_est.saturating_mul(fanout)
     };

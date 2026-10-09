@@ -38,11 +38,8 @@ pub(crate) fn join_variables(
     joined
 }
 
-/// A closed relation's rows ARE its sealed extension — the option is the kind
-/// (`schema/relation.rs`) — and its stored `S` counter never exists (closed
-/// relations are storage-virtual and write-refused), so a raw counter read
-/// prices it at 0.
-/// # Errors
+/// A relation's row count: a closed relation's sealed rows, else the source's
+/// committed count.
 pub(crate) fn relation_rows_on(
     source: &QuerySource<'_>,
     schema: &Schema,
@@ -71,7 +68,6 @@ pub(crate) const DELTA_PLANNING_ROWS: u64 = 1;
 
 pub(crate) const ACCUMULATED_PLANNING_ROWS: u64 = 16;
 
-/// # Errors
 pub(crate) fn occurrence_stats_on(
     images: &SourceImages<'_>,
     schema: &Schema,

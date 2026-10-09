@@ -3,11 +3,11 @@ use crate::ir::VarId;
 use std::collections::BTreeSet;
 
 /// The paper's Fig. 8 conservative hoist: traverse nodes in reverse; move a
-/// *lookup* subatom (never a node's first subatom — that is its opened
-/// iterate) to the previous node iff its variables are all available
-/// per node at the first non-hoistable lookup (preserving the probe order
-/// the cost-based order implies).
-/// before this node and the previous node lacks that occurrence, stopping
+/// lookup subatom (never a node's first subatom, its opened iterate) to the
+/// previous node iff its variables are all available before this node and
+/// the previous node lacks that occurrence, stopping per node at the first
+/// non-hoistable lookup (preserving the probe order the cost-based order
+/// implies).
 pub(crate) fn factor(plan: &mut FjPlan) {
     for i in (1..plan.nodes.len()).rev() {
         let available: BTreeSet<VarId> = plan.nodes[..i]

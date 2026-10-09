@@ -67,7 +67,7 @@ pub(crate) struct FjPlan {
 /// data anyone can construct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlanError {
-    /// A participating occurrence's subatoms do not partition its
+    /// A participating occurrence's subatoms do not partition its variables.
     BrokenPartition {
         occ: OccId,
     },

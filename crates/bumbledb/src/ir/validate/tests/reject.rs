@@ -113,7 +113,8 @@ fn rejects_conflicting_param_anchors() {
 
 #[test]
 fn rejects_order_comparison_on_string_in_both_written_orders() {
-    // equality-only refusal before generic classification.
+    // Strings are equality-only: an order refuses before generic
+    // classification.
     for literal_on_left in [false, true] {
         let literal = Term::Literal(Value::String(Box::from("x")));
         let (lhs, rhs) = if literal_on_left {
@@ -629,8 +630,7 @@ fn order_operator_on_two_bivalent_interval_variables() {
 
 #[test]
 fn order_operator_on_fixed_bytes_gets_the_dedicated_diagnostic() {
-    // is an encoding artifact — identity only, refused typed
-
+    // A fixed-bytes order is an encoding artifact: bytes are identity only.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(0, var(0)), (4, var(1))])],
@@ -992,8 +992,7 @@ fn rejects_point_in_between_two_intervals() {
 
 #[test]
 fn rejects_a_second_pack_term() {
-    // The multi-Pack product has no sighting — refused with its trigger
-
+    // A head holds at most one Pack.
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
@@ -1016,7 +1015,8 @@ fn rejects_a_second_pack_term() {
 
 #[test]
 fn rejects_pack_beside_a_fold_aggregate() {
-    // refused — coalesced-time accounting is two queries or a host fold.
+    // Pack beside a fold is refused: coalesced-time accounting is two queries
+    // or a host fold.
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),

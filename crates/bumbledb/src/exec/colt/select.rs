@@ -40,7 +40,9 @@ impl Colt {
         Ok(Some(cursor))
     }
 
-    /// invariant `union_positions` reads.
+    /// Selects the union of the set elements' children at `level` as one
+    /// node. Elements arrive sorted and distinct, so their position lists are
+    /// disjoint: the invariant `union_positions` reads.
     fn select_union(
         &mut self,
         cursor: Cursor,
@@ -155,7 +157,8 @@ impl Colt {
         built
     }
 
-    /// row or an unforced chunk list by the `select_union` invariant.
+    /// Appends one hit's positions; a hit is a pinned row or an unforced
+    /// chunk list by the `select_union` invariant.
     fn union_positions(
         &self,
         hit: Cursor,

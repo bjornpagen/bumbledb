@@ -3,7 +3,7 @@ use super::View;
 
 impl View {
     /// # Panics
-    /// Only on a programmer-invariant violation: an image beyond the u32
+    /// If the image has `u32::MAX` rows or more.
     #[cfg(test)]
     pub(crate) fn positions(&self) -> impl Iterator<Item = u32> + '_ {
         let (all, survivors) = match self {
