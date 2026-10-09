@@ -21,6 +21,8 @@ Owns: `ts/**` (except `ts/src/native/binding.d.ts`), `ts-log/**`, `examples/**`.
 | D6: `S3Store` takes a structural `S3Sender` (packed types need no AWS SDK); README documents `Database` | landed `ee7817f71` |
 | D8 consumers: core-ts on the merged package; Rust consumer on `WriteOutcome`/`ErrorKind` | landed `ad90b8bc7` |
 | G4 `test:s3`: ObjectStore conformance plus a hosted `Database` contract against real S3 | landed `3bf9357f7` |
+| L (TS): no ticket ids, chapter refs, rulings or history in `ts/` and `examples/` comments, messages and test names; removed-API absence probes deleted | landed `2a3b18723` |
+| D20 (TS tests): test database directories are `<name>.bdb` | landed `affa3f8ab` |
 
 Gate at the last commit (sandbox, HEAD addon): `biome check`, `tsc --noEmit`, `node --test` 283/283;
 notes `typecheck`, `test` 8/8, `migrations:check`, `next build`; `scripts/family.mjs pack` + `smoke` with
@@ -186,3 +188,7 @@ TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `impo
   accepts, while the package requires Node 26. Deploying needs a Node 26 runtime (container image or
   custom runtime) once Alchemy or Lambda offers one.
 - Notes is not in CI; the consolidator's gate runs it as listed above.
+- Comment purge: history and process references are gone from `ts/` and `examples/`; module essays
+  longer than five lines remain for the consolidator's strict pass (`ts/src/law.ts` header and
+  `TargetKeyWall` notes, `ts/src/codec.ts` header, `ts/src/rows.ts` header, and long item docs in
+  `query/scope.ts`, `query/lower.ts`, `query/atom.ts`, `changes.ts`).
