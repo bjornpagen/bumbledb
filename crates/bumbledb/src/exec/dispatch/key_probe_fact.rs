@@ -431,21 +431,30 @@ fn probe_uniqueness_scan(
             .unwrap_or(crate::schema::CompiledTheory::full_row_witness()),
         super::KeyProbeKind::Membership { .. } => crate::schema::CompiledTheory::full_row_witness(),
     };
-    let key_fields: Vec<_> = key_words.iter().map(|part| part.field).collect();
-    let ProbeBuffers { row, key, .. } = buf;
+    let ProbeBuffers {
+        row,
+        key,
+        walk_fields,
+        walk_words,
+        ..
+    } = buf;
     let scratch = &key.words;
-    let words: Vec<u64> = key_words
-        .iter()
-        .map(|part| scratch[usize::from(part.start)])
-        .collect();
+    walk_fields.clear();
+    walk_fields.extend(key_words.iter().map(|part| part.field));
+    walk_words.clear();
+    walk_words.extend(
+        key_words
+            .iter()
+            .map(|part| scratch[usize::from(part.start)]),
+    );
     let has_text = row.has_text();
     let mut found = false;
     if let Some(_outcome) = source.consume_compiled_visits(
         schema,
         plan.relation,
         witness,
-        &key_fields,
-        &words,
+        walk_fields,
+        walk_words,
         &mut |bytes| {
             crate::api::prepared::decode_row(row, fields, bytes, interner, source.work(), false)?;
             if key_spans_match(interner, key_words, row, scratch)? {

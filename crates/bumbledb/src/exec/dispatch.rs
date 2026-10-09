@@ -120,12 +120,15 @@ pub(crate) struct ProbeCtx<'a> {
 }
 
 /// One key-probe rule's buffers, reused across probes: the decoded candidate
-/// row, the resolved key words, and the key's values. Every probe replaces
-/// their contents; nothing is memoized.
+/// row, the resolved key words, the key's values, and the reference walk's
+/// key fields and first words. Every probe replaces their contents; nothing
+/// is memoized.
 pub(crate) struct ProbeBuffers {
     pub(crate) row: crate::image::canon::RowWords,
     key: crate::image::view::ResolvedWords,
     values: Vec<crate::ir::Value>,
+    walk_fields: Vec<FieldId>,
+    walk_words: Vec<u64>,
 }
 
 impl ProbeBuffers {
@@ -134,6 +137,8 @@ impl ProbeBuffers {
             row: crate::image::canon::RowWords::prepared(field_types),
             key: crate::image::view::ResolvedWords::default(),
             values: Vec::with_capacity(field_types.len()),
+            walk_fields: Vec::new(),
+            walk_words: Vec::new(),
         }
     }
 
@@ -141,5 +146,7 @@ impl ProbeBuffers {
         self.row.release_memory();
         self.key = crate::image::view::ResolvedWords::default();
         self.values = Vec::new();
+        self.walk_fields = Vec::new();
+        self.walk_words = Vec::new();
     }
 }
