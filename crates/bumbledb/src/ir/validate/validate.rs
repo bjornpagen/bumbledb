@@ -166,9 +166,9 @@ fn seal_interiors(
         if interior.rules.is_empty() {
             return Err(ValidationError::EmptyInterior { interior: id });
         }
-        // Interiors are full typed stages now (aggregate/computed heads
-        // included), so they take the same query-shape roster as main —
-        // including the Count-across-rules screen (R1).
+        // Interiors are full typed stages (aggregate and computed heads
+        // included), so they take the same query-shape roster as main,
+        // including the Count-across-rules screen.
         let head = interior.head();
         let lowered = lower_rules(
             &head,

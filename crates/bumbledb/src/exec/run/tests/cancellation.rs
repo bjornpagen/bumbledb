@@ -196,12 +196,10 @@ fn epoch_wrap_never_aliases_a_stale_cancellation() {
     assert!(executor.origin_cancelled(3));
 }
 
-/// The whole-execution D2 skip (absorb = None: a boolean/existential head
-/// licenses every node) stops the top-level cover draw MID-ENTRY: node 0 holds
-/// exactly one pending entry — the virtual root — so only pump's inner batch
-/// loop can see the poison. Before the check landed there, a first-batch
-/// witness still iterated and probed the entire remaining node-0 cover, batch
-/// by fully-priced batch.
+/// The whole-execution skip (a boolean or existential head licenses every
+/// node) stops the top-level cover draw mid-entry: node 0 holds exactly one
+/// pending entry, the virtual root, so only pump's inner batch loop can see
+/// the poison and stop iterating the remaining node-0 cover.
 #[test]
 fn whole_execution_skip_stops_the_cover_draw_mid_entry() {
     #[derive(Default)]

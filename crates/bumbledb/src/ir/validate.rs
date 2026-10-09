@@ -1,10 +1,7 @@
-//! The single validation boundary: IR in, [`ValidatedQuery`]
-//! witness out. Everything downstream trusts the witness and re-checks
-//! nothing (post-mortem §38: v5 validated one plan four times).
-//! The roster, transcribed from and
-//! checked off in code order below — it is exhaustive by contract.
-//! The query shape first (rules are validated one at a time; every
-//! across rules after each rule's own fixpoint):
+//! The single validation boundary: IR in, [`ValidatedQuery`] witness out.
+//! Everything downstream trusts the witness and re-checks nothing. Rules are
+//! validated one at a time (shape, then typing to a fixpoint), then across rules,
+//! interiors and the recursive component.
 use crate::ir::validate::error::FieldRefusal;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -618,7 +615,7 @@ impl<'a> RuleWitness<'a> {
         self.rule
     }
 
-    /// This lowered rule's written-rule provenance (ruled 2026-07-23,
+    /// The written rule this lowered rule was distributed from, if one.
     #[must_use]
     pub fn written(&self) -> Option<u16> {
         self.rule.written
@@ -709,7 +706,8 @@ struct Context {
 
     atom_vars: BTreeSet<VarId>,
 
-    /// refuse them (ruled 2026-07-23, R4); the row count is the proven
+    /// Variables bound to a closed relation's id: ordering them is refused.
+    /// The value is the closed relation's row count.
     closed_vars: BTreeMap<VarId, u16>,
 
     scalar_bound_vars: BTreeSet<VarId>,

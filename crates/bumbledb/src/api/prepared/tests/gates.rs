@@ -1,6 +1,6 @@
-//! Authored discriminators D07–D12 / D25 for the L05 query machine.
-//! Each gate is a consumer of the production
-//! execute/delivery path — not a `type_name` / `size_of` / fn-ref claim.
+//! End-to-end gates over the production execute and delivery path: source-row
+//! visit bounds, commit as the only cursor advance, and Pack output as the logical
+//! union.
 
 use super::*;
 use crate::ir::{
@@ -268,10 +268,10 @@ fn text_token_identity_is_generation_scoped_and_owners_survive_reclamation() {
     assert_eq!(right.text.as_ref(), "shared");
 }
 
-/// D10: a key-bound query over many unrelated rows visits through the
+/// A key-bound query over many unrelated rows visits through the
 /// compiled witness, not a full scan.
 #[test]
-fn d10_key_bound_query_visits_are_bounded() {
+fn key_bound_query_visits_are_bounded() {
     let rows: Vec<(u64, u64, String, i64)> = (0..48)
         .map(|id| {
             (
@@ -313,11 +313,11 @@ fn d10_key_bound_query_visits_are_bounded() {
     );
 }
 
-/// D12: `commit` is the only advance. An aborted preview retries the
-/// same row. `abort` discards
-/// ticket-local pending — a fresh ticket cannot commit that preview.
+/// `commit` is the only advance. An aborted preview retries the same row;
+/// `abort` discards ticket-local pending, so a fresh ticket cannot commit that
+/// preview.
 #[test]
-fn d12_preview_does_not_advance_until_commit() {
+fn preview_does_not_advance_until_commit() {
     let work = WorkContext::new();
     let mut answers = Answers::new();
     answers.begin(1);
@@ -345,10 +345,10 @@ fn d12_preview_does_not_advance_until_commit() {
     assert_eq!(cursor.debug_next_row(), 0, "abort retries the same row");
 }
 
-/// D11: Pack output is the logical union, not insertion-token order.
+/// Pack output is the logical union, not insertion-token order.
 /// Reverse claims `[10,20)` then `[0,15)` become `[0,20)`.
 #[test]
-fn d11_pack_order_is_logical_not_insertion() {
+fn pack_order_is_logical_not_insertion() {
     use bumbledb_theory::schema::{IntervalElement, ValueType};
     let field = |name: &str, value_type: ValueType| FieldDescriptor {
         name: name.into(),

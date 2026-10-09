@@ -1,10 +1,7 @@
-//! Completed results and transactional paged delivery.
-//!
-//! Execution builds one private answer set. Only a successful, fully
-//! evaluated result can be sealed. Rows borrow that owner; there is no
-//! quota-triggered copy into temporary storage or second result codec.
-//! Paging bounds delivery, not query execution or the size of the result.
-//! A failed/cancelled delivery never advances its cursor.
+//! Completed results and transactional paged delivery. Only a successful, fully
+//! evaluated result can be sealed; rows borrow that one answer set. Paging bounds
+//! delivery, not execution or result size, and a failed or cancelled delivery
+//! never advances its cursor.
 
 use super::source::PinnedSource;
 use super::{Answer, AnswerValue, Answers};

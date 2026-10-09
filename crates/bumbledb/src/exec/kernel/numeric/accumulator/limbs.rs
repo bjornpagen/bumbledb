@@ -282,10 +282,10 @@ fn divide(value: &[u64; LIMBS], divisor: u64) -> ([u64; LIMBS], u64) {
     let mut quotient = [0; LIMBS];
     let mut remainder = 0;
     for (out, &word) in quotient.iter_mut().zip(value).rev() {
-        let dividend = (u128::from(remainder) << 64) | u128::from(word);
+        let numerator = (u128::from(remainder) << 64) | u128::from(word);
         // remainder < divisor, hence this quotient digit always fits u64.
-        *out = (dividend / u128::from(divisor)) as u64;
-        remainder = (dividend % u128::from(divisor)) as u64;
+        *out = (numerator / u128::from(divisor)) as u64;
+        remainder = (numerator % u128::from(divisor)) as u64;
     }
     (quotient, remainder)
 }

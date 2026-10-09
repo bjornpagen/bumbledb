@@ -1,9 +1,7 @@
-//! COLT — a column-oriented lazy trie with chunked child-position lists.
-//! Mutable nodes, chunks, map slots and key words live in index-addressed
-//! pools, not interior-mutable pointers into shared images. Singleton
-//! children pin an image row instead of allocating another node. Both
-//! singleton and node children use `Cursor`; only map storage packs it into
-//! a word. Pool access remains bounds-checked, including fixed-width loops.
+//! COLT, a column-oriented lazy trie with chunked child-position lists. Nodes,
+//! chunks, map slots and key words live in index-addressed pools, not pointers
+//! into shared images. A singleton child pins an image row instead of allocating a
+//! node; both kinds are a `Cursor`. Pool access stays bounds-checked.
 #![allow(clippy::inline_always)]
 pub(super) use crate::image::view::{BoundView, View};
 
@@ -264,9 +262,8 @@ struct PoolMark {
 /// The lazy trie over one occurrence's view. Owns the view (a cheap
 /// enum over an `Arc`'d image plus survivor positions) and its pools, so a
 /// prepared query can hold and [`Colt::reset`] it across executions with
-/// every capacity retained (the 40-execution doc's zero-alloc discipline).
-/// RULED (audit 29): no `Vec::new` / `to_vec` / `.clone` on
-/// refill/advance — those paths truncate to a [`PoolMark`] and reuse.
+/// every capacity retained: refill and advance truncate to a [`PoolMark`] and
+/// reuse, never allocate.
 pub(crate) struct Colt {
     view: View,
 
@@ -404,19 +401,17 @@ mod select;
 
 use super::swar::{ctrl_tag, eq_byte_mask, hash_core, hash_words, zero_byte_mask};
 
-/// The probe hash for a key — exposed so the vectorized executor's phase 1
-/// (D4's two-phase probing, the 40-execution doc).
-/// can compute all hashes (pure ALU) before phase 2 issues any bucket load
+/// The probe hash for a key, so the executor can compute every hash of a batch
+/// (pure ALU) before it issues any bucket load.
 #[must_use]
 #[inline(always)]
 pub(crate) fn hash_key(words: &[u64]) -> u64 {
     hash_words(words)
 }
 
-/// executor's phase-1 const-arity dispatch target (the wordmap's
-/// `hash_core` precedent). Hash-identical to [`hash_key`] by
-/// construction: both delegate to the one `swar` fold, and the
-/// equivalence is pinned by the wordmap contract test.
+/// [`hash_key`] at a constant width `K`, for the executor's fixed-width
+/// gathers. Hash-identical to [`hash_key`]: both delegate to the one `swar`
+/// fold, and the wordmap contract test pins the equivalence.
 #[must_use]
 #[inline(always)]
 pub(crate) fn hash_key_core<const K: usize>(words: &[u64]) -> u64 {

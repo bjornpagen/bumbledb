@@ -37,11 +37,7 @@ impl<S> PreparedQuery<S> {
     /// instead of the lease's embedded one — the native runtime threads
     /// each wire operation's `WorkContext` through here so preparation,
     /// statistics reads and image construction observe that operation's
-    /// cancellation, not the long-lived session lease's context.
-    /// # Errors
-    /// As [`prepare_on`].
-    ///
-    /// `doc(hidden)` bridge seam (P06/W3-SESSION); embedders use
+    /// cancellation, not the long-lived session lease's context. Embedders use
     /// [`ReadInstance::prepare`].
     #[doc(hidden)]
     pub fn prepare_with_work(
@@ -381,9 +377,8 @@ fn prepare_interior(
     }
     let units = rules.len();
     let hint = output_hint(&rules);
-    // An interior is a full stage: projection, aggregate, or computed —
-    // the same sink selection as main (chapter 12's uniform nonrecursive
-    // composition; the projection-only wall is deleted).
+    // An interior is a full stage: projection, aggregate, or computed, with
+    // the same sink selection as main.
     let sink = sink_seed(&rules).map_or_else(
         || make_sink(&[], 0, SinkRegime::SingleRule(None), 0, &[]),
         |first| {
@@ -1053,8 +1048,7 @@ fn make_sink(
         // Computed outputs run through the adapter: lower every Compute
         // to an appended output slot, build the inner sink over the
         // widened layout, and let the adapter evaluate programs per
-        // surviving binding (after all input predicates — chapter 12's
-        // stage error boundary). Dense-group radixes never cover the
+        // surviving binding, after all input predicates. Dense-group radixes never cover the
         // appended slots, so the inner sink stays hashed.
         let (lowered, programs, total) = crate::api::prepared::computed::lower(finds, slot_count);
         let inner = make_plain_sink(&lowered, total, regime, hint, &[]);

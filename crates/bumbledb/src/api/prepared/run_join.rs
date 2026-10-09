@@ -26,7 +26,7 @@ pub(super) struct RuleCtx<'a> {
 pub(super) struct RuleScratch<'a> {
     pub(super) bindings: &'a mut Bindings,
     pub(super) occ_images: &'a OccImages,
-    pub(super) retired: &'a mut Vec<Vec<u32>>,
+    pub(super) recycled: &'a mut Vec<Vec<u32>>,
 }
 
 /// How a rule relates to the sink it emits into.
@@ -189,7 +189,7 @@ fn join<S: Sink, C: Counters>(
     let work = images.source().work();
     let bindings = &mut *scratch.bindings;
     let derived_images = scratch.occ_images;
-    let derived_retired = &mut *scratch.retired;
+    let derived_recycled = &mut *scratch.recycled;
     memo.tick += 1;
 
     // Bind the current operation on every COLT before any view reset,
@@ -226,7 +226,7 @@ fn join<S: Sink, C: Counters>(
             let image = derived_images.image(occ_idx);
             let mut buffer = std::mem::take(memo.spare_mut(occ_idx));
             if buffer.capacity() == 0
-                && let Some(pooled) = derived_retired.pop()
+                && let Some(pooled) = derived_recycled.pop()
             {
                 buffer = pooled;
             }

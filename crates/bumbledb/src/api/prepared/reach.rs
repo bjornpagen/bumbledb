@@ -56,7 +56,7 @@ pub(super) struct DerivedImages {
     working: Vec<TransientImage>,
     pub(super) published: Vec<Arc<RelationImage>>,
     pub(super) occ_images: OccImages,
-    pub(super) retired: Vec<Vec<u32>>,
+    pub(super) recycled: Vec<Vec<u32>>,
 }
 
 impl DerivedImages {
@@ -64,7 +64,7 @@ impl DerivedImages {
         self.working.resize_with(derived_count, Default::default);
         self.published.clear();
         self.occ_images.clear();
-        self.retired.clear();
+        self.recycled.clear();
     }
 
     /// Seal one finished projection stage or rec table into a resident image.
@@ -197,10 +197,10 @@ impl<S> PreparedQuery<S> {
 
         // Arcs; drop them before refill so TransientImage can get_mut.
         {
-            let retired = &mut self.runtime.derived.retired;
+            let recycled = &mut self.runtime.derived.recycled;
             for rule in self.pipeline.main_rules_mut() {
                 if let PreparedRule::FreeJoin(fj) = rule {
-                    unbind_interior_rule(fj, retired);
+                    unbind_interior_rule(fj, recycled);
                 }
             }
         }
@@ -219,7 +219,7 @@ impl<S> PreparedQuery<S> {
             for i in 0..n_interiors {
                 {
                     let interiors = self.pipeline.interiors_mut();
-                    unbind_interior_views(&mut interiors[i], &mut self.runtime.derived.retired);
+                    unbind_interior_views(&mut interiors[i], &mut self.runtime.derived.recycled);
                     interiors[i].sink.reset();
                     // Main, interior and recursive sinks share cancellation.
                     interiors[i]
@@ -233,7 +233,7 @@ impl<S> PreparedQuery<S> {
                         &mut self.runtime.derived,
                     );
                     let occ_images = std::mem::take(&mut self.runtime.derived.occ_images);
-                    let mut retired = std::mem::take(&mut self.runtime.derived.retired);
+                    let mut recycled = std::mem::take(&mut self.runtime.derived.recycled);
                     let interior = &mut self.pipeline.interiors_mut()[i];
                     let sink_use = if interior.units > 1 {
                         SinkUse::Shared
@@ -245,7 +245,7 @@ impl<S> PreparedQuery<S> {
                         &mut RuleScratch {
                             bindings: &mut self.runtime.bindings,
                             occ_images: &occ_images,
-                            retired: &mut retired,
+                            recycled: &mut recycled,
                         },
                         &mut interior.rules[rule_idx],
                         sink_use,
@@ -253,13 +253,13 @@ impl<S> PreparedQuery<S> {
                         counters,
                     );
                     self.runtime.derived.occ_images = occ_images;
-                    self.runtime.derived.retired = retired;
+                    self.runtime.derived.recycled = recycled;
                     ran |= result?;
                 }
                 // Seal the stage: aggregate/computed stages finalize HERE,
                 // so a required producer error (overflow, cardinality,
                 // scalar failure) fails the query before any consumer
-                // could discard it (the stage error boundary, Q-IR).
+                // could discard it.
                 {
                     let interiors = self.pipeline.interiors_mut();
                     seal_interior(
@@ -320,11 +320,11 @@ fn run_reach<Cnt: Counters>(
     driver.sink.begin(Some(images.source().work().clone()));
     for rule in &mut driver.base {
         if let PreparedRule::FreeJoin(fj) = rule {
-            unbind_interior_rule(fj, &mut derived.retired);
+            unbind_interior_rule(fj, &mut derived.recycled);
         }
     }
     for rule in &mut driver.rec {
-        unbind_interior_rule(rule, &mut derived.retired);
+        unbind_interior_rule(rule, &mut derived.recycled);
     }
 
     let sink_use = if driver.units > 1 {
@@ -339,7 +339,7 @@ fn run_reach<Cnt: Counters>(
             &mut RuleScratch {
                 bindings,
                 occ_images: &derived.occ_images,
-                retired: &mut derived.retired,
+                recycled: &mut derived.recycled,
             },
             rule,
             sink_use,
@@ -383,7 +383,7 @@ fn run_reach<Cnt: Counters>(
                 &mut RuleScratch {
                     bindings,
                     occ_images: &derived.occ_images,
-                    retired: &mut derived.retired,
+                    recycled: &mut derived.recycled,
                 },
                 rule,
                 sink_use,
@@ -392,7 +392,7 @@ fn run_reach<Cnt: Counters>(
             );
             // End every consumer lease, including a failed arm, before
             // the next refill. Derived views never enter parked memos.
-            unbind_interior_rule(rule, &mut derived.retired);
+            unbind_interior_rule(rule, &mut derived.recycled);
             if result.is_err() {
                 derived.occ_images.clear();
                 derived.published.pop();
@@ -412,15 +412,15 @@ fn main_plan(rules: &[PreparedRule], rule_idx: usize) -> Option<&crate::plan::fj
     }
 }
 
-fn unbind_interior_views(interior: &mut PreparedInterior, retired: &mut Vec<Vec<u32>>) {
+fn unbind_interior_views(interior: &mut PreparedInterior, recycled: &mut Vec<Vec<u32>>) {
     for rule in &mut interior.rules {
         if let PreparedRule::FreeJoin(fj) = rule {
-            unbind_interior_rule(fj, retired);
+            unbind_interior_rule(fj, recycled);
         }
     }
 }
 
-fn unbind_interior_rule(rule: &mut super::FreeJoinRule, retired: &mut Vec<Vec<u32>>) {
+fn unbind_interior_rule(rule: &mut super::FreeJoinRule, pool: &mut Vec<Vec<u32>>) {
     for (occ_idx, occurrence) in rule.plan.occurrences().iter().enumerate() {
         if occurrence.role.discharged() || occurrence.bind.edb().is_some() {
             continue;
@@ -431,7 +431,7 @@ fn unbind_interior_rule(rule: &mut super::FreeJoinRule, retired: &mut Vec<Vec<u3
         if spare.capacity() == 0 {
             *spare = recycled;
         } else if recycled.capacity() > 0 {
-            retired.push(recycled);
+            pool.push(recycled);
         }
     }
 }

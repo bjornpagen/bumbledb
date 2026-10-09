@@ -1,9 +1,7 @@
-//! Normalization: lowers a
-//! [`crate::ir::validate::ValidatedQuery`] **rule by rule** into the
-//! paper-form conjunctive queries execution consumes — the normalized
-//! artifact is a list, one [`NormalizedQuery`] per rule, because the query
-//! is a rule list. Each rule lowers exactly as the conjunctive query did:
-//! distinct-variable atom
+//! Normalization: lowers a [`crate::ir::validate::ValidatedQuery`] rule by rule
+//! into the conjunctive queries execution consumes, one [`NormalizedQuery`] per
+//! rule: distinct-variable atom occurrences, filters in field space, binding-slot
+//! widths, anti-probes and folded closed atoms.
 use std::collections::BTreeMap;
 
 use crate::image::view::FilterPredicate;
@@ -188,9 +186,9 @@ pub(crate) struct AntiProbe {
 /// **two consecutive u64 slots** — (start word, end word), in encoded
 /// column-word order — in the VarId-indexed binding-slot array; a
 /// `bytes<N>` variable occupies its `⌈N/8⌉` padded-word slots in byte
-/// order (the interval two-slot precedent, generalized); every other
-/// variable occupies one. Exported through
+/// order; every other variable occupies one. Exported through
 /// [`NormalizedQuery::slot_widths`] into the plan witness's binding-slot
+/// layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SlotWidth(u8);
 

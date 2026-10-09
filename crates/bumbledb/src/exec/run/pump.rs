@@ -137,9 +137,9 @@ impl Executor {
                     .extend(std::iter::repeat_n(entry_origin, yielded));
                 fill += yielded;
                 token = next;
-                // The bounded-quantum ledger poll on binding exploration
-                // (chapter 12 §7); a refusal poisons the drive and the
-                // Running checks above unwind every level.
+                // The bounded-quantum ledger poll on binding exploration; a
+                // refusal poisons the drive and the Running checks above
+                // unwind every level.
                 if !self.note_explored(yielded) {
                     break;
                 }

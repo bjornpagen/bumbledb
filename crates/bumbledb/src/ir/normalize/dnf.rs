@@ -1,9 +1,7 @@
-//! DNF distribution — OR as data. The input grammar admits nested OR
-//! ([`ConditionTree`]); **DNF of a query is a set of rules**, so
-//! validation distributes each rule's trees to disjunctive normal form
-//! and each disjunct becomes a rule: atoms cloned, conditions = the
-//! disjunct's leaves. The validated artifact carries only the flat
-//! [`LoweredRule`] — no `Or` survives the boundary, and the planner and
+//! DNF distribution, OR as data: the input grammar admits nested OR
+//! ([`ConditionTree`]), and the DNF of a query is a set of rules, so validation
+//! distributes each rule's trees and each disjunct becomes a rule. Only the flat
+//! [`LoweredRule`] crosses the validation boundary.
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, Rule};
 
 /// One Or-free rule — the only rule shape downstream of validation: the
@@ -19,10 +17,11 @@ pub struct LoweredRule {
     pub negated: Vec<Atom>,
 
     pub conditions: Vec<Comparison>,
-    /// Written-rule provenance (ruled 2026-07-23, R2): the index of the
+    /// The written rule this rule was distributed from; `None` when collapse
+    /// merged rules of different written rules.
     pub written: Option<u16>,
 
-    /// (the Kleene algebra, ruled 2026-07-23, R6) reads it: a written
+    /// Every written rule whose distribution produced this rule.
     pub minted: Vec<u16>,
 }
 

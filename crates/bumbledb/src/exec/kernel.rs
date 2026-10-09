@@ -1,9 +1,8 @@
-//! Batch kernels: predicate scans, survivor compaction, Allen interval masks
-//! and word folds. Portable bodies are generic over `S: Simd` on fixed-width
-//! vectors, so chunking, tails and bitmasks are identical at every level; each
-//! call dispatches once on the process-wide [`level`]. aarch64 Allen keeps a
-//! hand-tuned NEON specialization. Every kernel has a scalar twin in
-//! [`reference`] that the tests hold it bit-identical to at every level.
+//! Batch kernels: predicate scans, survivor compaction, Allen interval masks and
+//! word folds, generic over `S: Simd` on fixed-width vectors so chunking, tails and
+//! bitmasks match at every level; each call dispatches once on the cached
+//! [`level`]. aarch64 Allen keeps a hand-tuned NEON specialization. Every kernel
+//! has a scalar twin in [`reference`], held bit-identical at every level.
 mod allen;
 pub(crate) mod bench;
 mod compact;

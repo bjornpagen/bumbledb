@@ -1,9 +1,7 @@
-//! The grounding-evaluator: folding stage-zero atoms
-//! .
-//! A closed relation's extension is sealed at validate — stage-0 data
-//! . A query atom over
-//! it whose filters are prepare-resolvable constants is therefore not a
-//! join to plan: the evaluator runs the filters against the sealed rows
+//! Closed-relation evaluation: a closed relation's rows are sealed at validate,
+//! so a query atom over it whose filters are prepare-resolvable is not a join to
+//! plan. The evaluator runs the filters against the sealed rows and folds the atom
+//! into the id set that survives (or proves the rule empty).
 use std::collections::BTreeSet;
 
 use crate::error::Error;
@@ -129,8 +127,8 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
         return true;
     }
 
-    // need multi-column set reasoning; REFUSED v0, recorded (trigger: a
-
+    // A negated closed atom folds only when it binds its id alone; other
+    // shapes would need multi-column set reasoning, so the anti-probe stays.
     let &[(FieldId(0), k)] = occurrence.vars.as_slice() else {
         return false;
     };
@@ -140,7 +138,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
         return false;
     }
     if !domain_within_ids(normalized, schema, c_idx, k, closed) {
-        // direction this refusal pins). The anti-probe stays.
+        // The complement is only sound when `k` ranges over the closed ids.
         return false;
     }
     let extension_len = u64::try_from(rows.len()).expect("extensions cap at 256 rows");

@@ -1,8 +1,6 @@
-//! Test substrate for the execution lane: canonical rows in RAM, served
-//! through the one C05 source seam — no LMDB, no directories. Suites that
-//! need images build them exactly the way production does
-//! (`build_from_source` through an [`ImageCache`]), so the walker,
-//! interner and column conventions under test are the real ones.
+//! Test substrate: canonical rows in RAM behind the heap `QuerySource`, no LMDB.
+//! Suites build images the way production does (`build_from_source` through an
+//! [`ImageCache`]), so the walker, interner and column conventions are the real ones.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

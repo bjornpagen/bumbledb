@@ -1,10 +1,7 @@
-//! Free Join plan lowering: `binary2fj` (paper Fig. 7), the
-//! conservative `factor` hoist (Fig. 8), the `gj_split` lowering to
-//! the GJ end of the spectrum (ruled 2026-07-23, R19), cover
-//! enumeration (§4.4), residual and anti-probe placement, trie schemas
-//! (§3.3), and the sealed [`ValidatedPlan`] witness
-//! .
-//! Plain `Vec`s everywhere — no fixed-capacity silent-drop containers
+//! Free Join plan lowering: `binary2fj` (paper Fig. 7), the conservative `factor`
+//! hoist (Fig. 8), the `gj_split` lowering to the GJ end of the spectrum, cover
+//! enumeration (§4.4), residual and anti-probe placement, trie schemas (§3.3), and
+//! the sealed [`ValidatedPlan`] witness. Free Join: Wang et al., SIGMOD 2023.
 use crate::image::ColumnSpan;
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::VarId;
@@ -167,7 +164,8 @@ pub(crate) struct PlanOccurrence {
 
     pub selections: Vec<Selection>,
 
-    /// before the subtraction, `split_filters`); every other one is
+    /// The occurrence's filters that remain after its selections are split
+    /// off (`split_filters`).
     pub filters: Vec<FilterPredicate>,
 
     /// `(interval field, point var, dense)` — dense carries the F64
@@ -194,13 +192,12 @@ pub(crate) struct PlanNode {
 
     pub covers: Vec<u8>,
 
+    /// Residuals are grouped by kind (whole-variable compares, one-word
+    /// compares, Allen compares), so each executor pass reads one kind.
     pub residuals: Vec<FilterPredicate>,
-    // REFUSAL, recorded (the representation audit; do not re-litigate):
 
-    // enum begging to exist. The merge is refused: grouped-by-kind IS
     pub word_residuals: Vec<FilterPredicate>,
 
-    /// `residuals` (a fourth grouped-by-kind list, per the refusal above:
     pub allen_residuals: Vec<FilterPredicate>,
 
     pub anti_probes: Vec<AntiProbe>,
@@ -214,7 +211,7 @@ pub(crate) struct PlanNode {
     pub estimate: u64,
 }
 
-/// Plan evidence for D2 subtree cancellation. `Licensed` means this node
+/// Plan evidence for subtree cancellation. `Licensed` means this node
 /// binds only existential variables for the active projection shape;
 /// aggregate validation supplies every variable as sink-relevant, so its
 /// plans contain only `Forbidden`.
@@ -321,7 +318,8 @@ impl ValidatedPlan {
             .expect("validated plan binds every variable")
     }
 
-    /// (ruled 2026-07-23, R2). Total by construction: grounding may have
+    /// Every planned variable's `(var, first slot, width)` in slot order: the
+    /// DNF-derived union regime's dedup key layout.
     #[must_use]
     pub(crate) fn slot_spans(&self) -> Vec<(VarId, usize, usize)> {
         let mut spans = Vec::with_capacity(self.slots.len());

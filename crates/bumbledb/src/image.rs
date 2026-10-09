@@ -1,9 +1,7 @@
-//! Columnar relation images, the image cache, and filtered views.
-//! Images retain **all columns** in structure-of-arrays vectors. A full image
-//! comes from one sequential row scan and may enter the shared relation cache;
-//! an indexed bucket image is query-local and reused only with matching
-//! selections. Both feed the same Free Join machine. Immutable once built;
-//! `Arc` is the sharing unit, and the image pins its text generation.
+//! Columnar relation images, the image cache and filtered views. Images keep every
+//! column in structure-of-arrays slabs. A full image comes from one sequential row
+//! scan and may enter the shared cache; an indexed bucket image is query-local.
+//! Images are immutable once built, shared by `Arc`, and pin their text generation.
 pub(crate) mod cache;
 pub(crate) mod view;
 
@@ -48,9 +46,8 @@ enum Column {
 /// multi-word field decodes into parallel 8-byte columns and every
 /// existing kernel shape applies unchanged.
 /// An interval field is two columns with start/end semantics; a
-/// `bytes<N>` field with N > 8 is `⌈N/8⌉` plain word columns (the
-/// interval two-column precedent, generalized) — and a `bytes<N ≤ 8>`
-/// field is ONE word column, exactly like every other 8-byte scalar.
+/// `bytes<N>` field with N > 8 is `⌈N/8⌉` plain word columns, and a
+/// `bytes<N ≤ 8>` field is one word column like every other 8-byte scalar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ColumnWidth {
     Byte,

@@ -8,8 +8,7 @@ use std::collections::BTreeSet;
 /// Proof that distinct facts imply distinct bindings for this rule:
 /// every participating occurrence's bound fields cover a compiled key
 /// witness of its stored relation. Carrying this witness is the license
-/// to construct an aggregate sink without a binding seen-set (chapter 12
-/// §2's preserved and requalified elided-dedup regime).
+/// to construct an aggregate sink without a binding seen-set.
 ///
 /// Three arms prove key coverage, each per participating EDB occurrence:
 ///

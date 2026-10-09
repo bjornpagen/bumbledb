@@ -1,16 +1,15 @@
-//! Open-addressed word tuples for seen sets and aggregate groups.
-//! Control bytes gate key reads; generation stamps distinguish live slots
-//! from retained stale tags. The dense list contains only initialized live
-//! values. `V: Copy` permits recycling and rehashing without drop state.
-//! Unsafe value access is confined to the entry, rehash and iteration sites
-//! that establish or consume those invariants.
+//! Open-addressed word tuples for seen sets and aggregate groups. Control bytes
+//! gate key reads; generation stamps tell live slots from stale tags, and the dense
+//! list holds only initialized live values. `V: Copy` permits recycling and
+//! rehashing without drop state; unsafe value access is confined to the entry,
+//! rehash and iteration sites that establish those invariants.
 #![allow(clippy::inline_always)]
 use std::mem::MaybeUninit;
 
 /// Ctrl bytes scanned per probe step (one SWAR word).
 const WINDOW: usize = 8;
 
-/// Fixed-arity word-tuple keys mapping to `V`. No tombstones (insert-only).
+/// Fixed-arity word-tuple keys mapping to `V`. Insert-only: no entry is removed.
 #[derive(Debug)]
 pub(crate) struct WordMap<V> {
     arity: usize,

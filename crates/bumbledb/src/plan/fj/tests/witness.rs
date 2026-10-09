@@ -12,8 +12,7 @@ fn idiom_schema() -> Schema {
         name: name.into(),
         value_type: ty,
     };
-    // Application-owned unique ids (the successor contract): uniqueness is
-    // a DECLARED key statement, not a database-issued fresh generation.
+    // Application-owned unique ids: uniqueness is a declared key statement.
     let id = |name: &str| FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
@@ -101,8 +100,8 @@ fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedP
             FindTerm::Var(v) => {
                 sink_vars.insert(*v);
             }
-            // The sink reads a computed find through its input variables
-            // (C05: the adapter evaluates per surviving binding).
+            // The sink reads a computed find through its input variables; the
+            // adapter evaluates per surviving binding.
             FindTerm::Segments { left, right, .. } => {
                 sink_vars.extend([*left, *right]);
             }

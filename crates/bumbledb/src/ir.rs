@@ -1,21 +1,18 @@
-//! The pure-data query IR, validation, and normalization.
-//! Queries are plain data — encodable and inspectable. No wildcard variant
-//! exists: an unbound field is absent from `bindings`, so "wildcard bound
-//! to something" is unwritable. Variables carry dense ids only; names are a
-//! debugging sidecar the engine never stores.
+//! The pure-data query IR, validation and normalization. Queries are plain data.
+//! No wildcard variant exists: an unbound field is absent from `bindings`.
+//! Variables carry dense ids only; the engine never stores names.
 pub(crate) mod normalize;
 pub mod render;
 pub mod validate;
 
 use bumbledb_theory::schema::{FieldId, RelationId};
 
-/// The one literal-value sum, shared with statement selections — the
-/// normative IR block in names it here.
+/// The one literal-value sum, shared with statement selections.
 pub use bumbledb_theory::Value;
 
-/// condition grammar ([`ConditionTree`]) into Or-free rules; validation
-/// runs it, and it is exported so the differential suite can prove it
-/// against the naive model's direct tree evaluation.
+/// DNF distribution: rewrites a rule's condition grammar ([`ConditionTree`])
+/// into Or-free rules. Validation runs it; it is exported so the differential
+/// suite can prove it against the naive model's direct tree evaluation.
 pub use normalize::{LoweredRule, distribute};
 
 /// The rule-count cap, applied to each `Interior.rules` list, the main
@@ -111,23 +108,17 @@ pub struct Atom {
 /// The fold domain of every aggregate is the group's set of distinct full
 /// bindings over all query variables; the group key is the values of the
 /// non-aggregated find variables. Across rules the domain splits by
-/// provenance (ruled 2026-07-23, R2): a DNF-derived rule set keeps the
-/// written rule's full binding set (surface `or` is fold-transparent),
-/// while a hand-written multi-rule query folds the union of the rules'
-/// vocabulary — with the fold-free nullary `Count` refused there (R1).
+/// provenance: a DNF-derived rule set keeps the written rule's full binding
+/// set (surface `or` is fold-transparent), while a hand-written multi-rule
+/// query folds the union of the rules' vocabulary, with the fold-free nullary
+/// `Count` refused there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggOp {
     Sum,
     Mean,
-
-    /// (ruled 2026-07-23, R3: `Min` over bool is **All**); intervals and
     Min,
-
     Max,
-
     Count,
-
-    /// the only companions (validation, each refusal typed).
     Pack,
 }
 

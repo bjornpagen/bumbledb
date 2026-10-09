@@ -14,8 +14,8 @@ use bumbledb_theory::schema::{
 #[test]
 fn uuid_literal_renders_quoted() {
     // The macro lexes `uuid:"…canonical UUID…"` — a bare hex body is
-    // not one Rust token, so the QUOTED spelling is the render-reparse
-    // fixed point (P07's recorded request; QRY notation stability).
+    // not one Rust token, so the quoted spelling is the render-reparse
+    // fixed point.
     let id = bumbledb_theory::Uuid::from_bytes([
         0x00, 0xb1, 0x2c, 0x3d, 0x4e, 0x5f, 0x60, 0x71, 0x82, 0x93, 0xa4, 0xb5, 0xc6, 0xd7, 0xe8,
         0xf9,

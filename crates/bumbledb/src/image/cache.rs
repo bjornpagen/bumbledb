@@ -1,18 +1,8 @@
-//! The database-owned relation-image cache: one [`RelationSlot`] per
-//! relation and one synchronized [`GenerationProtocol`]. Map entries are
-//! eviction references to [`RelationImage`] owners; images own their slabs
-//! and share a resolver generation.
-//!
-//! Prepared query state (selection, trie, COLT pools) stays separate; only
-//! immutable relation images and text tokens are shared here. An execution
-//! that interprets tokens holds a [`GenerationHandle`]. Explicit clearing
-//! detaches map membership and rotates the current generation; live owners
-//! keep their exact old meanings.
-//!
-//! Reuse requires both the requested resolver owner and (relation, relation
-//! change version): a write to relation A never invalidates relation B's
-//! image. Cached ordinary slabs stay under a byte cap, evicting the least
-//! recently used image first; an image larger than the cap is never cached.
+//! The database-owned relation-image cache: one [`RelationSlot`] per relation and
+//! one [`GenerationProtocol`]. Reuse requires the requested resolver owner and the
+//! relation's change version, so a write to one relation never invalidates another's
+//! image. Cached ordinary slabs stay under a byte cap, evicting the least recently
+//! used image; clearing detaches every entry and rotates the generation.
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

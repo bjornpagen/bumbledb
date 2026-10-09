@@ -1,9 +1,8 @@
-//! Exact SUM and AVG over binary64: Neal's small superaccumulator (R. M.
-//! Neal, "Fast exact summation using small and large superaccumulators",
-//! arXiv:1505.05571). A value adds its 53-bit significand, split at a 32-bit
-//! boundary chosen by its exponent, into two of 67 signed 64-bit chunks;
-//! carries propagate lazily, at most every 1023 adds. The exact total rounds
-//! once, at output, to nearest even.
+//! Exact SUM and AVG over binary64 with Neal's small superaccumulator (R. M. Neal,
+//! "Fast exact summation using small and large superaccumulators", arXiv:1505.05571):
+//! a value adds its 53-bit significand, split at an exponent-chosen 32-bit
+//! boundary, into two of 67 signed 64-bit chunks; carries propagate lazily, at most
+//! every 1023 adds, and the total rounds once, at output, to nearest even.
 
 use super::FloatCardinalityOverflow;
 use bumbledb_theory::F64;
@@ -486,9 +485,9 @@ fn divide(value: &[u64; LIMBS], divisor: u64) -> ([u64; LIMBS], u64) {
     let mut quotient = [0; LIMBS];
     let mut remainder = 0;
     for (out, &word) in quotient.iter_mut().zip(value).rev() {
-        let dividend = (u128::from(remainder) << 64) | u128::from(word);
-        *out = (dividend / u128::from(divisor)) as u64;
-        remainder = (dividend % u128::from(divisor)) as u64;
+        let numerator = (u128::from(remainder) << 64) | u128::from(word);
+        *out = (numerator / u128::from(divisor)) as u64;
+        remainder = (numerator % u128::from(divisor)) as u64;
     }
     (quotient, remainder)
 }

@@ -1,16 +1,8 @@
-//! Query rendering back to the rule notation — the statement renderer's
-//! sibling (`crate::schema::render`), on the read side of the data
-//! surface: **when the write-side query surface is data, the renderer is
-//! the pretty syntax**. One rendered block per rule, set-builder shaped:
-//! ```text
-//! (v0, v1) | Busy(person: v0, during: v1), Allen(v1, INTERSECTS, ?0);
-//! ```
-//! The grammar is the schema grammar's own query side, promoted
-//! :
-//! atoms as `Relation(field: var)`, in-atom selections `field == literal`
-//! (schema-grammar-verbatim, params admitted as `?N`), `!` negation,
-//! membership as `in`, `Allen(term, MASK, term)` with masks as named
-//! basics joined by `|` (set union) or the workload composites, `;`
+//! Query rendering back to the rule notation, one set-builder block per rule:
+//! `(v0, v1) | Busy(person: v0, during: v1), Allen(v1, INTERSECTS, ?0);`. Atoms are
+//! `Relation(field: var)` with in-atom selections `field == literal` (params as
+//! `?N`), `!` negation, membership as `in`, and `Allen(term, MASK, term)` with masks
+//! as named basics joined by `|`.
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -21,9 +13,8 @@ use crate::schema::{Enforcement, Relation, Schema};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{FieldDescriptor, FieldId, RelationId};
 
-/// Shared with validation: the closed-reference order refusal (ruled
-/// 2026-07-23, R4) resolves its positions through this one table, never a
-/// second walk.
+/// Shared with validation: the closed-reference order refusal resolves its
+/// positions through this one table, never a second walk.
 pub(crate) struct ClosedRefs(BTreeMap<(RelationId, FieldId), RelationId>);
 
 impl ClosedRefs {
@@ -54,7 +45,7 @@ impl ClosedRefs {
         Self(map)
     }
 
-    /// if any — the R4 refusal's resolution question, and the dense
+    /// The closed relation `relation.field` references, if any.
     pub(crate) fn target(&self, relation: RelationId, field: FieldId) -> Option<RelationId> {
         self.0.get(&(relation, field)).copied()
     }
@@ -449,9 +440,8 @@ fn param_name(out: &mut String, param: ParamId) {
 }
 
 /// An atom source: the relation's name for `Edb`; `interior {id}` for
-/// `Interior` (the same spelling the rule prefix already emits —
-/// interior names are a text-layer sidecar the IR never carries; the
-/// macro's names resolve locally and lower to bare `InteriorId`s).
+/// `Interior`, the spelling the rule prefix emits: the IR carries no interior
+/// names (the macro's names lower to bare `InteriorId`s).
 fn source_name(out: &mut String, schema: &Schema, source: crate::ir::AtomSource) {
     match source {
         crate::ir::AtomSource::Edb(relation) => relation_name(out, schema, relation),

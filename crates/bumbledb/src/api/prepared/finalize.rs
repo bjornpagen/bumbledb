@@ -41,7 +41,7 @@ pub(super) fn finalize(
             let base = out.cells.len();
             let result = if let Some(error) = sink.take_error() {
                 // A sticky emit failure spoiled the execution: refuse
-                // before any answer publishes (Q-ATOMIC).
+                // before any answer publishes.
                 Err(error)
             } else {
                 fill_resolved_answers(out, interner, memo, columns, sink, work)

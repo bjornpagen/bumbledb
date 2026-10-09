@@ -1,5 +1,6 @@
-//! against the honest pipeline (validate → normalize → grounding) over a
-//! condition's refusal shape is easier to pin in isolation.
+//! Closed-relation evaluation: folded positive and negated closed atoms, the
+//! surviving id sets, and the refusals, checked through validate → normalize →
+//! grounding.
 use super::*;
 use crate::image::view::{Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, normalize_rules};
@@ -255,8 +256,8 @@ fn a_dead_payload_variable_folds() {
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0, 1, 2, 3]]);
 }
 
-/// Condition 2 negative — a param-bearing filter defers to bind time, which is
-/// REFUSED v0: the fold must not judge stage-3 values.
+/// A param-bearing filter resolves at bind time, so the fold must not judge
+/// it at prepare.
 #[test]
 fn a_param_filter_blocks_the_fold() {
     let schema = theory();

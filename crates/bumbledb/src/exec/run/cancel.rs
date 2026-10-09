@@ -1,4 +1,4 @@
-//! D2 origin cancellation bookkeeping and the typed execution poison.
+//! Origin cancellation bookkeeping for subtree skips, and the typed execution poison.
 use super::{Executor, Poison};
 
 impl Executor {

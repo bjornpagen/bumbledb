@@ -1,11 +1,8 @@
-//! Prepare-time row-count estimation: per-occurrence
-//! input estimates for the join-order DP and the introspection/report
-//! honesty numbers. Three sources, strongest first — schema structure
-//! (free and exact), resident-image exact distinct counts, documented
-//! constant floors. Prepare **never builds** an image for statistics
-//! (the cache is peeked); a cold prepare degrades to bounds and floors.
-//! Requested resident columns count once on demand under this prepare's work
-//! allowance. Only the scalar is cached; temporary counting tables are released.
+//! Prepare-time row-count estimates for the join-order DP and introspection, from
+//! three sources, strongest first: schema structure (exact), exact distinct counts
+//! of resident images, and constant floors. Prepare never builds an image for
+//! statistics (the cache is peeked), so a cold prepare degrades to bounds and
+//! floors; only the counted scalar is cached.
 use crate::api::prepared::source::QuerySource;
 use crate::image::SourceImages;
 use crate::image::view::{Const, FilterPredicate};

@@ -1,9 +1,8 @@
 //! A computed output's expression compiled to a postfix program over 64-lane
-//! registers. Typing happens at compile time, so every op is monomorphic. F64
-//! results are canonicalized after every op (one NaN, one zero), integer ops
-//! are checked, and each lane keeps its first error in program order: postfix
-//! order is the recursive evaluator's order, so a lane reports exactly the
-//! error that evaluator reports for the same binding.
+//! registers, monomorphic by compile-time typing. F64 results are canonicalized
+//! after every op and integer ops are checked; each lane keeps its first error in
+//! program order, which is the recursive evaluator's order, so both report the same
+//! error for the same binding.
 #![expect(
     clippy::inline_always,
     reason = "SIMD bodies inline into the dispatched target-feature context"

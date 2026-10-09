@@ -78,9 +78,8 @@ fn check_interval_field_literal(
         }
 
         // A dense-line point probe: any canonical F64 is well-typed; a
-        // nonfinite point is an ordinary NONMATCH at execution (chapter
-        // 11 §5's membership rule), never a validation refusal — the
-        // dense line has no reserved ceiling point.
+        // nonfinite point is an ordinary nonmatch at execution, never a
+        // validation refusal, since the dense line has no reserved ceiling.
         (Value::F64(_), IntervalElement::F64) => Ok(()),
 
         (Value::IntervalU64(_), IntervalElement::U64)
@@ -294,8 +293,8 @@ fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(),
 }
 
 impl Context {
-    /// The closed-reference order wall (ruled 2026-07-23, R4): a
-    /// them is refused exactly as the enum's ordinal order was, judged
+    /// A closed reference's words are declaration indices, so ordering one is
+    /// refused.
     fn screen_order_closed(&self, index: usize, var: VarId) -> Result<(), ValidationError> {
         if self.closed_vars.contains_key(&var) {
             return Err(ValidationError::Comparison {
@@ -1006,7 +1005,6 @@ impl Context {
                 })
             }
 
-            // (ordering a declaration-order accident, refused — R4).
             Shaped::OrdVarVar { op, lhs, rhs } => {
                 for var in [lhs, rhs] {
                     screen_order_operand(index, Some(self.resolved_var_type(*var)))?;

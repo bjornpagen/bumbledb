@@ -1,13 +1,7 @@
-//! Prepared-query suite root: the shared fixtures over the successor
-//! substrate. Two harnesses, one dynamic test theory:
-//!
-//! - [`Fix`] — the heap harness ([`InstanceBuilder`] → [`OwnedInstance`]);
-//!   no LMDB, no directories. Most denotation suites run here.
-//! - [`StoreFix`] — the store harness ([`Db`] over one temp directory);
-//!   generation/epoch/latch/snapshot behavior runs here.
-//!
-//! Both execute through the C05 entries (`prepare_on`/`prepare_owned`,
-//! `execute`/`execute_owned`), so every suite exercises the real seam.
+//! Prepared-query suite root. [`Fix`] is the heap harness ([`InstanceBuilder`] →
+//! [`OwnedInstance`], no LMDB); [`StoreFix`] is the store harness ([`Db`] over a
+//! temp directory) for generation, epoch, latch and snapshot behavior. Both execute
+//! through `prepare_on`/`prepare_owned` and `execute`/`execute_owned`.
 use super::*;
 
 use crate::api::db::{InstanceBuilder, OwnedInstance};
@@ -55,7 +49,7 @@ impl crate::schema::Theory for T {
     }
 }
 
-/// The heap harness: an admitted instance plus the C05 owned entries.
+/// The heap harness: an admitted instance plus the owned prepare and execute entries.
 pub(super) struct Fix {
     pub(super) instance: OwnedInstance<T>,
 }
@@ -104,7 +98,7 @@ impl Fix {
     }
 }
 
-/// The store harness: one real successor store in a temp directory.
+/// The store harness: one real store in a temp directory.
 pub(super) struct StoreFix {
     pub(super) db: crate::api::db::Db<T>,
     _dir: TempDir,

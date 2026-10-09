@@ -1,12 +1,8 @@
-//! The cache-scoped text interner: successor of the deleted persisted
-//! dictionary. Stored rows own their text inline; the query
-//! engine joins on fixed 64-bit words, so every distinct text observed
-//! during one [`GenerationHandle`] receives a monotonically minted token. Token equality
-//! is text equality by construction — the map is keyed by full text bytes,
-//! never a hash verdict (Q-COLLISION).
-//!
-//! Tokens are generation-scoped and never persisted. Consumers pin canonical
-//! shared text; token numbers are monotone and never reused after reclamation.
+//! The cache-scoped text interner. Stored rows own their text inline; the engine
+//! joins on 64-bit words, so every distinct text observed under one
+//! [`GenerationHandle`] gets a minted token. The map is keyed by the full text
+//! bytes, so token equality is text equality. Tokens are generation-scoped, never
+//! persisted, and never reused.
 
 use crate::work::{GenerationHandle, WorkContext, WorkError};
 use std::collections::{HashMap, VecDeque};

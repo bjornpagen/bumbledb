@@ -1,10 +1,7 @@
-//! The one view-validity epoch: closed theory, per-execution heap tick, or
-//! one store relation's committed change version. Not a dummy generation and
-//! not a second process clock.
-//!
-//! [`CacheGeneration`] scopes the database-owned
-//! resident cache: text tokens are valid only within their generation and
-//! are never persisted.
+//! The one view-validity epoch: the closed theory, a per-execution heap tick, or
+//! one store relation's committed change version. [`CacheGeneration`] scopes the
+//! database-owned resident cache: text tokens are valid only within their
+//! generation and are never persisted.
 use crate::storage::store::RelationVersion;
 
 /// Identity is checked before a memo uses this value. `Store(version)` is

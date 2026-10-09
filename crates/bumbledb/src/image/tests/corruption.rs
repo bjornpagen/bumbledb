@@ -1,7 +1,6 @@
-//! Corrupt stored bytes refuse at the one canonical walker — typed
-//! corruption, never a panic and never a normalized value. The storage
-//! side's raw-byte corruption drills live with the store's own tests
-//! (P02); these exercise the walker the build/probe/fallback paths share.
+//! Corrupt stored bytes refuse at the canonical walker with typed corruption, never
+//! a panic and never a normalized value. The store's raw-byte corruption drills
+//! live with the store's own tests.
 use super::schema;
 use crate::error::Error;
 use crate::image::canon::{TextWords, row_words};

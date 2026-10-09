@@ -601,8 +601,8 @@ fn full_fact_membership_lookup_with_an_interval_field_is_exact() {
 
 #[test]
 fn full_fact_membership_agrees_between_store_and_heap() {
-    // The store path answers membership through the exact fingerprint
-    // bucket (HASH-02); the heap path binary-searches canonical bytes.
+    // The store path answers membership through the fingerprint bucket plus
+    // exact bytes; the heap path binary-searches canonical bytes.
     let store = StoreFix::store("prepared-keyprobe-membership", stay_descriptor());
     store.insert_dyn(
         RelationId(0),

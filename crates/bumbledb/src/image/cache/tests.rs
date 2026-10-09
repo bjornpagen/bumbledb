@@ -1,9 +1,7 @@
-//! The version-keyed image cache: hits at the same relation change version,
-//! one rebuild per newer version, query-local images for old pinned
-//! versions, per-execution rebuilds for heap ticks, owner-scoped closed
-//! synthesis, and explicit cache clearing. (The end-to-end per-relation
-//! invalidation contract over a real store lives in
-//! `image/tests/relation_reuse.rs`.)
+//! The version-keyed image cache: hits at the same change version, one rebuild
+//! per newer version, query-local images for old pinned versions, rebuilds per
+//! heap tick, owner-scoped closed images, clearing, and the byte cap. The
+//! end-to-end per-relation contract over a real store is `image/tests/relation_reuse.rs`.
 use std::sync::Arc;
 
 use crate::image::ViewEpoch;
@@ -105,7 +103,7 @@ fn a_newer_generation_rebuilds_and_retires_the_old_entry() {
     assert!(!Arc::ptr_eq(&old, &new), "a newer generation rebuilds");
     assert!(
         cache.peek_at(R, generation(3), &cache.acquire()).is_none(),
-        "the old generation's entry retired when the newer one landed"
+        "the newer version replaced the old entry"
     );
     assert!(cache.peek_at(R, generation(4), &cache.acquire()).is_some());
     // The pinned reader's Arc keeps the old image alive query-local.
@@ -202,7 +200,7 @@ fn late_old_owner_builds_never_repopulate_or_displace_current_images() {
         assert!(late.generation().ptr_eq(&old_owner));
         assert!(
             cache.peek_at(relation, epoch, &old_owner).is_none(),
-            "retired owner cannot repopulate an empty slot"
+            "a rotated-out owner cannot repopulate an empty slot"
         );
         let current = cache
             .get_or_build_with(&source, fixture.schema(), relation, epoch, &current_owner)
@@ -221,7 +219,7 @@ fn late_old_owner_builds_never_repopulate_or_displace_current_images() {
                 &current,
                 &cache.peek_at(relation, epoch, &current_owner).unwrap()
             ),
-            "late retired builder cannot displace current owner's cache entry"
+            "a late builder of a rotated-out owner cannot displace current owner's cache entry"
         );
         let weak_old = old_owner.downgrade();
         drop(late);
@@ -229,15 +227,15 @@ fn late_old_owner_builds_never_repopulate_or_displace_current_images() {
         drop(old_owner);
         assert!(
             weak_old.upgrade().is_none(),
-            "no stale slot permanently pins the retired resolver"
+            "no stale slot permanently pins a rotated-out resolver"
         );
     }
 }
 
 #[test]
-fn closed_images_release_the_retired_owner_when_the_last_reader_drops() {
+fn closed_images_release_a_rotated_owner_when_the_last_reader_drops() {
     // Closed relations cannot contain text. They nevertheless share the
-    // operation's generation owner and must not keep a retired resolver
+    // operation's generation owner and must not keep a rotated-out resolver
     // alive forever through an unevictable cache entry.
     let fixture = fixture();
     let source = fixture.source();
@@ -366,11 +364,11 @@ fn acquire_is_the_production_pin_and_idle_memos_are_weak() {
     );
 }
 
-/// D02: two retained text-bearing images; trim A; ingest different texts;
-/// B still resolves the pinned generation. Concurrent trim/admit must not
-/// alias tokens; live image owners retain their text.
+/// Two retained text-bearing images; trim A; ingest different texts; B still
+/// resolves the pinned generation. Concurrent trim and admit must not alias
+/// tokens; live image owners retain their text.
 #[test]
-fn d02_shared_meanings_survive_trim_and_do_not_alias() {
+fn shared_meanings_survive_trim_and_do_not_alias() {
     let first = fixture();
     let cache = ImageCache::new(first.schema());
     let source_a = first.source();
@@ -418,7 +416,7 @@ fn d02_shared_meanings_survive_trim_and_do_not_alias() {
 }
 
 #[test]
-fn d02_concurrent_trim_and_admit_keep_pinned_meanings() {
+fn concurrent_trim_and_admit_keep_pinned_meanings() {
     let fixture = fixture();
     let cache = std::sync::Arc::new(ImageCache::new(fixture.schema()));
     let source = fixture.source();

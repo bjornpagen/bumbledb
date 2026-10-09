@@ -82,17 +82,17 @@ enum SinkSpec {
     Pack { slot: usize },
 }
 
-/// Crate-internal sink reply L05 consumes after emit or finalize.
-/// Work/scratch refusals are Stop; cardinality and corruption are Error.
-/// Finalize is Q-ATOMIC: no group publishes after a recorded failure.
+/// The sink's progress after emit or finalize. Work refusals are Stop;
+/// cardinality and corruption are Error. Finalize is atomic: no group
+/// publishes after a recorded failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SinkProgress {
     /// More input is welcome; the row was recorded or was an exact duplicate.
     Continue,
     /// Finalize emitted every group/answer; the execution is complete.
     Finish,
-    /// Cancellation stopped the sink. Sticky: later
-    /// emits drop and finalize refuses (Q-ATOMIC).
+    /// Cancellation stopped the sink. Sticky: later emits drop and finalize
+    /// refuses.
     Stop,
     /// Scratch, cardinality, or corruption failure. Sticky: later emits
     /// drop and finalize refuses before any answer publishes.
@@ -527,7 +527,7 @@ fn extend_sources(finds: &[SinkSpec], out: &mut Vec<usize>) {
 
 /// The projection sink: dedups projected find tuples, and reports
 /// staleness (`SkipSuffix`) so the executor can unwind suffixes that bind
-/// nothing projection-relevant (D2 — legal for this sink only).
+/// nothing projection-relevant (legal for this sink only).
 #[derive(Debug)]
 pub(crate) struct ProjectionSink {
     finds: Vec<SinkSpec>,
@@ -659,7 +659,7 @@ pub(crate) struct AggregateSink {
     /// Sticky failure recorded by the infallible fold paths; finalize
     /// refuses before any group publishes.
     error: Option<crate::error::Error>,
-    /// Successful finalize has published every group (L05 Finish).
+    /// Successful finalize has published every group.
     finished: bool,
     /// Stop/Error latched across [`Self::take_error`] until reset.
     terminal: SinkProgress,

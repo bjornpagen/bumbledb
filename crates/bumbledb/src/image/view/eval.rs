@@ -15,7 +15,7 @@ use super::{Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource};
 /// Address of one operand in a provider's space. Image and fact
 /// providers interpret [`Self::at`] as a [`FieldId`]; binding and batch
 /// providers interpret it as a variable id (residuals, at normalize) or
-/// a binding slot (ray-probe verdicts). [`Self::offset`] selects Start/End
+/// a binding slot (ray probes). [`Self::offset`] selects Start/End
 /// of an interval variable for word residuals; [`Self::width`] is 0 when
 /// the provider decides the load shape (image/fact columns) and 1/2/N
 /// when a slot provider must emit Word/Pair/Block.

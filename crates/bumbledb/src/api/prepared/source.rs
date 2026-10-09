@@ -100,7 +100,7 @@ impl<'a> QuerySource<'a> {
         }
     }
 
-    /// Actual source-row visits observed in this execution (D10).
+    /// Actual source-row visits observed in this execution.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn visit_count(&self) -> usize {
@@ -128,7 +128,7 @@ impl<'a> QuerySource<'a> {
     /// relation's committed change version on a store snapshot (one small
     /// meta read from the snapshot's own transaction — an unrelated write
     /// leaves it equal, so untouched relations keep their images across
-    /// generations; PERF-001), or the per-execution heap tick.
+    /// generations), or the per-execution heap tick.
     /// # Errors
     /// Storage failure reading the version.
     pub(crate) fn relation_epoch(&self, relation: RelationId) -> Result<ViewEpoch> {
@@ -251,7 +251,7 @@ impl<'a> QuerySource<'a> {
     /// Store sources seek [`OwnedSnapshot::visit_projection`] by
     /// [`crate::schema::ProjectionId`]; heap sources apply the same
     /// [`CompiledTheory::consume_visits`] control so visit counts and
-    /// early-stop are honest (D10).
+    /// early stops are exact.
     /// # Errors
     /// Storage, work, compile, or visitor failure.
     pub(crate) fn consume_compiled_visits(

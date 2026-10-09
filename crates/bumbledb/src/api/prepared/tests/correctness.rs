@@ -551,7 +551,7 @@ fn results_decode_text_tokens_to_original_bytes() {
 
 #[test]
 fn store_and_heap_sources_agree_on_the_same_rows() {
-    // The same query over the same rows through both C05 sources: the
+    // The same query over the same rows through both sources: the
     // committed store (images from canonical rows via the interner) and
     // the admitted heap instance.
     let rows: &[(u64, u64, &str, i64)] = &[
@@ -722,7 +722,7 @@ fn rebinding_params_reselects_the_account_and_range() {
 
 #[test]
 fn execute_complete_seals_only_full_results_and_pages_them() {
-    // C05: CompleteResult seals after full evaluation; the consuming
+    // CompleteResult seals after full evaluation; the consuming
     // cursor delivers every row exactly once with a terminal frame.
     let rows: &[(u64, u64, &str, i64)] = &[
         (1, 3, "a", 10),

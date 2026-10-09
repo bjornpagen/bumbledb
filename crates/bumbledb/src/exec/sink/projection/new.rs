@@ -102,7 +102,7 @@ impl ProjectionSink {
         self.seen.take_error()
     }
 
-    /// L05 Continue/Stop/Error. Finish is the successful drain L05 observes.
+    /// Continue, Stop or Error; Finish is the successful drain.
     #[must_use]
     pub(crate) fn progress(&self) -> crate::exec::sink::SinkProgress {
         self.seen.progress()

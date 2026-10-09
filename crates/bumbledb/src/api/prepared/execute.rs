@@ -61,10 +61,7 @@ impl<S> PreparedQuery<S> {
     /// instead of the snapshot frame's context. Retaining a snapshot does not
     /// extend an earlier operation's cancellation lifetime.
     /// # Errors
-    /// As [`Self::execute`].
-    ///
-    /// `doc(hidden)` bridge seam (P06/W3-SESSION); embedders use
-    /// `execute`/`execute_collect`.
+    /// As [`Self::execute`]. Embedders use `execute`/`execute_collect`.
     #[doc(hidden)]
     pub fn execute_collect_with_work<'p, P: super::BindArgs<'p>>(
         &mut self,
@@ -200,7 +197,7 @@ impl<S> PreparedQuery<S> {
     ) -> Result<bool> {
         self.fill_main_images(rule_idx);
         let occ_images = std::mem::take(&mut self.runtime.derived.occ_images);
-        let mut retired = std::mem::take(&mut self.runtime.derived.retired);
+        let mut recycled = std::mem::take(&mut self.runtime.derived.recycled);
         let interner = images.interner();
         let ctx = RuleCtx {
             schema: self.program.schema.as_ref(),
@@ -220,7 +217,7 @@ impl<S> PreparedQuery<S> {
             &mut RuleScratch {
                 bindings: &mut self.runtime.bindings,
                 occ_images: &occ_images,
-                retired: &mut retired,
+                recycled: &mut recycled,
             },
             &mut rules[rule_idx],
             sink_use,
@@ -228,7 +225,7 @@ impl<S> PreparedQuery<S> {
             counters,
         );
         self.runtime.derived.occ_images = occ_images;
-        self.runtime.derived.retired = retired;
+        self.runtime.derived.recycled = recycled;
         ran
     }
 

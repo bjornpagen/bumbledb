@@ -1,12 +1,8 @@
-//! Prepared queries, parameters, and results — the reusable
-//! execution object the allocation contract is written against.
-//! `prepare` runs the whole pipeline once: validate → normalize →
-//! filtered-view statistics → plan → classify. **Plans pin the statistics
-//! read at prepare time and are never invalidated by writes**; stale plans
-//! are accepted at this scale and re-preparation is explicit. Text
-//! literals and params resolve in the shared cache namespace and retain
-//! their canonical text owners. An unstored text is an ordinary unequal
-//! token, never a missing parameter.
+//! Prepared queries, parameters and results: the reusable execution object.
+//! `prepare` runs validate → normalize → statistics → plan → classify once. Plans
+//! pin the statistics read at prepare time and are never invalidated by writes;
+//! re-preparation is explicit. Text literals and params resolve in the shared cache
+//! namespace; an unstored text is an ordinary unequal token.
 use std::sync::Arc;
 
 use crate::exec::colt::Colt;
@@ -312,8 +308,7 @@ struct Runtime {
 }
 
 /// One named interior's prepared artifact: its rule loop and stage sink
-/// — projection, aggregate, or computed, exactly like main (chapter 12's
-/// uniform nonrecursive composition). Evaluated once, in declaration
+/// — projection, aggregate, or computed, exactly like main. Evaluated once, in declaration
 /// order, before rec and main; aggregate/computed stages FINALIZE before
 /// sealing their table, so a required producer error fails the whole
 /// query even if a consumer would discard the group (the stage error
@@ -423,8 +418,7 @@ pub(crate) struct FreeJoinRule {
     /// query — they are the head's, identical across rules).
     finds: Vec<FindSpec>,
     /// The rule's full slot array as `VarId`-ordered spans — the
-    /// DNF-derived union regime's shared dedup key (ruled 2026-07-23,
-    /// R2). Aggregate-bearing heads only; empty (and never read) for
+    /// DNF-derived union regime's shared dedup key. Aggregate-bearing heads only; empty (and never read) for
     /// projection heads.
     dedup_spans: Box<[(usize, usize)]>,
     /// Per occurrence: residual filters with symbolic constants
@@ -441,7 +435,7 @@ pub(crate) struct FreeJoinRule {
     /// slots unwritten and does not set it). Within one text generation,
     /// a parameter-free rule can reuse this completed resolution.
     resolution: ResolutionState,
-    /// The view memo : per occurrence, the active binding
+    /// The view memo: per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,
 }
@@ -452,8 +446,7 @@ pub(crate) struct KeyProbeRule {
     probe: crate::exec::dispatch::ProbeBuffers,
     distinct_witness: Option<crate::plan::fj::DistinctWitness>,
     finds: Vec<FindSpec>,
-    /// As [`FreeJoinRule::dedup_spans`] — the R2 shared-slot key over
-    /// this rule's key-probe layout.
+    /// As [`FreeJoinRule::dedup_spans`], over this rule's key-probe layout.
     dedup_spans: Box<[(usize, usize)]>,
 }
 
@@ -587,7 +580,7 @@ impl PreparedRule {
     }
 
     /// The rule's `VarId`-ordered full slot spans — the DNF-derived
-    /// union regime's shared dedup key (R2); empty for projection heads.
+    /// union regime's shared dedup key; empty for projection heads.
     fn dedup_spans(&self) -> &[(usize, usize)] {
         match self {
             Self::FreeJoin(rule) => &rule.dedup_spans,
@@ -696,11 +689,8 @@ struct ViewMemo {
 /// never crosses the `api` boundary.
 #[expect(
     clippy::large_enum_variant,
-    reason = "boxing the hot sink would add indirection to every emit"
-)] // Projection stays unboxed: it is
-// the hot variant (per-item emit paths reach through it), one prepared
-// query holds exactly one sink, and the pipeline scratch answers
-// that tripped the lint are the working set itself.
+    reason = "Projection is the hot variant: boxing it would add indirection to every emit"
+)]
 pub(super) enum EitherSink {
     Computed(Box<computed::ComputedSink>),
     Projection(ProjectionSink),

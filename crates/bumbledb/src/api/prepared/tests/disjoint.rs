@@ -1,4 +1,5 @@
-//! different discriminator literals do not collide, and the fold-free
+//! Folds over a proven disjoint union: arms with different discriminator literals
+//! do not collide, so a fold over the union absorbs nothing across rules.
 use super::*;
 use crate::ir::FoldOp;
 use crate::ir::{HeadOp, HeadTerm};
@@ -72,8 +73,8 @@ fn du_query(rules: Vec<Rule>) -> Query {
     }
 }
 
-/// The fold-free nullary `Count` on this shape is refused instead (R1, pinned
-/// below) — the disjointness proof cannot make a constant informative.
+/// The fold-free nullary `Count` on this shape is refused instead (pinned
+/// below): the disjointness proof cannot make a constant informative.
 #[test]
 fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
     let fix = items(&item_rows());

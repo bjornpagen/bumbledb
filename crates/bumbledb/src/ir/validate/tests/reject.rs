@@ -164,7 +164,7 @@ fn rejects_self_comparison() {
 
 #[test]
 fn accepts_order_comparison_on_bool_in_both_written_orders() {
-    // the strict 0/1 encoding IS the order (ruled 2026-07-23, R3), so
+    // The strict 0/1 encoding is the order, so bool orders are legal.
 
     for literal_on_left in [false, true] {
         let literal = Term::Literal(Value::Bool(true));
@@ -248,8 +248,8 @@ fn closed_expect_err(query: &Query) -> ValidationError {
 
 #[test]
 fn rejects_order_comparison_on_a_closed_reference() {
-    // words are declaration indices, so `Lt` on it is refused — the
-    // engine-judged wall, identical on every surface (ruled 2026-07-23,
+    // A closed reference's words are declaration indices, so `Lt` on it is
+    // refused.
 
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -272,7 +272,7 @@ fn rejects_order_comparison_on_a_closed_reference() {
 
 #[test]
 fn rejects_point_membership_of_a_closed_reference() {
-    // a closed-bound point side is refused (R4).
+    // A closed-bound point side is refused.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(
@@ -444,7 +444,7 @@ fn rejects_sum_over_non_integer() {
 
 #[test]
 fn rejects_min_and_max_over_str() {
-    // The str-extrema roster refusal (the README's recorded ruling):
+    // Min and Max over str are outside the fold roster.
 
     for op in [FoldOp::Min, FoldOp::Max] {
         let query = simple(

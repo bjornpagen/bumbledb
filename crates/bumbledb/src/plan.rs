@@ -1,5 +1,4 @@
-//! Statistics, the grounding, the DP planner, and Free Join plan lowering
-//! .
+//! Statistics, grounding, the join-order DP and Free Join plan lowering.
 pub(crate) mod fj;
 pub(crate) mod ground;
 pub(crate) mod planner;

@@ -1,10 +1,8 @@
-//! `Allen(mask)` over batches of interval pairs, branch-free and table
-//! driven. Per pair, six endpoint predicates pack into a 6-bit signature;
-//! the 13 valid signatures are the 13 basic relations. Codes are the
-//! [`crate::allen::Basic`] discriminants (their bit index in a mask), and a
-//! mask keeps a pair iff it holds the pair's code. The portable kernel maps a
-//! signature through an injective 4-bit hash into one nibble-packed `u64`;
-//! the aarch64 specialization indexes a 64-byte table with NEON `tbl`.
+//! `Allen(mask)` over batches of interval pairs, branch-free and table driven: six
+//! endpoint predicates pack into a 6-bit signature whose 13 valid values are the 13
+//! basic relations, coded as [`crate::allen::Basic`] discriminants. The portable
+//! kernel maps a signature through an injective 4-bit hash into one nibble-packed
+//! `u64`; aarch64 indexes a 64-byte table with NEON `tbl`.
 #![expect(
     clippy::inline_always,
     reason = "SIMD bodies inline into the dispatched target-feature context"

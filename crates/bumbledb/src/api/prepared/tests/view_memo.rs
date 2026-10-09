@@ -1,8 +1,5 @@
-//! View-memo behavior on the successor substrate: epoch-keyed hits within
-//! one generation, rebuilds across generations, parked-binding rotation,
-//! heap ticks that never memoize, and trim. The old write-path `advance`
-//! lineage hook is deleted with the transitional storage — invalidation is
-//! generation-keyed now.
+//! View-memo behavior: epoch-keyed hits within one generation, rebuilds across
+//! generations, parked-binding rotation, heap ticks that never memoize, and trim.
 use super::*;
 
 fn rotating_rows() -> Vec<(u64, u64, &'static str, i64)> {

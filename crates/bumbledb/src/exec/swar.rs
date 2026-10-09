@@ -1,9 +1,7 @@
-//! The shared probe primitives of the two ctrl-byte open-addressed
-//! structures — COLT's bucket maps (`colt`) and the sink `WordMap`
-//! (`wordmap`). The structures stay independent (bucket-of-8 vs window
-//! probing, different growth laws), but share one tag/hash implementation.
-//! Forced inlining keeps these pure-ALU leaves inside their probe loops;
-//! fixed-width callers expose a constant slice length to the same hash loop.
+//! The probe primitives shared by the two ctrl-byte open-addressed structures,
+//! COLT's bucket maps and the sink `WordMap`: one tag and hash implementation
+//! behind independent probing and growth. Forced inlining keeps these pure-ALU
+//! leaves inside their probe loops.
 #![allow(clippy::inline_always)]
 /// Tail-zero big-endian `bytes<N>` code words (encoding.rs pads at the tail;
 /// `fact_word.rs` reads big-endian) put ALL their entropy up there — whole code

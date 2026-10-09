@@ -1,24 +1,8 @@
-//! Canonical-row → column-word decoding: the one bridge from the stored
-//! canonical row codec (`crate::canonical`, inline text, tagged fields) to
-//! the execution engine's fixed 64-bit column words. Every consumer of a
-//! committed row — image builds, key probes, the cursor fallback — decodes
-//! through this walker, so the word conventions live in exactly one place:
-//!
-//! | Field type | Column words |
-//! | --- | --- |
-//! | `Bool` | one word 0/1 (byte column at the image layer) |
-//! | `U64` | the value |
-//! | `I64` | sign-biased order word (`v ^ 1<<63`) |
-//! | `F64` | canonical total-order key |
-//! | `String` | interner token ([`TextInterner`]); scans use lookup-only |
-//! | `Bytes<N>` | ⌈N/8⌉ zero-padded big-endian words |
-//! | `Uuid` | two big-endian words (byte order = total order) |
-//! | `Interval<U64/I64/F64>` | two order words (start, end) |
-//! | `FixedInterval` | two order words (canonical rows carry both bounds) |
-//!
-//! Corrupt stored bytes refuse (typed corruption), never normalize: the
-//! walker re-validates tags, widths, UTF-8, canonical float payloads and
-//! interval bounds exactly as the strict parser would.
+//! Canonical-row → column-word decoding, the one place the word conventions live:
+//! Bool 0/1, U64 as is, I64 sign-biased, F64 its order key, String an interner
+//! token, bytes<N> and Uuid big-endian words, intervals two order words (start,
+//! end). Corrupt stored bytes refuse with typed corruption: the walker re-validates
+//! tags, widths, UTF-8, float payloads and interval bounds as the strict parser does.
 
 use bumbledb_theory::schema::{FieldDescriptor, ValueType};
 
@@ -232,9 +216,9 @@ pub(crate) fn row_words(
     Ok(())
 }
 
-/// One decoded row's flat column words plus its field→column map — the
-/// key-probe and cursor-fallback row shape ([`Self::operand`] mirrors the
-/// image layer's span dispatch for single rows).
+/// One decoded row's flat column words plus its field→column map: the
+/// key-probe row shape ([`Self::operand`] mirrors the image layer's span
+/// dispatch for single rows).
 pub(crate) struct RowWords {
     spans: Box<[super::ColumnSpan]>,
     strings: Box<[bool]>,
@@ -409,7 +393,7 @@ mod string_field_tests {
     /// Probe/fallback `RowWords` must mark String columns so `holds` uses
     /// [`crate::image::TextEq`] instead of raw word identity.
     #[test]
-    fn d02_row_words_string_field_marks_string_columns() {
+    fn row_words_string_field_marks_string_columns() {
         let row = RowWords::new(&[ValueType::U64, ValueType::String, ValueType::I64]);
         assert!(
             row.has_text(),

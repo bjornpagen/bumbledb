@@ -1,9 +1,7 @@
-//! The distinct ladder and occurrence pricing, over the C05 source seam:
-//! key-exact (rung 0), schema containment bounds (rung 2), documented
-//! floors (rung 3), plus the interior-occurrence planning floors. The
-//! image-exact rung (1) needs a peekable store-generation memo — heap
-//! fixtures never memoize — so its coverage lives with the prepared-query
-//! store suites (`api/prepared/tests/selection.rs`).
+//! The distinct ladder and occurrence pricing over heap sources: key-exact,
+//! schema containment bounds, documented floors, and the interior-occurrence
+//! floors. The image-exact rung needs a store-generation memo, so its coverage
+//! lives in `api/prepared/tests/selection.rs`.
 use super::{
     ACCUMULATED_PLANNING_ROWS, DEFAULT_EQ_DISTINCT, DELTA_PLANNING_ROWS, occurrence_stats_on,
     relation_rows_on,

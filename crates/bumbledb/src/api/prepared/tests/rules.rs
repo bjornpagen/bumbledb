@@ -218,8 +218,8 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
     );
 }
 
-/// Cross-rule fold-free nullary `Count` is refused at validation (ruled
-/// 2026-07-23, R1): under the head-projection law every binding projects to the
+/// Cross-rule fold-free nullary `Count` is refused at validation: under the
+/// head-projection law every binding projects to the
 /// empty head tuple, so the union is a singleton and the Count is
 /// definitionally the constant 1 — an uninformative query, made unrepresentable
 /// beside `ArgAcrossRules` with the same modeling answer: one Count per

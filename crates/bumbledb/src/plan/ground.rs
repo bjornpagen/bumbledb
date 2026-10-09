@@ -1,10 +1,7 @@
-//! Grounding: containment-implied occurrence **elimination** and
-//! closed-relation **evaluation**
-//! .
-//! Two rewrites share one loop. Elimination (below) removes atoms
-//! that statements prove redundant; evaluation ([`evaluate`]) removes
-//! closed-relation atoms whose extension is stage-0-known by *running
-//! plan but a three-element id-set computed before the DP ever sees the
+//! Grounding, two rewrites in one loop: containment-implied occurrence elimination
+//! removes atoms that statements prove redundant, and closed-relation evaluation
+//! ([`evaluate`]) replaces a closed atom whose filters are prepare-resolvable with
+//! the id set its sealed rows satisfy, before the join-order DP runs.
 use std::collections::BTreeSet;
 
 use crate::image::view::{Const, FilterPredicate};
@@ -186,8 +183,9 @@ fn variables_join_or_dead(
     })
 }
 
-/// **Condition 4** — interval refusal (v0): no paired position is
-/// interval-typed.
+/// A variable is dead at occurrence `b_idx` when nothing outside it reads it:
+/// not the head, another participating occurrence, a residual, an
+/// anti-probe or a membership point.
 fn var_is_dead(
     normalized: &NormalizedQuery,
     b_idx: usize,

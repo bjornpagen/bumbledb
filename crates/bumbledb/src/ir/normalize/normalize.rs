@@ -162,8 +162,8 @@ fn lower_atom(
     for (field, term) in &atom.bindings {
         let field_type = field_type(*field);
         // Dense (F64) point membership carries the finite-probe guard
-        // through the predicate (chapter 10 §2: nonfinite probes are
-        // ordinary nonmatches, never word-order accidents).
+        // through the predicate: nonfinite probes are ordinary nonmatches,
+        // never word-order accidents.
         let dense = matches!(
             field_type.interval_element(),
             Some(bumbledb_theory::schema::IntervalElement::F64)

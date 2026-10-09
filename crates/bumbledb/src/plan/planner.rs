@@ -11,14 +11,10 @@ mod plan;
 
 pub(crate) use plan::plan;
 
-/// Hard cap on occurrences the exhaustive subset DP accepts. The 40-execution doc named
-/// 32 (the bitmask width), but 2³² DP states is memory-infeasible; at
-/// 2²⁰ the DP table (`Option<State>`, 32 bytes each) is ~32 MB plus a
-/// 16 MB per-mask prefix-variables memo — instant, and the doc's own
-/// envelope is "≤ ~12 atoms", where both are kilobytes. The
-/// validation-boundary roster cap counts negated occurrences too (they
-/// consume plan-time work), but only participating occurrences enter the
-/// and grounding-eliminated
+/// Hard cap on occurrences the exhaustive subset DP accepts: at 2²⁰ subsets the
+/// DP table (`Option<State>`, 32 bytes each) is about 32 MB plus a 16 MB
+/// per-mask prefix-variables memo, while ordinary queries of about 12 atoms
+/// need kilobytes. Only participating occurrences enter the DP.
 pub(crate) const MAX_OCCURRENCES: usize = 20;
 
 pub(crate) const MAX_DISTINCT_VARS: usize = 128;

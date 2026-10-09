@@ -1,30 +1,8 @@
-//! The key-probe row fetch over the successor store: exact value
-//! semantics, no image, no COLT.
-//!
-//! - **Membership** (every field bound to a constant): reconstruct the
-//!   probed fact's canonical bytes and ask the source for exact
-//!   membership — a fingerprint bucket walk plus full-byte comparison on
-//!   a store (HASH-02: the fingerprint only selects candidates), a binary
-//!   search on a heap instance.
-//! - **Uniqueness** (a declared key's determinant bound): on a store
-//!   source, the probe projects the key's scalar determinant through the
-//!   store's one projection convention, enumerates that determinant
-//!   bucket at the pinned snapshot, and confirms each candidate by exact
-//!   span comparison over every bound field — work is bucket-shaped,
-//!   never relation-shaped, and a forced fingerprint collision widens the
-//!   bucket without ever changing the answer. Committed state satisfies
-//!   its keys, so at most one row matches. Scalar words are already final;
-//!   a matched row containing text is recaptured in intern mode so its
-//!   text becomes answer-resolvable tokens before residual filters run.
-//!   Heap sources (admitted in-memory instances)
-//!   keep the bounded reference walk over their sorted rows — a scan,
-//!   named one — which is also the store path's exact oracle in the
-//!   regression suites.
-//!
-//! The old `FreshRow` row-id fast branch is deleted with the fresh
-//! reservation machinery (E-NO-RESERVE); the old fixed-layout fact fetch
-//! and the persisted-dictionary lookups are deleted with the transitional
-//! storage.
+//! The key-probe row fetch: exact value semantics, no image, no COLT. A membership
+//! probe reconstructs the row's canonical bytes and asks the source for exact
+//! membership; a uniqueness probe walks the key's determinant bucket and confirms
+//! each candidate by exact span comparison, so a fingerprint collision widens the
+//! bucket but never changes the answer. Heap sources take the bounded reference walk.
 
 use super::fact_word::FactOperand;
 use super::{KeyProbePart, KeyProbePlan, ProbeBuffers, ProbeCtx};

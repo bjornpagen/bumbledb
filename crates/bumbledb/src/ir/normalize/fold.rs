@@ -1,9 +1,7 @@
-//! The statically-empty fold: the database analog of comptime-unreachable, run at
-//! the end of each rule's lowering, over each **participating**
-//! occurrence's own filter list.
-//! Two jobs, one pass:
-//! 1. **Range folding** — a conjunction of constant order filters on one
-//!    u64/i64 slot collapses into a single `[lo, hi]` summary.
+//! The statically-empty fold, run at the end of each rule's lowering over each
+//! participating occurrence's filters. A conjunction of constant order filters on
+//! one slot collapses into one `[lo, hi]` summary, and a contradiction proves the
+//! rule empty before planning.
 use std::collections::BTreeMap;
 
 use super::Occurrence;
@@ -17,8 +15,6 @@ use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
 #[cfg(test)]
 thread_local! {
-
-    /// 2026-07-20 hard-delete ruling,
     static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 

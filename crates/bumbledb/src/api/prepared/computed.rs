@@ -1,11 +1,8 @@
-//! The computed-output sink adapter: typed scalar stage outputs
-//! (`FindTerm::Compute`) and interval segments, evaluated per surviving
-//! binding after every input predicate of the rule. It never licenses a
-//! suffix skip or a fused leaf scan: every output sees its complete binding.
-//! Scalar outputs run as compiled programs over 64 bindings at a time, one
-//! SIMD dispatch per chunk. Errors are sticky: the first failing binding's
-//! error is recorded, later rows are dropped, and finalize publishes nothing.
-//! The float environment is checked once per execution, at reset.
+//! The computed-output sink adapter: scalar outputs and interval segments,
+//! evaluated per surviving binding after every input predicate, so it never
+//! licenses a suffix skip or a fused leaf scan. Scalar outputs run as compiled
+//! programs over 64 bindings at a time. Errors are sticky: the first failing
+//! binding's error is kept and finalize publishes nothing.
 use std::sync::Arc;
 
 use super::EitherSink;

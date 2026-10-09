@@ -1,8 +1,6 @@
-//! Proof unit suite for the [`provably_distinct`] witness arms (chapter
-//! 12 §2's preserved elided-dedup regime): the declared-key arm, the
-//! whole-row implicit-key arm, and — as important — everything that must
-//! NOT prove (partial covers, non-equality pins, point-membership probes,
-//! derived occurrences).
+//! The [`provably_distinct`] witness arms: the declared-key arm and the whole-row
+//! implicit-key arm, and everything that must not prove (partial covers,
+//! non-equality pins, point-membership probes, derived occurrences).
 use super::*;
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::WordCmp;

@@ -94,8 +94,7 @@ pub(crate) struct LeafScan<'a> {
     pub bindings: &'a Bindings,
 }
 
-/// Consumes complete bindings (D3: the executor emits to a sink, never an
-/// `output`).
+/// Consumes complete bindings: the executor emits to a sink, never to an output.
 pub(crate) trait Sink {
     /// Whether this sink can consume a witnessed physical set traversal.
     /// Static dispatch erases the extra traversal machinery for ordinary
@@ -513,8 +512,8 @@ struct NodePrecompute {
 
 /// The executor scratch for one plan shape: per-execution cursor state and
 /// per-node buffers, sized once at construction. It does not borrow the
-/// plan — the same `&ValidatedPlan` is passed to [`Executor::execute`]
-/// (the prepared query owns both, the 40-execution doc).
+/// plan: the prepared query owns both and passes the same `&ValidatedPlan` to
+/// [`Executor::execute`].
 pub(crate) struct Executor {
     batch: usize,
 
@@ -567,7 +566,7 @@ enum Poison {
     /// Cancellation at a cooperative poll, or allocation failure during
     /// COLT growth. Surfaced as the typed work error by [`Executor::execute`].
     Work(crate::work::WorkError),
-    /// Sink Stop/Error — later probes must not run (D10).
+    /// Sink Stop or Error: later probes must not run.
     SinkStop,
     SinkError,
 }
