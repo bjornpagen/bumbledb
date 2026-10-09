@@ -18,7 +18,7 @@ use super::{BoundView, Const, FilterPredicate, View};
 /// # Panics
 /// If an image exceeds the u32 position space. Image admission enforces
 /// that bound independently of the database's mapped size.
-pub fn apply(
+pub(crate) fn apply(
     image: &Arc<RelationImage>,
     predicates: &[FilterPredicate],
     params: &[Const],

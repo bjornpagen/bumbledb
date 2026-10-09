@@ -4,7 +4,7 @@ use super::{HINT_CAP, LOAD_DEN, WINDOW, WordMap};
 
 impl<V: Copy> WordMap<V> {
     #[must_use]
-    pub fn new(arity: usize) -> Self {
+    pub(crate) fn new(arity: usize) -> Self {
         Self {
             arity,
             ctrl: Vec::new(),
@@ -21,7 +21,7 @@ impl<V: Copy> WordMap<V> {
     /// # Panics
     /// If the hinted backing's key-word count cannot be represented.
     #[must_use]
-    pub fn with_capacity_hint(arity: usize, hint: usize) -> Self {
+    pub(crate) fn with_capacity_hint(arity: usize, hint: usize) -> Self {
         let mut map = Self::new(arity);
         let capacity = (hint.clamp(2, HINT_CAP) * LOAD_DEN).next_power_of_two();
         map.allocate(capacity);

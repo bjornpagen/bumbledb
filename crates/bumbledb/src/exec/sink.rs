@@ -13,13 +13,13 @@ mod tests;
 /// A fold aggregate's operator, execution-side: exactly the ops that fold
 /// over a slot into an [`Acc`]. Nullary [`AggSpec::Count`] is a sibling
 /// arm, not a `FoldOp`.
-pub use crate::ir::FoldOp;
+pub(crate) use crate::ir::FoldOp;
 
 /// Nullary Count vs a fold over a slot. Trusted layer: Count cannot
 /// carry a slot and folds cannot omit one. Hostile Count-with-variable
 /// is unrepresentable on [`crate::ir::FindTerm`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AggSpec {
+pub(crate) enum AggSpec {
     Count,
     /// F64 argument: Sum/Mean exact, Min/Max over order keys with NaN propagating.
     Float {
@@ -67,7 +67,7 @@ impl AggSpec {
 /// aggregate. Widths come from the plan's
 /// binding-slot layout (`ValidatedPlan::slots`) — never assumed 1.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FindSpec {
+pub(crate) enum FindSpec {
     Var { slot: usize, width: usize },
     Compute(std::sync::Arc<crate::api::prepared::computed::OutputProgram>),
     Agg(AggSpec),
@@ -529,7 +529,7 @@ fn extend_sources(finds: &[SinkSpec], out: &mut Vec<usize>) {
 /// staleness (`SkipSuffix`) so the executor can unwind suffixes that bind
 /// nothing projection-relevant (D2 — legal for this sink only).
 #[derive(Debug)]
-pub struct ProjectionSink {
+pub(crate) struct ProjectionSink {
     finds: Vec<SinkSpec>,
     sources: Vec<usize>,
     seen: SeenSet,
@@ -641,7 +641,7 @@ pub(in crate::exec::sink) enum GroupState {
     clippy::struct_excessive_bools,
     reason = "Independent aggregate capabilities and terminal flags are not mutually exclusive states"
 )]
-pub struct AggregateSink {
+pub(crate) struct AggregateSink {
     dedup: DedupState,
     physical_distinct: Option<crate::plan::fj::ScalarSetTraversal>,
     finds: Vec<SinkSpec>,

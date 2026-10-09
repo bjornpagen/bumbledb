@@ -9,7 +9,7 @@ use crate::image::RelationImage;
 mod apply;
 mod eval;
 
-pub use apply::apply;
+pub(crate) use apply::apply;
 pub(crate) use eval::{
     DENSE_NEG_INF_KEY, Loaded, OperandAddr, Operands, dense_probe_word, element_probe_word, holds,
     is_prepare_resolvable, render_filter, resolve_filter_into,
@@ -27,7 +27,7 @@ mod positions;
 /// template retains its bytes so rotation can resolve it again. Interning
 /// an unstored text still produces an exact word that matches no row.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Const {
+pub(crate) enum Const {
     Word(u64),
     Text(super::intern::InternedText),
     Byte(u8),
@@ -120,7 +120,7 @@ impl ResolvedWords {
 /// Plan/exec membership probes keep [`ResolvedWordSource::Var`] on the
 /// shared enum; a view-level [`FilterPredicate::PointIn`] cannot spell it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ViewWordSource {
+pub(crate) enum ViewWordSource {
     Word(u64),
     Param(crate::ir::ParamId),
 }
@@ -128,7 +128,7 @@ pub enum ViewWordSource {
 /// [`FilterPredicate::AnyPointIn`]'s set: a bind-time param-set marker or
 /// its resolved word list. The param slice still holds [`Const::WordSet`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SetConst {
+pub(crate) enum SetConst {
     ParamSet(crate::ir::ParamId),
     WordSet(Vec<u64>),
 }
@@ -137,7 +137,7 @@ pub enum SetConst {
 /// constant side: an interval literal or a bind-time param. The param
 /// slice still holds [`Const::Interval`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IntervalConst {
+pub(crate) enum IntervalConst {
     Interval { start: u64, end: u64 },
     Param(crate::ir::ParamId),
 }
@@ -154,7 +154,7 @@ pub enum IntervalConst {
     dead_code,
     reason = "plan/exec membership probes keep Var; view filters use ViewWordSource"
 )]
-pub enum ResolvedWordSource {
+pub(crate) enum ResolvedWordSource {
     Word(u64),
     Param(crate::ir::ParamId),
     Var(crate::ir::VarId),
@@ -164,7 +164,7 @@ pub enum ResolvedWordSource {
 /// with the mirrored form pre-encoded (`Allen(a, b, m) ≡ Allen(b, a,
 /// converse(m))`, `crate::allen`). A comparison written constant-first
 /// lowers with the field kept on the left and the mask already conversed.
-pub type MaskConst = bumbledb_theory::allen::AllenMask;
+pub(crate) type MaskConst = bumbledb_theory::allen::AllenMask;
 
 /// One lowered per-atom filter (produced by the 20-query-ir doc's normalization).
 /// The membership kinds are **fixed word-comparison compositions** over
@@ -174,7 +174,7 @@ pub type MaskConst = bumbledb_theory::allen::AllenMask;
 /// the refine path). No expression tree exists: shapes as kinds is
 /// the representation-over-control-flow answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FilterPredicate {
+pub(crate) enum FilterPredicate {
     Compare {
         field: OperandAddr,
         op: crate::ir::WordCmp,
@@ -251,7 +251,7 @@ impl FilterPredicate {
 /// A view bound to a generation: every position, or the filter's survivors.
 /// Prepare stores [`View::Unbound`]; the executor holds this after bind.
 #[derive(Debug)]
-pub enum BoundView {
+pub(crate) enum BoundView {
     All(Arc<RelationImage>),
 
     Survivors {
@@ -262,14 +262,14 @@ pub enum BoundView {
 
 impl BoundView {
     #[must_use]
-    pub fn image(&self) -> &Arc<RelationImage> {
+    pub(crate) fn image(&self) -> &Arc<RelationImage> {
         match self {
             Self::All(image) | Self::Survivors { image, .. } => image,
         }
     }
 
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             Self::All(image) => image.row_count(),
             Self::Survivors { positions, .. } => positions.len(),
@@ -279,7 +279,7 @@ impl BoundView {
     /// # Panics
     /// On a programmer-invariant violation: `idx` out of the view's range.
     #[must_use]
-    pub fn position_at(&self, idx: usize) -> u32 {
+    pub(crate) fn position_at(&self, idx: usize) -> u32 {
         match self {
             Self::All(_) => u32::try_from(idx).expect("positions fit u32"),
             Self::Survivors { positions, .. } => positions[idx],
@@ -292,7 +292,7 @@ impl BoundView {
 /// — carrying *nothing*, so prepare pins no image), or a [`BoundView`].
 /// A three-variant representation, not a sentinel vector.
 #[derive(Debug)]
-pub enum View {
+pub(crate) enum View {
     Unbound,
 
     Bound(BoundView),
@@ -300,7 +300,7 @@ pub enum View {
 
 impl View {
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             Self::Unbound => 0,
             Self::Bound(bound) => bound.len(),
@@ -308,12 +308,12 @@ impl View {
     }
 
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     #[must_use]
-    pub fn bound(&self) -> Option<&BoundView> {
+    pub(crate) fn bound(&self) -> Option<&BoundView> {
         match self {
             Self::Unbound => None,
             Self::Bound(bound) => Some(bound),
@@ -321,7 +321,7 @@ impl View {
     }
 
     #[must_use]
-    pub fn clone_in(&self, mut buffer: Vec<u32>) -> Self {
+    pub(crate) fn clone_in(&self, mut buffer: Vec<u32>) -> Self {
         buffer.clear();
         match self {
             Self::Unbound => Self::Unbound,
@@ -337,7 +337,7 @@ impl View {
     }
 
     #[must_use]
-    pub fn recycle(self) -> Vec<u32> {
+    pub(crate) fn recycle(self) -> Vec<u32> {
         match self {
             Self::Unbound | Self::Bound(BoundView::All(_)) => Vec::new(),
             Self::Bound(BoundView::Survivors { positions, .. }) => positions,

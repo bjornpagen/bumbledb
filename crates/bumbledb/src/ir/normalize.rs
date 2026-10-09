@@ -20,19 +20,20 @@ mod lower_literal;
 mod normalize;
 mod place_comparisons;
 
-pub use dnf::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
+pub use dnf::{LoweredRule, distribute};
+pub(crate) use dnf::{collapse, disjunct_count, nesting_depth};
 #[cfg(test)]
-pub use fold::with_fold_disabled;
+pub(crate) use fold::with_fold_disabled;
 pub(crate) use fold::{decoded_interval, render_const, render_scalar};
 pub(crate) use lower_literal::{fixed_bytes_word_buf, lower_literal};
-pub use normalize::normalize_rules;
+pub(crate) use normalize::normalize_rules;
 
 /// Dense atom-occurrence id. Everything downstream (plan validity, trie
 /// schemas) quantifies over occurrences, never relation names — self-joins
 /// are ordinary. Positive occurrences are numbered first, negated after
 /// (the same order validation diagnostics use).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct OccId(pub u16);
+pub(crate) struct OccId(pub u16);
 
 /// An occurrence's planning state — one sum, deliberately: a polarity
 /// flag plus an `eliminated: Option<StatementId>` would admit
@@ -43,7 +44,7 @@ pub struct OccId(pub u16);
 /// - `Positive`: joins the plan — the only role
 ///   [`Role::participates`] admits.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Role {
+pub(crate) enum Role {
     Positive,
     Negated,
     Eliminated(StatementId),
@@ -54,7 +55,7 @@ pub enum Role {
 /// σ-survivors (n ≤ 256) and the stored relation the fold ran against.
 /// Not `Copy` — the parsed id list is the diagnostic source of truth.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FoldedMark {
+pub(crate) enum FoldedMark {
     Positive {
         relation: RelationId,
         survivors: Box<[u64]>,
@@ -70,7 +71,7 @@ pub enum FoldedMark {
 /// rec-arm stamp on the derived arms. EDB-with-a-derived-role and
 /// Interior-with-no-role are unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OccBind {
+pub(crate) enum OccBind {
     Edb(RelationId),
     Finished(crate::ir::InteriorId),
     RecDelta(crate::ir::InteriorId),
@@ -78,7 +79,7 @@ pub enum OccBind {
 
 impl OccBind {
     #[must_use]
-    pub const fn source(self) -> crate::ir::AtomSource {
+    pub(crate) const fn source(self) -> crate::ir::AtomSource {
         match self {
             Self::Edb(relation) => crate::ir::AtomSource::Edb(relation),
             Self::Finished(id) | Self::RecDelta(id) => crate::ir::AtomSource::Interior(id),
@@ -86,7 +87,7 @@ impl OccBind {
     }
 
     #[must_use]
-    pub const fn edb(self) -> Option<RelationId> {
+    pub(crate) const fn edb(self) -> Option<RelationId> {
         match self {
             Self::Edb(relation) => Some(relation),
             Self::Finished(_) | Self::RecDelta(_) => None,
@@ -94,7 +95,7 @@ impl OccBind {
     }
 
     #[must_use]
-    pub const fn interior(self) -> Option<crate::ir::InteriorId> {
+    pub(crate) const fn interior(self) -> Option<crate::ir::InteriorId> {
         match self {
             Self::Edb(_) => None,
             Self::Finished(id) | Self::RecDelta(id) => Some(id),
@@ -102,19 +103,19 @@ impl OccBind {
     }
 
     #[must_use]
-    pub const fn of_occurrence(occurrence: &Occurrence) -> Self {
+    pub(crate) const fn of_occurrence(occurrence: &Occurrence) -> Self {
         occurrence.bind
     }
 }
 
 impl Role {
     #[must_use]
-    pub fn participates(&self) -> bool {
+    pub(crate) fn participates(&self) -> bool {
         matches!(self, Self::Positive)
     }
 
     #[must_use]
-    pub fn discharged(&self) -> bool {
+    pub(crate) fn discharged(&self) -> bool {
         matches!(self, Self::Eliminated(_) | Self::Folded(_))
     }
 }
@@ -124,7 +125,7 @@ impl Role {
 /// are the anti-probe's key fields and `filters` are its own filter list,
 /// evaluated inside the probe.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Occurrence {
+pub(crate) struct Occurrence {
     pub occ_id: OccId,
     pub role: Role,
 
@@ -143,7 +144,7 @@ pub struct Occurrence {
 
 impl Occurrence {
     #[must_use]
-    pub const fn source(&self) -> crate::ir::AtomSource {
+    pub(crate) const fn source(&self) -> crate::ir::AtomSource {
         self.bind.source()
     }
 }
@@ -153,14 +154,14 @@ impl Occurrence {
 /// interval variable's start word; `End` is an interval variable's end
 /// word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IntervalWord {
+pub(crate) enum IntervalWord {
     Start,
     End,
 }
 
 impl IntervalWord {
     #[must_use]
-    pub fn offset(self) -> usize {
+    pub(crate) fn offset(self) -> usize {
         match self {
             Self::Start => 0,
             Self::End => 1,
@@ -176,7 +177,7 @@ impl IntervalWord {
 /// ([`Occurrence::filters`]) evaluated inside the probe — **rejects** the
 /// binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AntiProbe {
+pub(crate) struct AntiProbe {
     pub occurrence: OccId,
 
     pub probe_bindings: Vec<(FieldId, VarId)>,
@@ -191,15 +192,15 @@ pub struct AntiProbe {
 /// variable occupies one. Exported through
 /// [`NormalizedQuery::slot_widths`] into the plan witness's binding-slot
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SlotWidth(u8);
+pub(crate) struct SlotWidth(u8);
 
 impl SlotWidth {
-    pub const ONE: Self = Self(1);
+    pub(crate) const ONE: Self = Self(1);
 
-    pub const TWO: Self = Self(2);
+    pub(crate) const TWO: Self = Self(2);
 
     #[must_use]
-    pub fn of(value_type: &ValueType) -> Self {
+    pub(crate) fn of(value_type: &ValueType) -> Self {
         match value_type {
             // Intervals are two order words; `Uuid` is sixteen exact
             // identity bytes — two big-endian words, byte order = total
@@ -216,7 +217,7 @@ impl SlotWidth {
     }
 
     #[must_use]
-    pub fn slots(self) -> usize {
+    pub(crate) fn slots(self) -> usize {
         usize::from(self.0)
     }
 }
@@ -225,7 +226,7 @@ impl SlotWidth {
 /// list (word comparisons and anti-probes — exactly those; nothing
 /// single-occurrence survives to residuals).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NormalizedQuery {
+pub(crate) struct NormalizedQuery {
     pub occurrences: Vec<Occurrence>,
 
     pub residuals: Vec<FilterPredicate>,

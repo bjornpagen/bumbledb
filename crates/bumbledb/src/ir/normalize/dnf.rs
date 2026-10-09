@@ -33,7 +33,7 @@ pub struct LoweredRule {
 /// *recursive* tree walk ([`disjunct_count`], [`distribute`], the
 /// renderer) runs only after validation judged this bound.
 #[must_use]
-pub fn nesting_depth(trees: &[ConditionTree]) -> usize {
+pub(crate) fn nesting_depth(trees: &[ConditionTree]) -> usize {
     let mut work: Vec<(&ConditionTree, usize)> = trees.iter().map(|tree| (tree, 1)).collect();
     let mut max = 0;
     while let Some((tree, depth)) = work.pop() {
@@ -53,7 +53,7 @@ pub fn nesting_depth(trees: &[ConditionTree]) -> usize {
 /// Saturating: a count past `usize::MAX` is still "past the cap".
 /// exponential case is rejected before a single disjunct is built.
 #[must_use]
-pub fn disjunct_count(rule: &Rule) -> usize {
+pub(crate) fn disjunct_count(rule: &Rule) -> usize {
     conjunction_count(&rule.conditions)
 }
 
@@ -121,7 +121,7 @@ fn tree_terms(tree: &ConditionTree) -> Vec<Vec<Comparison>> {
 /// and set-equal conditions. Condition order and multiplicity do not change
 /// answers. Keep the first occurrence to preserve diagnostic ordering.
 #[must_use]
-pub fn collapse(rules: Vec<LoweredRule>) -> Vec<LoweredRule> {
+pub(crate) fn collapse(rules: Vec<LoweredRule>) -> Vec<LoweredRule> {
     let mut kept: Vec<LoweredRule> = Vec::with_capacity(rules.len());
     for rule in rules {
         if let Some(earlier) = kept

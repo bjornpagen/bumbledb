@@ -51,7 +51,11 @@ impl<V: Copy> WordMap<V> {
     /// # Panics
     /// If `key.len() != arity`, capacity is exhausted, or `make` panics.
     #[inline(always)]
-    pub fn get_or_insert_with(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
+    pub(crate) fn get_or_insert_with(
+        &mut self,
+        key: &[u64],
+        make: impl FnOnce() -> V,
+    ) -> (&mut V, bool) {
         assert_eq!(key.len(), self.arity);
 
         match self.arity {
@@ -166,7 +170,7 @@ impl<V: Copy> WordMap<V> {
     }
 
     #[inline(always)]
-    pub fn insert(&mut self, key: &[u64]) -> bool
+    pub(crate) fn insert(&mut self, key: &[u64]) -> bool
     where
         V: Default,
     {

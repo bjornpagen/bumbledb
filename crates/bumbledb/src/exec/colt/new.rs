@@ -6,7 +6,11 @@ impl Colt {
     }
 
     #[must_use]
-    pub fn new(view: View, selections: &[SelectionLevel], join_schema: Vec<Vec<usize>>) -> Self {
+    pub(crate) fn new(
+        view: View,
+        selections: &[SelectionLevel],
+        join_schema: Vec<Vec<usize>>,
+    ) -> Self {
         let schema_columns: Vec<Vec<usize>> = selections
             .iter()
             .map(|level| level.columns().to_vec())
@@ -36,7 +40,7 @@ impl Colt {
     }
 
     #[must_use]
-    pub fn unbound_sibling(&self) -> Self {
+    pub(crate) fn unbound_sibling(&self) -> Self {
         Self {
             view: View::Unbound,
             selection_kinds: self.selection_kinds.clone(),
@@ -67,7 +71,7 @@ impl Colt {
         std::mem::swap(&mut self.work, &mut other.work);
     }
 
-    pub fn reset(&mut self, view: View) -> View {
+    pub(crate) fn reset(&mut self, view: View) -> View {
         let old = std::mem::replace(&mut self.view, view);
         self.nodes.clear();
         self.nodes.push(NodeState::Unforced(Positions::Root));

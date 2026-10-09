@@ -12,7 +12,7 @@ use crate::plan::fj::ValidatedPlan;
 /// sink). `Stop` is cancellation/allocation/scratch refusal; `Error` is cardinality
 /// or corruption. Every executor path propagates terminal replies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Flow {
+pub(crate) enum Flow {
     Continue,
     SkipSuffix,
     Stop,
@@ -22,7 +22,7 @@ pub enum Flow {
 impl Flow {
     /// Work/scratch refusal or a recorded sink error — later probes must not run.
     #[must_use]
-    pub const fn is_terminal(self) -> bool {
+    pub(crate) const fn is_terminal(self) -> bool {
         matches!(self, Self::Stop | Self::Error)
     }
 
@@ -48,7 +48,7 @@ impl Flow {
 /// keys (slots in `key_slots`, varying per entry) or from `bindings`
 /// (everything else — bound by ancestor nodes, constant across the
 /// batch).
-pub struct LeafBatch<'a> {
+pub(crate) struct LeafBatch<'a> {
     pub keys: &'a [u64],
     pub arity: usize,
 
@@ -61,7 +61,7 @@ pub struct LeafBatch<'a> {
 
 /// Where a leaf-batch output slot's value comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LeafSource {
+pub(crate) enum LeafSource {
     Key(usize),
 
     Outer,
@@ -69,7 +69,7 @@ pub enum LeafSource {
 
 impl LeafBatch<'_> {
     #[must_use]
-    pub fn source_of(&self, slot: usize) -> LeafSource {
+    pub(crate) fn source_of(&self, slot: usize) -> LeafSource {
         self.key_slots
             .iter()
             .position(|s| *s == slot)
@@ -77,7 +77,7 @@ impl LeafBatch<'_> {
     }
 
     #[must_use]
-    pub fn key(&self, entry: u32, word: usize) -> u64 {
+    pub(crate) fn key(&self, entry: u32, word: usize) -> u64 {
         self.keys[entry as usize * self.arity + word]
     }
 }
@@ -85,7 +85,7 @@ impl LeafBatch<'_> {
 /// A fused leaf scan: no intermediate key batch is materialized.
 /// The sink reads leaf words through
 /// [`Colt::suffix_column`] and outer slots through `bindings`.
-pub struct LeafScan<'a> {
+pub(crate) struct LeafScan<'a> {
     pub colt: &'a Colt,
 
     pub level: usize,
@@ -96,7 +96,7 @@ pub struct LeafScan<'a> {
 
 /// Consumes complete bindings (D3: the executor emits to a sink, never an
 /// `output`).
-pub trait Sink {
+pub(crate) trait Sink {
     /// Whether this sink can consume a witnessed physical set traversal.
     /// Static dispatch erases the extra traversal machinery for ordinary
     /// projection/computed sinks. The executor still requires the plan's
@@ -155,7 +155,7 @@ pub trait Sink {
 
 /// Whether [`Sink::begin_scan`] opened a fused scan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScanOffer {
+pub(crate) enum ScanOffer {
     Declined,
     Open,
 }
@@ -177,7 +177,7 @@ fn emit_node_batch<S: Sink>(
 /// mint `Licensed`; aggregate sinks inherit the forbidden default because
 /// existential variables still multiply their fold domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SkipCapability {
+pub(crate) enum SkipCapability {
     Forbidden,
     Licensed,
 }
@@ -185,7 +185,7 @@ pub enum SkipCapability {
 /// Structural test observer. Production instantiates [`NoopCounters`], a
 /// zero-sized type whose callbacks compile away. Tests count work and assert
 /// batch ordering without timing or recording a profile.
-pub trait Counters {
+pub(crate) trait Counters {
     fn node_entry(&mut self, node: usize);
 
     fn batch(&mut self, node: usize, len: usize);
@@ -209,13 +209,13 @@ pub trait Counters {
 
 /// The release-path counters: every method compiles to nothing.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct NoopCounters;
+pub(crate) struct NoopCounters;
 
 /// Dense slot-indexed binding array with an epoch discipline instead of
 /// `Option` (branch-light: stale slots are never read — reads are
 /// plan-scoped — the epoch exists for debug assertions).
 #[derive(Debug)]
-pub struct Bindings {
+pub(crate) struct Bindings {
     slots: Vec<u64>,
 
     #[cfg(debug_assertions)]
@@ -227,7 +227,7 @@ pub struct Bindings {
 /// Default probe batch: enough independent work to overlap memory loads
 /// while amortizing per-batch bookkeeping. A tuning parameter, not a
 /// hardware constant; batch size one follows the same execution path.
-pub const BATCH: usize = 128;
+pub(crate) const BATCH: usize = 128;
 
 #[derive(Debug, Clone, Copy)]
 enum Source {
@@ -515,7 +515,7 @@ struct NodePrecompute {
 /// per-node buffers, sized once at construction. It does not borrow the
 /// plan — the same `&ValidatedPlan` is passed to [`Executor::execute`]
 /// (the prepared query owns both, the 40-execution doc).
-pub struct Executor {
+pub(crate) struct Executor {
     batch: usize,
 
     physical_distinct: Option<crate::plan::fj::ScalarSetTraversal>,

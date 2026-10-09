@@ -194,14 +194,14 @@ impl SourceLayout {
 
 impl Executor {
     #[must_use]
-    pub fn new(plan: &ValidatedPlan) -> Self {
+    pub(crate) fn new(plan: &ValidatedPlan) -> Self {
         Self::with_batch_size(plan, BATCH)
     }
 
     /// # Panics
     /// Only on a programmer-invariant violation: a zero batch size.
     #[must_use]
-    pub fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
+    pub(crate) fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
         assert!(
             batch > 0,
             "a batch has at least one element (set_batch_size is the caller-facing knob)"
@@ -388,7 +388,7 @@ impl Executor {
     /// # Panics
     /// Only on programmer-invariant violations: the source roster and buffer
     /// layout must match the validated plan used at construction.
-    pub fn execute<S: Sink, C: Counters>(
+    pub(crate) fn execute<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
         colts: &mut [Colt],

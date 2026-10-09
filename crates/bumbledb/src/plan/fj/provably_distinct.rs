@@ -43,7 +43,7 @@ use std::collections::BTreeSet;
 /// do not apply (a sound extension for fully-bound sealed interiors would need
 /// the interior arity threaded in — not required by any consumer today).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DistinctWitness(());
+pub(crate) struct DistinctWitness(());
 
 /// A plain output tuple determines every participating stored fact, not
 /// merely the complete binding. Valid only for this exact rule/head under

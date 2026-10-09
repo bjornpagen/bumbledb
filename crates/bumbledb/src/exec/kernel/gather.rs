@@ -13,7 +13,12 @@ use fearless_simd::{Level, Simd, SimdBase, SimdMask, dispatch, i64x4, u64x4};
 /// # Panics
 /// If any index addresses past `values`.
 #[must_use]
-pub fn fold_sum_u64_idx(values: &[u64], stride: usize, offset: usize, indices: &[u32]) -> u128 {
+pub(crate) fn fold_sum_u64_idx(
+    values: &[u64],
+    stride: usize,
+    offset: usize,
+    indices: &[u32],
+) -> u128 {
     sum_u64_idx(super::level(), values, stride, offset, indices)
 }
 
@@ -24,7 +29,7 @@ pub fn fold_sum_u64_idx(values: &[u64], stride: usize, offset: usize, indices: &
 /// # Panics
 /// If `indices` is empty or any index addresses past `values`.
 #[must_use]
-pub fn fold_min_max_u64_idx(
+pub(crate) fn fold_min_max_u64_idx(
     values: &[u64],
     stride: usize,
     offset: usize,

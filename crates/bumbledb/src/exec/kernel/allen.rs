@@ -81,7 +81,7 @@ const HASHED_CODES: u64 = {
 ///
 /// # Panics
 /// If the four endpoint streams differ in length.
-pub fn allen_code_batch(
+pub(crate) fn allen_code_batch(
     a_starts: &[u64],
     a_ends: &[u64],
     b_starts: &[u64],
@@ -95,7 +95,7 @@ pub fn allen_code_batch(
 ///
 /// # Panics
 /// If the two endpoint streams differ in length.
-pub fn allen_code_batch_const(
+pub(crate) fn allen_code_batch_const(
     a_starts: &[u64],
     a_ends: &[u64],
     b_start: u64,
@@ -107,7 +107,7 @@ pub fn allen_code_batch_const(
 
 /// `keep[i] = 1` iff `mask` holds `codes[i]`; `keep` is resized like `codes`
 /// in [`allen_code_batch`].
-pub fn allen_filter_batch(codes: &[u8], mask: AllenMask, keep: &mut Vec<u8>) {
+pub(crate) fn allen_filter_batch(codes: &[u8], mask: AllenMask, keep: &mut Vec<u8>) {
     filter_batch(super::level(), codes, mask, keep);
 }
 
@@ -116,7 +116,7 @@ pub fn allen_filter_batch(codes: &[u8], mask: AllenMask, keep: &mut Vec<u8>) {
 ///
 /// # Panics
 /// If the four endpoint columns differ in length.
-pub fn allen_filter_columns(
+pub(crate) fn allen_filter_columns(
     a_starts: &[u64],
     a_ends: &[u64],
     b_starts: &[u64],
@@ -139,7 +139,7 @@ pub fn allen_filter_columns(
 ///
 /// # Panics
 /// If the two endpoint columns differ in length.
-pub fn allen_filter_columns_const(
+pub(crate) fn allen_filter_columns_const(
     starts: &[u64],
     ends: &[u64],
     b_start: u64,

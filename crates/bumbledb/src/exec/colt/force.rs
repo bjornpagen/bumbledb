@@ -137,7 +137,7 @@ impl Colt {
     /// # Errors
     /// Returns the work refusal that stopped force or growth. Callers must
     /// propagate it before reading maps or chunks.
-    pub fn force_root(&mut self) -> Result<(), WorkError> {
+    pub(crate) fn force_root(&mut self) -> Result<(), WorkError> {
         if self.schema_columns.is_empty() {
             return Ok(());
         }
@@ -145,7 +145,7 @@ impl Colt {
     }
 
     #[must_use]
-    pub fn same_shape(&self, other: &Colt) -> bool {
+    pub(crate) fn same_shape(&self, other: &Colt) -> bool {
         self.selection_kinds == other.selection_kinds && self.schema_columns == other.schema_columns
     }
 
@@ -153,7 +153,7 @@ impl Colt {
     ///
     /// # Errors
     /// Returns cancellation or a fallible pool-allocation error.
-    pub fn clone_bound_from(
+    pub(crate) fn clone_bound_from(
         &mut self,
         other: &Colt,
         mut buffer: Vec<u32>,

@@ -1,7 +1,7 @@
 use super::WordMap;
 
 impl<V: Copy> WordMap<V> {
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.stale += self.len;
         self.dense.clear();
         self.len = 0;
@@ -17,7 +17,7 @@ impl<V: Copy> WordMap<V> {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&[u64], &V)> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&[u64], &V)> {
         self.iter_since(0)
     }
 
@@ -25,7 +25,7 @@ impl<V: Copy> WordMap<V> {
         unsafe_code,
         reason = "the dense list contains only initialized live values"
     )]
-    pub fn iter_since(&self, since: usize) -> impl Iterator<Item = (&[u64], &V)> + Clone {
+    pub(crate) fn iter_since(&self, since: usize) -> impl Iterator<Item = (&[u64], &V)> + Clone {
         self.dense[since.min(self.dense.len())..]
             .iter()
             .map(move |&idx| {

@@ -26,7 +26,7 @@ mod tests;
 /// the validated expression, and its inputs — per referenced variable,
 /// the binding slot it reads and the type its word decodes as.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OutputProgram {
+pub(crate) struct OutputProgram {
     pub(crate) find: usize,
     pub(crate) expression: FindTerm,
     pub(crate) inputs: Vec<(VarId, usize, ValueType)>,

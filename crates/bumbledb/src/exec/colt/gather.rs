@@ -9,7 +9,11 @@ impl Colt {
         reason = "measured kernel inlining is machine-checked and load-bearing"
     )]
     #[inline(always)]
-    pub fn any_position_matches(&self, cursor: Cursor, checks: &[(usize, usize, u64)]) -> bool {
+    pub(crate) fn any_position_matches(
+        &self,
+        cursor: Cursor,
+        checks: &[(usize, usize, u64)],
+    ) -> bool {
         let check = |position: u32| {
             checks.iter().all(|(start_col, end_col, point)| {
                 self.word_at(*start_col, position) <= *point
@@ -59,7 +63,7 @@ impl Colt {
     }
 
     /// Gather encoded interval endpoints at the given image positions.
-    pub fn gather_interval_pair(
+    pub(crate) fn gather_interval_pair(
         &self,
         start_col: usize,
         end_col: usize,
@@ -89,7 +93,7 @@ impl Colt {
     /// # Panics
     /// If `out` is shorter than the level's column list or the position is
     /// outside the bound image.
-    pub fn gather_row(&self, level: usize, position: u32, out: &mut [u64]) {
+    pub(crate) fn gather_row(&self, level: usize, position: u32, out: &mut [u64]) {
         let level = self.join_index(level);
         for (i, col) in self.schema_columns[level].iter().enumerate() {
             out[i] = match self.bound_view().image().column(*col) {
@@ -100,14 +104,14 @@ impl Colt {
     }
 
     #[must_use]
-    pub fn suffix_column(&self, level: usize, word: usize) -> ColumnView<'_> {
+    pub(crate) fn suffix_column(&self, level: usize, word: usize) -> ColumnView<'_> {
         self.bound_view()
             .image()
             .column(self.schema_columns[self.join_index(level)][word])
     }
 
     #[must_use]
-    pub fn suffix_scannable(&self, cursor: Cursor) -> bool {
+    pub(crate) fn suffix_scannable(&self, cursor: Cursor) -> bool {
         matches!(
             cursor,
             Cursor::Node(node)
@@ -117,7 +121,7 @@ impl Colt {
 
     /// Continue(false) means the cursor is not an unforced suffix; Break
     /// carries the visitor's stop reason without visiting any later run.
-    pub fn for_each_suffix_run<B>(
+    pub(crate) fn for_each_suffix_run<B>(
         &self,
         cursor: Cursor,
         mut f: impl FnMut(SuffixRun<'_>) -> ControlFlow<B>,

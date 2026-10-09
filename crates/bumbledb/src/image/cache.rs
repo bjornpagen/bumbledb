@@ -113,7 +113,7 @@ impl VersionCache {
 /// The database-owned relation-image cache plus generation-owned
 /// text resolution. One instance per database; prepared programs hold
 /// `Arc<ImageCache>` handles to the same owner.
-pub struct ImageCache {
+pub(crate) struct ImageCache {
     slots: Box<[RelationSlot]>,
     protocol: GenerationProtocol,
     budget: Budget,
@@ -141,21 +141,21 @@ impl ImageCache {
     /// Acquire the current generation. Every token-bearing consumer holds
     /// this handle (directly or through its image) for the execution.
     #[must_use]
-    pub fn acquire(&self) -> GenerationHandle {
+    pub(crate) fn acquire(&self) -> GenerationHandle {
         self.protocol.acquire()
     }
 
     /// Weak/versioned current generation for idle prepared memo caches.
     #[must_use]
     #[cfg(test)]
-    pub fn weak_current(&self) -> WeakGenerationHandle {
+    pub(crate) fn weak_current(&self) -> WeakGenerationHandle {
         self.protocol.acquire().downgrade()
     }
 
     /// The current whole-cache generation identity.
     #[must_use]
     #[cfg(test)]
-    pub fn cache_generation(&self) -> CacheGeneration {
+    pub(crate) fn cache_generation(&self) -> CacheGeneration {
         self.protocol.identity()
     }
 
@@ -163,7 +163,7 @@ impl ImageCache {
     /// Live image / handle owners keep their resolver and slabs.
     /// The cache's previous current handle is dropped here so idle
     /// generations are not preserved forever.
-    pub fn clear(&self) {
+    pub(crate) fn clear(&self) {
         // Rotate first: a builder holding an old resolver cannot publish
         // after detachment. Publication checks the current owner while
         // holding its slot lock, which detachment must then acquire.

@@ -5,13 +5,13 @@ use crate::work::cache::GenerationProtocol;
 
 impl ImageCache {
     #[must_use]
-    pub fn new(schema: &Schema) -> Self {
+    pub(crate) fn new(schema: &Schema) -> Self {
         Self::with_byte_cap(schema, super::DEFAULT_IMAGE_CACHE_BYTES)
     }
 
     /// An empty cache that keeps at most `cap` bytes of ordinary image slabs.
     #[must_use]
-    pub fn with_byte_cap(schema: &Schema, cap: usize) -> Self {
+    pub(crate) fn with_byte_cap(schema: &Schema, cap: usize) -> Self {
         Self {
             slots: schema
                 .relations()

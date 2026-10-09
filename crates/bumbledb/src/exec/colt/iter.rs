@@ -23,7 +23,7 @@ impl Colt {
     /// # Errors
     /// Returns the force/growth refusal. Do not treat `Ok((0, token))` as
     /// admission failure.
-    pub fn iter_batch(
+    pub(crate) fn iter_batch(
         &mut self,
         cursor: Cursor,
         level: usize,

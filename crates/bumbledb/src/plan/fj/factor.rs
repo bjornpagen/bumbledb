@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 /// per node at the first non-hoistable lookup (preserving the probe order
 /// the cost-based order implies).
 /// before this node and the previous node lacks that occurrence, stopping
-pub fn factor(plan: &mut FjPlan) {
+pub(crate) fn factor(plan: &mut FjPlan) {
     for i in (1..plan.nodes.len()).rev() {
         let available: BTreeSet<VarId> = plan.nodes[..i]
             .iter()

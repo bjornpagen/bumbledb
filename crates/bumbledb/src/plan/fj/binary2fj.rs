@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 /// occurrence the normalized query lacks.
 /// Only on programmer-invariant violations: `order` referencing an
 #[must_use]
-pub fn binary2fj(normalized: &NormalizedQuery, order: &JoinOrder) -> FjPlan {
+pub(crate) fn binary2fj(normalized: &NormalizedQuery, order: &JoinOrder) -> FjPlan {
     let occurrence = |occ: OccId| {
         normalized
             .occurrences

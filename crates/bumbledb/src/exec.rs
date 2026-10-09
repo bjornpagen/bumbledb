@@ -1,10 +1,10 @@
 //! COLT, the executor, sinks, kernels, dispatch, and introspection.
-pub mod colt;
-pub mod dispatch;
-pub mod kernel;
-pub mod run;
-pub mod sink;
+pub(crate) mod colt;
+pub(crate) mod dispatch;
+pub(crate) mod kernel;
+pub(crate) mod run;
+pub(crate) mod sink;
 pub(crate) mod swar;
-pub mod wordmap;
+pub(crate) mod wordmap;
 
 pub(crate) const SCAN_HOIST_THRESHOLD: usize = 8;

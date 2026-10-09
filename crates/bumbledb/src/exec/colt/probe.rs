@@ -88,13 +88,13 @@ impl Probe<'_> {
 
 impl Colt {
     #[cfg(test)]
-    pub fn get(&mut self, cursor: Cursor, level: usize, key: &[u64]) -> Option<Cursor> {
+    pub(crate) fn get(&mut self, cursor: Cursor, level: usize, key: &[u64]) -> Option<Cursor> {
         self.get_prehashed(cursor, level, key, hash_words(key))
             .expect("test COLT has no refusing work ledger")
     }
 
     #[cfg(test)]
-    pub fn get_prehashed(
+    pub(crate) fn get_prehashed(
         &mut self,
         cursor: Cursor,
         level: usize,
@@ -152,7 +152,7 @@ impl Colt {
 
     /// # Errors
     /// Returns the force/growth refusal before the node is marked forced.
-    pub fn ensure_forced(
+    pub(crate) fn ensure_forced(
         &mut self,
         cursor: Cursor,
         level: usize,

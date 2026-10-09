@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 /// never has a choice). Acyclic plans carry no such subatom and pass
 /// through unchanged. The split mints no machinery: trie schemas derive
 /// from the split subatoms per §3.3, the partition check admits one
-pub fn gj_split(plan: &mut FjPlan) {
+pub(crate) fn gj_split(plan: &mut FjPlan) {
     // First-bound node per variable. Invariant under the split: a
 
     let mut first_bound: BTreeMap<VarId, usize> = BTreeMap::new();

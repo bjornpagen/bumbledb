@@ -4,8 +4,8 @@
 //! an indexed bucket image is query-local and reused only with matching
 //! selections. Both feed the same Free Join machine. Immutable once built;
 //! `Arc` is the sharing unit, and the image pins its text generation.
-pub mod cache;
-pub mod view;
+pub(crate) mod cache;
+pub(crate) mod view;
 
 mod bind;
 mod build;
@@ -25,9 +25,9 @@ pub(crate) use bind::SourceImages;
 pub(crate) use build::build_from_source;
 pub(crate) use epoch::{CacheGeneration, ViewEpoch};
 
-pub use build::TransientImage;
+pub(crate) use build::TransientImage;
 pub(crate) use build::synthesize_closed;
-pub use text_eq::TextEq;
+pub(crate) use text_eq::TextEq;
 
 // M2 Max's measured stream-tracker pitch period. Small nonzero residues
 // near its multiples are the harmful band; exact multiples are allowed.
@@ -52,7 +52,7 @@ enum Column {
 /// interval two-column precedent, generalized) — and a `bytes<N ≤ 8>`
 /// field is ONE word column, exactly like every other 8-byte scalar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ColumnWidth {
+pub(crate) enum ColumnWidth {
     Byte,
 
     Word,
@@ -64,7 +64,7 @@ pub enum ColumnWidth {
 
 impl ColumnWidth {
     #[must_use]
-    pub const fn column_count(self) -> u16 {
+    pub(crate) const fn column_count(self) -> u16 {
         match self {
             Self::Byte | Self::Word => 1,
             Self::WordPair => 2,
@@ -78,7 +78,7 @@ impl ColumnWidth {
 /// filter evaluator here, the plan witness downstream) dispatch on spans,
 /// never on raw field indices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ColumnSpan {
+pub(crate) struct ColumnSpan {
     pub first_column: u16,
     pub width: ColumnWidth,
 }
@@ -89,7 +89,9 @@ pub struct ColumnSpan {
 /// field its `⌈N/8⌉` word columns (one plain word column for N ≤ 8),
 /// every other field one column of its width.
 #[must_use]
-pub fn column_spans(field_types: &[bumbledb_theory::schema::ValueType]) -> Box<[ColumnSpan]> {
+pub(crate) fn column_spans(
+    field_types: &[bumbledb_theory::schema::ValueType],
+) -> Box<[ColumnSpan]> {
     use bumbledb_theory::schema::ValueType;
     let mut next_column = 0u16;
     field_types
@@ -130,7 +132,7 @@ pub fn column_spans(field_types: &[bumbledb_theory::schema::ValueType]) -> Box<[
 
 /// A borrowed view of one column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ColumnView<'a> {
+pub(crate) enum ColumnView<'a> {
     Words(&'a [u64]),
     Bytes(&'a [u8]),
 }
@@ -139,7 +141,7 @@ pub enum ColumnView<'a> {
 /// generation. The shared allocation owns its slabs, generation handle,
 /// and canonical text. Eviction cannot invalidate a still-held image.
 #[derive(Debug)]
-pub struct RelationImage {
+pub(crate) struct RelationImage {
     row_count: usize,
 
     /// Exact scalar statistics, initialized only for columns the planner asks for.
@@ -236,13 +238,13 @@ impl RelationImage {
     }
 
     #[must_use]
-    pub fn generation(&self) -> &crate::work::GenerationHandle {
+    pub(crate) fn generation(&self) -> &crate::work::GenerationHandle {
         &self.generation
     }
 
     /// True when this field's column words are generation-scoped text tokens.
     #[must_use]
-    pub fn field_is_string(&self, field: bumbledb_theory::schema::FieldId) -> bool {
+    pub(crate) fn field_is_string(&self, field: bumbledb_theory::schema::FieldId) -> bool {
         self.strings
             .get(usize::from(field.0))
             .copied()
@@ -250,17 +252,17 @@ impl RelationImage {
     }
 
     #[must_use]
-    pub const fn row_count(&self) -> usize {
+    pub(crate) const fn row_count(&self) -> usize {
         self.row_count
     }
 
     #[must_use]
-    pub fn span(&self, field: bumbledb_theory::schema::FieldId) -> ColumnSpan {
+    pub(crate) fn span(&self, field: bumbledb_theory::schema::FieldId) -> ColumnSpan {
         self.spans[usize::from(field.0)]
     }
 
     #[must_use]
-    pub fn column(&self, column: usize) -> ColumnView<'_> {
+    pub(crate) fn column(&self, column: usize) -> ColumnView<'_> {
         match self.columns[column] {
             Column::Words { start } => {
                 ColumnView::Words(&self.words[start..start + self.row_count])
@@ -275,7 +277,7 @@ impl RelationImage {
     /// On a programmer-invariant violation: `column` is a 1-byte column
     #[cfg(test)]
     #[must_use]
-    pub fn column_words(&self, column: usize) -> &[u64] {
+    pub(crate) fn column_words(&self, column: usize) -> &[u64] {
         match self.column(column) {
             ColumnView::Words(words) => words,
             ColumnView::Bytes(_) => panic!("column {column} is a 1-byte column"),
@@ -286,7 +288,7 @@ impl RelationImage {
     /// On a programmer-invariant violation: `column` is an 8-byte column.
     #[cfg(test)]
     #[must_use]
-    pub fn column_bytes(&self, column: usize) -> &[u8] {
+    pub(crate) fn column_bytes(&self, column: usize) -> &[u8] {
         match self.column(column) {
             ColumnView::Bytes(bytes) => bytes,
             ColumnView::Words(_) => panic!("column {column} is an 8-byte column"),

@@ -12,7 +12,7 @@ const WINDOW: usize = 8;
 
 /// Fixed-arity word-tuple keys mapping to `V`. No tombstones (insert-only).
 #[derive(Debug)]
-pub struct WordMap<V> {
+pub(crate) struct WordMap<V> {
     arity: usize,
 
     ctrl: Vec<u8>,
@@ -63,7 +63,7 @@ impl<V: Copy> WordMap<V> {
     }
 
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.len
     }
 }

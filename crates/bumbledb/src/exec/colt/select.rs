@@ -7,7 +7,10 @@ use crate::work::WorkError;
 impl Colt {
     /// # Errors
     /// Returns the force/growth refusal. A selection miss is `Ok(None)`.
-    pub fn select(&mut self, keys: &[impl AsRef<[u64]>]) -> Result<Option<Cursor>, WorkError> {
+    pub(crate) fn select(
+        &mut self,
+        keys: &[impl AsRef<[u64]>],
+    ) -> Result<Option<Cursor>, WorkError> {
         debug_assert_eq!(
             keys.len(),
             self.selection_depth(),
@@ -217,7 +220,7 @@ impl Colt {
     /// # Panics
     /// `select()` would silently drop its selections — wrong results.
     #[must_use]
-    pub fn start(&self) -> Cursor {
+    pub(crate) fn start(&self) -> Cursor {
         match self.start {
             super::Start::Vacuous(cursor) | super::Start::Selected(cursor) => cursor,
             super::Start::Pending => panic!("select() runs before the join"),
@@ -225,7 +228,7 @@ impl Colt {
     }
 
     #[must_use]
-    pub fn root() -> Cursor {
+    pub(crate) fn root() -> Cursor {
         Cursor::Node(NodeRef(0))
     }
 }

@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 /// leaf's scan runs are group-constant and the aggregate sink's
 /// scan-fold pushdown can fire (`exec/sink/aggregate/sink.rs`
 /// `begin_scan` declines any group word among the scan's key slots;
-pub fn fold_split(plan: &mut FjPlan, group: &BTreeSet<VarId>) {
+pub(crate) fn fold_split(plan: &mut FjPlan, group: &BTreeSet<VarId>) {
     let mut i = 0;
     while i < plan.nodes.len() {
         let opening = &plan.nodes[i].subatoms[0];

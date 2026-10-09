@@ -4,7 +4,7 @@ use crate::image::ColumnView;
 impl Colt {
     #[cfg(test)]
     #[must_use]
-    pub fn arity(&self, level: usize) -> usize {
+    pub(crate) fn arity(&self, level: usize) -> usize {
         self.arity_at(self.join_index(level))
     }
 
@@ -14,7 +14,7 @@ impl Colt {
 
     #[cfg(test)]
     #[must_use]
-    pub fn forced_capacity(&self, cursor: Cursor) -> Option<usize> {
+    pub(crate) fn forced_capacity(&self, cursor: Cursor) -> Option<usize> {
         match cursor {
             Cursor::Row(_) => None,
             Cursor::Node(node) => match self.nodes[node.0 as usize] {
@@ -26,7 +26,7 @@ impl Colt {
 
     #[cfg(test)]
     #[must_use]
-    pub fn watermark(&self) -> usize {
+    pub(crate) fn watermark(&self) -> usize {
         self.nodes.len()
             + self.chunks.len()
             + self.chunk_positions.len()
@@ -37,7 +37,7 @@ impl Colt {
     }
 
     #[must_use]
-    pub fn key_count(&self, cursor: Cursor) -> KeyCount {
+    pub(crate) fn key_count(&self, cursor: Cursor) -> KeyCount {
         match cursor {
             Cursor::Row(_) => KeyCount::Estimate(1),
             Cursor::Node(node) => match self.nodes[node.0 as usize] {

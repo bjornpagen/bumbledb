@@ -13,7 +13,7 @@ use crate::schema::Schema;
 /// participating occurrence, or a query over the caps the validation
 /// boundary enforces.
 /// Only on programmer-invariant violations: `stats` missing a
-pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -> JoinOrder {
+pub(crate) fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -> JoinOrder {
     let participating: Vec<&Occurrence> = normalized
         .occurrences
         .iter()

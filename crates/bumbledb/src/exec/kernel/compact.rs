@@ -9,7 +9,7 @@ use fearless_simd::Level;
 ///
 /// # Panics
 /// If `mask` is shorter than `items`.
-pub fn compact_u32_by_mask(items: &mut Vec<u32>, mask: &[u8]) {
+pub(crate) fn compact_u32_by_mask(items: &mut Vec<u32>, mask: &[u8]) {
     compact(super::level(), items, mask);
 }
 

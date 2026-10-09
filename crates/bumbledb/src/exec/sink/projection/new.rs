@@ -21,7 +21,7 @@ impl ProjectionSink {
 
     #[cfg(test)]
     #[must_use]
-    pub fn new(slots: Vec<usize>) -> Self {
+    pub(crate) fn new(slots: Vec<usize>) -> Self {
         let slot_count = slots.iter().max().map_or(0, |slot| slot + 1);
         Self::with_capacity_hint_sources(slots, slot_count, 0)
     }
@@ -42,7 +42,7 @@ impl ProjectionSink {
     }
 
     #[must_use]
-    pub fn with_capacity_hint(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
+    pub(crate) fn with_capacity_hint(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
         let parsed = parse_finds(finds);
         let sources = sources_of(&parsed);
         let mut sink = Self::with_capacity_hint_sources(sources, slot_count, hint);
@@ -50,7 +50,7 @@ impl ProjectionSink {
         sink
     }
 
-    pub fn aim(&mut self, finds: &[FindSpec]) {
+    pub(crate) fn aim(&mut self, finds: &[FindSpec]) {
         self.scan_route.clear();
         self.batch_route.clear();
         parse_finds_into(finds, &mut self.finds);
@@ -63,7 +63,7 @@ impl ProjectionSink {
     }
 
     /// Answers in insertion order (the main sink's warm finalize fill).
-    pub fn answers(
+    pub(crate) fn answers(
         &self,
     ) -> ResidentRows<impl Iterator<Item = &[u64]> + Clone, impl Iterator<Item = &[u64]> + Clone>
     {
@@ -109,7 +109,7 @@ impl ProjectionSink {
     }
 
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.seen.len()
     }
 
@@ -118,11 +118,11 @@ impl ProjectionSink {
         dead_code,
         reason = "the companion API documents and preserves the type contract"
     )]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.seen.clear();
         self.scratch.resize(self.sources.len(), 0);
     }

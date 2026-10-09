@@ -284,7 +284,7 @@ pub(super) fn build_from_scan(
 /// retains its resolver generation and the text owners behind its tokens;
 /// only uniquely owned images can be refilled in place.
 #[derive(Debug, Default)]
-pub enum TransientImage {
+pub(crate) enum TransientImage {
     #[default]
     Empty,
     Occupied {
@@ -308,7 +308,7 @@ impl TransientImage {
         not(test),
         expect(dead_code, reason = "infallible test twin of `refill_drained`")
     )]
-    pub fn refill<'r>(
+    pub(crate) fn refill<'r>(
         &mut self,
         field_types: &[ValueType],
         row_count: usize,
@@ -339,7 +339,7 @@ impl TransientImage {
     /// The drain's failure, invalid text ownership, or allocation failure.
     /// # Panics
     /// As [`Self::refill`]: programmer-invariant violations only.
-    pub fn refill_drained(
+    pub(crate) fn refill_drained(
         &mut self,
         work: Option<&crate::work::WorkContext>,
         field_types: &[ValueType],

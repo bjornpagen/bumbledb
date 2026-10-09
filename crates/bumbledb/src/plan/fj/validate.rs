@@ -130,7 +130,7 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 /// Production rules route through [`validate_with_signatures`].
 /// Only on programmer-invariant violations (more than 256 subatoms in one
 #[cfg(test)]
-pub fn validate(
+pub(crate) fn validate(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
     schema: &Schema,
@@ -141,7 +141,7 @@ pub fn validate(
 
 /// # Errors
 /// # Panics
-pub fn validate_with_signatures(
+pub(crate) fn validate_with_signatures(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
     schema: &Schema,

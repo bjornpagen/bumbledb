@@ -5,12 +5,12 @@
 //! hand-tuned NEON specialization. Every kernel has a scalar twin in
 //! [`reference`] that the tests hold it bit-identical to at every level.
 mod allen;
-pub mod bench;
+pub(crate) mod bench;
 mod compact;
 mod filter;
 mod fold;
 mod gather;
-pub mod numeric;
+pub(crate) mod numeric;
 mod prefetch;
 pub mod reference;
 
@@ -25,17 +25,17 @@ use std::sync::OnceLock;
 
 use fearless_simd::Level;
 
-pub use allen::{
+pub(crate) use allen::{
     allen_code_batch, allen_code_batch_const, allen_filter_batch, allen_filter_columns,
     allen_filter_columns_const,
 };
-pub use compact::compact_u32_by_mask;
-pub use filter::{
+pub(crate) use compact::compact_u32_by_mask;
+pub(crate) use filter::{
     filter_any_point_in_u64, filter_eq_u8, filter_eq_u64, filter_point_in_u64, filter_range_u64,
 };
-pub use fold::{fold_min_max_u64, fold_sum_u64};
-pub use gather::{fold_min_max_u64_idx, fold_sum_u64_idx};
-pub use prefetch::prefetch_read;
+pub(crate) use fold::{fold_min_max_u64, fold_sum_u64};
+pub(crate) use gather::{fold_min_max_u64_idx, fold_sum_u64_idx};
+pub(crate) use prefetch::prefetch_read;
 
 /// The best SIMD level of this CPU, detected once per process. Miri
 /// interprets the scalar fallback level, which has no intrinsics.

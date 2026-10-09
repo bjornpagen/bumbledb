@@ -22,11 +22,11 @@ mod provably_distinct;
 mod split_filters;
 mod validate;
 
-pub use binary2fj::binary2fj;
+pub(crate) use binary2fj::binary2fj;
 pub(crate) use check_selections::check_selections;
-pub use factor::factor;
-pub use fold_split::fold_split;
-pub use gj_split::gj_split;
+pub(crate) use factor::factor;
+pub(crate) use fold_split::fold_split;
+pub(crate) use gj_split::gj_split;
 pub(crate) use provably_distinct::{
     DistinctWitness, Distinctness, ProjectionDistinctWitness, provably_distinct,
     provably_distinct_projection,
@@ -36,15 +36,15 @@ pub(crate) use crate::ir::normalize::OccBind;
 
 pub(crate) use split_filters::split_filters;
 #[cfg(test)]
-pub use validate::validate;
-pub use validate::validate_with_signatures;
+pub(crate) use validate::validate;
+pub(crate) use validate::validate_with_signatures;
 
 /// A subatom: one occurrence with a subset of its variables. The plan
 /// partitions every **positive** occurrence's variables across its
 /// subatoms; negated occurrences join no node — they are reached only
 /// through anti-probes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Subatom {
+pub(crate) struct Subatom {
     pub occ: OccId,
     pub vars: Vec<VarId>,
 }
@@ -53,7 +53,7 @@ pub struct Subatom {
 /// cover, probe the rest in order. `estimate` is the planner's per-step
 /// row count — copied through fold-split, sealed onto [`PlanNode`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Node {
+pub(crate) struct Node {
     pub subatoms: Vec<Subatom>,
     pub estimate: u64,
 }
@@ -61,7 +61,7 @@ pub struct Node {
 /// A Free Join plan: a list of nodes partitioning the query's positive
 /// occurrences.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FjPlan {
+pub(crate) struct FjPlan {
     pub nodes: Vec<Node>,
 }
 
@@ -69,7 +69,7 @@ pub struct FjPlan {
 /// valid by construction; this boundary exists because [`FjPlan`] is plain
 /// data anyone can construct.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PlanError {
+pub(crate) enum PlanError {
     /// A participating occurrence's subatoms do not partition its
     BrokenPartition {
         occ: OccId,
@@ -129,7 +129,7 @@ pub enum PlanError {
 /// the probe-not-scan half of an occurrence's conditions; `filters`
 /// keeps the scannable rest.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Selection {
+pub(crate) struct Selection {
     pub field: FieldId,
     pub value: Const,
 }
@@ -142,7 +142,7 @@ pub struct Selection {
 /// occurrence because the conjunction quantifies over one fact:
 /// `∃f (P₁(f) ∧ P₂(f))`, never `∃f P₁(f) ∧ ∃f P₂(f)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PointProbe {
+pub(crate) struct PointProbe {
     pub occ: OccId,
 
     /// `(interval field, point var, dense)` — as
@@ -156,7 +156,7 @@ pub struct PointProbe {
 /// grounding-eliminated occurrences appear nowhere at all and their view is
 /// never built (`plan/ground.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlanOccurrence {
+pub(crate) struct PlanOccurrence {
     pub occ_id: OccId,
 
     pub role: Role,
@@ -189,7 +189,7 @@ impl PlanOccurrence {
 
 /// One validated node.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlanNode {
+pub(crate) struct PlanNode {
     pub subatoms: Vec<Subatom>,
 
     pub covers: Vec<u8>,
@@ -219,7 +219,7 @@ pub struct PlanNode {
 /// aggregate validation supplies every variable as sink-relevant, so its
 /// plans contain only `Forbidden`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SuffixSkip {
+pub(crate) enum SuffixSkip {
     Forbidden,
     Licensed,
 }
@@ -227,7 +227,7 @@ pub enum SuffixSkip {
 /// The sealed plan witness execution trusts; validated once at
 /// construction, nothing downstream re-checks (post-mortem §38).
 #[derive(Debug)]
-pub struct ValidatedPlan {
+pub(crate) struct ValidatedPlan {
     occurrences: Vec<PlanOccurrence>,
     nodes: Vec<PlanNode>,
 
@@ -259,27 +259,27 @@ impl ValidatedPlan {
     }
 
     #[must_use]
-    pub fn occurrences(&self) -> &[PlanOccurrence] {
+    pub(crate) fn occurrences(&self) -> &[PlanOccurrence] {
         &self.occurrences
     }
 
     #[must_use]
-    pub fn nodes(&self) -> &[PlanNode] {
+    pub(crate) fn nodes(&self) -> &[PlanNode] {
         &self.nodes
     }
 
     #[must_use]
-    pub fn slots(&self) -> &[(VarId, SlotWidth)] {
+    pub(crate) fn slots(&self) -> &[(VarId, SlotWidth)] {
         &self.slots
     }
 
     #[must_use]
-    pub fn slot_count(&self) -> usize {
+    pub(crate) fn slot_count(&self) -> usize {
         self.slots.iter().map(|(_, width)| width.slots()).sum()
     }
 
     #[must_use]
-    pub fn is_negated(&self, occ: OccId) -> bool {
+    pub(crate) fn is_negated(&self, occ: OccId) -> bool {
         self.occurrences[usize::from(occ.0)].role == Role::Negated
     }
 
@@ -292,14 +292,14 @@ impl ValidatedPlan {
     }
 
     #[must_use]
-    pub fn estimates(&self) -> Vec<u64> {
+    pub(crate) fn estimates(&self) -> Vec<u64> {
         self.nodes.iter().map(|node| node.estimate).collect()
     }
 
     /// # Panics
     /// On a programmer-invariant violation: a variable outside the plan.
     #[must_use]
-    pub fn slot_of(&self, var: VarId) -> usize {
+    pub(crate) fn slot_of(&self, var: VarId) -> usize {
         let mut slot = 0;
         for (candidate, width) in &self.slots {
             if *candidate == var {
@@ -313,7 +313,7 @@ impl ValidatedPlan {
     /// # Panics
     /// On a programmer-invariant violation: a variable outside the plan.
     #[must_use]
-    pub fn width_of(&self, var: VarId) -> usize {
+    pub(crate) fn width_of(&self, var: VarId) -> usize {
         self.slots
             .iter()
             .find(|(candidate, _)| *candidate == var)
@@ -323,7 +323,7 @@ impl ValidatedPlan {
 
     /// (ruled 2026-07-23, R2). Total by construction: grounding may have
     #[must_use]
-    pub fn slot_spans(&self) -> Vec<(VarId, usize, usize)> {
+    pub(crate) fn slot_spans(&self) -> Vec<(VarId, usize, usize)> {
         let mut spans = Vec::with_capacity(self.slots.len());
         let mut slot = 0;
         for (var, width) in &self.slots {
@@ -338,7 +338,7 @@ impl ValidatedPlan {
     /// On a programmer-invariant violation: an occurrence outside the plan.
     #[cfg(test)]
     #[must_use]
-    pub fn occurrence(&self, occ: OccId) -> &PlanOccurrence {
+    pub(crate) fn occurrence(&self, occ: OccId) -> &PlanOccurrence {
         self.occurrences
             .iter()
             .find(|o| o.occ_id == occ)

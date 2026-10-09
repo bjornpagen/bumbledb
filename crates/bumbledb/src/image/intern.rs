@@ -34,7 +34,7 @@ pub(crate) struct TextInterner {
 /// A resident token together with its canonical text owner. The generation
 /// stamp belongs to the surrounding image or resolved query state.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InternedText {
+pub(crate) struct InternedText {
     pub(crate) word: u64,
     pub(crate) text: Arc<str>,
 }
@@ -184,7 +184,7 @@ impl<'a> InternerHandle<'a> {
     }
 
     /// Mint a token and pin its text atomically under the resolver lock.
-    pub fn intern(&self, text: &str) -> crate::error::Result<InternedText> {
+    pub(crate) fn intern(&self, text: &str) -> crate::error::Result<InternedText> {
         let generation = self.generation.ok_or(crate::error::Error::Corruption(
             crate::error::CorruptionError::MalformedValue("text outside a sealed text-free probe"),
         ))?;
@@ -198,7 +198,7 @@ impl<'a> InternerHandle<'a> {
         })
     }
 
-    pub fn latch(&self, bytes: &[u8]) -> crate::error::Result<InternedText> {
+    pub(crate) fn latch(&self, bytes: &[u8]) -> crate::error::Result<InternedText> {
         let text = std::str::from_utf8(bytes)
             .expect("IR string literals are UTF-8 by construction (Value::String)");
         self.intern(text)

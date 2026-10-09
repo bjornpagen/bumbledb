@@ -19,7 +19,7 @@ const FIRST_CHUNK_CAP: usize = 8;
 /// ties — label-first preference is exactly the bug that
 /// iterated a 500-key forced map instead of a 7-row view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyCount {
+pub(crate) enum KeyCount {
     Exact(u64),
 
     Estimate(u64),
@@ -27,7 +27,7 @@ pub enum KeyCount {
 
 impl KeyCount {
     #[must_use]
-    pub fn magnitude(self) -> u64 {
+    pub(crate) fn magnitude(self) -> u64 {
         match self {
             Self::Exact(n) | Self::Estimate(n) => n,
         }
@@ -37,7 +37,7 @@ impl KeyCount {
 /// A reference into the trie: either a real node or a single image
 /// position pinned by a singleton child (no node is allocated for it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cursor {
+pub(crate) enum Cursor {
     Node(NodeRef),
     Row(u32),
 }
@@ -46,7 +46,7 @@ pub enum Cursor {
 /// either the all-rows identity range (positions are the indices) or a
 /// borrowed position slice (survivor roots, chunk-chain segments).
 #[derive(Debug, Clone, Copy)]
-pub enum SuffixRun<'a> {
+pub(crate) enum SuffixRun<'a> {
     Identity { start: usize, len: usize },
     Positions(&'a [u32]),
 }
@@ -71,7 +71,7 @@ impl SuffixRun<'_> {
     }
 
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             Self::Identity { len, .. } => *len,
             Self::Positions(p) => p.len(),
@@ -79,14 +79,14 @@ impl SuffixRun<'_> {
     }
 
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
     }
 }
 
 /// Index of a node in the pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NodeRef(u32);
+pub(crate) struct NodeRef(u32);
 
 /// Opaque resume token for [`Colt::iter_batch`]; start at `default`.
 /// Bit 63 tags every nonzero token with the node state that minted it
@@ -95,7 +95,7 @@ pub struct NodeRef(u32);
 /// changed state — the silent-omission wrong-results class, closed on
 /// both staleness axes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct BatchToken(u64);
+pub(crate) struct BatchToken(u64);
 
 const DENSE_TOKEN_TAG: u64 = 1 << 63;
 
@@ -213,7 +213,7 @@ fn unpack_child(word: u64) -> Cursor {
 /// is scalar or set, never both), so it lives in the trie's shape, not
 /// in the per-execution key data.
 #[derive(Debug, Clone)]
-pub enum SelectionLevel {
+pub(crate) enum SelectionLevel {
     Point { columns: Vec<usize> },
     Set { columns: Vec<usize> },
 }
@@ -267,7 +267,7 @@ struct PoolMark {
 /// every capacity retained (the 40-execution doc's zero-alloc discipline).
 /// RULED (audit 29): no `Vec::new` / `to_vec` / `.clone` on
 /// refill/advance — those paths truncate to a [`PoolMark`] and reuse.
-pub struct Colt {
+pub(crate) struct Colt {
     view: View,
 
     selection_kinds: Vec<SelectionKind>,
@@ -314,7 +314,7 @@ impl Colt {
     /// positions are included. This is not process heap or resident memory.
     #[cfg(test)]
     #[must_use]
-    pub fn retained_bytes(&self) -> usize {
+    pub(crate) fn retained_bytes(&self) -> usize {
         use std::mem::size_of;
         let survivors = match &self.view {
             View::Bound(crate::image::view::BoundView::Survivors { positions, .. }) => {
@@ -339,7 +339,7 @@ impl Colt {
 
     /// Install this operation's cancellation context. A cancelled prior
     /// context cannot refuse the next execution after rebind.
-    pub fn bind(&mut self, work: Option<&crate::work::WorkContext>) {
+    pub(crate) fn bind(&mut self, work: Option<&crate::work::WorkContext>) {
         self.work = work.cloned();
     }
 
@@ -409,7 +409,7 @@ use super::swar::{ctrl_tag, eq_byte_mask, hash_core, hash_words, zero_byte_mask}
 /// can compute all hashes (pure ALU) before phase 2 issues any bucket load
 #[must_use]
 #[inline(always)]
-pub fn hash_key(words: &[u64]) -> u64 {
+pub(crate) fn hash_key(words: &[u64]) -> u64 {
     hash_words(words)
 }
 
@@ -419,7 +419,7 @@ pub fn hash_key(words: &[u64]) -> u64 {
 /// equivalence is pinned by the wordmap contract test.
 #[must_use]
 #[inline(always)]
-pub fn hash_key_core<const K: usize>(words: &[u64]) -> u64 {
+pub(crate) fn hash_key_core<const K: usize>(words: &[u64]) -> u64 {
     hash_core::<K>(words)
 }
 

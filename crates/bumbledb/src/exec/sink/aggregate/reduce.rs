@@ -26,7 +26,7 @@ pub(in crate::exec::sink) enum Partial {
 }
 
 impl Partial {
-    pub fn seed(spec: AggSpec) -> Self {
+    pub(crate) fn seed(spec: AggSpec) -> Self {
         match spec {
             AggSpec::Fold {
                 op: FoldOp::Sum, ..
@@ -47,11 +47,11 @@ impl Partial {
         }
     }
 
-    pub fn same_kernel(&self, other: &Self) -> bool {
+    pub(crate) fn same_kernel(&self, other: &Self) -> bool {
         std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         *self = match self {
             Self::Sum(_) => Self::Sum(0),
             Self::Extrema { .. } => Self::Extrema {
@@ -65,7 +65,7 @@ impl Partial {
     /// Folds the run's words of `column` (`stride` words per row, input at
     /// `word`). Callers bound the run by a checked binding count, so a float
     /// total cannot overflow its cardinality.
-    pub fn fold(&mut self, column: &[u64], stride: usize, word: usize, run: SuffixRun<'_>) {
+    pub(crate) fn fold(&mut self, column: &[u64], stride: usize, word: usize, run: SuffixRun<'_>) {
         match self {
             Self::Sum(total) => {
                 *total += match run {

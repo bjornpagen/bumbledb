@@ -12,7 +12,7 @@ mod key_probe_fact;
 #[cfg(test)]
 mod tests;
 
-pub use classify::classify;
+pub(crate) use classify::classify;
 pub(crate) use execute_key_probe::execute_key_probe;
 pub(crate) use fact_word::FactOperand;
 pub(crate) use key_probe_fact::key_probe_row;
@@ -21,7 +21,7 @@ pub(crate) use key_probe_fact::key_probe_row;
 /// reads and its binding-slot span (the `SlotWidth` layout — an interval
 /// variable spans two consecutive word slots).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KeyProbeVar {
+pub(crate) struct KeyProbeVar {
     pub field: FieldId,
     pub var: VarId,
 
@@ -33,7 +33,7 @@ pub struct KeyProbeVar {
 /// One schema-sealed key field and its fixed word range. The three u16s
 /// occupy the alignment space beside Const; execution needs no span Vec.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyProbePart {
+pub(crate) struct KeyProbePart {
     pub field: FieldId,
     pub start: u16,
     pub end: u16,
@@ -46,14 +46,14 @@ const _: () = assert!(
 );
 
 impl KeyProbePart {
-    pub fn words(&self) -> std::ops::Range<usize> {
+    pub(crate) fn words(&self) -> std::ops::Range<usize> {
         usize::from(self.start)..usize::from(self.end)
     }
 }
 
 /// U vs M access path. Trusted layer: Option-as-tag is accidental.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KeyProbeKind {
+pub(crate) enum KeyProbeKind {
     Uniqueness {
         statement: StatementId,
         projection: crate::schema::ProjectionId,
@@ -65,7 +65,7 @@ pub enum KeyProbeKind {
 }
 
 impl KeyProbeKind {
-    pub fn key(&self) -> &[KeyProbePart] {
+    pub(crate) fn key(&self) -> &[KeyProbePart] {
         match self {
             Self::Uniqueness { key, .. } | Self::Membership { key } => key,
         }
@@ -75,7 +75,7 @@ impl KeyProbeKind {
 /// The point-lookup plan: one `U` determinant (or `M`-membership) get, one `F`
 /// fetch, a decode — no images, no COLT, no plan search.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyProbePlan {
+pub(crate) struct KeyProbePlan {
     pub relation: RelationId,
     pub kind: KeyProbeKind,
 
@@ -86,7 +86,7 @@ pub struct KeyProbePlan {
 
 impl KeyProbePlan {
     #[must_use]
-    pub fn slot_of(&self, var: VarId) -> usize {
+    pub(crate) fn slot_of(&self, var: VarId) -> usize {
         self.vars
             .iter()
             .find(|binding| binding.var == var)
@@ -95,7 +95,7 @@ impl KeyProbePlan {
     }
 
     #[must_use]
-    pub fn width_of(&self, var: VarId) -> usize {
+    pub(crate) fn width_of(&self, var: VarId) -> usize {
         self.vars
             .iter()
             .find(|binding| binding.var == var)
@@ -104,7 +104,7 @@ impl KeyProbePlan {
     }
 
     #[must_use]
-    pub fn slot_count(&self) -> usize {
+    pub(crate) fn slot_count(&self) -> usize {
         self.vars.last().map_or(0, |v| v.slot + v.width)
     }
 }

@@ -25,7 +25,7 @@ thread_local! {
 /// Runs `f` with the fold bypassed on this thread — the fold-preservation
 /// differential's off switch. Restores on unwind.
 #[cfg(test)]
-pub fn with_fold_disabled<T>(f: impl FnOnce() -> T) -> T {
+pub(crate) fn with_fold_disabled<T>(f: impl FnOnce() -> T) -> T {
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {

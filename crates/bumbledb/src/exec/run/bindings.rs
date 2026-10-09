@@ -3,7 +3,7 @@ use super::Bindings;
 
 impl Bindings {
     #[must_use]
-    pub fn new(slot_count: usize) -> Self {
+    pub(crate) fn new(slot_count: usize) -> Self {
         Self {
             slots: vec![0; slot_count],
             #[cfg(debug_assertions)]
@@ -13,7 +13,7 @@ impl Bindings {
         }
     }
 
-    pub fn resize(&mut self, slot_count: usize) {
+    pub(crate) fn resize(&mut self, slot_count: usize) {
         self.slots.clear();
         self.slots.resize(slot_count, 0);
         #[cfg(debug_assertions)]
@@ -24,14 +24,14 @@ impl Bindings {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         #[cfg(debug_assertions)]
         {
             self.current += 1;
         }
     }
 
-    pub fn set(&mut self, slot: usize, value: u64) {
+    pub(crate) fn set(&mut self, slot: usize, value: u64) {
         self.slots[slot] = value;
         #[cfg(debug_assertions)]
         {
@@ -39,7 +39,7 @@ impl Bindings {
         }
     }
 
-    pub fn load_row(&mut self, row: &[u64]) {
+    pub(crate) fn load_row(&mut self, row: &[u64]) {
         self.slots.copy_from_slice(row);
         #[cfg(debug_assertions)]
         {
@@ -49,7 +49,7 @@ impl Bindings {
     }
 
     #[must_use]
-    pub fn get(&self, slot: usize) -> u64 {
+    pub(crate) fn get(&self, slot: usize) -> u64 {
         #[cfg(debug_assertions)]
         debug_assert_eq!(
             self.epochs[slot], self.current,
@@ -59,7 +59,7 @@ impl Bindings {
     }
 
     #[must_use]
-    pub fn slot_count(&self) -> usize {
+    pub(crate) fn slot_count(&self) -> usize {
         self.slots.len()
     }
 }

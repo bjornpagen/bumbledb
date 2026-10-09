@@ -17,7 +17,7 @@ use bumbledb_theory::schema::{FieldId, RelationId};
 /// # Panics
 /// Only on programmer-invariant violations (validated-schema id widths).
 #[must_use]
-pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProbePlan> {
+pub(crate) fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProbePlan> {
     let [occurrence] = normalized.occurrences.as_slice() else {
         return None;
     };

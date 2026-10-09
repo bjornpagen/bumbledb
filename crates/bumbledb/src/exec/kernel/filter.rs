@@ -11,29 +11,34 @@ use std::mem::MaybeUninit;
 use fearless_simd::{Level, Simd, SimdBase, SimdMask, dispatch, u8x16, u64x4};
 
 /// Positions in `col` equal to `value`.
-pub fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {
+pub(crate) fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {
     eq_u64(super::level(), col, value, out);
 }
 
 /// Positions in `col` within `lo..=hi` in word order (order-preserving for
 /// biased I64 and F64 order keys).
-pub fn filter_range_u64(col: &[u64], lo: u64, hi: u64, out: &mut Vec<u32>) {
+pub(crate) fn filter_range_u64(col: &[u64], lo: u64, hi: u64, out: &mut Vec<u32>) {
     range_u64(super::level(), col, lo, hi, out);
 }
 
 /// Positions in the byte column `col` equal to `value`.
-pub fn filter_eq_u8(col: &[u8], value: u8, out: &mut Vec<u32>) {
+pub(crate) fn filter_eq_u8(col: &[u8], value: u8, out: &mut Vec<u32>) {
     eq_u8(super::level(), col, value, out);
 }
 
 /// Positions where `starts[i] <= point < ends[i]`.
-pub fn filter_point_in_u64(starts: &[u64], ends: &[u64], point: u64, out: &mut Vec<u32>) {
+pub(crate) fn filter_point_in_u64(starts: &[u64], ends: &[u64], point: u64, out: &mut Vec<u32>) {
     point_in_u64(super::level(), starts, ends, point, out);
 }
 
 /// Positions where some element of `points` lies in `[starts[i], ends[i])`;
 /// an empty set keeps nothing.
-pub fn filter_any_point_in_u64(starts: &[u64], ends: &[u64], points: &[u64], out: &mut Vec<u32>) {
+pub(crate) fn filter_any_point_in_u64(
+    starts: &[u64],
+    ends: &[u64],
+    points: &[u64],
+    out: &mut Vec<u32>,
+) {
     any_point_in_u64(super::level(), starts, ends, points, out);
 }
 

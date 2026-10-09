@@ -9,7 +9,7 @@ mod densify;
 mod estimate;
 mod plan;
 
-pub use plan::plan;
+pub(crate) use plan::plan;
 
 /// Hard cap on occurrences the exhaustive subset DP accepts. The 40-execution doc named
 /// 32 (the bitmask width), but 2³² DP states is memory-infeasible; at
@@ -19,7 +19,7 @@ pub use plan::plan;
 /// validation-boundary roster cap counts negated occurrences too (they
 /// consume plan-time work), but only participating occurrences enter the
 /// and grounding-eliminated
-pub const MAX_OCCURRENCES: usize = 20;
+pub(crate) const MAX_OCCURRENCES: usize = 20;
 
 pub(crate) const MAX_DISTINCT_VARS: usize = 128;
 
@@ -27,7 +27,7 @@ pub(crate) const MAX_DISTINCT_VARS: usize = 128;
 /// variables only. Unshared output variables cannot affect join fanout and
 /// do not request statistics. Own-condition selectivity is included in rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OccStats {
+pub(crate) struct OccStats {
     pub occ_id: OccId,
     /// Estimated row count after this occurrence's own conditions.
     pub rows: u64,
@@ -40,7 +40,7 @@ pub struct OccStats {
 /// anti-probes, and grounding-eliminated occurrences left planning entirely
 /// (`plan/ground.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JoinOrder {
+pub(crate) struct JoinOrder {
     pub order: Vec<OccId>,
     /// The estimator's row count after each step; `estimates[0]` is the
     pub estimates: Vec<u64>,

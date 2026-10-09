@@ -17,7 +17,7 @@ use bumbledb_theory::schema::{FieldId, ValueType};
 /// `Interior` binding's field type reads the target's column — `FieldId(i)`
 /// is head position `i`. Everything else is the conjunctive lowering, verbatim.
 #[must_use]
-pub fn normalize_rules<'a>(
+pub(crate) fn normalize_rules<'a>(
     schema: &Schema,
     signatures: &[&crate::ir::validate::Signature],
     rules: impl IntoIterator<Item = RuleWitness<'a>>,

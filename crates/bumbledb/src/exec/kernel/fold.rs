@@ -24,7 +24,7 @@ fn strided_extent_in(len: usize, stride: usize, offset: usize, count: usize) -> 
 /// # Panics
 /// If `stride` is zero or the extent runs past `values`.
 #[must_use]
-pub fn fold_sum_u64(values: &[u64], stride: usize, offset: usize, count: usize) -> u128 {
+pub(crate) fn fold_sum_u64(values: &[u64], stride: usize, offset: usize, count: usize) -> u128 {
     sum_u64(super::level(), values, stride, offset, count)
 }
 
@@ -33,7 +33,12 @@ pub fn fold_sum_u64(values: &[u64], stride: usize, offset: usize, count: usize) 
 /// # Panics
 /// If `count` or `stride` is zero or the extent runs past `values`.
 #[must_use]
-pub fn fold_min_max_u64(values: &[u64], stride: usize, offset: usize, count: usize) -> (u64, u64) {
+pub(crate) fn fold_min_max_u64(
+    values: &[u64],
+    stride: usize,
+    offset: usize,
+    count: usize,
+) -> (u64, u64) {
     min_max_u64(super::level(), values, stride, offset, count)
 }
 

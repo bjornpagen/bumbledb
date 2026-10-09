@@ -41,13 +41,13 @@ fn pack_slot(finds: &[SinkSpec]) -> Option<usize> {
 impl AggregateSink {
     #[cfg(test)]
     #[must_use]
-    pub fn new(finds: impl AsRef<[FindSpec]>, slot_count: usize) -> Self {
+    pub(crate) fn new(finds: impl AsRef<[FindSpec]>, slot_count: usize) -> Self {
         Self::build(finds.as_ref(), slot_count, DedupRegime::Bindings, 0, &[])
     }
 
     #[cfg(test)]
     #[must_use]
-    pub fn new_dense(
+    pub(crate) fn new_dense(
         finds: impl AsRef<[FindSpec]>,
         slot_count: usize,
         dense_groups: &[u16],
@@ -63,7 +63,7 @@ impl AggregateSink {
 
     #[cfg(test)]
     #[must_use]
-    pub fn new_distinct(
+    pub(crate) fn new_distinct(
         finds: impl AsRef<[FindSpec]>,
         slot_count: usize,
         witness: crate::plan::fj::DistinctWitness,
@@ -78,7 +78,7 @@ impl AggregateSink {
     }
 
     #[must_use]
-    pub fn with_capacity_hint(
+    pub(crate) fn with_capacity_hint(
         finds: &[FindSpec],
         slot_count: usize,
         hint: usize,
@@ -88,13 +88,13 @@ impl AggregateSink {
     }
 
     #[must_use]
-    pub fn for_union(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
+    pub(crate) fn for_union(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
         Self::build(finds, slot_count, DedupRegime::Union, hint, &[])
     }
 
     /// DNF union deduplicates bindings using the shared slot arrays.
     #[must_use]
-    pub fn for_dnf_union(
+    pub(crate) fn for_dnf_union(
         finds: &[FindSpec],
         slot_count: usize,
         spans: &[(usize, usize)],
@@ -104,7 +104,7 @@ impl AggregateSink {
     }
 
     #[must_use]
-    pub fn without_seen_set(
+    pub(crate) fn without_seen_set(
         finds: &[FindSpec],
         slot_count: usize,
         witness: crate::plan::fj::DistinctWitness,
@@ -244,7 +244,12 @@ impl AggregateSink {
         }
     }
 
-    pub fn aim(&mut self, finds: &[FindSpec], slot_count: usize, shared_slots: &[(usize, usize)]) {
+    pub(crate) fn aim(
+        &mut self,
+        finds: &[FindSpec],
+        slot_count: usize,
+        shared_slots: &[(usize, usize)],
+    ) {
         debug_assert_eq!(finds.len(), self.finds.len(), "one head, fixed arity");
 
         parse_finds_into(finds, &mut self.finds);
@@ -276,7 +281,7 @@ impl AggregateSink {
 
     /// Live groups.
     #[must_use]
-    pub fn group_count(&self) -> usize {
+    pub(crate) fn group_count(&self) -> usize {
         self.groups.len()
     }
 
@@ -293,7 +298,7 @@ impl AggregateSink {
 
     #[must_use]
     #[cfg(test)]
-    pub fn distinct_seen(&self) -> Option<usize> {
+    pub(crate) fn distinct_seen(&self) -> Option<usize> {
         self.dedup.seen().map(SeenSet::len)
     }
 
@@ -369,17 +374,17 @@ impl AggregateSink {
 
     #[cfg(test)]
     #[must_use]
-    pub fn seen_elided(&self) -> bool {
+    pub(crate) fn seen_elided(&self) -> bool {
         matches!(self.dedup, DedupState::Elided { .. })
     }
 
     #[cfg(test)]
     #[must_use]
-    pub fn dense_group_table(&self) -> bool {
+    pub(crate) fn dense_group_table(&self) -> bool {
         matches!(self.groups, GroupTable::Dense { .. })
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.clear_state();
         self.groups.clear();
         self.binding_scratch.resize(self.binding_words(), 0);
