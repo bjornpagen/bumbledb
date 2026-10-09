@@ -270,9 +270,11 @@ impl DnfCap {
                     false
                 }
             }),
-        );
+        )
+        .map_err(|e| format!("install the cap: {e}"))?;
         let result = f();
-        conn.progress_handler(0, None::<fn() -> bool>);
+        conn.progress_handler(0, None::<fn() -> bool>)
+            .map_err(|e| format!("clear the cap: {e}"))?;
         match result {
             Ok(value) => Ok(Some(value)),
             Err(_) if tripped.load(Ordering::Relaxed) => Ok(None),

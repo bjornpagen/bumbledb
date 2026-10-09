@@ -137,11 +137,12 @@ pub fn assert_loaded_equal(db: &Db<Scheduling>, conn: &Connection, cfg: GenConfi
                 Ok(snap.scan(rel)?.count())
             })
             .expect("scan counts");
-        let theirs: u64 = conn
+        let theirs: i64 = conn
             .query_row(&format!("SELECT COUNT(*) FROM \"{name}\""), [], |row| {
                 row.get(0)
             })
             .expect("count");
+        let theirs = u64::try_from(theirs).expect("a count is non-negative");
         assert_eq!(ours as u64, theirs, "row counts diverge for {name}");
         assert_eq!(ours as u64, sizes.rows(rel), "generator count for {name}");
     }

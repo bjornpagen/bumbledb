@@ -24,9 +24,11 @@ pub fn with_cap<T>(
     conn.progress_handler(
         CAP_GRANULARITY_OPS,
         Some(move || Instant::now() >= deadline),
-    );
+    )
+    .map_err(|e| format!("install the cap: {e}"))?;
     let result = run();
-    conn.progress_handler(CAP_GRANULARITY_OPS, None::<fn() -> bool>);
+    conn.progress_handler(CAP_GRANULARITY_OPS, None::<fn() -> bool>)
+        .map_err(|e| format!("clear the cap: {e}"))?;
     match result {
         Ok(value) => Ok(CapOutcome::Done(value)),
         Err(rusqlite::Error::SqliteFailure(e, _))

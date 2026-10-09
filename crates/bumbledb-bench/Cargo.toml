@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 blake3 = "1.8.7"
 bumbledb = { path = "../bumbledb" }
-rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "hooks"] }
 
 [lints]
 workspace = true
