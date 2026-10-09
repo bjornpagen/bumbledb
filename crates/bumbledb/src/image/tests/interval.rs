@@ -68,7 +68,8 @@ fn interval_field_decodes_into_two_word_columns_with_golden_words() {
     let (_cache, image) = source.image_with_cache(T);
     assert_eq!(image.row_count(), 3);
 
-    // Three fields, four columns: the interval field spans two word columns.
+    // The field→column map: three fields, four columns — the interval
+
     assert_eq!(
         image.span(FieldId(0)),
         ColumnSpan {

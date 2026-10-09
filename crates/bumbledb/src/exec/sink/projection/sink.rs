@@ -196,8 +196,7 @@ impl ProjectionSink {
         Flow::Continue
     }
 
-    /// The licensed projection's batch emit: records the first survivor and
-    /// replies `SkipSuffix`, so the executor unwinds the rest of the subtree.
+    /// Licensed-projection first-emit unwind. `SkipSuffix` after the first
     fn project_batch_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
         self.prepare_plain_batch_sources(batch);
         let keys = &self.batch_route.keys;

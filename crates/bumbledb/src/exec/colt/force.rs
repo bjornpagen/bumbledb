@@ -149,11 +149,10 @@ impl Colt {
         self.selection_kinds == other.selection_kinds && self.schema_columns == other.schema_columns
     }
 
-    /// Rebinds this trie to a copy of `other`'s view and pools (same shape),
-    /// returning the previous view. Tokens minted against the previous
-    /// binding stay refused.
+    /// tokens minted against the previous binding stay refused.
+    ///
     /// # Errors
-    /// Cancellation or a refused pool allocation.
+    /// Returns cancellation or a fallible pool-allocation error.
     pub(crate) fn clone_bound_from(
         &mut self,
         other: &Colt,

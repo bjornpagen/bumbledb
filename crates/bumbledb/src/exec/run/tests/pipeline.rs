@@ -259,9 +259,7 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
 
     let schema = schema(3);
 
-    // A variable-free gate atom is an existence test: present, it admits every
-    // binding without being enumerated (emits stay at the join's own 300);
-    // absent, it rejects them all.
+    // executor must never enumerate (emits stay at the join's own 300).
     let r: Vec<(u64, u64)> = (0..300u64).map(|i| (i, i % 7)).collect();
     let t: Vec<(u64, u64)> = (0..7u64).map(|i| (i, i + 100)).collect();
     let gate: Vec<(u64, u64)> = (0..500u64).map(|i| (i, i)).collect();

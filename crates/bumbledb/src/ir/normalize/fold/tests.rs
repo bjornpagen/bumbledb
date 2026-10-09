@@ -129,8 +129,8 @@ fn an_eq_constant_on_the_range_edge_survives() {
 #[test]
 fn an_eq_constant_missing_from_the_set_is_statically_empty() {
     assert!(set_refutes_eq(&[1, 2, 5], Some(7)));
-    // Empty after sentinel-trim: the never-minted id matches nothing, so the
-    // set refutes every Eq.
+    // Empty after sentinel-trim: the never-minted id matches nothing,
+
     assert!(set_refutes_eq(&[SENTINEL_ID], None));
     assert!(set_refutes_eq(&[], None));
 }
@@ -226,8 +226,8 @@ fn an_order_conjunction_folds_to_one_summary() {
 
 #[test]
 fn an_eq_pin_subsumes_its_folded_bounds() {
-    // a == 5 ∧ a >= 1 ∧ a < 9 → the Eq alone (a point implies every bound
-    // it satisfies).
+    // a == 5 ∧ a >= 1 ∧ a < 9 → the Eq alone (a point implies every
+
     let schema = schema();
     let normalized = one_rule(
         &schema,

@@ -93,7 +93,8 @@ impl Context {
         rule: &LoweredRule,
         group_key: &BTreeSet<VarId>,
     ) -> Result<(), ValidationError> {
-        // At most one Pack per head, and Pack never beside a fold.
+        // one Pack per head (the multi-Pack product is refused with its
+
         let mut fold_seen = false;
         let mut pack_seen = false;
         for (find_idx, term) in rule.finds.iter().enumerate() {

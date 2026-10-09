@@ -4,12 +4,15 @@ use crate::schema::Schema;
 
 /// Plans a left-deep join order by exhaustive DP over **participating**
 /// occurrence subsets, minimizing the sum of intermediate-result
-/// estimates. Negated occurrences enter no DP state: they never join and the
-/// planner treats them as free filters. Deterministic: ties break toward the
-/// smaller trailing occurrence id, independent of `stats` input order.
+/// estimates. Negated occurrences enter no DP state — they never join;
+/// they only shrink results, and the planner treats them as free filters
+/// . Grounding-eliminated occurrences left
+/// planning entirely (`plan/ground.rs`). Deterministic: ties break toward
+/// the smaller trailing occurrence id, independent of `stats` input order.
 /// # Panics
-/// If `stats` misses a participating occurrence or the query exceeds the
-/// caps the validation boundary enforces.
+/// participating occurrence, or a query over the caps the validation
+/// boundary enforces.
+/// Only on programmer-invariant violations: `stats` missing a
 pub(crate) fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -> JoinOrder {
     let participating: Vec<&Occurrence> = normalized
         .occurrences

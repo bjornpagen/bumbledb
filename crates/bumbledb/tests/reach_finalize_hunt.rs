@@ -165,7 +165,7 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     .expect("read");
 
     // Grow the graph: the same prepared handle re-executes against a new
-    // snapshot and must see the added edges.
+
     let mut more = edges.clone();
     for n in CHAIN..(CHAIN + 16) {
         more.insert((n, n + 1));
@@ -538,8 +538,8 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
     };
     let mut prepared = db.prepare(&query, common::work()).expect("prepare");
     db.read(common::work(), |snap| {
-        // big → small → empty → big → small: every transition between closure
-        // sizes reuses the same prepared handle.
+        // big → small → empty → big → small: every transition where a
+
         for &src in &[0u64, 50, 90, 0, 50, 90, 0] {
             let answers = snap.execute_collect(&mut prepared, &[bumbledb::BindValue::U64(src)])?;
             let got: BTreeSet<u64> = answers

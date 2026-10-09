@@ -31,12 +31,14 @@ pub(crate) struct OccStats {
     pub var_distincts: Vec<(VarId, u64)>,
 }
 
-/// The chosen left-deep join order of the participating occurrences, with
-/// per-step estimates retained for introspection.
+/// The chosen left-deep join order, with per-step estimates retained for
+/// introspection. Participating occurrences
+/// anti-probes, and grounding-eliminated occurrences left planning entirely
+/// (`plan/ground.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct JoinOrder {
     pub order: Vec<OccId>,
-    /// The estimator's row count after each step of `order`.
+    /// The estimator's row count after each step; `estimates[0]` is the
     pub estimates: Vec<u64>,
 }
 

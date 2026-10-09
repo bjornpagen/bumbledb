@@ -2,8 +2,7 @@
 use super::{Executor, Poison};
 
 impl Executor {
-    /// Records the first terminal refusal; later ones never overwrite it, and
-    /// every drive loop stops at the next `Running` check.
+    /// every loop before a second site can fire) and always paired with
     pub(super) fn poison(&mut self, poison: Poison) {
         if !matches!(self.drive_state, super::DriveState::Poisoned(_)) {
             self.drive_state = super::DriveState::Poisoned(poison);

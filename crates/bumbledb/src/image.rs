@@ -271,7 +271,7 @@ impl RelationImage {
     }
 
     /// # Panics
-    /// If `column` is a byte column.
+    /// On a programmer-invariant violation: `column` is a 1-byte column
     #[cfg(test)]
     #[must_use]
     pub(crate) fn column_words(&self, column: usize) -> &[u64] {

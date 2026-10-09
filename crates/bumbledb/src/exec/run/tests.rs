@@ -129,7 +129,8 @@ fn colts_with_params(
     plan.occurrences()
         .iter()
         .map(|occurrence| {
-            // Field→column through the span map, as production builds it.
+            // Field→column through the span map (production shape —
+
             let columns: Vec<Vec<usize>> = occurrence
                 .trie_schema
                 .iter()

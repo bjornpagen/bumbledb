@@ -351,8 +351,8 @@ fn covers_never_rebind_an_already_bound_variable() {
     );
     let plan = planned(&normalized, &schema, &[0, 1, 2]);
 
-    // The mixed-variable subatom T(x, z) is never a cover: a cover binds
-    // exactly its node's new variables.
+    // The mixed-var subatom T(x, z) must not be listed as a cover of
+
     for node in plan.nodes() {
         for &cover in &node.covers {
             let vars = &node.subatoms[cover as usize].vars;
@@ -491,8 +491,8 @@ fn phase_one_hashes_the_whole_batch_before_any_phase_two_probe() {
 fn pinned_siblings_probe_without_hashing() {
     let schema = schema(3);
 
-    // Every key is unique, so after node 0 both siblings pin to a
-    // `Cursor::Row` and probe without hashing.
+    // so both pin to Cursor::Row after node 0. At node 1 both B(c)
+
     let a_rows: Vec<(u64, u64)> = vec![(1, 10), (2, 20)];
     let b_rows: Vec<(u64, u64)> = vec![(1, 100), (2, 200)];
     let c_rows: Vec<(u64, u64)> = vec![(10, 100), (20, 200)];

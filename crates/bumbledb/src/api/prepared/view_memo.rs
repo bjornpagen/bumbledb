@@ -124,8 +124,8 @@ impl ViewMemo {
         let colt = &mut self.colts[occ];
         let occ_memo = &mut self.occs[occ];
 
-        // A parked binding whose epoch the new one supersedes can never be
-        // reused: drop it, its pools and its image.
+        // — drop it, its pools, and its image Arc. Closed and frozen
+
         for slot in &mut occ_memo.parked {
             if slot
                 .as_ref()

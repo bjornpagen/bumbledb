@@ -46,7 +46,8 @@ fn skewed_maps_size_by_the_formula_and_iterate_densely() {
     let root = Colt::root();
     colt.ensure_forced(root, 0).expect("force");
 
-    // 500 keys: next_pow2(12_500 * 5 / 16) = 4_096 buckets of 8, 32_768 slots.
+    // next_pow2(12_500 * 5 / 16) = 4_096 → 32_768 slots
+
     assert_eq!(colt.forced_capacity(root), Some(32_768));
 
     let mut keys = vec![0u64; 64];

@@ -24,11 +24,14 @@ mod validate;
 
 pub use validate::validate;
 
-/// The typed output signature a query (or interior) defines, derived once at
-/// validation and sealed: the single authority for sink construction,
-/// result typing and introspection. Signatures are anonymous; an `Interior`
-/// atom of the same query references one by [`InteriorId`] and is typed
-/// against its columns.
+/// The signature a query defines — anonymous (names live in the host,
+/// exactly like relations pre-`as`), its typed output signature derived
+/// ONCE at validation and sealed. The single authority for sink
+/// construction, result-buffer typing, finalize's all-words decision,
+/// and introspection's header. Referenced only by [`InteriorId`], from
+/// inside the same [`crate::ir::Query`] — the named-view refusal stands
+/// (no stored, named, or cross-query reference exists), and the one
+/// reference form is the `Interior` atom, typed against these sealed
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signature {
     pub columns: Box<[SignatureColumn]>,
@@ -272,8 +275,7 @@ impl InteriorSignatures<'_> {
         Ok(())
     }
 
-    /// The signature of an interior the screen admitted; the recursive
-    /// component's id resolves only once its signature is sealed.
+    /// base is a roster refusal). Rec lookup is unrepresentable on
     fn lookup(&self, interior: InteriorId) -> &Signature {
         let index = usize::try_from(interior.0).expect("64-bit usize");
         let interiors = self.interiors();
@@ -526,7 +528,7 @@ impl ValidatedQuery {
     }
 
     /// # Panics
-    /// If `index` is not a main rule's index.
+    /// On a programmer-invariant violation: an index at or beyond
     #[must_use]
     pub fn rule(&self, index: usize) -> RuleWitness<'_> {
         self.main_rule(index)
@@ -575,7 +577,7 @@ impl ValidatedQuery {
     }
 
     /// # Panics
-    /// If `param` is not a parameter of this query.
+    /// On a programmer-invariant violation: an unknown `ParamId` (the
     #[must_use]
     pub fn param_type(&self, param: ParamId) -> &ValueType {
         &self.param_types_map()[&param]
@@ -625,7 +627,7 @@ impl<'a> RuleWitness<'a> {
     }
 
     /// # Panics
-    /// If `var` is not a variable of this rule.
+    /// On a programmer-invariant violation: an unknown `VarId` (the witness
     #[must_use]
     pub fn var_type(&self, var: VarId) -> &ValueType {
         &self.typing.var_types[&var]
@@ -641,7 +643,6 @@ impl<'a> RuleWitness<'a> {
     }
 
     /// # Panics
-    /// If `param` is not a parameter of this query.
     #[must_use]
     pub fn param_type(&self, param: ParamId) -> &ValueType {
         self.query.param_type(param)

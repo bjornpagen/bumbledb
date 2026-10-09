@@ -118,8 +118,7 @@ impl<S> PreparedQuery<S> {
         Ok(())
     }
 
-    /// Binds one scalar parameter; a set-typed slot rejects the scalar shape
-    /// before any conversion.
+    /// a set-typed slot rejects the scalar shape before any conversion.
     fn bind_scalar_slot(
         &mut self,
         work: &WorkContext,
@@ -244,8 +243,8 @@ impl<S> PreparedQuery<S> {
                 interner.intern(text).map(Const::Text)
             })?
             else {
-                // Park the pooled Vec back before erroring, so the slot keeps
-                // its capacity.
+                // Park the pooled Vec back before erroring: the slot
+
                 words.clear();
                 let expected = *expected;
                 self.bound.resolved_params[idx] = Const::WordSet(words);

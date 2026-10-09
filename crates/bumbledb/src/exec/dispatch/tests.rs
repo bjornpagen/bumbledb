@@ -382,7 +382,7 @@ fn full_fact_binding_takes_the_membership_path() {
     assert_eq!(plan.kind.key().len(), 2, "every field, declaration order");
     assert!(plan.remaining_filters.is_empty());
 
-    // Neither a key nor every field bound: Free Join.
+    // not full-fact either → Free Join.
     let membership = single(occurrence(
         &[],
         vec![

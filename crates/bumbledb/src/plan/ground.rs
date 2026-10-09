@@ -15,11 +15,11 @@ pub(crate) mod evaluate;
 
 #[cfg(any(test, feature = "testing"))]
 thread_local! {
+
     static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Runs `f` with grounding bypassed on this thread: the grounding
-/// differential's off switch. Restores on unwind.
+/// tests' off switch. Restores on unwind.
 #[cfg(any(test, feature = "testing"))]
 pub fn with_grounding_disabled<T>(f: impl FnOnce() -> T) -> T {
     struct Reset;

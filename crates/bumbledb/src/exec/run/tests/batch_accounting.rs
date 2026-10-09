@@ -210,7 +210,7 @@ fn zero_yield_draws_are_not_batches() {
 
     let schema = schema(3);
 
-    // Batch size 4 over a three-node chain: every counted batch is nonempty.
+    // resume the counter must not book.
     let r: Vec<(u64, u64)> = (0..8u64).map(|i| (i, i % 2)).collect();
     let s: Vec<(u64, u64)> = (0..2u64)
         .flat_map(|y| (0..4u64).map(move |j| (y, y * 4 + j)))

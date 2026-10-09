@@ -77,7 +77,8 @@ fn build_occurrences(
                     .collect(),
             };
 
-            // Selections split off before the remaining filters are kept.
+            // before the subtraction (the filter-order law,
+
             let view_filters = occurrence.filters.clone();
             let (selections, filters) = match &occurrence.role {
                 Role::Positive => split_filters(&view_filters),
@@ -105,7 +106,8 @@ fn build_occurrences(
 /// because the empty set is bound everywhere. The variables are a slice,
 /// re-walked in full per node: a single iterator consumed across the `position`
 /// steps is exhausted after the first failing node, making every later check
-/// vacuously true and attaching the item one node too early.
+/// vacuously true — the one-node-too- early misattachment the placement
+/// regression test pins.
 fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usize> {
     bound
         .iter()
@@ -120,8 +122,13 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 /// [`PlanError`] when the plan does not partition the query's
 /// participating occurrences, joins a non-participating occurrence,
 /// duplicates an occurrence within a node, lacks a cover, or leaves a
-/// residual or anti-probe unplaced. EDB-only test fixtures pass no derived
-/// signatures; production rules route through [`validate_with_signatures`].
+/// residual or anti-probe unplaced.
+/// # Panics
+/// node — impossible for plans over the planner's occurrence cap — or a
+/// normalized query whose slot-width map misses a variable).
+/// Test convenience: EDB-only fixtures pass no derived signatures.
+/// Production rules route through [`validate_with_signatures`].
+/// Only on programmer-invariant violations (more than 256 subatoms in one
 #[cfg(test)]
 pub(crate) fn validate(
     plan: &FjPlan,
@@ -132,10 +139,8 @@ pub(crate) fn validate(
     validate_with_signatures(plan, normalized, schema, &[], sink_vars)
 }
 
-/// As [`validate`], with the signatures of the query's derived tables.
+/// # Errors
 /// # Panics
-/// If a node holds more than 256 subatoms (impossible under the planner's
-/// occurrence cap) or the slot-width map misses a variable.
 pub(crate) fn validate_with_signatures(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
@@ -216,8 +221,8 @@ pub(crate) fn validate_with_signatures(
         nodes[node].allen_residuals.push(residual.clone());
     }
 
-    // An anti-probe attaches at the earliest node that binds every probe and
-    // membership-point variable it reads.
+    // probe, so the probe cannot run before that variable is bound); a
+
     for (probe_idx, anti_probe) in normalized.anti_probes.iter().enumerate() {
         let occurrence = &normalized.occurrences[usize::from(anti_probe.occurrence.0)];
         let vars: Vec<VarId> = anti_probe

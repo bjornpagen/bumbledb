@@ -42,9 +42,7 @@ impl Answers {
         self.text.len() + self.blob.len()
     }
 
-    /// The value at `column` of answer `answer`.
     /// # Panics
-    /// If either index is out of range.
     #[must_use]
     pub fn get(&self, answer: usize, column: usize) -> AnswerValue<'_> {
         assert!(column < self.arity && answer < self.len());
@@ -104,7 +102,7 @@ impl Answers {
         self.cells.push(cell);
     }
 
-    /// One stored word of type `ty` as an answer cell.
+    /// invariant. The point fast lane's per-cell decode; the finalize
     pub(super) fn word_cell(ty: &ValueType, word: u64) -> Result<Cell> {
         Ok(match ty {
             ValueType::Bool => Cell::Bool(word != 0),
@@ -152,8 +150,7 @@ impl Answers {
         self.cells.push(cell);
     }
 
-    /// An interval cell from its two order words; stored intervals are
-    /// nonempty, so `start < end`.
+    /// stored invariant, not a runtime hope: every stored interval was
     pub(super) fn interval_cell(element: IntervalElement, start: u64, end: u64) -> Cell {
         match element {
             IntervalElement::U64 => Cell::IntervalU64(
@@ -214,9 +211,7 @@ impl Answers {
 }
 
 impl<'a> Answer<'a> {
-    /// The value at `column`.
     /// # Panics
-    /// If `column` is out of range.
     #[must_use]
     pub fn get(&self, column: usize) -> AnswerValue<'a> {
         self.buffer.get(self.answer, column)
