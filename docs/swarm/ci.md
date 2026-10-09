@@ -53,12 +53,14 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
     `cargo test --workspace --doc --profile ci`; tree-clean check (no modified tracked file, no
     unignored untracked file).
   - `addon`: `cargo build -p bumbledb-node --profile ${BUMBLEDB_ADDON_PROFILE:-addon-ci}`, copied
-    to `target/addon/bumbledb.<platform>-<arch>.node` and `ts/bumbledb.<platform>-<arch>.node`
-    (the dev addon `ts/src/native/load.ts` prefers); `pnpm --dir ts test`; tree-clean.
+    to `target/addon/bdb.<platform>-<arch>.node` and `ts/bdb.<platform>-<arch>.node` (the dev
+    addon); `pnpm --dir ts test`; packs and smoke-tests the host family (`scripts/family.mjs`);
+    tree-clean.
+  - `s3`, `miri`, `deep`, `clippy`, `udeps`, `asm`: see the S3 and deep entries below.
 - `ci.yml` (pull requests, `main`, and `workflow_call` from release): `lint` once on ubuntu-24.04;
   `test` on macos-26, ubuntu-24.04, ubuntu-24.04-arm; `addon` on linux-x64 (`addon-ci`) for pull
   requests and on all three platforms (`release`, fat LTO) otherwise, uploading
-  `bumbledb.<platform>.node` artifacts. Linux addons build in `amazonlinux:2023` (glibc 2.34).
+  `bdb.<platform>.node` artifacts. Linux addons build in `amazonlinux:2023` (glibc 2.34).
 - Deleted: `scripts/battery.sh`, `scripts/check.sh`, `.github/workflows/bumbledb-log.yml`.
 - `lint` also runs `cargo deny check --config .config/deny.toml` (advisories incl. yanked,
   permissive licenses only, crates.io as the only source, wildcard versions denied except
@@ -130,6 +132,16 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
     `release.yml` + environment `release` as the npm trusted publisher of
     `@bjornpagen/bumbledb` and the three platform packages.
 
+## Replies
+
+- bench, on `scripts/bench_night.py` and `scripts/bench_viz.py`: those bench/profiling scripts are
+  outside this lane's owned paths this wave (they stay as they are). Consolidator: drop the
+  `hash-probe`, `correspondence-oracles` and `scorecard-plan` jobs from `bench_night.py` and the
+  `hash-probe` and `ghz`/`p50_norm` reads from `bench_viz.py`. `lint` runs
+  `scripts/test_bench_scheduler.py`, `scripts/flame.py selftest` and `scripts/structural-corpus.py`
+  (which reads `crates/bumbledb-bench/fixtures/conformance/structural-algebra.json`).
+- ts: done on your side (F3): `stage.ts`/`build.ts` no longer call the deleted release scripts.
+
 ## Requests to other lanes
 
 ### all Rust lanes
@@ -161,10 +173,6 @@ Items: G1, G3, G4, G5, G10, G11, G12, G13, L (scripts and config).
   `BUMBLEDB_S3_PREFIX`; never delete under `log/`. The CI lane already runs the racing-create probe
   before the suite, so the suite need not repeat it. It may load the addon (the lane installs it as
   the dev addon).
-- `ts/scripts/stage.ts` and `ts/scripts/build.ts` call `scripts/release-results.mjs`
-  (`--candidate-digest`, `--specification-revision`, `--write-native-provenance`) and read
-  `scripts/version-roster.txt`; both are deleted. Drop pack provenance (`pack-provenance.json` in
-  `files`) and the roster check.
 - **`node ts/scripts/build.ts dist`**: please add a dist-only mode (today `release` also rebuilds
   the addon; the release job packs the three CI-built addons and must not rebuild one).
 - **D20 in the addon paths:** the dev addon `ts/bdb.<platform>-<arch>.node`, platform package
