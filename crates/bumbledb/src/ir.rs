@@ -287,6 +287,32 @@ impl WordCmp {
         }
     }
 
+    /// The operator with its sides swapped: `a op b` iff `b op.converse() a`.
+    #[must_use]
+    pub(crate) const fn converse(self) -> Self {
+        match self {
+            Self::Lt => Self::Gt,
+            Self::Le => Self::Ge,
+            Self::Gt => Self::Lt,
+            Self::Ge => Self::Le,
+            Self::Eq | Self::Ne => self,
+        }
+    }
+
+    /// The inclusive word range `w op constant` keeps (empty when
+    /// `lo > hi`). `Ne` keeps two ranges and has none.
+    #[must_use]
+    pub(crate) fn kept_range(self, constant: u64) -> Option<(u64, u64)> {
+        Some(match self {
+            Self::Eq => (constant, constant),
+            Self::Le => (0, constant),
+            Self::Ge => (constant, u64::MAX),
+            Self::Lt => constant.checked_sub(1).map_or((1, 0), |hi| (0, hi)),
+            Self::Gt => constant.checked_add(1).map_or((1, 0), |lo| (lo, u64::MAX)),
+            Self::Ne => return None,
+        })
+    }
+
     pub(crate) fn compare<T: Ord + ?Sized>(self, left: &T, right: &T) -> bool {
         match self {
             Self::Eq => left == right,

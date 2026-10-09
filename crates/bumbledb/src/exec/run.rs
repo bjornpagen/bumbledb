@@ -408,6 +408,11 @@ struct BatchBuffers {
     point_rows: Vec<u32>,
 
     point_row_ks: Vec<u32>,
+
+    /// One residual's gathered words and the indices its kernel kept.
+    words: Vec<u64>,
+
+    kept: Vec<u32>,
 }
 
 /// Retained per-node execution buffers.
@@ -442,6 +447,15 @@ struct CoverAt {
     occ: usize,
     cursor: Cursor,
     level: usize,
+}
+
+/// A direct leaf scan's residual buffers: the surviving positions, and the
+/// gathered words and kept indices of one kernel filter.
+#[derive(Default)]
+struct ScanBuffers {
+    filtered: Vec<u32>,
+    words: Vec<u64>,
+    kept: Vec<u32>,
 }
 
 /// A middle node's accumulated cover batch: `fill` entries of `arity` key
@@ -521,8 +535,7 @@ pub struct Executor {
 
     leaf: LeafPrecompute,
 
-    /// Selected positions for residual filtering of direct leaf scans.
-    scan_filter: Vec<u32>,
+    scan_buffers: ScanBuffers,
 
     drive: Drive,
 

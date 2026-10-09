@@ -5,7 +5,9 @@ use super::{
     AllenResidualSpec, BatchBuffers, BatchRows, Counters, ResidualSpec, Source, grow_scratch,
 };
 
-/// Keeps the survivors that satisfy every word residual.
+/// Keeps the survivors that satisfy every word residual. A one-word compare
+/// against a side constant across the batch runs as one range-filter kernel
+/// scan over the gathered words.
 pub(super) fn residual_pass<R: BatchRows, C: Counters>(
     specs: &[ResidualSpec],
     sources: &[(Source, Source)],
@@ -16,6 +18,24 @@ pub(super) fn residual_pass<R: BatchRows, C: Counters>(
 ) {
     for (spec, &(lhs, rhs)) in specs.iter().zip(sources) {
         let n = buf.survivors.len();
+        if let Some((varying, lo, hi)) = constant_range(rows, spec, lhs, rhs) {
+            buf.words.clear();
+            buf.words.extend(
+                buf.survivors
+                    .iter()
+                    .map(|&element| rows.word(element as usize, varying, 0)),
+            );
+            buf.kept.clear();
+            crate::exec::kernel::filter_range_u64(&buf.words, lo, hi, &mut buf.kept);
+            for k in 0..n {
+                counters.residual(node, k < buf.kept.len());
+            }
+            for (to, &from) in buf.kept.iter().enumerate() {
+                buf.survivors[to] = buf.survivors[from as usize];
+            }
+            buf.survivors.truncate(buf.kept.len());
+            continue;
+        }
         grow_scratch(&mut buf.mask, n);
         for k in 0..n {
             let element = buf.survivors[k] as usize;
@@ -30,6 +50,27 @@ pub(super) fn residual_pass<R: BatchRows, C: Counters>(
         }
         crate::exec::kernel::compact_u32_by_mask(&mut buf.survivors, &buf.mask);
     }
+}
+
+/// A one-word residual with exactly one side constant across the batch: the
+/// varying side and the inclusive word range it must fall in. `Ne` keeps two
+/// ranges and has none.
+fn constant_range<R: BatchRows>(
+    rows: &R,
+    spec: &ResidualSpec,
+    lhs: Source,
+    rhs: Source,
+) -> Option<(Source, u64, u64)> {
+    if spec.width != 1 {
+        return None;
+    }
+    let (varying, constant, op) = match (rows.constant(lhs, 0), rows.constant(rhs, 0)) {
+        (None, Some(constant)) => (lhs, constant, spec.op),
+        (Some(constant), None) => (rhs, constant, spec.op.converse()),
+        _ => return None,
+    };
+    let (lo, hi) = op.kept_range(constant)?;
+    Some((varying, lo, hi))
 }
 
 /// Keeps the survivors whose interval pairs satisfy every Allen residual.

@@ -368,6 +368,87 @@ fn scan_and_batch_paths_agree_across_fixtures() {
     }
 }
 
+#[test]
+fn kernel_scan_residuals_match_every_operator_side_and_boundary() {
+    let ops = [
+        WordCmp::Eq,
+        WordCmp::Ne,
+        WordCmp::Lt,
+        WordCmp::Le,
+        WordCmp::Gt,
+        WordCmp::Ge,
+    ];
+    for op in ops {
+        for constant in [0, 1, 7, u64::MAX - 1, u64::MAX] {
+            let Some((lo, hi)) = op.kept_range(constant) else {
+                continue;
+            };
+            for word in [0, 1, 6, 7, 8, u64::MAX - 1, u64::MAX] {
+                assert_eq!(
+                    (lo..=hi).contains(&word),
+                    op.compare(&word, &constant),
+                    "{op:?} {constant} at {word}"
+                );
+            }
+        }
+        for word in [0, 5, u64::MAX] {
+            for constant in [0, 5, u64::MAX] {
+                assert_eq!(
+                    op.compare(&word, &constant),
+                    op.converse().compare(&constant, &word)
+                );
+            }
+        }
+    }
+
+    let schema = schema(2);
+    let outer = [0, 1, 6, u64::MAX];
+    let r0: Vec<(u64, u64)> = (0..8).map(|i| (outer[i % 4], i as u64 % 3)).collect();
+    let mut r1: Vec<(u64, u64)> = (0..36).map(|i| (i % 3, i / 3)).collect();
+    r1.extend([(0, u64::MAX), (1, u64::MAX - 1)]);
+    let views = views_of(&schema, &[r0.clone(), r1.clone()]);
+    // Keyed on `x`, the leaf scans position runs; unkeyed, it scans the
+    // whole relation as one contiguous run under each outer binding.
+    for keyed in [true, false] {
+        for op in ops {
+            for column_left in [true, false] {
+                let (left, right) = if column_left {
+                    (VarId(2), VarId(0))
+                } else {
+                    (VarId(0), VarId(2))
+                };
+                let leaf_vars: &[(u16, u16)] = if keyed { &[(0, 1), (1, 2)] } else { &[(1, 2)] };
+                let normalized = normalized(
+                    vec![
+                        occurrence(0, 0, &[(0, 0), (1, 1)]),
+                        occurrence(1, 1, leaf_vars),
+                    ],
+                    vec![FilterPredicate::FieldsCompare {
+                        op,
+                        left: OperandAddr::from(left),
+                        right: OperandAddr::from(right),
+                    }],
+                );
+                let plan =
+                    planned_with_sinks(&normalized, &schema, &[0, 1], &all_vars(&normalized));
+                let slots: Vec<usize> = (0..3).map(|k| plan.slot_of(VarId(k))).collect();
+                let mut expected = BTreeSet::new();
+                for (a, x) in &r0 {
+                    for (x2, b) in &r1 {
+                        let (l, r) = if column_left { (b, a) } else { (a, b) };
+                        if (!keyed || x2 == x) && op.compare(l, r) {
+                            expected.insert(vec![*a, *x, *b]);
+                        }
+                    }
+                }
+                let label = format!("{op:?} column_left={column_left} keyed={keyed}");
+                assert_eq!(scan_rows_of(&plan, &views, &slots), expected, "{label}");
+                assert_eq!(batch_rows_of(&plan, &views, &slots), expected, "{label}");
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 struct ScanCounters {
     cancel: Option<crate::work::WorkContext>,

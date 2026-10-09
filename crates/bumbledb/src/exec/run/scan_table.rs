@@ -1,5 +1,7 @@
 //! The scan-pushdown leaf arm and its residual position filter.
-use super::{Counters, Cursor, Executor, Flow, JoinCtx, LeafScan, Operand, Sink, Source};
+use super::{
+    Counters, Cursor, Executor, Flow, JoinCtx, LeafScan, Operand, ScanBuffers, Sink, Source,
+};
 use std::ops::ControlFlow;
 
 impl Executor {
@@ -61,7 +63,7 @@ impl Executor {
         counters.node_entry(node_idx);
         counters.cover_choice(node_idx, 0, crate::exec::colt::KeyCount::Estimate(0));
         let n_residuals = scan_residuals.len();
-        let mut filtered = std::mem::take(&mut self.scan_filter);
+        let mut buffers = std::mem::take(&mut self.scan_buffers);
         let ledger = &mut self.ledger;
         let mut work_refusal = None;
         let drove = scan.colt.for_each_suffix_run(cursor, |run| {
@@ -79,6 +81,11 @@ impl Executor {
                     }) as usize;
                 let (run, tail) = remaining.split_at(remaining.len().min(available));
                 remaining = tail;
+                let ScanBuffers {
+                    filtered,
+                    words,
+                    kept,
+                } = &mut buffers;
                 if n_residuals != 0 {
                     filtered.clear();
                     if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD {
@@ -99,16 +106,28 @@ impl Executor {
                                 }
                                 Operand::Const(word) => *word,
                             };
-                            let mut eval = |position: u32| {
-                                let pass =
-                                    op.compare(&value(&lhs, position), &value(&rhs, position));
-                                counters.residual(node_idx, pass);
-                                pass
-                            };
-                            if idx == 0 {
-                                push_surviving(run, &mut filtered, &mut eval);
+                            if let Some(range) = word_range(*op, lhs, rhs) {
+                                let before = if idx == 0 { run.len() } else { filtered.len() };
+                                if idx == 0 {
+                                    push_in_range(range, run, words, filtered);
+                                } else {
+                                    retain_in_range(range, filtered, words, kept);
+                                }
+                                for k in 0..before {
+                                    counters.residual(node_idx, k < filtered.len());
+                                }
                             } else {
-                                retain_surviving(&mut filtered, &mut eval);
+                                let mut eval = |position: u32| {
+                                    let pass =
+                                        op.compare(&value(&lhs, position), &value(&rhs, position));
+                                    counters.residual(node_idx, pass);
+                                    pass
+                                };
+                                if idx == 0 {
+                                    push_surviving(run, filtered, &mut eval);
+                                } else {
+                                    retain_surviving(filtered, &mut eval);
+                                }
                             }
                             if filtered.is_empty() {
                                 break;
@@ -138,7 +157,7 @@ impl Executor {
                             }
                             true
                         };
-                        push_surviving(run, &mut filtered, &mut eval);
+                        push_surviving(run, filtered, &mut eval);
                     }
                 }
                 // Charge every explored window, including all-rejected
@@ -152,7 +171,7 @@ impl Executor {
                 if n_residuals == 0 {
                     sink.scan_run(&scan, run);
                 } else if !filtered.is_empty() {
-                    sink.scan_run(&scan, crate::exec::colt::SuffixRun::Positions(&filtered));
+                    sink.scan_run(&scan, crate::exec::colt::SuffixRun::Positions(filtered));
                 }
                 let flow = Flow::from_sink_progress(sink.progress());
                 if flow.is_terminal() {
@@ -172,7 +191,7 @@ impl Executor {
             }
             ControlFlow::Break(flow) => flow,
         };
-        self.scan_filter = filtered;
+        self.scan_buffers = buffers;
         if let Some(error) = work_refusal {
             self.poison(super::Poison::Work(error));
         }
@@ -180,6 +199,72 @@ impl Executor {
         // and must never fall through into the generic leaf.
         Some(flow)
     }
+}
+
+/// A residual that compares a word column with a constant: the column and
+/// the inclusive word range it keeps. `None` for a byte column, two columns,
+/// or `Ne`.
+fn word_range<'c>(
+    op: crate::ir::WordCmp,
+    lhs: Operand<'c>,
+    rhs: Operand<'c>,
+) -> Option<(&'c [u64], u64, u64)> {
+    let (column, constant, op) = match (lhs, rhs) {
+        (Operand::Col(crate::image::ColumnView::Words(column)), Operand::Const(constant)) => {
+            (column, constant, op)
+        }
+        (Operand::Const(constant), Operand::Col(crate::image::ColumnView::Words(column))) => {
+            (column, constant, op.converse())
+        }
+        _ => return None,
+    };
+    let (lo, hi) = op.kept_range(constant)?;
+    Some((column, lo, hi))
+}
+
+/// Appends the run's positions whose word lies in the range, through one
+/// range-filter kernel scan (a position run is gathered first).
+fn push_in_range(
+    (column, lo, hi): (&[u64], u64, u64),
+    run: crate::exec::colt::SuffixRun<'_>,
+    words: &mut Vec<u64>,
+    out: &mut Vec<u32>,
+) {
+    let from = out.len();
+    match run {
+        crate::exec::colt::SuffixRun::Identity { start, len } => {
+            crate::exec::kernel::filter_range_u64(&column[start..start + len], lo, hi, out);
+            let base = u32::try_from(start).expect("positions fit u32");
+            for position in &mut out[from..] {
+                *position += base;
+            }
+        }
+        crate::exec::colt::SuffixRun::Positions(positions) => {
+            words.clear();
+            words.extend(positions.iter().map(|&p| column[p as usize]));
+            crate::exec::kernel::filter_range_u64(words, lo, hi, out);
+            for position in &mut out[from..] {
+                *position = positions[*position as usize];
+            }
+        }
+    }
+}
+
+/// Keeps the positions of `filtered` whose word lies in the range.
+fn retain_in_range(
+    (column, lo, hi): (&[u64], u64, u64),
+    filtered: &mut Vec<u32>,
+    words: &mut Vec<u64>,
+    kept: &mut Vec<u32>,
+) {
+    words.clear();
+    words.extend(filtered.iter().map(|&p| column[p as usize]));
+    kept.clear();
+    crate::exec::kernel::filter_range_u64(words, lo, hi, kept);
+    for (to, &from) in kept.iter().enumerate() {
+        filtered[to] = filtered[from as usize];
+    }
+    filtered.truncate(kept.len());
 }
 
 fn push_surviving(

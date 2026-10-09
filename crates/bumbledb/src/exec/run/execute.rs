@@ -268,7 +268,7 @@ impl Executor {
             var_widths,
             scratch,
             leaf,
-            scan_filter: Vec::new(),
+            scan_buffers: super::ScanBuffers::default(),
             drive,
             ledger: None,
             cancelled: Vec::new(),
@@ -355,7 +355,7 @@ impl Executor {
     pub(crate) fn release_memory(&mut self) {
         self.scratch = Vec::new();
         self.cursors = Vec::new();
-        self.scan_filter = Vec::new();
+        self.scan_buffers = super::ScanBuffers::default();
         self.cancelled = Vec::new();
         self.overlap = crate::interval::overlap::OverlapCache::default();
         self.overlap_hits = Vec::new();
