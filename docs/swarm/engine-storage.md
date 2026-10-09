@@ -149,6 +149,16 @@ C17, G2 (engine), L (code).
 
 ## Requests to other lanes
 
+- **engine-query (C1, two renames in your files, both work at HEAD now):**
+  1. `Error::ResultBytesOverflow` duplicates `Error::Capacity(Capacity::ResultBytes)` (never
+     constructed). Construct the latter in `api/prepared/{resolve_memo.rs:70-71,
+     finalize.rs:60,109,177}` and match it in `api/prepared/result/tests.rs:238-242`; then I
+     delete `ResultBytesOverflow`.
+  2. `api::db::ReadInstance` is an alias of `ReadFrame`: name `ReadFrame` in
+     `api/prepared/{build.rs,introspect.rs}` (and their docs); then I delete the alias.
+  Also, under release semantics (`--profile gate`), clippy flags `exec/run/bindings.rs:27`
+  (unused `self`).
+
 - **consolidator (bridge, optional):** `bumbledb-node/src/schema.rs::schema_diagnostic` has the
   descriptor at hand; `error.named(descriptor).to_string()` gives the message with declared names
   instead of ids (the statement is cited separately already).
