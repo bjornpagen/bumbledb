@@ -1,11 +1,8 @@
-//! Worker-local resource table (C7): ordinary event-loop state, not a
-//! parked stack and not a runtime-global payload map.
-//!
-//! Each configured worker owns one table. Snapshot entries hold L07's
-//! [`OwnedRead`] from `Db::snapshot`, plus worker-affine prepared state.
-//! Jobs borrow the entry and take `frame(&work)`. Send payloads (results,
-//! cursors, drafts, changes, populations) live here so no consumer can run
-//! conversion/I/O under the shared route lock.
+//! Worker-local resource tables: each worker owns one. Snapshot entries hold
+//! an [`OwnedRead`] plus worker-affine prepared state; jobs borrow an entry
+//! and take `frame(&work)`. Send payloads (results, cursors, drafts, change
+//! sets, hosted machines) live here so no conversion or I/O runs under the
+//! shared route lock.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

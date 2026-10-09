@@ -57,9 +57,7 @@ fn retained_completion_keeps_its_operation_slot_until_taken() {
     assert_eq!(runtime.inspect().retained, 1);
     assert!(matches!(runtime.take(&operation), Ok(Output::Ready)));
     assert_eq!(runtime.inspect().retained, 0);
-    // PINNED (P12's runtimeTake double-take note, decided wave-E): a second
-    // take is the TYPED SpentHandle refusal, never a null/None payload —
-    // runtime_take and every *Take verb ride this one path.
+    // A second take is the typed `SpentHandle` refusal, never an empty value.
     assert!(matches!(
         runtime.take(&operation),
         Err(RuntimeError::SpentHandle)
@@ -237,13 +235,7 @@ fn preparation_panic_faults_and_reclaims_registered_lease() {
     assert_eq!(runtime.inspect().retained, 0);
 }
 
-// --- Managed directory owner (C09 / RUN-05 / REP-009) ---------------------
-//
-// The transitional Legacy/Managed owner split is gone: every native DB now
-// lives in the one runtime registry, acquired behind a kernel-held
-// directory lock. These tests drive that owner registry directly (no engine
-// or N-API), proving acquisition, path-traversal/reserved-namespace refusal,
-// the one close authority reporting Closed, and idempotent close join.
+// Directory owners: acquisition, path safety, one close authority.
 
 fn owner_options() -> Options {
     Options {
@@ -330,9 +322,9 @@ fn directory_owner_lifecycle_and_path_safety() {
 
 #[test]
 fn suspended_owner_fences_a_second_acquire() {
-    // RUN-05/REP-009: while one owner holds the kernel lock, a second
-    // acquire of the same path refuses with DirectoryBusy and mutates
-    // nothing. Releasing the first lets the next owner in.
+    // While one owner holds the kernel lock, a second acquire of the same
+    // path refuses with DirectoryBusy and mutates nothing. Releasing the
+    // first lets the next owner in.
     let runtime = Runtime::start(owner_options()).unwrap();
     let base = unique_base("fence");
     std::fs::create_dir_all(&base).unwrap();
@@ -395,7 +387,7 @@ fn suspended_owner_fences_a_second_acquire() {
 
 #[test]
 fn worker_inbox_wakeup_reaches_a_sleeping_pool() {
-    // D24/D29 sensitivity: a sleeping worker must observe an admitted inbox
+    // a sleeping worker must observe an admitted inbox
     // item (lane_send holds the bookkeeping lock across notify; the wait
     // path try_recv's before Condvar::wait). One ready job after idle
     // proves wakeup. Failed admission must not leave a route.

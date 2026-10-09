@@ -7,7 +7,7 @@
 //! Each configured worker owns a resource table as ordinary event-loop state.
 //! Capabilities route to `runtime/worker/kind/id/generation`. Jobs borrow one
 //! entry and return to the scheduler. Workers wake for every inbox, queue,
-//! close and cleanup source. JS-driven WriterSession/HostWrite ABI is deleted.
+//! close and cleanup source.
 use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -276,7 +276,7 @@ pub enum Output {
         cap: Capability,
         work: session::PayloadWork,
     },
-    /// One immutable final-state apply outcome (chapter 35 `Db.apply`).
+    /// One apply outcome.
     Apply(crate::db_wire::ApplyOutcome),
     /// A non-committing judgment; cancellation never becomes mutation evidence.
     Judge(crate::db_wire::JudgeOutcome),
@@ -291,13 +291,11 @@ pub enum Output {
 }
 
 impl Output {
-    /// Whether this outcome is EVIDENCE of a dispatched store mutation. A
-    /// completed mutation is evidence, not a cancellable acquisition:
-    /// interruption may discard its delivery, never rewrite a known
-    /// mutation outcome into a rollback claim (the certainty model's one
-    /// carve-out from post-work cancellation).
+    /// Whether this outcome reports a state change that already happened (a
+    /// commit, or a machine step whose requests and settlements the caller
+    /// must see). Cancellation after the work never replaces it.
     fn mutation_evidence(&self) -> bool {
-        matches!(self, Self::Apply(_))
+        matches!(self, Self::Apply(_) | Self::HostedStep(_))
     }
 
     /// A page/rows owner whose ownership and cursor advance are already
@@ -392,8 +390,8 @@ pub struct Runtime {
     pub(crate) lane_senders: Vec<std::sync::mpsc::Sender<lanes::WorkerCommand>>,
     state: Mutex<State>,
     changed: Condvar,
-    /// One-shot D12/D25 probe: next payload publication cancels after
-    /// `work()` returns a page and before `operation.output` is written.
+    /// One-shot: the next payload publication cancels after `work()`
+    /// returns a page and before `operation.output` is written.
     publication_cancel: AtomicBool,
     #[cfg(test)]
     publication_hold: Mutex<Option<PublicationHold>>,
@@ -502,7 +500,7 @@ impl Runtime {
         {
             runtime.begin_close();
             // Startup failed before accepting any job: these idle workers can
-            // be joined now, so the failed acquisition cannot overlap a successor.
+            // be joined now, so the failed start cannot overlap a later one.
             for worker in lock(&workers).take().unwrap_or_default() {
                 let _ = worker.join();
             }
@@ -705,8 +703,7 @@ impl Runtime {
         let _ = self.registry.close_all();
     }
 
-    /// Arm the next payload publication gap (one-shot). L16
-    /// `runtimeArmPublicationCancel`.
+    /// Arm the next payload publication gap (one-shot).
     pub(crate) fn arm_publication_cancel(&self) {
         self.publication_cancel.store(true, Ordering::Release);
     }
@@ -959,7 +956,9 @@ impl Runtime {
             return Ok(None);
         }
         if !value.queued_publication() {
-            operation.context.checkpoint()?;
+            if !value.mutation_evidence() {
+                operation.context.checkpoint()?;
+            }
             return Ok(Some(value));
         }
         sink.accept(value, || {})?;

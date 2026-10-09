@@ -1,17 +1,7 @@
-//! Shared routing/admission metadata (C7).
-//!
-//! The runtime-wide lock covers only capability routes, resource state and
-//! native handle counts. Payloads live in the owning worker table. Absence or
-//! generation mismatch refuses — IDs are not kept as revoked tombstones.
-//!
-//! Consumer contract (L13/L14/L16):
-//! - `Capability { runtime, worker, kind, id, generation }` is the only token.
-//! - `RegistryAdmission::admit` reserves a handle slot then installs on a worker.
-//! - `Runtime::submit_payload` / `SnapshotSession::submit` borrow one entry.
-//! - `Runtime::close_resource` is the joined close; it cannot `QueueFull`.
-//! - Failed drafts release their pending rows and stay terminal.
-//! - `Output::Page` / `Rows` carry [`super::QueuedOutput`]. No `Cursor.pending`.
-//! - `with_payload`, `RetainedGuard`, and JS-driven `WriterSession` are gone.
+//! Capability routes and admission. The runtime-wide lock covers only
+//! routes, resource state and native handle counts; payloads live in their
+//! owning worker's table. A `Capability` is the only token: an absent route
+//! or a generation mismatch refuses, and closed IDs are never kept.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -52,24 +42,6 @@ impl ResourceState {
             Self::Closing => Err(RuntimeError::ClosedHandle),
         }
     }
-}
-
-/// Worker-routed capability header (C7). Binds runtime identity, worker
-/// route, kind, ID and generation. Never holds payload bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ResourceHeader {
-    pub runtime: u64,
-    pub worker: u32,
-    pub kind: NativeKind,
-    pub id: u64,
-    pub generation: u64,
-}
-
-/// Guaranteed close-drain: already-owned obligation, not QueueFull-prone
-/// new work (C7). Repeated close joins one drain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CloseDrain {
-    pub header: ResourceHeader,
 }
 
 /// A checked capability crossing into the registry. Never holds payload
@@ -250,7 +222,7 @@ impl NativeRegistry {
 
     /// Revokes admission and records exactly one drain. Repeated calls
     /// join the existing flag — they do not enqueue rejectable work.
-    pub(crate) fn request_close(&self, cap: Capability) -> Result<CloseDrain, RuntimeError> {
+    pub(crate) fn request_close(&self, cap: Capability) -> Result<(), RuntimeError> {
         self.check(cap)?;
         let mut routes = self.routes();
         let route = routes
@@ -263,15 +235,7 @@ impl NativeRegistry {
         if route.state == ResourceState::Live {
             route.state = ResourceState::Closing;
         }
-        Ok(CloseDrain {
-            header: ResourceHeader {
-                runtime: self.runtime,
-                worker: route.worker,
-                kind: cap.kind,
-                id: cap.id,
-                generation: route.generation,
-            },
-        })
+        Ok(())
     }
 
     /// Removes a drained route. No tombstone remains.
@@ -402,7 +366,7 @@ impl RegistryAdmission {
 
     /// Coalesced close: existing admitted obligation, not a new job.
     #[cfg(test)]
-    pub(crate) fn request_close(&self) -> Result<CloseDrain, RuntimeError> {
+    pub(crate) fn request_close(&self) -> Result<(), RuntimeError> {
         self.runtime.request_resource_close(self.cap)
     }
 }

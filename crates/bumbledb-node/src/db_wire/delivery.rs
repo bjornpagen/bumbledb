@@ -162,7 +162,8 @@ pub(crate) enum PullOutcome {
 
 #[cfg(test)]
 impl PullOutcome {
-    /// Output L12's sink registers. Live pull commits the same ticket.
+    /// The output the publication sink registers; a live pull commits the
+    /// same ticket.
     pub fn committed_output(self) -> Result<Output, RuntimeError> {
         match self {
             Self::Page { queued, .. } => Ok(Output::Page(Some(queued))),

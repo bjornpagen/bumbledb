@@ -1,6 +1,6 @@
-//! Worker-table snapshots (C7): one owned pinned read plus prepared state
-//! per entry. Jobs borrow the entry for one operation and return to the
-//! scheduler. No session-long reactor, no `ready_rx`, no JS-driven writer.
+//! Worker-table snapshots: one owned pinned read plus prepared state per
+//! entry. Jobs borrow the entry for one operation and return it to the
+//! scheduler.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
@@ -11,7 +11,7 @@ use bumbledb::{OwnedRead, PreparedQuery, SchemaDescriptor};
 
 use super::lanes::{LaneId, WorkerCommand};
 use super::owners::{DbLease, ManagedDb};
-use super::registry::{Capability, CloseDrain, NativeKind};
+use super::registry::{Capability, NativeKind};
 use super::table::{SnapshotData, SnapshotResource, TablePayload, WorkerContext};
 use super::{Notify, Operation, Output, Runtime, RuntimeError, WaitTarget, lock};
 
@@ -66,7 +66,6 @@ impl SnapshotAccess<'_> {
             .prepared
             .as_deref_mut()
             .ok_or(RuntimeError::ClosedHandle)?;
-        // L07 seam: execute against the owned frame, not a !Send ReadInstance.
         prepared
             .execute_complete_with_work(&self.owned.frame(context), context, args)
             .map_err(|error| engine_error(&error))
@@ -82,9 +81,9 @@ impl SnapshotAccess<'_> {
 pub type SnapshotWork =
     Box<dyn FnOnce(&WorkContext, &mut SnapshotAccess<'_>) -> Result<Output, RuntimeError> + Send>;
 
-/// Live-ticket publication boundary. L13 calls [`PublicationSink::accept`]
-/// with the original `DeliveryTicket` still alive: register `QueuedOutput`
-/// and `commit()` are one transition. No park, no second preview.
+/// The publication boundary: [`PublicationSink::accept`] registers the
+/// `QueuedOutput` and commits the still-live `DeliveryTicket` as one
+/// transition.
 pub struct PublicationSink<'a> {
     operation: &'a Operation,
     armed: bool,
@@ -285,7 +284,6 @@ impl Runtime {
         let worker = WorkerContext::worker_id()?;
         let schema = lease.schema();
         let store_identity = lease.db().integration_store().identity().store.to_string();
-        // L07 seam: Db::snapshot → OwnedRead. Each job takes frame(&work).
         let pinned_read = lease
             .db()
             .snapshot(context)
@@ -557,14 +555,11 @@ impl Runtime {
         Ok(operation)
     }
 
-    pub(crate) fn request_resource_close(
-        &self,
-        cap: Capability,
-    ) -> Result<CloseDrain, RuntimeError> {
-        let drain = self.registry.request_close(cap)?;
+    pub(crate) fn request_resource_close(&self, cap: Capability) -> Result<(), RuntimeError> {
+        self.registry.request_close(cap)?;
         let _ = self.send_close(cap);
         self.changed.notify_all();
-        Ok(drain)
+        Ok(())
     }
 
     pub(crate) fn reserve_native_route(
@@ -633,8 +628,7 @@ impl Runtime {
         )
     }
 
-    /// Route one Send-payload job to the owning worker. L13/L14 replace
-    /// `with_payload` with this — no global mutex around conversion.
+    /// Route one payload job to the payload's owning worker.
     pub(crate) fn submit_payload(
         &self,
         cap: Capability,
@@ -723,7 +717,7 @@ impl Runtime {
         report: super::Report,
     ) -> Result<(), RuntimeError> {
         match self.request_resource_close(cap) {
-            Ok(_) | Err(RuntimeError::ClosedHandle) => {
+            Ok(()) | Err(RuntimeError::ClosedHandle) => {
                 self.wait_target(WaitTarget::Resource(cap), report);
                 Ok(())
             }
@@ -754,7 +748,6 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests {
-    //! D18/D24/D29 discriminators. Authored now; verification `NotRun`.
     use std::sync::mpsc::channel;
     use std::time::{Duration, Instant};
 
@@ -1167,7 +1160,7 @@ mod tests {
 
     #[test]
     fn one_worker_open_read_close_and_idle_snapshots_share_the_pool() {
-        // D24: workers=1, open/read/close; more idle snapshots than workers;
+        // workers=1, open/read/close; more idle snapshots than workers;
         // sleeping worker then an opening job on that same worker. Ready
         // after reactor-exit / missing inbox wakeup must fail this schedule.
         let runtime = Runtime::start(options()).unwrap();
@@ -1228,7 +1221,7 @@ mod tests {
 
     #[test]
     fn close_drains_while_js_tokens_stay_reachable_and_queue_is_full() {
-        // D18: keep wrappers reachable; fill the ordinary queue; close still
+        // keep wrappers reachable; fill the ordinary queue; close still
         // drains. QueueFull must not strand teardown. Counters match release.
         let runtime = Runtime::start(options()).unwrap();
         let base = unique_dir("d18-close");
@@ -1294,7 +1287,7 @@ mod tests {
 
     #[test]
     fn js_thread_admit_returns_without_waiting_on_busy_worker() {
-        // D24: JS-thread admit/install must return while the only worker
+        // JS-thread admit/install must return while the only worker
         // is blocked. A ready_rx / thread-join on take fails this schedule.
         let runtime = Runtime::start(options()).unwrap();
         let (release, blocked) = channel();
@@ -1352,7 +1345,7 @@ mod tests {
 
     #[test]
     fn close_of_uninstalled_route_does_not_leave_a_row() {
-        // D18: reserve + async install, then close before the worker
+        // reserve + async install, then close before the worker
         // inserts. The route must drain; QueueFull cannot apply; no leftover
         // row or handle slot.
         let runtime = Runtime::start(options()).unwrap();
@@ -1419,7 +1412,7 @@ mod tests {
 
     #[test]
     fn idle_shutdown_wakes_sleeping_pool_without_reentering_state() {
-        // D18: idle pool (active==0) then runtime drain. Re-locking
+        // idle pool (active==0) then runtime drain. Re-locking
         // runtime.state from lane_send during begin_close/drain hangs.
         let runtime = Runtime::start(options()).unwrap();
         assert_eq!(runtime.inspect().active, 0, "pool starts asleep");
@@ -1432,7 +1425,7 @@ mod tests {
 
     #[test]
     fn close_during_busy_snapshot_drains_after_job() {
-        // D18: close while a snapshot job holds the table entry. Destruction
+        // close while a snapshot job holds the table entry. Destruction
         // after WorkerContext::with returns; a nested with() panics.
         let runtime = Runtime::start(options()).unwrap();
         let base = unique_dir("d18-busy-snapshot");
@@ -1490,7 +1483,7 @@ mod tests {
 
     #[test]
     fn arm_publication_cancel_drops_unregistered_page() {
-        // D12/D25: arm, then work returns a page. The one-shot must fail
+        // arm, then work returns a page. The one-shot must fail
         // before operation.output; retry on the same cap delivers the page.
         let runtime = Runtime::start(options()).unwrap();
         let admission = super::super::registry::RegistryAdmission::admit(
@@ -1561,7 +1554,7 @@ mod tests {
 
     #[test]
     fn dispatch_payload_registers_page_before_post_checkpoint() {
-        // D12: publication is dispatch_payload_message, not an L13 helper.
+        // Publication happens in dispatch_payload_message.
         // Predelivery Err leaves the cap retryable. A live (not cancelled)
         // page stays registered for take; cancel-without-take is the
         // abandoned-output discriminator, not this one.
@@ -1627,7 +1620,7 @@ mod tests {
 
     #[test]
     fn publication_boundary_cancel_does_not_skip_or_duplicate_rows() {
-        // D12: native publication-boundary cancel cannot skip or duplicate
+        // native publication-boundary cancel cannot skip or duplicate
         // rows. The armed reject drops the local page before accept; retry
         // delivers the same two rows, not a later page or a doubled page.
         let runtime = Runtime::start(options()).unwrap();
@@ -1710,7 +1703,7 @@ mod tests {
 
     #[test]
     fn abandoned_publication_reclaims_on_cancel_close_without_js_take() {
-        // D12: pause after native publication, before the JS callback.
+        // pause after native publication, before the JS callback.
         // Interrupt, retain wrappers, cancel+close must finish and release
         // native resources without a JavaScript take.
         let runtime = Runtime::start(options()).unwrap();
@@ -1829,7 +1822,7 @@ mod tests {
 
     #[test]
     fn close_during_busy_payload_drains_after_job() {
-        // D18: close while a payload job holds the table entry. Same
+        // close while a payload job holds the table entry. Same
         // nested-borrow failure as the snapshot schedule.
         let runtime = Runtime::start(options()).unwrap();
         let admission = super::super::registry::RegistryAdmission::admit(
@@ -1957,7 +1950,7 @@ mod tests {
 
     #[test]
     fn failed_admission_rolls_back_and_history_does_not_accumulate() {
-        // D29: failed admission before insertion leaves no payload/row/slot.
+        // failed admission before insertion leaves no payload/row/slot.
         // Long create/revoke returns to the admitted baseline. No tombstones.
         let runtime = Runtime::start(options()).unwrap();
         let baseline = runtime.inspect();

@@ -162,3 +162,7 @@ Hosted databases (R-B3, `bumbledb_log::Machine<Cache>`; one machine per database
   state with the head schema's `SchemaHandle`; every query and point-read verb works on it.
   Refuses `ClosedHandle` before the first state exists.
 - `hostedClose(hosted, cb: CloseOut)`; step `Close` first to settle pending tickets.
+- Never cancel (`runtimeCancel`) or drop an untaken hosted step operation: a step's `StepOut`
+  carries requests the machine then waits on, and a cancelled `hostedRespond*` loses its
+  response. To stop a database, step `Close`. A completed step is never replaced by a later
+  cancellation.

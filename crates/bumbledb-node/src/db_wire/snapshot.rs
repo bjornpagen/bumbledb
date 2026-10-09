@@ -1,17 +1,6 @@
-//! Snapshot and execution-session jobs over L07/L12 owned read/frame.
-//!
-//! Each operation receives a fresh cancellation `WorkContext`. The
-//! snapshot's age does not expire later operations. One-shot plans drop
-//! with their operation. Explicit preparation owns one reusable worker-table
-//! object and an independent share of the same snapshot pin.
-//!
-//! Point reads decode canonical rows from `OwnedRead::get_dyn`. Prepared
-//! executions acquire their own cache resolver through the core query path;
-//! the worker-held LMDB snapshot does not retain obsolete text resolvers.
-//!
-//! No borrowed `ReadInstance` lease, no unsafe Send.
-//! Published snapshots are [`super::SnapshotHandle`] only — mint with
-//! `assemble`, close with `runtime_snapshot_close`. No writable `Db`.
+//! Snapshot jobs over a worker-held owned read. Each operation gets a fresh
+//! `WorkContext`; one-shot plans drop with their operation, and an explicit
+//! preparation owns one reusable worker-table entry sharing the same pin.
 
 use std::sync::Arc;
 

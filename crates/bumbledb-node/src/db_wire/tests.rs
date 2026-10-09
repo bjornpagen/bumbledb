@@ -115,7 +115,7 @@ fn work() -> WorkContext {
     policy()
 }
 
-// ---- D25 / D12 consumer counterexamples on the native pull -----------------
+// Native pull: abort retries the same row; a commit advances exactly once.
 
 fn cursor_payload(runtime: &Arc<Runtime>, db: &ManagedDb) -> Payload {
     let (mut payload, _) = sealed_result(runtime, db);
@@ -186,7 +186,7 @@ fn cancelled_pull_refuses_and_retry_delivers_same_row() {
             assert_eq!(first_key(queued), 1);
             assert!(*terminal);
             let Output::Page(Some(handoff)) = outcome.committed_output().expect("handoff") else {
-                panic!("L12 must receive the committed QueuedOutput")
+                panic!("the sink must receive the committed QueuedOutput")
             };
             assert_eq!(handoff.rows.len(), 3);
         }
@@ -591,7 +591,7 @@ fn draft_finish_normalizes_add_wins_and_spends() {
     ));
 }
 
-// ---- D01 / D18 collect + result lifetime -----------------------------------
+// Collection and sealed result lifetime.
 
 fn sealed_result(runtime: &Arc<Runtime>, db: &ManagedDb) -> (Payload, u64) {
     let (opened_tx, opened_rx) = std::sync::mpsc::channel();

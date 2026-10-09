@@ -1,4 +1,4 @@
-//! Per-worker inbox (C7): routed jobs and coalesced close, never a
+//! Per-worker inbox: routed jobs and coalesced close, never a
 //! session-long reactor and never a thread-per-session host claim.
 
 use std::sync::mpsc::{Receiver, Sender, channel};
