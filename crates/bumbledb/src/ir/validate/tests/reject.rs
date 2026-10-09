@@ -435,7 +435,10 @@ fn rejects_sum_over_non_integer() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::AggregateInputType { find: FindIndex(0) }
+        ValidationError::Aggregate {
+            find: FindIndex(0),
+            refusal: AggregateRefusal::InputType
+        }
     ));
 }
 
@@ -450,7 +453,10 @@ fn rejects_min_and_max_over_str() {
         );
         assert!(matches!(
             expect_err(&query),
-            ValidationError::AggregateInputType { find: FindIndex(0) }
+            ValidationError::Aggregate {
+                find: FindIndex(0),
+                refusal: AggregateRefusal::InputType
+            }
         ));
     }
 }
@@ -464,7 +470,10 @@ fn rejects_folds_over_bool() {
         );
         assert!(matches!(
             expect_err(&query),
-            ValidationError::AggregateInputType { find: FindIndex(0) }
+            ValidationError::Aggregate {
+                find: FindIndex(0),
+                refusal: AggregateRefusal::InputType
+            }
         ));
     }
 }
@@ -501,7 +510,10 @@ fn rejects_sparse_param_ids() {
         negated: vec![],
         conditions: vec![],
     });
-    assert!(matches!(expect_err(&query), ValidationError::ParamIdGap { param } if param.0 == 0));
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::Param { param, refusal: ParamRefusal::IdGap } if param.0 == 0
+    ));
 }
 
 #[test]
@@ -647,7 +659,10 @@ fn rejects_min_and_max_over_fixed_bytes() {
         );
         assert!(matches!(
             expect_err(&query),
-            ValidationError::AggregateInputType { find: FindIndex(0) }
+            ValidationError::Aggregate {
+                find: FindIndex(0),
+                refusal: AggregateRefusal::InputType
+            }
         ));
     }
 }

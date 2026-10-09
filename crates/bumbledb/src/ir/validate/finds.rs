@@ -188,7 +188,10 @@ impl Context {
                         _ => false,
                     };
                     if !admitted {
-                        return Err(ValidationError::AggregateInputType { find });
+                        return Err(ValidationError::Aggregate {
+                            find,
+                            refusal: AggregateRefusal::InputType,
+                        });
                     }
                     if self.closed_vars.contains_key(over) {
                         return Err(ValidationError::Aggregate {

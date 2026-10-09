@@ -146,6 +146,8 @@ pub enum ParamRefusal {
     ScalarAndSet,
     /// Parameter sets hold points, not intervals.
     IntervalSet,
+    /// Parameter ids are dense from 0; this one is unused.
+    IdGap,
 }
 
 /// Why one comparison is refused.
@@ -188,6 +190,9 @@ pub enum AggregateRefusal {
     MultiplePack,
     MixedPackAndFold,
     PackInputType,
+    /// The input type is outside the fold's roster (Mean needs F64; Sum, Min
+    /// and Max take U64, I64 or F64).
+    InputType,
 }
 
 /// Why the recursive component is refused.
@@ -319,6 +324,9 @@ impl fmt::Display for ValidationError {
                         f,
                         "parameter {param}: param sets hold points, not intervals"
                     ),
+                    ParamRefusal::IdGap => {
+                        write!(f, "parameter ids are not dense: {param} is unused")
+                    }
                 }
             }
             Self::Comparison { index, refusal } => match refusal {
@@ -377,6 +385,10 @@ impl fmt::Display for ValidationError {
                 "find {find}: aggregate input outside the fold's type roster"
             ),
             Self::Aggregate { find, refusal } => match refusal {
+                AggregateRefusal::InputType => write!(
+                    f,
+                    "find {find}: aggregate input outside the fold's type roster"
+                ),
                 AggregateRefusal::ClosedReference => write!(
                     f,
                     "find {find}: ordering fold over a closed reference — \

@@ -278,7 +278,10 @@ fn param_density_is_judged_across_the_whole_program() {
     };
     assert_eq!(
         expect_err(&gapped),
-        ValidationError::ParamIdGap { param: ParamId(1) }
+        ValidationError::Param {
+            param: ParamId(1),
+            refusal: crate::ir::validate::error::ParamRefusal::IdGap
+        }
     );
 }
 

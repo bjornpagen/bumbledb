@@ -578,8 +578,9 @@ impl ParamTables {
     fn check_masks_and_density(&self) -> Result<(), ValidationError> {
         for (position, param) in self.param_kinds.keys().enumerate() {
             if usize::from(param.0) != position {
-                return Err(ValidationError::ParamIdGap {
+                return Err(ValidationError::Param {
                     param: ParamId(u16::try_from(position).expect("param ids fit u16")),
+                    refusal: ParamRefusal::IdGap,
                 });
             }
         }
