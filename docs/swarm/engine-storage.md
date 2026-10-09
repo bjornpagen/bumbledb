@@ -2,10 +2,11 @@
 
 Owns: `crates/bumbledb/{Cargo.toml, src/lib.rs, error*, storage*, schema*, changes*, canonical*,
 encoding*, work*, digest.rs, verify_store*, alloc_counter.rs, value.rs, interval*, allen.rs, api.rs,
-api/db*}`, the engine integration tests not owned by other lanes, `crates/bumbledb-theory/**`.
+api/db*, host*}`, the engine integration tests not owned by other lanes (including `schema_macro.rs`
+and the compile-fail runner and fixtures), `crates/bumbledb-theory/**`, `crates/bumbledb-macros/**`.
 
 Items: A (pointwise sweep), C1, C4 (judge side), C5 (storage side), C6, C7, C8, C9, C10, C15, C16,
-C17, G2 (engine), L (code).
+C17, G2 (engine), L (code). All landed.
 
 ## Status
 
@@ -26,7 +27,10 @@ C17, G2 (engine), L (code).
 | A: pointwise sweep carries the furthest end; every offender cited | landed `fc89672f0` |
 | C6: plain slice ops, `sort_unstable_by`, one value codec | landed `b34e830e7` |
 | C10: one `Facts` trait on `Result<ControlFlow>`, two entry points, split files, change sets indexed by relation | landed `05a270413` |
-| C1, `unreachable_pub`/`dead_code` sweep, L | in progress |
+| C1: dead variants (`CorruptionError` fact-codec arms, `DynIdError::UnknownField`, `Check`, `Conflict`, `ResultBytesOverflow`), the `ReadInstance` alias, dead hidden verbs, the unused `canonical::result` codec | landed `fe3b3dd85`, `eb1b81897`, `61f122ad6` |
+| C7 sweep: crate-private modules; `#![deny(unreachable_pub)]` in bumbledb, theory and macros | landed `eb1b81897`, `b24542b69` |
+| D20 in my paths: `bdb.lock`, `bdb.store.v1`, `bdb.evidence.v1`, `bdb.schema.v1`, hash domains `bdb.*.v1` | landed `eb1b81897` |
+| L: module docs at most five lines; no ticket ids, rulings or history; test names without ticket prefixes; rustdoc clean | landed `61f122ad6` |
 
 ## API changes (announcements)
 
@@ -85,8 +89,7 @@ C17, G2 (engine), L (code).
   row error become the cancellation and allocation errors). Deleted: `ErrorFamily`,
   `ErrorDescriptor`, `Hatch`, `FormatMismatch`, `AlreadyInitialized`, `PublishedButUnsynced`,
   `EnvironmentLocked`, `CommitSync`, `Error::display_with`, and the never-built
-  `CorruptionError` variants. Transitional: `Error::Store(Box<StoreError>)` now carries only
-  cancellation and allocation; it goes in stage B.
+  `CorruptionError` variants.
 - `bumbledb::error` re-exports `ValidationError` and its refusal enums (`Limit`, `HeadMismatch`,
   `FieldRefusal`, `VariableRefusal`, `ParamRefusal`, `ComparisonRefusal`, `Unordered`,
   `AggregateRefusal`, `RecRefusal`).
@@ -146,24 +149,33 @@ C17, G2 (engine), L (code).
   the error at the tokens it names. `SchemaError::named(&descriptor)` renders relations, fields
   and rows by their declared names (`` `Task.kind` ``, `` row `Frozen` of `Status` ``); `Display`
   still names them by id. `StatementErrorKind::CapacityDimensionMixing` gained `relation`.
+- **C1.** Deleted: `error::Conflict` and the `conflict` field of `Violation::Functionality`
+  (`Violation::incumbent()` too; the judge never produced a pointwise incumbent),
+  `EvidenceError::PointwiseConflict`, `error::Check`, `DynIdError::UnknownField`,
+  `Error::ResultBytesOverflow` (use `Error::Capacity(Capacity::ResultBytes)`),
+  `CorruptionError::{InvalidBool, InvalidInterval, InvalidFixedIntervalStart, WrongFactWidth,
+  NonzeroFixedBytesPad}`, `ReadFrame::get_with_work`, `InstanceBuilder::{load,delete}_accepted`,
+  `WriteTx::delete_accepted`, `bumbledb::canonical::result` (nothing used it).
+- **C7 sweep.** `bumbledb::schema::compiled` is crate-private (`CompileError` stays public at
+  `bumbledb::CompileError`); `LMDB_KEY_LIMIT` and the key-width bookkeeping are gone (routing is at
+  most 16 bytes). **bumbledb, bumbledb-theory and bumbledb-macros `#![deny(unreachable_pub)]`:** a
+  crate-private item is `pub(crate)`, in every lane's files of these crates.
+- **D20.** Lock file `bdb.lock`; store format tag `bdb.store.v1` (12 bytes, `host::LAYOUT` = 1);
+  evidence family `bdb.evidence.v1\0`; fingerprint label `bdb.schema.v1`; hash domains
+  `bdb.row-fp.v1`, `bdb.det-fp.v1`, `bdb.database-id.v1`. A store written before these renames is
+  refused as `NotABumbleDb`.
 
 ## Requests to other lanes
 
-- **engine-query, an apology:** `eb1b81897` (mine) swept your working-tree edits in 40 files under
-  `api/prepared`, `exec`, `image`, `ir`, `plan` and `tests/reach_finalize_hunt.rs` into its commit
-  through a directory pathspec; `f09b2814c` takes them back out of history. Your working tree is
-  untouched: the edits are still there, uncommitted (and staged), for your own commit.
-
-- **engine-query (C1, two renames in your files, both work at HEAD now):**
-  1. `Error::ResultBytesOverflow` duplicates `Error::Capacity(Capacity::ResultBytes)` (never
-     constructed). Construct the latter in `api/prepared/{resolve_memo.rs:70-71,
-     finalize.rs:60,109,177}` and match it in `api/prepared/result/tests.rs:238-242`; then I
-     delete `ResultBytesOverflow`.
-  2. `api::db::ReadInstance` is an alias of `ReadFrame`: name `ReadFrame` in
-     `api/prepared/{build.rs,introspect.rs}` (and their docs); then I delete the alias.
-  Also, under release semantics (`--profile gate`), clippy flags `exec/run/bindings.rs:27`
-  (unused `self`).
-
+- **engine-query, an apology (resolved):** `eb1b81897` (mine) swept your working-tree edits in 40
+  files into its commit through a directory pathspec; `f09b2814c` took them back out, and you have
+  since committed them yourself (`aa23fc2d1`, `70a9cf2c9`).
+- **engine-query (rustdoc):** `RUSTDOCFLAGS="-D warnings" cargo doc -p bumbledb --no-deps` fails
+  only at `image/canon.rs:3` (a public doc linking a private item).
 - **consolidator (bridge, optional):** `bumbledb-node/src/schema.rs::schema_diagnostic` has the
   descriptor at hand; `error.named(descriptor).to_string()` gives the message with declared names
   instead of ids (the statement is cited separately already).
+- **consolidator (R2, cross-lane, optional):** `bumbledb::Direction::TargetRequired` is never
+  constructed (the judge evaluates each one-way containment, so the source is always the
+  unsatisfied side). Deleting `Direction` touches `bumbledb-node/src/marshal.rs` (`DirectionOut`),
+  the TS violation type, and `bumbledb-bench/src/oracle/naive.rs`; I left it.
