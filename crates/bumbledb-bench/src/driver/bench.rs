@@ -4,7 +4,7 @@ use crate::cli::{BenchArgs, CorpusArgs};
 use crate::corpus_gen::{self, GenConfig};
 use crate::harness::Protocol;
 use crate::schema::Ledger;
-use crate::{clockproxy, families, report, sqlite_run, verify};
+use crate::{families, report, sqlite_run, verify};
 
 use super::corpus::gen_config;
 use super::write_families::write_families;
@@ -48,10 +48,6 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
         return Err(alloc_missing("--alloc"));
     }
 
-    // Refuse RAM-backed timing before generating a corpus. Write runners
-    // independently check their scratch targets.
-    crate::devhonesty::assert_disk_backed(&args.corpus.dir, "the timed read families")
-        .map_err(|refusal| refusal.to_string())?;
     let paths = ensure_corpus(&args.corpus.dir, cfg)?;
     let verified = stamp_is_fresh(&paths, cfg);
     if !verified && !args.i_am_lying {
@@ -97,23 +93,14 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     });
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("out dir: {e}"))?;
 
-    // One durability point remains: the stamped corpus opens
-    // durable, always. The retired `--nosync`/`--ephemeral` flags refuse in
-    // the parser.
-    let lane = crate::duralane::DurabilityLane::Durable;
-
-    let mode = lane.store_mode();
-    let db = mode.open(&paths.db, Ledger)?;
-    let cal_db = mode.open(&paths.cal_db, crate::calendar::Scheduling)?;
+    let db = crate::harness::open_db(&paths.db, Ledger)?;
+    let cal_db = crate::harness::open_db(&paths.cal_db, crate::calendar::Scheduling)?;
     let conn =
         sqlite_run::open_for_bench(&paths.oracle).map_err(|e| format!("open oracle: {e}"))?;
     sqlite_run::FairnessCheck::run(&conn)?;
     let cal_conn = sqlite_run::open_for_bench(&paths.cal_oracle)
         .map_err(|e| format!("open calendar oracle: {e}"))?;
     sqlite_run::FairnessCheck::run_calendar(&cal_conn)?;
-
-    eprintln!("bench: warming clocks (200 ms spin)");
-    clockproxy::warm_up(std::time::Duration::from_millis(200));
 
     let proto = Protocol {
         warmups: Protocol::WARM.warmups,
@@ -124,7 +111,6 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         proto,
         read_batch: args.read_batch,
         alloc: args.alloc,
-        proxy_per_rep: args.proxy_per_rep,
         first_family_warmed: false,
         db: &db,
         conn: &conn,
@@ -144,9 +130,9 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
             reads.push(run.read_cal_family(family)?);
         }
     }
-    // under the same protocol — report-only rows beside the reads. It
-    // runs after the stamped read families (its corpus load commits
-    // fsync) and before the write families (it times reads).
+    // The closure and displaced worlds are report-only rows beside the reads.
+    // Their corpus loads commit with fsync, so they run after the stamped
+    // read families and before the write families.
     reads.extend(crate::closure::bench_families(
         cfg,
         &out_dir.join("scratch"),
@@ -155,13 +141,8 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         args.read_batch,
         crate::harness::Modes {
             alloc_window: args.alloc,
-            proxy_per_rep: args.proxy_per_rep,
         },
-        lane.store_mode(),
     )?);
-
-    // with the mass as the row's parameter. After the closure lane
-    // (same reads-before-writes law), before the write families.
     reads.extend(crate::displaced::bench_families(
         cfg,
         &out_dir.join("scratch"),
@@ -170,13 +151,11 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         args.read_batch,
         crate::harness::Modes {
             alloc_window: args.alloc,
-            proxy_per_rep: args.proxy_per_rep,
         },
-        lane.store_mode(),
     )?);
 
     // Fsync-heavy write families follow every read family.
-    let writes = write_families(cfg, &out_dir.join("scratch"), &selected, lane)?;
+    let writes = write_families(cfg, &out_dir.join("scratch"), &selected)?;
 
     // File sizes are disk measurements, not image-cache memory usage.
     let store = report::StoreNumbers {
@@ -192,7 +171,6 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
             scale: cfg.scale.label(),
             seed: cfg.seed,
             samples: proto.samples,
-            store: lane.store_mode().label(),
         },
         corpus_digest: corpus_gen::digest_hex(&corpus_gen::corpus_digest(cfg)),
         verify_stamp: if verified {

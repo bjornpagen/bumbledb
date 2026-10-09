@@ -608,9 +608,9 @@ mod home_costs {
             order_hash.update(&(id as u64).to_be_bytes());
         }
         let schema = bumbledb::schema::fingerprint::fingerprint(db.schema()).to_string();
-        let (load_samples, load_clock) = crate::clockproxy::stamped(|| load(&db, &rows, &ids))?;
+        let load_samples = load(&db, &rows, &ids)?;
         let raw = census(&db, &raw_dir, &rows, shape)?;
-        let (raw_reads, raw_clock) = crate::clockproxy::stamped(|| reads(&db, &rows, shape, args))?;
+        let raw_reads = reads(&db, &rows, shape, args)?;
         db.compact(&compact_dir, harness::bench_work())
             .map_err(|error| format!("compact: {error:?}"))?;
         drop(db);
@@ -620,8 +620,7 @@ mod home_costs {
         if raw.per_namespace != compact.per_namespace {
             return Err("compaction changed live namespace entries/bytes".into());
         }
-        let (compact_reads, compact_clock) =
-            crate::clockproxy::stamped(|| reads(&db, &rows, shape, args))?;
+        let compact_reads = reads(&db, &rows, shape, args)?;
         drop(db);
         let mut out = String::new();
         let _ = write!(
@@ -646,22 +645,6 @@ mod home_costs {
         push_census(&mut out, &compact);
         out.push_str(",\"compacted_reads\":");
         push_reads(&mut out, &compact_reads);
-        out.push_str(",\"clock_proxy\":{");
-        for (index, (label, stamp)) in [
-            ("durable_insert", load_clock),
-            ("raw_reads", raw_clock),
-            ("compacted_reads", compact_clock),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            if index != 0 {
-                out.push(',');
-            }
-            json::push_str_lit(&mut out, label);
-            let _ = write!(out, ":{{\"pre\":{},\"post\":{}}}", stamp.pre, stamp.post);
-        }
-        out.push('}');
         out.push('}');
         // Retain both newly created stores for physical follow-up diagnosis.
         Ok(out)

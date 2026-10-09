@@ -241,14 +241,9 @@ pub(super) fn run_query(
         engine.sample(stores, rotation.next_set(), &mut buffer)
     })?;
 
-    // alloc window over the same protocol, so `scenarios --alloc` scopes
-
     let alloc = if modes.alloc {
         let mut rotation = Rotation::new(sets.clone());
-        let alloc_modes = Modes {
-            alloc_window: true,
-            ..Modes::default()
-        };
+        let alloc_modes = Modes { alloc_window: true };
         let mut buffer = Answers::new();
         let measured = harness::measure_batched(proto, alloc_modes, 1, || {
             engine.sample(stores, rotation.next_set(), &mut buffer)

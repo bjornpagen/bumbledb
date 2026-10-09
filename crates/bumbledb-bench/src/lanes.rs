@@ -9,7 +9,6 @@ pub mod writes;
 use std::fmt::Write as _;
 
 use crate::harness::Stats;
-use crate::report::GhzReport;
 
 pub(crate) use crate::report::push_provenance;
 
@@ -24,20 +23,6 @@ pub(crate) fn push_stats(out: &mut String, stats: &Stats) {
 pub(crate) fn push_opt_stats(out: &mut String, stats: Option<&Stats>) {
     match stats {
         Some(stats) => push_stats(out, stats),
-        None => out.push_str("null"),
-    }
-}
-
-pub(crate) fn push_ghz(out: &mut String, ghz: Option<GhzReport>) {
-    out.push_str(",\"ghz\":");
-    match ghz {
-        Some(g) => {
-            let _ = write!(
-                out,
-                "{{\"pre\":{:.3},\"post\":{:.3},\"retried\":{},\"contaminated\":{}}}",
-                g.pre, g.post, g.retried, g.contaminated
-            );
-        }
         None => out.push_str("null"),
     }
 }

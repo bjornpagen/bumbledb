@@ -13,22 +13,15 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20 lawful   the law home-turf world: judged-law admission vs SQL\n\
     \x20          constraint enforcement (report-class; writes\n\
     \x20          lawful.md + lawful.json)\n\
-    \x20 merge    min-of-runs table from N run dirs' report.json\n\
     \x20 storage  on-disk bytes per corpus scale, both engines\n\
     \x20          (report-class; no timing)\n\
-    \x20 writes   write/commit/delete throughput ladder across\n\
-    \x20          durability lanes (report-class)\n\
+    \x20 writes   write/commit/delete throughput ladder (report-class)\n\
     \x20 curves   scale-curve runner + cold/warm/memoized panel\n\
     \x20          (report-class)\n\
     \x20 heap     heap-arm ladder: frozen-vs-LMDB point reads, admission\n\
     \x20          A/I/R/F/J prefixes (report-class)\n\
-    \x20 corpus-float  deterministic float fixture corpus (canon/order/\n\
-    \x20          arith/agg) with oracle expectations; writes line-hex\n\
-    \x20          files (a generator, never a measurement)\n\
-    \x20 hash-probe  BLAKE3/AEGIS candidate probe: equivalence, KATs and\n\
-    \x20          per-size timing before the format freeze (report-class)\n\
-    \x20 app-perf compact scorecard: cold-open, warm, post-write first\n\
-    \x20          read, large-result, tenant churn; --plan prints L21 inputs\n\
+    \x20 app-perf regime lane: cold-open, warm, post-write first read,\n\
+    \x20          large-result, tenant churn\n\
     \x20 queries  print the versioned query list (QUERIES.md)\n\
     \x20 help     print this text\n";
 
@@ -58,7 +51,6 @@ pub fn help() -> String {
          \x20 --read-batch N  operations per timed read sample, 1..=16 (default auto)\n\
          \x20                N > 1 reports batch-average quantiles, not per-call tails\n\
          \x20 --alloc         allocation windows (needs the alloc-counter feature build)\n\
-         \x20 --proxy-per-rep per-sample GHz stamps + normalized p50 (confirm runs)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>)\n\
          \x20 --i-am-lying    skip the stamp gate; the report reads UNVERIFIED\n\
          \n\
@@ -70,9 +62,6 @@ pub fn help() -> String {
          \x20                 closure/displaced/scenarios: fresh corpus + SQLite gate\n\
          \x20                 scenarios have fixed scale S; displaced retains foreign stream\n\
          \x20                 no alloc-counter feature; use cargo --profile profiling\n\
-         \n\
-         MERGE:\n\
-         \x20 merge DIR [DIR ...]   run directories holding report.json\n\
          \n\
          SCENARIOS / CRUD / LAWFUL (the world commands share one flag vocabulary):\n\
          \x20 --seed N        corpus seed              (default 1)\n\
@@ -98,8 +87,6 @@ pub fn help() -> String {
          \x20 --scale S|M|L   corpus scale             (default S)\n\
          \x20 --seed N        corpus seed              (default 1)\n\
          \x20 --dir PATH      scratch root             (default bench-data)\n\
-         \x20 --lanes a       durability lanes (only `durable` exists —\n\
-         \x20                 ENG-008 retired the engine's no-sync surface)\n\
          \x20 --batches a,b   rows per commit          (default 1,10,100,1000)\n\
          \x20 --samples N     measured samples per cell\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-writes)\n\
@@ -123,33 +110,16 @@ pub fn help() -> String {
          \x20                 (default 256,1024,4096,16384)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-heap)\n\
          \n\
-         CORPUS-FLOAT:\n\
-         \x20 --seed N        walk seed (decimal or 0x-hex; default 0xB0B)\n\
-         \x20 --random N      random canon/arith cases   (default 1024)\n\
-         \x20 --groups N      aggregate groups           (default 128)\n\
-         \x20 --group-size N  payloads per group, min 1  (default 12)\n\
-         \x20 --out PATH      fixture dir (default fixtures/float)\n\
-         \n\
-         HASH-PROBE:\n\
-         \x20 --seed N        input-corpus seed        (default 1)\n\
-         \x20 --samples N     timed samples per cell   (default 64)\n\
-         \x20 --kat PATH      known-answer vector file; absent = KAT NotRun\n\
-         \x20 --out PATH      artifact dir (default bench-out/<timestamp>-hash-probe)\n\
-         \n\
          APP-PERF:\n\
          \x20 --scale S|M|L   corpus scale             (default S)\n\
          \x20 --seed N        corpus seed              (default 1)\n\
-         \x20 --dir PATH      scratch root             (default bench-data)\n\
          \x20 --regimes a,b   warm, cold-open, post-write, large-result,\n\
-         \x20                 tenant-churn (default all; selective lives in\n\
-         \x20                 `bench --families`, hosted/maintenance in the\n\
-         \x20                 log lanes)\n\
+         \x20                 tenant-churn (default all)\n\
          \x20 --samples N     measured samples per regime cell\n\
          \x20 --tenants N     churn tenant count       (default 8, min 2)\n\
-         \x20 --plan          print the scorecard/input plan; no timing\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-app-perf)\n\
          \n\
-         SHARED-MACHINE BOOST (owner ruling 2026-07-20):\n\
+         SHARED-MACHINE BOOST:\n\
          \x20 BUMBLEDB_BENCH_BOOST=1  claim user-interactive QoS before any\n\
          \x20                 measurement subcommand (macOS); on Linux set and\n\
          \x20                 verify absolute nice -10 (needs priority permission)\n\

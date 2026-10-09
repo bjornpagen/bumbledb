@@ -11,8 +11,8 @@ mod work;
 
 pub use cold::{measure_cold, org_touch};
 pub use measure::{measure, measure_batched, measure_interleaved};
-pub use stats::{normalized_p50, stats};
-pub use work::bench_work;
+pub use stats::stats;
+pub use work::{bench_work, create_db, open_db};
 
 /// Warmup and measured sample counts. Each family selects its protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,16 +49,12 @@ pub struct Measurement {
     pub stats: Stats,
     pub work: u64,
 
-    pub p50_norm: Option<u64>,
-
     pub alloc: Option<bumbledb::alloc_counter::AllocSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Modes {
     pub alloc_window: bool,
-    /// Record an effective-GHz proxy reading after EVERY sample:
-    pub proxy_per_rep: bool,
 }
 
 pub const QUANTUM_FLOOR_NS: u64 = 500;

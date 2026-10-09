@@ -78,7 +78,6 @@ fn bench_refuses_without_a_stamp() {
         read_batch: None,
         alloc: false,
 
-        proxy_per_rep: false,
         out: Some(dir.join("out")),
         i_am_lying: false,
     };
@@ -97,7 +96,6 @@ fn alloc_without_counter_names_the_cargo_invocation() {
         read_batch: None,
         alloc: true,
 
-        proxy_per_rep: false,
         out: None,
         i_am_lying: false,
     };
@@ -159,7 +157,6 @@ fn the_full_sequence_runs_at_tiny() {
         read_batch: None,
         alloc: false,
 
-        proxy_per_rep: false,
         out: Some(out.clone()),
         i_am_lying: false,
     };

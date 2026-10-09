@@ -2,7 +2,6 @@ use bumbledb::FieldId;
 
 use crate::compare::Owned;
 use crate::corpus_gen::Scale;
-use crate::duralane::{self, DurabilityLane};
 use crate::harness::Protocol;
 use crate::poststate;
 
@@ -38,42 +37,34 @@ fn the_crud_schema_validates_and_names_its_ids() {
 #[test]
 fn the_twin_stores_load_value_identical_at_tiny() {
     let sizes = CrudSizes::of(Scale::Tiny);
-    for lane in duralane::ALL {
-        let dir = scratch(&format!("twin-{}", lane.label()));
-        let (db, conn) = super::corpus::load_stores(&dir, 7, sizes, lane).unwrap_or_else(|e| {
-            panic!("{}: {e}", lane.label());
-        });
-        for (rel, expected) in [
-            (ids::DOC, sizes.docs + sizes.delete_pool),
-            (ids::COUNTER, sizes.counters),
-        ] {
-            let name = super::schema().relation(rel).name();
-            let ours = poststate::engine_rows(&db, rel).expect("engine rows");
-            let theirs =
-                poststate::sqlite_rows(&conn, super::schema().relation(rel)).expect("mirror rows");
-            assert_eq!(ours.len() as u64, expected, "{name}: engine row count");
-            assert_eq!(theirs.len() as u64, expected, "{name}: mirror row count");
-            poststate::assert_identical("crud", name, ours, theirs).expect(name);
-        }
-        drop((db, conn));
-        let _ = std::fs::remove_dir_all(&dir);
+    let dir = scratch("twin");
+    let (db, conn) = super::corpus::load_stores(&dir, 7, sizes).expect("load");
+    for (rel, expected) in [
+        (ids::DOC, sizes.docs + sizes.delete_pool),
+        (ids::COUNTER, sizes.counters),
+    ] {
+        let name = super::schema().relation(rel).name();
+        let ours = poststate::engine_rows(&db, rel).expect("engine rows");
+        let theirs =
+            poststate::sqlite_rows(&conn, super::schema().relation(rel)).expect("mirror rows");
+        assert_eq!(ours.len() as u64, expected, "{name}: engine row count");
+        assert_eq!(theirs.len() as u64, expected, "{name}: mirror row count");
+        poststate::assert_identical("crud", name, ours, theirs).expect(name);
     }
+    drop((db, conn));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn the_lane_parity_assertion_catches_a_mismatched_synchronous() {
+fn the_parity_assertion_catches_a_mismatched_synchronous() {
     let dir = scratch("parity-mismatch");
     let conn = rusqlite::Connection::open(dir.join("durable.sqlite")).expect("open");
-    DurabilityLane::Durable.configure(&conn).expect("configure");
-    DurabilityLane::Durable
-        .assert_parity(&conn)
+    crate::sqlite_run::configure_durable(&conn).expect("configure");
+    crate::sqlite_run::assert_durable_parity(&conn)
         .expect("a configured durable mirror passes its own readback");
-    // Weaken the connection by hand (the retired nosync lane's pragma set):
-    // the durable parity readback must convict it before any timing.
     conn.pragma_update(None, "synchronous", "OFF")
         .expect("pragma");
-    let err = DurabilityLane::Durable
-        .assert_parity(&conn)
+    let err = crate::sqlite_run::assert_durable_parity(&conn)
         .expect_err("a weakened mirror is not a durable twin");
     assert!(err.contains("synchronous"), "{err}");
     drop(conn);
@@ -123,8 +114,7 @@ fn expected_mixed_work() -> u64 {
 fn every_crud_write_family_leaves_the_twins_value_identical() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("families-durable");
-    let (db, conn) =
-        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
+    let (db, conn) = super::corpus::load_stores(&dir, SEED, sizes).expect("load");
 
     let mut ours_cursor = MintCursor::at_base(sizes);
     let mut theirs_cursor = MintCursor::at_base(sizes);
@@ -201,8 +191,7 @@ fn every_crud_write_family_leaves_the_twins_value_identical() {
 fn a_second_twin_pair_runs_the_same_families_identically() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("families-second");
-    let (db, conn) =
-        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
+    let (db, conn) = super::corpus::load_stores(&dir, SEED, sizes).expect("load");
     let mut ours_cursor = MintCursor::at_base(sizes);
     let mut theirs_cursor = MintCursor::at_base(sizes);
 
@@ -236,8 +225,7 @@ fn a_second_twin_pair_runs_the_same_families_identically() {
 fn the_delete_lane_refuses_a_missing_row() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("delete-refusal");
-    let (db, conn) =
-        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
+    let (db, conn) = super::corpus::load_stores(&dir, SEED, sizes).expect("load");
     let one = Protocol {
         warmups: 0,
         samples: 1,
@@ -280,8 +268,7 @@ fn the_upsert_follows_its_stream_through_hits_and_misses() {
         "the stream must carry at least one miss: {stream:?}"
     );
     let dir = scratch("upsert-stream");
-    let (db, conn) =
-        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
+    let (db, conn) = super::corpus::load_stores(&dir, SEED, sizes).expect("load");
     lanes::upsert_bumbledb(&db, proto, &stream).expect("upsert engine");
     lanes::upsert_sqlite(&conn, proto, &stream).expect("upsert sqlite");
     assert_twins_identical(&db, &conn);
@@ -348,8 +335,7 @@ fn a_colliding_seed_is_absorbed_by_the_counter_model() {
         "a collided key's prev must carry the earlier family's write, not the loaded 0: {collided:?}"
     );
     let dir = scratch("colliding-seed");
-    let (db, conn) =
-        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
+    let (db, conn) = super::corpus::load_stores(&dir, SEED, sizes).expect("load");
     lanes::update_bumbledb(&db, proto, &update).expect("update engine");
     lanes::update_sqlite(&conn, proto, &update).expect("update sqlite");
     lanes::update_bumbledb(&db, proto, &hot).expect("hot engine");
@@ -365,10 +351,9 @@ const RUN_SEED: u64 = SEED;
 
 fn load_poisoned(
     dir: &std::path::Path,
-    lane: DurabilityLane,
     sizes: CrudSizes,
 ) -> Result<(bumbledb::Db<super::CrudWorld>, rusqlite::Connection), String> {
-    let (db, conn) = super::corpus::load_stores(dir, RUN_SEED, sizes, lane)?;
+    let (db, conn) = super::corpus::load_stores(dir, RUN_SEED, sizes)?;
     conn.execute(
         "INSERT INTO \"Doc\" VALUES (?1, ?2, ?3, ?4)",
         (
@@ -386,8 +371,8 @@ fn load_poisoned(
 fn the_crud_gate_refuses_a_divergent_oracle() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("run-gate-divergent");
-    let err = super::run::fold(&dir, RUN_SEED, sizes, Some(2), None, &|lane_dir, lane| {
-        load_poisoned(lane_dir, lane, sizes)
+    let err = super::run::fold(&dir, RUN_SEED, sizes, Some(2), None, &|dir| {
+        load_poisoned(dir, sizes)
     })
     .expect_err("a poisoned mirror must not be timed");
     assert!(err.contains("ENGINES DISAGREE"), "{err}");
@@ -395,34 +380,27 @@ fn the_crud_gate_refuses_a_divergent_oracle() {
 }
 
 #[test]
-fn the_full_crud_run_produces_both_lanes_and_parses() {
+fn the_full_crud_run_renders_every_family_and_parses() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("run-full");
     let (md, json_text) =
         super::run_with(&dir, RUN_SEED, sizes, Some(2), None).expect("the full crud run");
-    assert!(md.contains("## lane durable"), "{md}");
     for family in super::families() {
         assert!(md.contains(family.name), "missing {} in\n{md}", family.name);
     }
     let parsed = crate::json::parse(&json_text).expect("the artifact parses");
-    let lanes = parsed
-        .get("lanes")
+    let rows = parsed
+        .get("rows")
         .and_then(crate::json::Value::as_arr)
-        .expect("lanes array");
-    assert_eq!(lanes.len(), 1, "one durability lane (ENG-008)");
-    for lane in lanes {
-        let rows = lane
-            .get("rows")
-            .and_then(crate::json::Value::as_arr)
-            .expect("rows array");
-        assert_eq!(rows.len(), super::families().len(), "eleven rows per lane");
-        assert!(
-            lane.get("config")
-                .and_then(crate::json::Value::as_str)
-                .is_some_and(|config| config.contains("SQLite WAL")),
-            "the lane carries its parity config prose"
-        );
-    }
+        .expect("rows array");
+    assert_eq!(rows.len(), super::families().len(), "one row per family");
+    assert!(
+        parsed
+            .get("config")
+            .and_then(crate::json::Value::as_str)
+            .is_some_and(|config| config.contains("SQLite WAL")),
+        "the artifact carries its parity config prose"
+    );
     assert_eq!(
         parsed.get("poststate").and_then(crate::json::Value::as_str),
         Some("ok"),
@@ -432,7 +410,7 @@ fn the_full_crud_run_produces_both_lanes_and_parses() {
         parsed
             .get("provenance")
             .is_some_and(|p| p.get("host").is_some()),
-        "the provenance stamp rides the artifact (the one shared emitter)"
+        "the provenance stamp rides the artifact"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -456,14 +434,9 @@ fn a_filtered_run_still_gates_the_read_query() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("run-filtered-gate");
     let only = vec!["crud_insert".to_owned()];
-    let err = super::run::fold(
-        &dir,
-        RUN_SEED,
-        sizes,
-        Some(2),
-        Some(&only),
-        &|lane_dir, lane| load_poisoned(lane_dir, lane, sizes),
-    )
+    let err = super::run::fold(&dir, RUN_SEED, sizes, Some(2), Some(&only), &|dir| {
+        load_poisoned(dir, sizes)
+    })
     .expect_err("the gate must run even when read_point is filtered out");
     assert!(err.contains("ENGINES DISAGREE"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);

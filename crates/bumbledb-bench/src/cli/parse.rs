@@ -1,12 +1,11 @@
 use std::path::PathBuf;
 
 use crate::corpus_gen::Scale;
-use crate::duralane::DurabilityLane;
 use crate::verify::DEFAULT_RANDOM_CASES;
 
 use super::{
-    AppPerfArgs, BenchArgs, Cmd, CorpusArgs, CorpusFloatArgs, CurvesArgs, HashProbeArgs, HeapArgs,
-    ProfileArgs, ScenarioArgs, StorageArgs, StorageProfile, WritesArgs,
+    AppPerfArgs, BenchArgs, Cmd, CorpusArgs, CurvesArgs, HeapArgs, ProfileArgs, ScenarioArgs,
+    StorageArgs, StorageProfile, WritesArgs,
 };
 
 struct Tokens<'a> {
@@ -123,7 +122,6 @@ fn parse_bench(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
         samples: None,
         read_batch: None,
         alloc: false,
-        proxy_per_rep: false,
         out: None,
         i_am_lying: false,
     };
@@ -148,14 +146,6 @@ fn parse_bench(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
                 args.read_batch = std::num::NonZeroU32::new(batch);
             }
             "--alloc" => args.alloc = true,
-            "--ephemeral" | "--nosync" => {
-                return Err(format!(
-                    "`{flag}` was retired with the engine's no-sync constructor surface \
-                     (ENG-008): production stores are durable-only and the bench does not \
-                     re-add a weakened lane. Run without the flag."
-                ));
-            }
-            "--proxy-per-rep" => args.proxy_per_rep = true,
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             "--i-am-lying" => args.i_am_lying = true,
             _ => return Err(unknown("bench", &flag)),
@@ -278,23 +268,6 @@ fn parse_storage(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Storage(args))
 }
 
-fn parse_lane_list(flag: &str, raw: &str) -> Result<Vec<DurabilityLane>, String> {
-    if raw.is_empty() {
-        return Err(format!("`{flag}` needs at least one lane"));
-    }
-    raw.split(',')
-        .map(|token| match token {
-            "durable" => Ok(DurabilityLane::Durable),
-            "nosync" => Err(
-                "lane `nosync` was retired with the engine's no-sync constructor surface \
-                 (ENG-008); only `durable` remains"
-                    .to_owned(),
-            ),
-            other => Err(format!("unknown lane `{other}` (expected durable)")),
-        })
-        .collect()
-}
-
 fn parse_batch_list(flag: &str, raw: &str) -> Result<Vec<u32>, String> {
     if raw.is_empty() {
         return Err(format!("`{flag}` needs at least one batch size"));
@@ -320,7 +293,6 @@ fn parse_writes(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
             "--scale" => args.scale = parse_scale(tokens.value(&flag)?)?,
             "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
             "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
-            "--lanes" => args.lanes = parse_lane_list(&flag, tokens.value(&flag)?)?,
             "--batches" => args.batches = parse_batch_list(&flag, tokens.value(&flag)?)?,
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
@@ -383,54 +355,6 @@ fn parse_heap(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Heap(args))
 }
 
-/// Seed values for the float corpus accept `0x`-prefixed hex — the P11
-/// regeneration command pins `--seed 0xB0B`.
-fn parse_u64_maybe_hex(flag: &str, raw: &str) -> Result<u64, String> {
-    let parsed = raw
-        .strip_prefix("0x")
-        .or_else(|| raw.strip_prefix("0X"))
-        .map_or_else(|| raw.parse(), |hex| u64::from_str_radix(hex, 16));
-    parsed.map_err(|_| format!("`{flag}` needs an integer (decimal or 0x-hex), got `{raw}`"))
-}
-
-fn parse_corpus_float(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
-    let mut args = CorpusFloatArgs::default();
-    while let Some(flag) = tokens.next() {
-        let flag = flag.to_owned();
-        match flag.as_str() {
-            "--seed" => args.seed = parse_u64_maybe_hex(&flag, tokens.value(&flag)?)?,
-            "--random" => args.random = parse_u64(&flag, tokens.value(&flag)?)?,
-            "--groups" => args.groups = parse_u64(&flag, tokens.value(&flag)?)?,
-            "--group-size" => {
-                let n = parse_u64(&flag, tokens.value(&flag)?)?;
-                if n == 0 {
-                    return Err(format!("`{flag}` rejects 0 — a group needs payloads"));
-                }
-                args.group_size =
-                    usize::try_from(n).map_err(|_| format!("`{flag}` is too large, got `{n}`"))?;
-            }
-            "--out" => args.out = PathBuf::from(tokens.value(&flag)?),
-            _ => return Err(unknown("corpus-float", &flag)),
-        }
-    }
-    Ok(Cmd::CorpusFloat(args))
-}
-
-fn parse_hash_probe(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
-    let mut args = HashProbeArgs::default();
-    while let Some(flag) = tokens.next() {
-        let flag = flag.to_owned();
-        match flag.as_str() {
-            "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
-            "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
-            "--kat" => args.kat = Some(PathBuf::from(tokens.value(&flag)?)),
-            "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
-            _ => return Err(unknown("hash-probe", &flag)),
-        }
-    }
-    Ok(Cmd::HashProbe(args))
-}
-
 fn parse_app_perf(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     let mut args = AppPerfArgs::default();
     while let Some(flag) = tokens.next() {
@@ -438,24 +362,14 @@ fn parse_app_perf(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
         match flag.as_str() {
             "--scale" => args.scale = parse_scale(tokens.value(&flag)?)?,
             "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
-            "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
             "--regimes" => {
-                let raw = tokens.value(&flag)?;
-                let regimes: Vec<String> = raw.split(',').map(str::to_owned).collect();
-                for regime in &regimes {
-                    if !matches!(
-                        regime.as_str(),
-                        "warm" | "cold-open" | "post-write" | "large-result" | "tenant-churn"
-                    ) {
-                        return Err(format!(
-                            "unknown regime `{regime}` (expected warm, cold-open, post-write, \
-                             large-result, or tenant-churn; selective runs through `bench \
-                             --families`, hosted-contention and maintenance run through the \
-                             log lanes)"
-                        ));
-                    }
-                }
-                args.regimes = Some(regimes);
+                args.regimes = Some(
+                    tokens
+                        .value(&flag)?
+                        .split(',')
+                        .map(crate::appperf::Regime::parse)
+                        .collect::<Result<_, _>>()?,
+                );
             }
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
             "--tenants" => {
@@ -467,7 +381,6 @@ fn parse_app_perf(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
                 }
             }
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
-            "--plan" => args.plan = true,
             _ => return Err(unknown("app-perf", &flag)),
         }
     }
@@ -501,19 +414,7 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "writes" => parse_writes(&mut tokens),
         "curves" => parse_curves(&mut tokens),
         "heap" => parse_heap(&mut tokens),
-        "corpus-float" => parse_corpus_float(&mut tokens),
-        "hash-probe" => parse_hash_probe(&mut tokens),
         "app-perf" => parse_app_perf(&mut tokens),
-        "merge" => {
-            let mut dirs = Vec::new();
-            while let Some(token) = tokens.next() {
-                dirs.push(PathBuf::from(token));
-            }
-            if dirs.is_empty() {
-                return Err("`merge` needs at least one run directory".to_owned());
-            }
-            Ok(Cmd::Merge { dirs })
-        }
         other => Err(format!("unknown command `{other}`")),
     }
 }

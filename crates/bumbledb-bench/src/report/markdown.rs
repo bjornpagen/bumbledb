@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use super::{GhzReport, RunReport, Verdict};
+use super::{RunReport, Verdict};
 
 fn us(ns: u64) -> f64 {
     ns as f64 / 1000.0
@@ -19,8 +19,8 @@ fn markdown_header(out: &mut String, report: &RunReport) {
     }
     let _ = writeln!(
         out,
-        "- config: scale {}, seed {}, {} samples, {} stores",
-        report.config.scale, report.config.seed, report.config.samples, report.config.store
+        "- config: scale {}, seed {}, {} samples",
+        report.config.scale, report.config.seed, report.config.samples
     );
     let _ = writeln!(out, "- corpus digest: `{}`", report.corpus_digest);
     let _ = writeln!(out, "- verify stamp: `{}`\n", report.verify_stamp);
@@ -51,19 +51,7 @@ fn markdown_header(out: &mut String, report: &RunReport) {
     } else {
         "informational below scale L"
     };
-    let _ = writeln!(out, "p99 budget (<= 10 ms warm): {budget} ({scope}).");
-    let dirty = report.contaminated_families();
-    if dirty.is_empty() {
-        let _ = writeln!(out);
-    } else {
-        let _ = writeln!(
-            out,
-            "clock proxy: {} block(s) still contaminated after retry — treat their \
-             percentiles as dirty: {}.\n",
-            dirty.len(),
-            dirty.join(", ")
-        );
-    }
+    let _ = writeln!(out, "p99 budget (<= 10 ms warm): {budget} ({scope}).\n");
 }
 
 fn markdown_family_tables(out: &mut String, report: &RunReport) {
@@ -152,79 +140,6 @@ fn markdown_diagnostics(out: &mut String, report: &RunReport) {
         report.store.db_bytes
     );
     let _ = writeln!(out, "- sqlite file: {} bytes\n", report.store.sqlite_bytes);
-
-    let stamped: Vec<(&str, GhzReport, Option<u64>)> = report
-        .reads
-        .iter()
-        .map(|f| (f.name.as_str(), f.ghz, f.p50_norm))
-        .chain(report.writes.iter().map(|f| (f.name.as_str(), f.ghz, None)))
-        .filter_map(|(name, ghz, norm)| ghz.map(|g| (name, g, norm)))
-        .collect();
-    if !stamped.is_empty() {
-        let _ = writeln!(out, "## Clock proxy\n");
-        let _ = writeln!(
-            out,
-            "| family | GHz pre | GHz post | status | norm p50 (us) |"
-        );
-        let _ = writeln!(out, "|---|---|---|---|---|");
-        for (name, ghz, norm) in &stamped {
-            let norm = norm.map_or_else(|| "-".to_owned(), |n| format!("{:.1}", us(n)));
-            let _ = writeln!(
-                out,
-                "| {name} | {:.2} | {:.2} | {} | {norm} |",
-                ghz.pre,
-                ghz.post,
-                ghz.status(),
-            );
-        }
-        let _ = writeln!(out);
-    }
-
-    markdown_engine_clocks(out, report);
-}
-
-fn markdown_engine_clocks(out: &mut String, report: &RunReport) {
-    let families = report
-        .reads
-        .iter()
-        .map(|family| (family.name.as_str(), family.ghz_ours, family.ghz_theirs))
-        .chain(
-            report
-                .writes
-                .iter()
-                .map(|family| (family.name.as_str(), family.ghz_ours, family.ghz_theirs)),
-        );
-    let mut started = false;
-    for (name, ours, theirs) in families {
-        for (engine, stamp) in [("bumbledb", ours), ("SQLite", theirs)] {
-            let Some(stamp) = stamp else {
-                continue;
-            };
-            if !started {
-                started = true;
-                let _ = writeln!(out, "## Per-engine clock proxy\n");
-                let _ = writeln!(
-                    out,
-                    "Legacy combined stamps above are unchanged. Write brackets include engine \
-                     setup and teardown, not just timed samples. An intermediate dip can flag \
-                     an engine while the legacy outer bracket is clean. Missing attribution \
-                     is unknown, never reconstructed from old reports.\n"
-                );
-                let _ = writeln!(out, "| family | engine | GHz pre | GHz post | status |");
-                let _ = writeln!(out, "|---|---|---|---|---|");
-            }
-            let _ = writeln!(
-                out,
-                "| {name} | {engine} | {:.2} | {:.2} | {} |",
-                stamp.pre,
-                stamp.post,
-                stamp.status()
-            );
-        }
-    }
-    if started {
-        let _ = writeln!(out);
-    }
 }
 
 #[must_use]

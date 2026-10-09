@@ -14,13 +14,12 @@ use bumbledb::schema::ValueType;
 use bumbledb::{Answers, Db, ParamId, Query, RelationId, Value};
 
 use crate::calendar::corpus_gen::CalSizes;
-use crate::clockproxy;
 use crate::closure::{self, ClosSizes};
 use crate::compare;
 use crate::corpus_gen::{GenConfig, Scale, Sizes};
 use crate::families::{Draw, param_args, scalar_draw, set_bindings};
 use crate::harness::{self, Protocol, Rotation, Stats};
-use crate::report::{self, GhzReport, Provenance};
+use crate::report::{self, Provenance};
 use crate::sqlite_run::{self, FairnessCheck, PreparedFamily, open_for_bench};
 use crate::translate::{ParamSlot, Translated, translate};
 
@@ -51,7 +50,6 @@ pub struct CurvePoint {
     pub theirs: Option<Stats>,
     pub theirs_hand: Option<Stats>,
     pub cap: Option<CapEvent>,
-    pub ghz: Option<GhzReport>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,9 +57,7 @@ pub struct CapEvent {
     pub at: &'static str,
 }
 
-/// The cold/warm/memoized panel, both engines — one proxy bracket around the
-/// whole panel (the reopen rounds are not idempotent, so the stamp annotates,
-/// never re-runs).
+/// The cold/warm/memoized panel, both engines.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Warmth {
     pub ours_cold: Stats,
@@ -70,7 +66,6 @@ pub struct Warmth {
     pub theirs_cold: Stats,
     pub theirs_warm: Stats,
     pub theirs_memoized: Stats,
-    pub ghz: Option<GhzReport>,
 }
 
 fn push_point(out: &mut String, point: &CurvePoint) {
@@ -91,7 +86,6 @@ fn push_point(out: &mut String, point: &CurvePoint) {
         }
         None => out.push_str("null"),
     }
-    super::push_ghz(out, point.ghz);
     out.push('}');
 }
 
@@ -113,7 +107,6 @@ fn push_warmth(out: &mut String, warmth: Option<&Warmth>) {
     super::push_stats(out, &w.theirs_warm);
     out.push_str(",\"theirs_memoized\":");
     super::push_stats(out, &w.theirs_memoized);
-    super::push_ghz(out, w.ghz);
     out.push('}');
 }
 
@@ -415,17 +408,15 @@ fn time_lane(
     draws: &[Draw],
     types: &[ValueType],
     proto: Protocol,
-) -> Result<Option<(Stats, clockproxy::GhzStamp)>, String> {
+) -> Result<Option<Stats>, String> {
     cap.guarded(conn, || {
         let mut family = PreparedFamily::new(conn, translated, types.to_vec())?;
         let mut rotation = Rotation::new((0..draws.len()).collect::<Vec<_>>());
-        let (measured, ghz) = clockproxy::stamped(|| {
-            harness::measure(proto, || {
-                let index = rotation.next_index();
-                sqlite_run::sample_args(&mut family, &draws[index])
-            })
+        let measured = harness::measure(proto, || {
+            let index = rotation.next_index();
+            sqlite_run::sample_args(&mut family, &draws[index])
         })?;
-        Ok((measured.stats, ghz))
+        Ok(measured.stats)
     })
 }
 
@@ -479,32 +470,25 @@ fn curve_point<S>(
             theirs: None,
             theirs_hand: None,
             cap: Some(CapEvent { at: "gate" }),
-            ghz: None,
         });
     }
 
     let mut rotation = Rotation::new(bundle.draws.clone());
-    let (ours, mut ghz) = clockproxy::frequency_checked(|| {
-        harness::measure(proto, || {
-            let args = param_args(rotation.next_set());
-            db.read(crate::harness::bench_work(), |snap| {
-                snap.execute(&mut prepared, &args, &mut buffer)
-            })
-            .map_err(|e| format!("execute: {e:?}"))?;
-            Ok(buffer.len() as u64)
+    let ours = harness::measure(proto, || {
+        let args = param_args(rotation.next_set());
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
         })
+        .map_err(|e| format!("execute: {e:?}"))?;
+        Ok(buffer.len() as u64)
     })?;
     let answers = ours.work as f64 / f64::from(proto.samples.max(1));
 
     let theirs = time_lane(conn, cap, &bundle.canonical, &bundle.draws, &types, proto)?;
-    let theirs = theirs.map(|(stats, stamp)| {
-        ghz = ghz.merge(stamp);
-        stats
-    });
     let mut cap_event = theirs.is_none().then_some(CapEvent { at: "timing" });
 
-    // before it is timed; a cap here leaves the canonical results
-
+    // The hand-written SQL is gated like the canonical translation before it
+    // is timed; a cap here leaves the canonical results standing.
     let mut theirs_hand = None;
     if let Some(hand) = &bundle.hand {
         let hand_label = format!("{name}[hand]");
@@ -519,11 +503,7 @@ fn curve_point<S>(
             )
         })?;
         if hand_gate.is_some() {
-            theirs_hand =
-                time_lane(conn, cap, hand, &bundle.draws, &types, proto)?.map(|(stats, stamp)| {
-                    ghz = ghz.merge(stamp);
-                    stats
-                });
+            theirs_hand = time_lane(conn, cap, hand, &bundle.draws, &types, proto)?;
         }
         if theirs_hand.is_none() {
             cap_event = cap_event.or(Some(CapEvent { at: "hand" }));
@@ -538,7 +518,6 @@ fn curve_point<S>(
         theirs,
         theirs_hand,
         cap: cap_event,
-        ghz: Some(ghz.into()),
     })
 }
 
@@ -556,28 +535,6 @@ fn elapsed_ns(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
-/// Opens the engine store, absorbing the transient typed `EnvironmentLocked`
-/// window — the engine's own drop-order test
-/// (`dropping_the_handle_never_leaks_an_env_already_opened_window`) documents
-/// the retry loop keyed on the typed error as the sanctioned reopen pattern.
-/// Retrying happens strictly BEFORE any timed region — cold timing starts at
-/// the first execute, never at open.
-fn open_absorbing_lock_window<S: bumbledb::Theory + Copy>(
-    path: &Path,
-    theory: S,
-) -> Result<Db<S>, String> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        match Db::open(path, theory, crate::harness::bench_work()) {
-            Ok(db) => return Ok(db),
-            Err(bumbledb::Error::EnvironmentLocked) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            Err(e) => return Err(format!("open {}: {e:?}", path.display())),
-        }
-    }
-}
-
 /// Per reopen-cold round: drop and reopen the store, prepare (excluded from the
 /// timed region — the timed-region law), time exactly the first execution
 /// (`cold`), then the second execution of the same prepared statement (`warm`);
@@ -589,7 +546,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
     bundle: &Bundle,
 ) -> Result<Warmth, String> {
     let open_db =
-        || open_absorbing_lock_window(db_path, theory).map_err(|e| format!("warmth reopen: {e}"));
+        || crate::harness::open_db(db_path, theory).map_err(|e| format!("warmth reopen: {e}"));
     let types: Vec<ValueType> = {
         let db = open_db()?;
         let prepared = db
@@ -696,22 +653,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
         theirs_cold,
         theirs_warm,
         theirs_memoized,
-        ghz: None,
     })
-}
-
-/// [`warmth_panel`] under one non-retrying proxy bracket (reopen rounds are not
-/// idempotent): the stamp annotates the whole panel.
-fn warmth_panel_stamped<S: bumbledb::Theory + Copy>(
-    theory: S,
-    db_path: &Path,
-    oracle_path: &Path,
-    bundle: &Bundle,
-) -> Result<Warmth, String> {
-    let (mut warmth, ghz) =
-        clockproxy::stamped(|| warmth_panel(theory, db_path, oracle_path, bundle))?;
-    warmth.ghz = Some(ghz.into());
-    Ok(warmth)
 }
 
 struct WorldStores<S> {
@@ -775,7 +717,7 @@ fn run_scale(
 
     let ledger = if needs(World::Ledger) {
         let paths = paths.as_ref().expect("corpus ensured above");
-        let db = open_absorbing_lock_window(&paths.db, crate::schema::Ledger)
+        let db = crate::harness::open_db(&paths.db, crate::schema::Ledger)
             .map_err(|e| format!("open ledger store: {e}"))?;
         let conn = open_for_bench(&paths.oracle).map_err(|e| format!("open ledger oracle: {e}"))?;
         FairnessCheck::run(&conn)?;
@@ -791,7 +733,7 @@ fn run_scale(
 
     let calendar = if needs(World::Calendar) {
         let paths = paths.as_ref().expect("corpus ensured above");
-        let db = open_absorbing_lock_window(&paths.cal_db, crate::calendar::Scheduling)
+        let db = crate::harness::open_db(&paths.cal_db, crate::calendar::Scheduling)
             .map_err(|e| format!("open calendar store: {e}"))?;
         let conn =
             open_for_bench(&paths.cal_oracle).map_err(|e| format!("open calendar oracle: {e}"))?;
@@ -811,11 +753,7 @@ fn run_scale(
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|e| format!("closure scratch: {e}"))?;
         eprintln!("curves: loading the closure world at {}", scale.label());
-        let (db, conn) = closure::load_stores_sized(
-            &dir,
-            curve_sizes(scale),
-            crate::storemode::StoreMode::default(),
-        )?;
+        let (db, conn) = closure::load_stores_sized(&dir, curve_sizes(scale))?;
         Some(WorldStores {
             db,
             conn,
@@ -825,10 +763,6 @@ fn run_scale(
     } else {
         None
     };
-
-    // loads above end in fsync-heavy commits that drop the core to its
-    // DVFS floor — eat the ramp before the first timed block.
-    clockproxy::warm_up(std::time::Duration::from_millis(200));
 
     for ((family, bundle), curve) in ctx.selected.iter().zip(&bundles).zip(curves.iter_mut()) {
         let point = match family.world {
@@ -883,16 +817,16 @@ fn run_scale(
             let warmth = match family.world {
                 World::Ledger => {
                     let (db_path, oracle_path) = ledger.as_ref().expect("ledger world open");
-                    warmth_panel_stamped(crate::schema::Ledger, db_path, oracle_path, bundle)?
+                    warmth_panel(crate::schema::Ledger, db_path, oracle_path, bundle)?
                 }
                 World::Calendar => {
                     let (db_path, oracle_path) = calendar.as_ref().expect("calendar world open");
-                    warmth_panel_stamped(crate::calendar::Scheduling, db_path, oracle_path, bundle)?
+                    warmth_panel(crate::calendar::Scheduling, db_path, oracle_path, bundle)?
                 }
                 World::Closure => {
                     let (db_path, oracle_path) =
                         closure_paths.as_ref().expect("closure world open");
-                    warmth_panel_stamped(closure::Reachability, db_path, oracle_path, bundle)?
+                    warmth_panel(closure::Reachability, db_path, oracle_path, bundle)?
                 }
             };
             curve.warmth = Some(warmth);
@@ -983,8 +917,6 @@ pub fn run(args: &crate::cli::CurvesArgs) -> Result<i32, String> {
     if args.scales.is_empty() {
         return Err("curves: --scales named no scale".to_owned());
     }
-    crate::devhonesty::assert_disk_backed(&args.dir, "the timed curve families")
-        .map_err(|refusal| refusal.to_string())?;
     let proto = Protocol {
         warmups: 8,
         samples: args.samples.unwrap_or(64),
@@ -1107,12 +1039,6 @@ mod tests {
                         theirs: Some(stats(200)),
                         theirs_hand: None,
                         cap: None,
-                        ghz: Some(GhzReport {
-                            pre: 3.5,
-                            post: 3.4,
-                            retried: false,
-                            contaminated: false,
-                        }),
                     },
                     CurvePoint {
                         scale: "M",
@@ -1122,7 +1048,6 @@ mod tests {
                         theirs: None,
                         theirs_hand: None,
                         cap: Some(CapEvent { at: "timing" }),
-                        ghz: None,
                     },
                 ],
                 warmth: Some(Warmth {
@@ -1132,7 +1057,6 @@ mod tests {
                     theirs_cold: stats(40),
                     theirs_warm: stats(50),
                     theirs_memoized: stats(60),
-                    ghz: None,
                 }),
             }],
         };
@@ -1174,11 +1098,6 @@ mod tests {
         assert_eq!(theirs.get("max").and_then(Json::as_f64), Some(205.0));
         assert_eq!(rows[0].get("theirs_hand"), Some(&Json::Null));
         assert_eq!(rows[0].get("cap"), Some(&Json::Null));
-
-        let ghz = rows[0].get("ghz").expect("ghz");
-        assert_eq!(ghz.get("pre").and_then(Json::as_f64), Some(3.5));
-        assert_eq!(ghz.get("contaminated").and_then(Json::as_bool), Some(false));
-        assert_eq!(rows[1].get("ghz"), Some(&Json::Null));
 
         assert_eq!(rows[1].get("theirs"), Some(&Json::Null));
         assert_eq!(
@@ -1353,7 +1272,7 @@ mod tests {
             scale: Scale::Tiny,
         };
         let paths = crate::driver::ensure_corpus(&dir, cfg).expect("corpus");
-        let db = open_absorbing_lock_window(&paths.cal_db, crate::calendar::Scheduling)
+        let db = crate::harness::open_db(&paths.cal_db, crate::calendar::Scheduling)
             .expect("open cal store");
         let conn = open_for_bench(&paths.cal_oracle).expect("open cal oracle");
         let bundle = calendar_bundle("busy_scan", &cfg).expect("bundle");

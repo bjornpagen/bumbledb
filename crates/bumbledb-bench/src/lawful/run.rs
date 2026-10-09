@@ -1,17 +1,14 @@
 use std::path::Path;
 
 use crate::corpus_gen::Scale;
-use crate::duralane::{self, DurabilityLane};
 use crate::harness::{Protocol, Stats};
-use crate::report::GhzReport;
-use crate::{clockproxy, poststate};
+use crate::poststate;
 
 use super::{LawFamily, LawSizes, families, ids, lanes, load, render, schema};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LawRow {
     pub family: &'static str,
-    pub lane: &'static str,
     pub about: &'static str,
     pub ours: Stats,
     pub theirs: Stats,
@@ -19,7 +16,6 @@ pub struct LawRow {
     pub ratio_p50: f64,
 
     pub work: u64,
-    pub ghz: GhzReport,
 }
 
 /// # Errors
@@ -32,13 +28,10 @@ pub fn run(
     run_with(dir, seed, LawSizes::of(Scale::S), samples, only)
 }
 
-/// The full lawful run: returns `(markdown, json)` only after every lane's
-/// post-state comparison passes. `samples` overrides measured samples, not
-/// warmups. `only` selects registry names; unknown names refuse before loading.
+/// The full lawful run: returns `(markdown, json)` only after the post-state
+/// comparison passes. `samples` overrides measured samples, not warmups.
+/// `only` selects registry names; unknown names refuse before loading.
 /// # Errors
-/// The device-honesty refusal (the timed lawful lanes are fsync-bound); an
-/// unknown `--only` name; loader, runner, and post-state failures, stringified
-/// with the lane named.
 pub fn run_with(
     dir: &Path,
     seed: u64,
@@ -46,9 +39,6 @@ pub fn run_with(
     samples: Option<u32>,
     only: Option<&[String]>,
 ) -> Result<(String, String), String> {
-    // Every lane is durable; refuse RAM-backed targets before creating anything.
-    crate::devhonesty::assert_disk_backed(dir, "the timed lawful lanes")
-        .map_err(|refusal| refusal.to_string())?;
     if let Some(names) = only {
         for name in names {
             if !families().iter().any(|family| family.name == name.as_str()) {
@@ -65,10 +55,7 @@ pub fn run_with(
     }
     let selected =
         move |name: &str| only.is_none_or(|names| names.iter().any(|n| n.as_str() == name));
-    let mut rows = Vec::new();
-    for lane in duralane::ALL {
-        rows.extend(run_lane(lane, dir, seed, sizes, samples, &selected)?);
-    }
+    let rows = run_twins(dir, seed, sizes, samples, &selected)?;
     Ok((render::markdown(seed, &rows), render::json(seed, &rows)))
 }
 
@@ -85,16 +72,15 @@ fn ratio(ours: u64, theirs: u64) -> f64 {
     ours as f64 / theirs.max(1) as f64
 }
 
-fn run_lane(
-    lane: DurabilityLane,
+fn run_twins(
     dir: &Path,
     seed: u64,
     sizes: LawSizes,
     samples: Option<u32>,
     selected: &dyn Fn(&str) -> bool,
 ) -> Result<Vec<LawRow>, String> {
-    eprintln!("bench: lawful {} — loading the twin pair", lane.label());
-    let (db, conn) = load::load_stores(&dir.join(lane.label()), seed, sizes, lane)?;
+    eprintln!("bench: lawful — loading the twin pair");
+    let (db, conn) = load::load_stores(&dir.join("lawful"), seed, sizes)?;
     let mut ours_cursor = lanes::LawCursor::at_base(sizes);
     let mut theirs_cursor = lanes::LawCursor::at_base(sizes);
 
@@ -125,64 +111,38 @@ fn run_lane(
             continue;
         }
         let proto = proto_of(family, samples);
-        eprintln!("bench: lawful {} — {}", lane.label(), family.name);
-        let (ours, theirs, stamp) = match family.name {
+        eprintln!("bench: lawful — {}", family.name);
+        let (ours, theirs) = match family.name {
             "law_commit_attempt" => {
                 let timed = attempt_stream;
-                let ((ours, theirs), stamp) = clockproxy::stamped(|| {
-                    Ok((
-                        lanes::commit_attempt_engine(&db, proto, timed, &mut ours_cursor)?,
-                        lanes::commit_attempt_sqlite(&conn, proto, timed, &mut theirs_cursor)?,
-                    ))
-                })?;
-                (ours, theirs, stamp)
+                (
+                    lanes::commit_attempt_engine(&db, proto, timed, &mut ours_cursor)?,
+                    lanes::commit_attempt_sqlite(&conn, proto, timed, &mut theirs_cursor)?,
+                )
             }
             "law_commit_cluster" => {
                 let timed = cluster_stream;
-                let ((ours, theirs), stamp) = clockproxy::stamped(|| {
-                    Ok((
-                        lanes::commit_cluster_engine(&db, proto, timed, &mut ours_cursor)?,
-                        lanes::commit_cluster_sqlite(&conn, proto, timed, &mut theirs_cursor)?,
-                    ))
-                })?;
-                (ours, theirs, stamp)
+                (
+                    lanes::commit_cluster_engine(&db, proto, timed, &mut ours_cursor)?,
+                    lanes::commit_cluster_sqlite(&conn, proto, timed, &mut theirs_cursor)?,
+                )
             }
-            "law_reject_key" => {
-                let ((ours, theirs), stamp) = clockproxy::stamped(|| {
-                    Ok((
-                        lanes::reject_key_engine(&db, proto)?,
-                        lanes::reject_key_sqlite(&conn, proto)?,
-                    ))
-                })?;
-                (ours, theirs, stamp)
-            }
-            "law_reject_containment" => {
-                let ((ours, theirs), stamp) = clockproxy::stamped(|| {
-                    Ok((
-                        lanes::reject_containment_engine(&db, proto, sizes)?,
-                        lanes::reject_containment_sqlite(&conn, proto, sizes)?,
-                    ))
-                })?;
-                (ours, theirs, stamp)
-            }
-            "law_reject_window" => {
-                let ((ours, theirs), stamp) = clockproxy::stamped(|| {
-                    Ok((
-                        lanes::reject_window_engine(&db, proto)?,
-                        lanes::reject_window_sqlite(&conn, proto)?,
-                    ))
-                })?;
-                (ours, theirs, stamp)
-            }
-            "law_reject_scope" => {
-                let ((ours, theirs), stamp) = clockproxy::stamped(|| {
-                    Ok((
-                        lanes::reject_scope_engine(&db, proto)?,
-                        lanes::reject_scope_sqlite(&conn, proto)?,
-                    ))
-                })?;
-                (ours, theirs, stamp)
-            }
+            "law_reject_key" => (
+                lanes::reject_key_engine(&db, proto)?,
+                lanes::reject_key_sqlite(&conn, proto)?,
+            ),
+            "law_reject_containment" => (
+                lanes::reject_containment_engine(&db, proto, sizes)?,
+                lanes::reject_containment_sqlite(&conn, proto, sizes)?,
+            ),
+            "law_reject_window" => (
+                lanes::reject_window_engine(&db, proto)?,
+                lanes::reject_window_sqlite(&conn, proto)?,
+            ),
+            "law_reject_scope" => (
+                lanes::reject_scope_engine(&db, proto)?,
+                lanes::reject_scope_sqlite(&conn, proto)?,
+            ),
             other => return Err(format!("unregistered lawful family: {other}")),
         };
         if ours.work != theirs.work {
@@ -193,13 +153,11 @@ fn run_lane(
         }
         rows.push(LawRow {
             family: family.name,
-            lane: lane.label(),
             about: family.about,
             ours: ours.stats,
             theirs: theirs.stats,
             ratio_p50: ratio(ours.stats.p50, theirs.stats.p50),
             work: ours.work,
-            ghz: stamp.into(),
         });
     }
 
@@ -213,8 +171,7 @@ fn run_lane(
         let relation = schema().relation(rel);
         let ours = poststate::engine_rows(&db, rel)?;
         let theirs = poststate::sqlite_rows(&conn, relation)?;
-        poststate::assert_identical("lawful", relation.name(), ours, theirs)
-            .map_err(|e| format!("{} lane: {e}", lane.label()))?;
+        poststate::assert_identical("lawful", relation.name(), ours, theirs)?;
     }
     drop((db, conn));
     Ok(rows)

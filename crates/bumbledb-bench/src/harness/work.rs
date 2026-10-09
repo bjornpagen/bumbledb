@@ -2,12 +2,34 @@
 //! Allocation measurements belong to the separate allocator pass, not to
 //! counters on the product's ordinary execution path.
 
-use bumbledb::WorkContext;
+use std::path::Path;
+
+use bumbledb::schema::Theory;
+use bumbledb::{Admission, Db, WorkContext};
 
 /// Each operation starts uncancelled, independent of earlier operations.
 #[must_use]
 pub fn bench_work() -> WorkContext {
     WorkContext::new()
+}
+
+/// A fresh store holding the empty state of `schema`.
+/// # Errors
+pub fn create_db<S: Theory>(path: &Path, schema: S) -> Result<Db<S>, String> {
+    match Db::create(path, schema, bench_work()) {
+        Err(error) => Err(format!("create {}: {error:?}", path.display())),
+        Ok(Admission::Accepted(db)) => Ok(db),
+        Ok(Admission::Rejected(violations)) => Err(format!(
+            "create {}: empty state rejected: {violations}",
+            path.display()
+        )),
+    }
+}
+
+/// # Errors
+pub fn open_db<S: Theory>(path: &Path, schema: S) -> Result<Db<S>, String> {
+    Db::open(path, schema, bench_work())
+        .map_err(|error| format!("open {}: {error:?}", path.display()))
 }
 
 #[cfg(test)]

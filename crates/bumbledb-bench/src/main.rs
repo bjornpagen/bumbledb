@@ -20,14 +20,11 @@ fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
         cli::Cmd::Scenarios(args) => driver::cmd_scenarios(args),
         cli::Cmd::Crud(args) => driver::cmd_crud(args),
         cli::Cmd::Lawful(args) => driver::cmd_lawful(args),
-        cli::Cmd::Merge { dirs } => driver::cmd_merge(dirs),
         cli::Cmd::Storage(args) => lanes::storage::run(args),
         cli::Cmd::Writes(args) => lanes::writes::run(args),
         cli::Cmd::Curves(args) => lanes::curves::run(args),
         cli::Cmd::Heap(args) => lanes::heap::run(args),
-        cli::Cmd::CorpusFloat(args) => driver::cmd_corpus_float(args).map(|()| 0),
-        cli::Cmd::HashProbe(args) => bumbledb_bench::hashprobe::probe::run(args),
-        cli::Cmd::AppPerf(args) => bumbledb_bench::appperf::runner::run(args),
+        cli::Cmd::AppPerf(args) => bumbledb_bench::appperf::run(args),
     }
 }
 
@@ -41,8 +38,6 @@ fn main() {
             std::process::exit(2);
         }
     };
-    // The scheduler-boost seam (owner ruling 2026-07-20): one place, for
-
     if cmd.runs_measurements()
         && let Err(message) = bumbledb_bench::boost::engage_from_env()
     {

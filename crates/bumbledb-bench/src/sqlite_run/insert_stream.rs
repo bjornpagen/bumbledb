@@ -3,7 +3,6 @@ use std::path::Path;
 use rusqlite::Connection;
 
 use crate::corpus_gen::GenConfig;
-use crate::duralane::DurabilityLane;
 use crate::harness::{self, Measurement};
 use crate::schema::schema;
 use crate::writebench::{non_posting_relations, write_protocol};
@@ -12,20 +11,15 @@ use crate::{corpus, sqlmap};
 /// minus postings, built before any timing), the full posting stream
 /// # Errors
 /// # Panics
-pub fn insert_stream(
-    cfg: GenConfig,
-    scratch: &Path,
-    lane: DurabilityLane,
-) -> Result<Measurement, String> {
+pub fn insert_stream(cfg: GenConfig, scratch: &Path) -> Result<Measurement, String> {
     use std::cell::RefCell;
     let proto = write_protocol("insert_stream");
     let mut pending = std::collections::VecDeque::new();
     for sample in 0..proto.warmups + proto.samples {
         let path = scratch.join(format!("insert-stream-oracle-{sample}.sqlite"));
         let conn = Connection::open(&path).map_err(|e| format!("open: {e}"))?;
-        corpus::configure_sqlite(&conn).map_err(|e| format!("configure: {e}"))?;
-        lane.configure(&conn)?;
-        lane.assert_parity(&conn)?;
+        crate::sqlite_run::configure_durable(&conn)?;
+        crate::sqlite_run::assert_durable_parity(&conn)?;
         for statement in sqlmap::ddl(schema()) {
             conn.execute(&statement, [])
                 .map_err(|e| format!("ddl: {e}"))?;

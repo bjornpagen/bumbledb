@@ -1,7 +1,5 @@
 use super::*;
 
-use crate::duralane::DurabilityLane;
-
 fn argv(args: &[&str]) -> Vec<String> {
     args.iter().map(ToString::to_string).collect()
 }
@@ -80,7 +78,6 @@ fn bench_parses_every_knob() {
         "--read-batch",
         "16",
         "--alloc",
-        "--proxy-per-rep",
         "--out",
         "artifacts",
         "--i-am-lying",
@@ -94,20 +91,12 @@ fn bench_parses_every_knob() {
             samples: Some(8),
             read_batch: std::num::NonZeroU32::new(16),
             alloc: true,
-            proxy_per_rep: true,
             out: Some(PathBuf::from("artifacts")),
             i_am_lying: true,
         })
     );
     let err = parse(&argv(&["bench", "--frobnicate"])).unwrap_err();
     assert!(err.contains("--frobnicate"), "{err}");
-    // ENG-008: the retired weakened-lane flags refuse loudly, naming the
-    // deleted constructor surface — never a silent durable fallback.
-    for flag in ["--nosync", "--ephemeral"] {
-        let err = parse(&argv(&["bench", flag])).unwrap_err();
-        assert!(err.contains("ENG-008"), "{flag}: {err}");
-        assert!(err.contains(flag), "{flag}: {err}");
-    }
 }
 
 #[test]
@@ -269,7 +258,7 @@ fn storage_home_costs_is_opt_in_bounded_and_separate_from_corpus_options() {
 }
 
 #[test]
-fn writes_parses_the_lane_flags() {
+fn writes_parses_its_flags() {
     let cmd = parse(&argv(&[
         "writes",
         "--scale",
@@ -278,8 +267,6 @@ fn writes_parses_the_lane_flags() {
         "9",
         "--dir",
         "/tmp/w",
-        "--lanes",
-        "durable",
         "--batches",
         "1,10,100,1000",
         "--samples",
@@ -294,7 +281,6 @@ fn writes_parses_the_lane_flags() {
             scale: Scale::M,
             seed: 9,
             dir: PathBuf::from("/tmp/w"),
-            lanes: vec![DurabilityLane::Durable],
             batches: vec![1, 10, 100, 1000],
             samples: Some(4),
             out: Some(PathBuf::from("artifacts")),
@@ -305,26 +291,14 @@ fn writes_parses_the_lane_flags() {
         parse(&argv(&["writes"])),
         Ok(Cmd::Writes(WritesArgs::default()))
     );
-    assert_eq!(
-        WritesArgs::default().lanes,
-        vec![DurabilityLane::Durable],
-        "one durability point remains (ENG-008)"
-    );
     assert_eq!(WritesArgs::default().batches, vec![1, 10, 100, 1000]);
 
     let err = parse(&argv(&["writes", "--batches", "0"])).unwrap_err();
     assert!(err.contains("--batches"), "{err}");
-
-    let err = parse(&argv(&["writes", "--lanes", "durable,paranoid"])).unwrap_err();
-    assert!(err.contains("paranoid"), "{err}");
-
-    // The retired lane token refuses with the audit row, not "unknown".
-    let err = parse(&argv(&["writes", "--lanes", "nosync"])).unwrap_err();
-    assert!(err.contains("ENG-008"), "{err}");
 }
 
 #[test]
-fn curves_parses_the_lane_flags() {
+fn curves_parses_its_flags() {
     let cmd = parse(&argv(&[
         "curves",
         "--scales",
@@ -369,7 +343,7 @@ fn curves_parses_the_lane_flags() {
 }
 
 #[test]
-fn heap_parses_the_lane_flags() {
+fn heap_parses_its_flags() {
     let cmd = parse(&argv(&[
         "heap",
         "--scale",
@@ -513,6 +487,7 @@ fn the_boost_seam_membership_is_pinned() {
         vec!["writes"],
         vec!["curves"],
         vec!["heap"],
+        vec!["app-perf"],
     ] {
         let cmd = parse(&argv(&tokens)).expect("parses");
         assert!(cmd.runs_measurements(), "{tokens:?} runs measurements");
@@ -523,7 +498,6 @@ fn the_boost_seam_membership_is_pinned() {
         vec!["gen"],
         vec!["verify"],
         vec!["verify-store"],
-        vec!["merge", "some-dir"],
     ] {
         let cmd = parse(&argv(&tokens)).expect("parses");
         assert!(!cmd.runs_measurements(), "{tokens:?} never boosts");
@@ -559,42 +533,7 @@ fn help_text_names_the_binary_and_version() {
 }
 
 #[test]
-fn hash_probe_parses_flags_and_defaults() {
-    assert_eq!(
-        parse(&argv(&["hash-probe"])).expect("parses"),
-        Cmd::HashProbe(HashProbeArgs::default())
-    );
-    let cmd = parse(&argv(&[
-        "hash-probe",
-        "--seed",
-        "9",
-        "--samples",
-        "32",
-        "--kat",
-        "/tmp/kat.json",
-        "--out",
-        "/tmp/out",
-    ]))
-    .expect("parses");
-    assert_eq!(
-        cmd,
-        Cmd::HashProbe(HashProbeArgs {
-            seed: 9,
-            samples: Some(32),
-            kat: Some(PathBuf::from("/tmp/kat.json")),
-            out: Some(PathBuf::from("/tmp/out")),
-        })
-    );
-    let err = parse(&argv(&["hash-probe", "--nope"])).unwrap_err();
-    assert!(err.contains("--nope"), "{err}");
-    assert!(
-        Cmd::HashProbe(HashProbeArgs::default()).runs_measurements(),
-        "the probe is a measurement command and takes the boost seam"
-    );
-}
-
-#[test]
-fn app_perf_parses_regimes_and_refuses_unknown_or_foreign_ones() {
+fn app_perf_parses_regimes_and_refuses_unknown_ones() {
     let cmd = parse(&argv(&[
         "app-perf",
         "--scale",
@@ -609,91 +548,16 @@ fn app_perf_parses_regimes_and_refuses_unknown_or_foreign_ones() {
         cmd,
         Cmd::AppPerf(AppPerfArgs {
             scale: Scale::M,
-            regimes: Some(vec!["warm".to_owned(), "post-write".to_owned()]),
+            regimes: Some(vec![
+                crate::appperf::Regime::Warm,
+                crate::appperf::Regime::PostWrite
+            ]),
             tenants: 4,
             ..AppPerfArgs::default()
         })
     );
     let err = parse(&argv(&["app-perf", "--regimes", "hosted-contention"])).unwrap_err();
-    assert!(
-        err.contains("hosted-contention") && err.contains("log lanes"),
-        "foreign regimes name their owning lane: {err}"
-    );
+    assert!(err.contains("hosted-contention"), "{err}");
     let err = parse(&argv(&["app-perf", "--tenants", "1"])).unwrap_err();
     assert!(err.contains("at least 2"), "{err}");
-    assert!(Cmd::AppPerf(AppPerfArgs::default()).runs_measurements());
-    let plan = parse(&argv(&["app-perf", "--plan"])).expect("parses");
-    assert!(
-        !plan.runs_measurements(),
-        "--plan is an input dump, not a timing run"
-    );
-}
-
-#[test]
-fn help_text_names_the_new_lanes() {
-    let text = help();
-    for command in ["hash-probe", "app-perf", "corpus-float"] {
-        assert!(text.contains(command), "{command}");
-    }
-    assert!(text.contains("--kat"), "the KAT flag is documented");
-}
-
-/// The P11 float-corpus generator arm: hex seeds parse (the pinned
-/// regeneration command is `corpus-float --seed 0xB0B --out fixtures/float`),
-/// the generator is not a measurement command, and degenerate group sizes
-/// refuse.
-#[test]
-fn corpus_float_parses_the_pinned_regeneration_command() {
-    assert_eq!(
-        parse(&argv(&["corpus-float"])).expect("parses"),
-        Cmd::CorpusFloat(CorpusFloatArgs::default())
-    );
-    let cmd = parse(&argv(&[
-        "corpus-float",
-        "--seed",
-        "0xB0B",
-        "--out",
-        "fixtures/float",
-    ]))
-    .expect("parses");
-    assert_eq!(
-        cmd,
-        Cmd::CorpusFloat(CorpusFloatArgs {
-            seed: 0xB0B,
-            out: PathBuf::from("fixtures/float"),
-            ..CorpusFloatArgs::default()
-        })
-    );
-    let cmd = parse(&argv(&[
-        "corpus-float",
-        "--seed",
-        "7",
-        "--random",
-        "16",
-        "--groups",
-        "4",
-        "--group-size",
-        "5",
-    ]))
-    .expect("parses");
-    assert_eq!(
-        cmd,
-        Cmd::CorpusFloat(CorpusFloatArgs {
-            seed: 7,
-            random: 16,
-            groups: 4,
-            group_size: 5,
-            out: PathBuf::from("fixtures/float"),
-        })
-    );
-    assert!(
-        !Cmd::CorpusFloat(CorpusFloatArgs::default()).runs_measurements(),
-        "a generator never takes the boost seam"
-    );
-    let err = parse(&argv(&["corpus-float", "--group-size", "0"])).unwrap_err();
-    assert!(err.contains("--group-size"), "{err}");
-    let err = parse(&argv(&["corpus-float", "--seed", "0xZZ"])).unwrap_err();
-    assert!(err.contains("--seed"), "{err}");
-    let err = parse(&argv(&["corpus-float", "--nope"])).unwrap_err();
-    assert!(err.contains("--nope"), "{err}");
 }

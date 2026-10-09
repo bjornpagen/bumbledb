@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use super::{GhzReport, Provenance, ReadFamilyReport, RunReport, WriteFamilyReport};
+use super::{Provenance, ReadFamilyReport, RunReport, WriteFamilyReport};
 
 use crate::json;
 use crate::scenarios::json_out::push_stats;
@@ -28,23 +28,6 @@ fn push_read_family(out: &mut String, family: &ReadFamilyReport) {
                 "{{\"allocs\":{},\"deallocs\":{},\"alloc_bytes\":{},\"dealloc_bytes\":{}}}",
                 alloc.allocs, alloc.deallocs, alloc.alloc_bytes, alloc.dealloc_bytes
             );
-        }
-        None => out.push_str("null"),
-    }
-    push_ghz(out, "ghz", family.ghz);
-    for (name, stamp) in [
-        ("ghz_ours", family.ghz_ours),
-        ("ghz_theirs", family.ghz_theirs),
-    ] {
-        // Missing attribution stays absent, including engine-only writes.
-        if stamp.is_some() {
-            push_ghz(out, name, stamp);
-        }
-    }
-    out.push_str(",\"p50_norm\":");
-    match family.p50_norm {
-        Some(v) => {
-            let _ = write!(out, "{v}");
         }
         None => out.push_str("null"),
     }
@@ -80,20 +63,6 @@ fn push_load(out: &mut String, key: &str, load: [f64; 3]) {
     );
 }
 
-fn push_ghz(out: &mut String, name: &str, ghz: Option<GhzReport>) {
-    let _ = write!(out, ",\"{name}\":");
-    match ghz {
-        Some(g) => {
-            let _ = write!(
-                out,
-                "{{\"pre\":{:.3},\"post\":{:.3},\"retried\":{},\"contaminated\":{}}}",
-                g.pre, g.post, g.retried, g.contaminated
-            );
-        }
-        None => out.push_str("null"),
-    }
-}
-
 fn push_write_family(out: &mut String, family: &WriteFamilyReport) {
     out.push_str("{\"name\":");
     json::push_str_lit(out, &family.name);
@@ -111,16 +80,6 @@ fn push_write_family(out: &mut String, family: &WriteFamilyReport) {
         }
         None => out.push_str("null"),
     }
-    push_ghz(out, "ghz", family.ghz);
-    for (name, stamp) in [
-        ("ghz_ours", family.ghz_ours),
-        ("ghz_theirs", family.ghz_theirs),
-    ] {
-        // Missing attribution stays absent, including engine-only writes.
-        if stamp.is_some() {
-            push_ghz(out, name, stamp);
-        }
-    }
     out.push('}');
 }
 
@@ -131,8 +90,8 @@ pub fn to_json(report: &RunReport) -> String {
     push_provenance(&mut out, &report.provenance);
     let _ = write!(
         out,
-        ",\"config\":{{\"scale\":\"{}\",\"seed\":{},\"samples\":{},\"store\":\"{}\"}}",
-        report.config.scale, report.config.seed, report.config.samples, report.config.store
+        ",\"config\":{{\"scale\":\"{}\",\"seed\":{},\"samples\":{}}}",
+        report.config.scale, report.config.seed, report.config.samples
     );
     out.push_str(",\"corpus_digest\":");
     json::push_str_lit(&mut out, &report.corpus_digest);

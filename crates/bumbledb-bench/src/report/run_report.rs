@@ -15,16 +15,4 @@ impl RunReport {
             .filter(|family| family.verdict != Verdict::ReportOnly)
             .all(|family| family.p99_within_budget)
     }
-
-    /// after the bounded retry — dirty percentiles, named.
-    #[must_use]
-    pub fn contaminated_families(&self) -> Vec<&str> {
-        self.reads
-            .iter()
-            .map(|f| (f.name.as_str(), f.ghz))
-            .chain(self.writes.iter().map(|f| (f.name.as_str(), f.ghz)))
-            .filter(|(_, ghz)| ghz.is_some_and(|g| g.contaminated))
-            .map(|(name, _)| name)
-            .collect()
-    }
 }

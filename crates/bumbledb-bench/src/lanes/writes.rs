@@ -1,8 +1,7 @@
-//! The durability axis is [`crate::duralane::DurabilityLane`] — post-ENG-008
-//! a single durable point (the engine's no-sync surface is deleted; see
-//! `duralane.rs` for the recorded decision). `ANALYZE` after load,
-//! `wal_checkpoint(TRUNCATE)` after load — then the pragmas back: a
-//! misconfigured twin fails before flattering
+//! The write ladder: commit and delete throughput per batch size, then the
+//! insertion stream, on a durability-paired twin (see
+//! [`crate::sqlite_run::DURABILITY`]). The post-state is verified before the
+//! stream runs.
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -11,13 +10,12 @@ use bumbledb::{Db, Value};
 use rusqlite::Connection;
 
 use crate::corpus_gen::{GenConfig, Rng, Sizes};
-use crate::duralane::DurabilityLane;
 use crate::harness::{self, Measurement, Protocol, Stats};
 use crate::json;
-use crate::report::{GhzReport, Provenance};
-use crate::schema::{Ledger, Posting, PostingId, ids, schema};
+use crate::report::Provenance;
+use crate::schema::{Ledger, Posting, PostingId, ids};
 use crate::sqlite_run::POSTING_INSERT;
-use crate::{clockproxy, corpus, sqlmap, writebench};
+use crate::{corpus, writebench};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WritesReport {
@@ -25,13 +23,6 @@ pub struct WritesReport {
     pub scale: &'static str,
     pub seed: u64,
     pub samples: u32,
-    pub lanes: Vec<LaneReport>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LaneReport {
-    pub lane: &'static str,
-    pub sqlite_sync: &'static str,
     pub rows: Vec<WriteRow>,
 }
 
@@ -45,7 +36,6 @@ pub struct WriteRow {
     pub commits_per_sec_theirs: f64,
     pub rows_per_sec_ours: f64,
     pub rows_per_sec_theirs: f64,
-    pub ghz: Option<GhzReport>,
 }
 
 fn push_row(out: &mut String, row: &WriteRow) {
@@ -63,7 +53,6 @@ fn push_row(out: &mut String, row: &WriteRow) {
         row.rows_per_sec_ours,
         row.rows_per_sec_theirs,
     );
-    super::push_ghz(out, row.ghz);
     out.push('}');
 }
 
@@ -74,25 +63,17 @@ pub fn to_json(report: &WritesReport) -> String {
     super::push_provenance(&mut out, &report.provenance);
     let _ = write!(
         out,
-        ",\"scale\":\"{}\",\"seed\":{},\"samples\":{},\"lanes\":[",
-        report.scale, report.seed, report.samples
+        ",\"scale\":\"{}\",\"seed\":{},\"samples\":{},\"sqlite_sync\":\"{}\",\"rows\":[",
+        report.scale,
+        report.seed,
+        report.samples,
+        crate::sqlite_run::SQLITE_SYNC
     );
-    for (index, lane) in report.lanes.iter().enumerate() {
+    for (index, row) in report.rows.iter().enumerate() {
         if index > 0 {
             out.push(',');
         }
-        let _ = write!(
-            out,
-            "{{\"lane\":\"{}\",\"sqlite_sync\":\"{}\",\"rows\":[",
-            lane.lane, lane.sqlite_sync
-        );
-        for (row_index, row) in lane.rows.iter().enumerate() {
-            if row_index > 0 {
-                out.push(',');
-            }
-            push_row(&mut out, row);
-        }
-        out.push_str("]}");
+        push_row(&mut out, row);
     }
     out.push_str("]}");
     out
@@ -105,30 +86,24 @@ fn to_markdown(report: &WritesReport) -> String {
         "# writes lane — scale {}, seed {}, samples {}",
         report.scale, report.seed, report.samples
     );
-    for lane in &report.lanes {
+    let _ = writeln!(out, "\nsqlite `{}`\n", crate::sqlite_run::SQLITE_SYNC);
+    out.push_str(
+        "| family | batch | ours p50 ns | sqlite p50 ns | ours commits/s | sqlite commits/s | ours rows/s | sqlite rows/s |\n",
+    );
+    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|\n");
+    for row in &report.rows {
         let _ = writeln!(
             out,
-            "\n## lane `{}` — sqlite `{}`\n",
-            lane.lane, lane.sqlite_sync
+            "| {} | {} | {} | {} | {:.1} | {:.1} | {:.1} | {:.1} |",
+            row.name,
+            row.batch,
+            row.ours.p50,
+            row.theirs.p50,
+            row.commits_per_sec_ours,
+            row.commits_per_sec_theirs,
+            row.rows_per_sec_ours,
+            row.rows_per_sec_theirs,
         );
-        out.push_str(
-            "| family | batch | ours p50 ns | sqlite p50 ns | ours commits/s | sqlite commits/s | ours rows/s | sqlite rows/s |\n",
-        );
-        out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|\n");
-        for row in &lane.rows {
-            let _ = writeln!(
-                out,
-                "| {} | {} | {} | {} | {:.1} | {:.1} | {:.1} | {:.1} |",
-                row.name,
-                row.batch,
-                row.ours.p50,
-                row.theirs.p50,
-                row.commits_per_sec_ours,
-                row.commits_per_sec_theirs,
-                row.rows_per_sec_ours,
-                row.rows_per_sec_theirs,
-            );
-        }
     }
     out
 }
@@ -143,13 +118,7 @@ fn commits_per_sec(stats: &Stats) -> f64 {
     1e9 / (stats.mean_ns.max(1) as f64)
 }
 
-fn ladder_row(
-    name: String,
-    batch: u32,
-    ours: Stats,
-    theirs: Stats,
-    ghz: Option<GhzReport>,
-) -> WriteRow {
+fn ladder_row(name: String, batch: u32, ours: Stats, theirs: Stats) -> WriteRow {
     let cps_ours = commits_per_sec(&ours);
     let cps_theirs = commits_per_sec(&theirs);
     WriteRow {
@@ -161,7 +130,6 @@ fn ladder_row(
         commits_per_sec_theirs: cps_theirs,
         rows_per_sec_ours: cps_ours * f64::from(batch),
         rows_per_sec_theirs: cps_theirs * f64::from(batch),
-        ghz,
     }
 }
 
@@ -359,58 +327,10 @@ fn delete_sqlite(
     })
 }
 
-/// `insert_stream` on `SQLite`, lane-local (`sqlite_run::insert_stream`
-/// hardwires [`corpus::configure_sqlite`] = FULL, so this variant applies the
-/// lane's pragmas after the standing config on every throwaway file):
-/// pre-seeded throwaway files (the corpus minus postings, built before any
-/// timing), the full posting stream timed as a host loop of 4096-row
-/// transactions per sample.
-fn insert_stream_sqlite(
-    cfg: GenConfig,
-    scratch: &Path,
-    lane: DurabilityLane,
-) -> Result<Measurement, String> {
-    use std::cell::RefCell;
-    let proto = writebench::write_protocol("insert_stream");
-    let mut pending = VecDeque::new();
-    for sample in 0..proto.warmups + proto.samples {
-        let path = scratch.join(format!("insert-stream-oracle-{sample}.sqlite"));
-        let conn = Connection::open(&path).map_err(|e| format!("open: {e}"))?;
-        corpus::configure_sqlite(&conn).map_err(|e| format!("configure: {e}"))?;
-        lane.configure(&conn)?;
-        lane.assert_parity(&conn)?;
-        for statement in sqlmap::ddl(schema()) {
-            conn.execute(&statement, [])
-                .map_err(|e| format!("ddl: {e}"))?;
-        }
-        for rel in writebench::non_posting_relations() {
-            corpus::load_sqlite_relation(&conn, cfg, rel).map_err(|e| format!("seed: {e}"))?;
-        }
-        pending.push_back(conn);
-    }
-    let pending = RefCell::new(pending);
-    let done = RefCell::new(Vec::new());
-    harness::measure(proto, || {
-        let conn = pending.borrow_mut().pop_front().expect("pre-seeded store");
-        let mut facts = corpus::load_sqlite_relation(&conn, cfg, ids::POSTING)
-            .map_err(|e| format!("insert_stream sqlite: {e}"))?;
-        facts += corpus::load_sqlite_relation(&conn, cfg, ids::POSTING_TAG)
-            .map_err(|e| format!("insert_stream sqlite tags: {e}"))?;
-        done.borrow_mut().push(conn);
-        Ok(facts)
-    })
-}
-
-fn verify_insert_stream_pair(
-    scratch: &Path,
-    lane: DurabilityLane,
-    expected_postings: u64,
-) -> Result<(), String> {
+fn verify_insert_stream_pair(scratch: &Path, expected_postings: u64) -> Result<(), String> {
     let dir = scratch.join("insert-stream-bumbledb-0");
-    let db = lane
-        .store_mode()
-        .open(&dir, Ledger)
-        .map_err(|e| format!("insert_stream re-open ({}): {e}", lane.label()))?;
+    let db =
+        crate::harness::open_db(&dir, Ledger).map_err(|e| format!("insert_stream re-open: {e}"))?;
     let ours = db
         .read(crate::harness::bench_work(), |snap| {
             Ok(snap.scan(ids::POSTING)?.count())
@@ -424,9 +344,8 @@ fn verify_insert_stream_pair(
     let theirs = u64::try_from(theirs).map_err(|e| format!("insert_stream oracle count: {e}"))?;
     if ours != expected_postings || theirs != expected_postings {
         return Err(format!(
-            "insert_stream pair 0 diverges ({}): engine {ours} vs sqlite {theirs} vs expected \
-             {expected_postings} postings",
-            lane.label()
+            "insert_stream pair 0 diverges: engine {ours} vs sqlite {theirs} vs expected \
+             {expected_postings} postings"
         ));
     }
     Ok(())
@@ -519,32 +438,26 @@ fn verify_post_state(
     Ok(())
 }
 
-/// One durability lane, whole: seed the twin pair, run the commit ladder, run
-/// the delete ladder, verify the post-state, then `insert_stream` — LAST,
-/// always (seconds of fsync leave the deepest clock shadow; nothing measures
-/// after it — the `write_families` order pin, carried here by the same
-/// `debug_assert!`).
-fn run_lane(
-    lane: DurabilityLane,
+/// Seed the twin pair, run the commit ladder, run the delete ladder, verify
+/// the post-state, then `insert_stream`, always last: nothing measures after
+/// its seconds of fsync.
+fn run_ladder(
     cfg: GenConfig,
     proto: Protocol,
     batches: &[u32],
     scratch: &Path,
-) -> Result<LaneReport, String> {
+) -> Result<Vec<WriteRow>, String> {
     std::fs::create_dir_all(scratch).map_err(|e| format!("scratch: {e}"))?;
     let sizes = Sizes::of(cfg.scale);
 
-    eprintln!(
-        "bench: writes {} — loading the scratch corpus",
-        lane.label()
-    );
-    let db = lane.store_mode().create(&scratch.join("db"), Ledger)?;
-    corpus::load_bumbledb(&db, cfg).map_err(|e| format!("load ({}): {e:?}", lane.label()))?;
+    eprintln!("bench: writes — loading the scratch corpus");
+    let db = crate::harness::create_db(&scratch.join("db"), Ledger)?;
+    corpus::load_bumbledb(&db, cfg).map_err(|e| format!("load: {e:?}"))?;
 
     let (conn, _) = corpus::load_sqlite(&scratch.join("oracle.sqlite"), cfg)
-        .map_err(|e| format!("oracle load ({}): {e}", lane.label()))?;
-    lane.configure(&conn)?;
-    lane.assert_parity(&conn)?;
+        .map_err(|e| format!("oracle load: {e}"))?;
+    crate::sqlite_run::configure_durable(&conn)?;
+    crate::sqlite_run::assert_durable_parity(&conn)?;
 
     let calls = u64::from(proto.warmups + proto.samples);
     let mut inserted = 0u64;
@@ -553,37 +466,23 @@ fn run_lane(
 
     for &batch in batches {
         let name = format!("commit_b{batch}");
-        eprintln!("bench: writes {} — {name}", lane.label());
+        eprintln!("bench: writes — {name}");
         let mut rng_ours = Rng::new(cfg.seed ^ COMMIT_SEED ^ u64::from(batch));
         let mut rng_theirs = Rng::new(cfg.seed ^ COMMIT_SEED ^ u64::from(batch));
-        let ((ours, theirs), ghz) = clockproxy::stamped(|| {
-            Ok((
-                commit_engine(&db, cfg, proto, batch, &mut rng_ours)?,
-                commit_sqlite(&conn, cfg, proto, batch, &mut rng_theirs)?,
-            ))
-        })?;
+        let ours = commit_engine(&db, cfg, proto, batch, &mut rng_ours)?;
+        let theirs = commit_sqlite(&conn, cfg, proto, batch, &mut rng_theirs)?;
         inserted += calls * u64::from(batch);
-        rows.push(ladder_row(
-            name,
-            batch,
-            ours.stats,
-            theirs.stats,
-            Some(ghz.into()),
-        ));
+        rows.push(ladder_row(name, batch, ours.stats, theirs.stats));
     }
 
     for &batch in batches {
         let name = format!("delete_b{batch}");
-        eprintln!("bench: writes {} — {name}", lane.label());
+        eprintln!("bench: writes — {name}");
         let total = calls * u64::from(batch);
         let (mut recorded, mut mirrored) = seed_delete_rows(&db, &conn, cfg, total, batch)?;
         inserted += total;
-        let ((ours, theirs), ghz) = clockproxy::stamped(|| {
-            Ok((
-                harness::measure(proto, || delete_recorded(&db, &mut recorded, batch))?,
-                delete_sqlite(&conn, &mut mirrored, proto, batch)?,
-            ))
-        })?;
+        let ours = harness::measure(proto, || delete_recorded(&db, &mut recorded, batch))?;
+        let theirs = delete_sqlite(&conn, &mut mirrored, proto, batch)?;
         if !recorded.is_empty() || !mirrored.is_empty() {
             return Err(format!(
                 "delete_b{batch}: {} engine / {} sqlite rows survived the ladder \
@@ -593,33 +492,19 @@ fn run_lane(
             ));
         }
         deleted += total;
-        rows.push(ladder_row(
-            name,
-            batch,
-            ours.stats,
-            theirs.stats,
-            Some(ghz.into()),
-        ));
+        rows.push(ladder_row(name, batch, ours.stats, theirs.stats));
     }
-
-    // (e) Post-state verification — BEFORE insert_stream: the stream
-
-    // in the symmetry re-check below). The gate must pass before the
 
     let expected = sizes.postings + inserted - deleted;
     verify_post_state(&db, &conn, sizes.postings, expected)
-        .map_err(|e| format!("post-state ({}): {e}", lane.label()))?;
+        .map_err(|e| format!("post-state: {e}"))?;
 
-    eprintln!("bench: writes {} — insert_stream", lane.label());
+    eprintln!("bench: writes — insert_stream");
     let stream_scratch = scratch.join("insert-stream");
     std::fs::create_dir_all(&stream_scratch).map_err(|e| format!("insert_stream scratch: {e}"))?;
-    let ((ours, theirs), ghz) = clockproxy::stamped(|| {
-        Ok((
-            writebench::insert_stream_bumbledb(cfg, &stream_scratch, lane.store_mode())?,
-            insert_stream_sqlite(cfg, &stream_scratch, lane)?,
-        ))
-    })?;
-    verify_insert_stream_pair(&stream_scratch, lane, sizes.postings)?;
+    let ours = writebench::insert_stream_bumbledb(cfg, &stream_scratch)?;
+    let theirs = crate::sqlite_run::insert_stream(cfg, &stream_scratch)?;
+    verify_insert_stream_pair(&stream_scratch, sizes.postings)?;
     let facts = sizes.postings + sizes.posting_tags;
     let batch = u32::try_from(facts).expect("stream fits u32");
     rows.push(ladder_row(
@@ -627,7 +512,6 @@ fn run_lane(
         batch,
         ours.stats,
         theirs.stats,
-        Some(ghz.into()),
     ));
 
     debug_assert!(
@@ -636,21 +520,11 @@ fn run_lane(
             .is_none_or(|index| index == rows.len() - 1),
         "insert_stream must be the last write row"
     );
-    Ok(LaneReport {
-        lane: lane.label(),
-        sqlite_sync: lane.sqlite_sync_label(),
-        rows,
-    })
+    Ok(rows)
 }
 
 /// # Errors
-/// The device-honesty refusal; setup failures; the post-state gate.
 pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
-    // Device honesty FIRST, before creating anything: the timed write
-
-    crate::devhonesty::assert_disk_backed(&args.dir, "the timed write lanes")
-        .map_err(|refusal| refusal.to_string())?;
-
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(
             "{}-writes",
@@ -669,19 +543,14 @@ pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
         scale: args.scale,
     };
 
-    let mut lanes = Vec::new();
-    for lane in &args.lanes {
-        let scratch = out_dir.join("scratch").join(lane.label());
-        let report = run_lane(*lane, cfg, proto, &args.batches, &scratch)?;
-        lanes.push(report);
-    }
+    let rows = run_ladder(cfg, proto, &args.batches, &out_dir.join("scratch"))?;
 
     let report = WritesReport {
         provenance: crate::report::provenance(Path::new(".")),
         scale: args.scale.label(),
         seed: args.seed,
         samples: proto.samples,
-        lanes,
+        rows,
     };
     std::fs::write(out_dir.join("writes-report.json"), to_json(&report))
         .map_err(|e| format!("artifact: {e}"))?;
@@ -730,27 +599,6 @@ mod tests {
         dir
     }
 
-    /// ENG-008: exactly one durability point remains, and it is the durable
-    /// one — no weakened lane exists to select, spell, or fall back to.
-    #[test]
-    fn the_durability_axis_has_exactly_one_durable_point() {
-        assert_eq!(crate::duralane::ALL.len(), 1);
-        assert_eq!(DurabilityLane::Durable.label(), "durable");
-        assert_eq!(
-            DurabilityLane::Durable.sqlite_sync_label(),
-            "wal+synchronous=FULL+fullfsync=ON"
-        );
-        assert_eq!(
-            DurabilityLane::Durable.store_mode(),
-            crate::storemode::StoreMode::Durable
-        );
-        assert_eq!(
-            DurabilityLane::Durable.store_mode().label(),
-            "durable",
-            "the store mode has no weakened spelling left"
-        );
-    }
-
     #[test]
     fn report_json_shape_is_pinned() {
         let report = WritesReport {
@@ -758,39 +606,28 @@ mod tests {
             scale: "S",
             seed: 9,
             samples: 8,
-            lanes: vec![LaneReport {
-                lane: DurabilityLane::Durable.label(),
-                sqlite_sync: DurabilityLane::Durable.sqlite_sync_label(),
-                rows: vec![
-                    WriteRow {
-                        name: "append".to_owned(),
-                        batch: 10,
-                        ours: stats(100),
-                        theirs: stats(200),
-                        commits_per_sec_ours: 1234.25,
-                        commits_per_sec_theirs: 617.5,
-                        rows_per_sec_ours: 12342.5,
-                        rows_per_sec_theirs: 6175.0,
-                        ghz: Some(GhzReport {
-                            pre: 3.5,
-                            post: 3.25,
-                            retried: false,
-                            contaminated: false,
-                        }),
-                    },
-                    WriteRow {
-                        name: "delete".to_owned(),
-                        batch: 1,
-                        ours: stats(300),
-                        theirs: stats(400),
-                        commits_per_sec_ours: 100.5,
-                        commits_per_sec_theirs: 50.25,
-                        rows_per_sec_ours: 100.5,
-                        rows_per_sec_theirs: 50.25,
-                        ghz: None,
-                    },
-                ],
-            }],
+            rows: vec![
+                WriteRow {
+                    name: "append".to_owned(),
+                    batch: 10,
+                    ours: stats(100),
+                    theirs: stats(200),
+                    commits_per_sec_ours: 1234.25,
+                    commits_per_sec_theirs: 617.5,
+                    rows_per_sec_ours: 12342.5,
+                    rows_per_sec_theirs: 6175.0,
+                },
+                WriteRow {
+                    name: "delete".to_owned(),
+                    batch: 1,
+                    ours: stats(300),
+                    theirs: stats(400),
+                    commits_per_sec_ours: 100.5,
+                    commits_per_sec_theirs: 50.25,
+                    rows_per_sec_ours: 100.5,
+                    rows_per_sec_theirs: 50.25,
+                },
+            ],
         };
         let parsed = crate::json::parse(&to_json(&report)).expect("valid JSON");
         assert_eq!(
@@ -810,17 +647,11 @@ mod tests {
         assert_eq!(parsed.get("scale").and_then(Value::as_str), Some("S"));
         assert_eq!(parsed.get("seed").and_then(Value::as_f64), Some(9.0));
         assert_eq!(parsed.get("samples").and_then(Value::as_f64), Some(8.0));
-        let lanes = parsed.get("lanes").and_then(Value::as_arr).expect("lanes");
-        assert_eq!(lanes.len(), 1);
         assert_eq!(
-            lanes[0].get("lane").and_then(Value::as_str),
-            Some("durable")
-        );
-        assert_eq!(
-            lanes[0].get("sqlite_sync").and_then(Value::as_str),
+            parsed.get("sqlite_sync").and_then(Value::as_str),
             Some("wal+synchronous=FULL+fullfsync=ON")
         );
-        let rows = lanes[0].get("rows").and_then(Value::as_arr).expect("rows");
+        let rows = parsed.get("rows").and_then(Value::as_arr).expect("rows");
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].get("name").and_then(Value::as_str), Some("append"));
         assert_eq!(rows[0].get("batch").and_then(Value::as_f64), Some(10.0));
@@ -849,15 +680,9 @@ mod tests {
             rows[0].get("rows_per_sec_theirs").and_then(Value::as_f64),
             Some(6175.0)
         );
-
-        let ghz = rows[0].get("ghz").expect("ghz");
-        assert_eq!(ghz.get("pre").and_then(Value::as_f64), Some(3.5));
-        assert_eq!(ghz.get("post").and_then(Value::as_f64), Some(3.25));
-        assert_eq!(ghz.get("retried").and_then(Value::as_bool), Some(false));
-        assert_eq!(rows[1].get("ghz"), Some(&Value::Null));
     }
 
-    fn lane_rows(out: &Path) -> crate::json::Value {
+    fn report_json(out: &Path) -> crate::json::Value {
         let raw = std::fs::read_to_string(out.join("writes-report.json")).expect("artifact");
         crate::json::parse(&raw).expect("valid JSON")
     }
@@ -870,25 +695,14 @@ mod tests {
             scale: Scale::Tiny,
             seed: 1,
             dir: dir.clone(),
-            lanes: vec![DurabilityLane::Durable],
             batches: vec![1, 10],
             samples: Some(4),
             out: Some(out.clone()),
         })
         .expect("the tiny ladder runs");
         assert_eq!(code, 0);
-        let parsed = lane_rows(&out);
-        let lanes = parsed.get("lanes").and_then(Value::as_arr).expect("lanes");
-        assert_eq!(lanes.len(), 1);
-        assert_eq!(
-            lanes[0].get("lane").and_then(Value::as_str),
-            Some("durable")
-        );
-        assert_eq!(
-            lanes[0].get("sqlite_sync").and_then(Value::as_str),
-            Some("wal+synchronous=FULL+fullfsync=ON")
-        );
-        let rows = lanes[0].get("rows").and_then(Value::as_arr).expect("rows");
+        let parsed = report_json(&out);
+        let rows = parsed.get("rows").and_then(Value::as_arr).expect("rows");
         let names: Vec<&str> = rows
             .iter()
             .filter_map(|row| row.get("name").and_then(Value::as_str))

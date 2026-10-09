@@ -221,7 +221,6 @@ pub fn write_families(
     _cfg: GenConfig,
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
-    mode: crate::storemode::StoreMode,
 ) -> Result<Vec<crate::report::WriteFamilyReport>, String> {
     let names = [
         "commit_window_admission",
@@ -234,9 +233,10 @@ pub fn write_families(
 
     std::fs::create_dir_all(scratch).map_err(|e| format!("windowed scratch: {e}"))?;
     eprintln!("bench: loading the windowed twin worlds");
-    let windowed = mode.create(&scratch.join("windowed"), world::WindowedWorld)?;
+    let windowed = crate::harness::create_db(&scratch.join("windowed"), world::WindowedWorld)?;
     load(&windowed, Mass::BENCH)?;
-    let unwindowed = mode.create(&scratch.join("baseline"), baseline::UnwindowedWorld)?;
+    let unwindowed =
+        crate::harness::create_db(&scratch.join("baseline"), baseline::UnwindowedWorld)?;
     load(&unwindowed, Mass::BENCH)?;
 
     let mut out = Vec::new();
@@ -247,16 +247,13 @@ pub fn write_families(
             return Ok(());
         }
         eprintln!("bench: {name}");
-        let (ours, ghz) = crate::clockproxy::stamped(|| run(write_protocol(name)))?;
+        let ours = run(write_protocol(name))?;
 
         out.push(crate::report::WriteFamilyReport {
             name: name.to_owned(),
             ours: ours.stats,
             theirs: None,
             facts_per_sec: None,
-            ghz: Some(ghz.into()),
-            ghz_ours: Some(ghz.into()),
-            ghz_theirs: None,
         });
         Ok(())
     };

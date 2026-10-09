@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use crate::corpus_gen::Scale;
-use crate::duralane::DurabilityLane;
 
 mod help;
 mod parse;
@@ -39,8 +38,6 @@ pub struct BenchArgs {
     /// Fixed operations per timed read sample; None retains automatic batching.
     pub read_batch: Option<std::num::NonZeroU32>,
     pub alloc: bool,
-
-    pub proxy_per_rep: bool,
     pub out: Option<PathBuf>,
 
     pub i_am_lying: bool,
@@ -79,10 +76,6 @@ pub enum Cmd {
 
     Lawful(ScenarioArgs),
 
-    Merge {
-        dirs: Vec<PathBuf>,
-    },
-
     Storage(StorageArgs),
 
     Writes(WritesArgs),
@@ -91,14 +84,6 @@ pub enum Cmd {
 
     /// The heap-arm ladder: frozen-vs-LMDB point reads and admission
     Heap(HeapArgs),
-
-    /// The deterministic float fixture corpus generator (P11's
-    /// `corpus_gen::float_corpus`; a generator like `gen`, never a
-    /// measurement).
-    CorpusFloat(CorpusFloatArgs),
-
-    /// The HASH-01/04 candidate probe (report-class; F3 only).
-    HashProbe(HashProbeArgs),
 
     /// The APP-* regime lane over the ledger corpus (report-class; F3 only).
     AppPerf(AppPerfArgs),
@@ -117,15 +102,12 @@ impl Cmd {
             | Self::Writes(_)
             | Self::Curves(_)
             | Self::Heap(_)
-            | Self::HashProbe(_) => true,
-            Self::AppPerf(args) => !args.plan,
+            | Self::AppPerf(_) => true,
             Self::Help
             | Self::Queries
             | Self::Gen(_)
-            | Self::CorpusFloat(_)
             | Self::Verify { .. }
-            | Self::VerifyStore(_)
-            | Self::Merge { .. } => false,
+            | Self::VerifyStore(_) => false,
         }
     }
 }
@@ -195,11 +177,6 @@ pub struct WritesArgs {
     pub seed: u64,
     pub dir: PathBuf,
 
-    /// The durability lanes to run. Post-ENG-008 exactly one exists
-    /// (`durable`); the flag survives so the run order stays explicit in
-    /// artifacts and scripts.
-    pub lanes: Vec<DurabilityLane>,
-
     pub batches: Vec<u32>,
 
     pub samples: Option<u32>,
@@ -212,7 +189,6 @@ impl Default for WritesArgs {
             scale: Scale::S,
             seed: 1,
             dir: PathBuf::from("bench-data"),
-            lanes: vec![DurabilityLane::Durable],
             batches: vec![1, 10, 100, 1000],
             samples: None,
             out: None,
@@ -251,80 +227,19 @@ impl Default for CurvesArgs {
     }
 }
 
-/// `corpus-float` — the deterministic float fixture corpus (canon / order /
-/// arith / agg) with oracle-computed expectations, rendered as fixed
-/// line-hex files under `--out`. Seeds accept `0x`-prefixed hex (the P11
-/// regeneration command pins `--seed 0xB0B`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CorpusFloatArgs {
-    pub seed: u64,
-
-    /// Random canonicalization/arithmetic cases appended after the
-    /// structured boundary roster.
-    pub random: u64,
-
-    /// Deterministic aggregate groups beyond the named chapter 11 goldens.
-    pub groups: u64,
-
-    /// Payloads per aggregate group (pre-dedup).
-    pub group_size: usize,
-
-    pub out: PathBuf,
-}
-
-impl Default for CorpusFloatArgs {
-    fn default() -> Self {
-        Self {
-            seed: 0xB0B,
-            random: 1024,
-            groups: 128,
-            group_size: 12,
-            out: PathBuf::from("fixtures/float"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HashProbeArgs {
-    pub seed: u64,
-
-    /// Timed samples per (candidate, input) cell.
-    pub samples: Option<u32>,
-
-    /// Known-answer vector file (see `hashprobe::kat`); absent = the report
-    /// records `NotRun`, never a pass.
-    pub kat: Option<PathBuf>,
-    pub out: Option<PathBuf>,
-}
-
-impl Default for HashProbeArgs {
-    fn default() -> Self {
-        Self {
-            seed: 1,
-            samples: None,
-            kat: None,
-            out: None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppPerfArgs {
     pub scale: Scale,
     pub seed: u64,
-    pub dir: PathBuf,
 
-    /// Regime filter (warm, cold-open, post-write, large-result,
-    /// tenant-churn); default all runnable here.
-    pub regimes: Option<Vec<String>>,
+    /// Regime filter; default all.
+    pub regimes: Option<Vec<crate::appperf::Regime>>,
 
     pub samples: Option<u32>,
 
     /// Tenant count for the churn regime.
     pub tenants: u32,
     pub out: Option<PathBuf>,
-    /// Print the scorecard/input plan and exit. Not a measurement.
-    pub plan: bool,
 }
 
 impl Default for AppPerfArgs {
@@ -332,12 +247,10 @@ impl Default for AppPerfArgs {
         Self {
             scale: Scale::S,
             seed: 1,
-            dir: PathBuf::from("bench-data"),
             regimes: None,
             samples: None,
             tenants: 8,
             out: None,
-            plan: false,
         }
     }
 }

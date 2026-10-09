@@ -4,7 +4,6 @@ use bumbledb::{Db, RelationId, Value};
 
 use crate::corpus_gen::Scale;
 use crate::differential::{self, Op};
-use crate::duralane::{self, DurabilityLane};
 use crate::harness::{Measurement, Protocol};
 use crate::json::Value as Json;
 use crate::naive::{Delta, NaiveDb, Violation as Cited};
@@ -116,29 +115,25 @@ fn the_enforcement_map_is_total_over_the_materialized_statements() {
 #[test]
 fn the_lawful_twins_load_value_identical_at_tiny() {
     let sizes = LawSizes::of(Scale::Tiny);
-    for lane in duralane::ALL {
-        let dir = scratch(&format!("twin-{}", lane.label()));
-        let (db, conn) = super::load::load_stores(&dir, 7, sizes, lane).unwrap_or_else(|e| {
-            panic!("{}: {e}", lane.label());
-        });
-        for (rel, expected) in [
-            (ids::TASK, sizes.tasks),
-            (ids::ATTEMPT, sizes.tasks * sizes.attempts_per_task),
-            (ids::VERDICT, 0),
-            (ids::STEER, sizes.steers),
-            (ids::STEER_SCOPE, sizes.steers / 2),
-        ] {
-            let name = super::schema().relation(rel).name();
-            let ours = poststate::engine_rows(&db, rel).expect("engine rows");
-            let theirs =
-                poststate::sqlite_rows(&conn, super::schema().relation(rel)).expect("mirror rows");
-            assert_eq!(ours.len() as u64, expected, "{name}: engine row count");
-            assert_eq!(theirs.len() as u64, expected, "{name}: mirror row count");
-            poststate::assert_identical("lawful", name, ours, theirs).expect(name);
-        }
-        drop((db, conn));
-        let _ = std::fs::remove_dir_all(&dir);
+    let dir = scratch("twin");
+    let (db, conn) = super::load::load_stores(&dir, 7, sizes).expect("load");
+    for (rel, expected) in [
+        (ids::TASK, sizes.tasks),
+        (ids::ATTEMPT, sizes.tasks * sizes.attempts_per_task),
+        (ids::VERDICT, 0),
+        (ids::STEER, sizes.steers),
+        (ids::STEER_SCOPE, sizes.steers / 2),
+    ] {
+        let name = super::schema().relation(rel).name();
+        let ours = poststate::engine_rows(&db, rel).expect("engine rows");
+        let theirs =
+            poststate::sqlite_rows(&conn, super::schema().relation(rel)).expect("mirror rows");
+        assert_eq!(ours.len() as u64, expected, "{name}: engine row count");
+        assert_eq!(theirs.len() as u64, expected, "{name}: mirror row count");
+        poststate::assert_identical("lawful", name, ours, theirs).expect(name);
     }
+    drop((db, conn));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -260,8 +255,7 @@ fn assert_twins_identical(db: &Db<LawfulWorld>, conn: &rusqlite::Connection) {
 fn every_lawful_commit_family_leaves_the_twins_value_identical() {
     let sizes = LawSizes::of(Scale::Tiny);
     let dir = scratch("legal-families");
-    let (db, conn) =
-        super::load::load_stores(&dir, 7, sizes, DurabilityLane::Durable).expect("load");
+    let (db, conn) = super::load::load_stores(&dir, 7, sizes).expect("load");
     let mut ours_cursor = LawCursor::at_base(sizes);
     let mut theirs_cursor = LawCursor::at_base(sizes);
     let stream = lanes::attempt_ops(sizes, COUNT * 2);
@@ -299,8 +293,7 @@ fn every_lawful_commit_family_leaves_the_twins_value_identical() {
 fn every_rejection_lane_refuses_on_both_engines_and_commits_nothing() {
     let sizes = LawSizes::of(Scale::Tiny);
     let dir = scratch("rejections");
-    let (db, conn) =
-        super::load::load_stores(&dir, 7, sizes, DurabilityLane::Durable).expect("load");
+    let (db, conn) = super::load::load_stores(&dir, 7, sizes).expect("load");
     let mut ours_cursor = LawCursor::at_base(sizes);
     let mut theirs_cursor = LawCursor::at_base(sizes);
     lanes::fill_window_target_engine(&db, sizes, &mut ours_cursor).expect("window setup engine");
@@ -465,18 +458,11 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
 }
 
 #[test]
-fn the_full_lawful_run_renders_the_enforcement_map_and_both_lanes() {
+fn the_full_lawful_run_renders_the_enforcement_map_and_every_family() {
     let dir = scratch("full-run");
     let (markdown, json) = super::run::run_with(&dir, 7, LawSizes::of(Scale::Tiny), Some(2), None)
         .expect("the tiny lawful run");
     assert!(markdown.contains("enforcement map"), "{markdown}");
-    for lane in duralane::ALL {
-        assert!(
-            markdown.contains(&format!("## lane `{}`", lane.label())),
-            "missing the {} lane section:\n{markdown}",
-            lane.label()
-        );
-    }
     for family in super::families() {
         assert!(
             markdown.contains(family.name),
@@ -492,18 +478,14 @@ fn the_full_lawful_run_renders_the_enforcement_map_and_both_lanes() {
         .and_then(Json::as_arr)
         .expect("enforcement");
     assert_eq!(enforcement_rows.len(), enforcement::MAP.len());
-    let lane_rows = parsed.get("lanes").and_then(Json::as_arr).expect("lanes");
-    assert_eq!(
-        lane_rows.len(),
-        super::families().len() * duralane::ALL.len(),
-        "one row per (family × lane)"
-    );
+    let rows = parsed.get("rows").and_then(Json::as_arr).expect("rows");
+    assert_eq!(rows.len(), super::families().len(), "one row per family");
     assert_eq!(parsed.get("poststate").and_then(Json::as_str), Some("ok"));
     assert!(
         parsed
             .get("provenance")
             .is_some_and(|p| p.get("host").is_some()),
-        "the provenance stamp rides the artifact (the one shared emitter)"
+        "the provenance stamp rides the artifact"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

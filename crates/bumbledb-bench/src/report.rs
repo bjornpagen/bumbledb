@@ -42,8 +42,6 @@ pub struct RunConfig {
     pub scale: &'static str,
     pub seed: u64,
     pub samples: u32,
-
-    pub store: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,25 +72,6 @@ impl From<bumbledb::alloc_counter::AllocSnapshot> for AllocReport {
     }
 }
 
-impl From<crate::clockproxy::GhzStamp> for GhzReport {
-    fn from(stamp: crate::clockproxy::GhzStamp) -> Self {
-        Self {
-            pre: stamp.pre,
-            post: stamp.post,
-            retried: stamp.retried,
-            contaminated: stamp.contaminated(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GhzReport {
-    pub pre: f64,
-    pub post: f64,
-    pub retried: bool,
-    pub contaminated: bool,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReadFamilyReport {
     pub name: String,
@@ -105,14 +84,6 @@ pub struct ReadFamilyReport {
     pub verdict: Verdict,
     pub alloc: Option<AllocReport>,
     pub p99_within_budget: bool,
-    /// Legacy merged stamp; retain it unchanged for existing consumers.
-    pub ghz: Option<GhzReport>,
-    /// Recorded engine brackets. None is unknown, never inferred from ghz.
-    pub ghz_ours: Option<GhzReport>,
-    pub ghz_theirs: Option<GhzReport>,
-
-    /// ran: samples rescaled to the cohort's best clock before the
-    pub p50_norm: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,12 +92,6 @@ pub struct WriteFamilyReport {
     pub ours: Stats,
     pub theirs: Option<Stats>,
     pub facts_per_sec: Option<f64>,
-    /// Legacy outer bracket, including its original contamination flag.
-    pub ghz: Option<GhzReport>,
-    /// Whole engine blocks, including setup and teardown outside samples.
-    /// None is unknown or absent, never inferred from the outer bracket.
-    pub ghz_ours: Option<GhzReport>,
-    pub ghz_theirs: Option<GhzReport>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,10 +116,8 @@ pub struct RunReport {
 }
 
 mod budget;
-mod ghz;
 mod json_out;
 mod markdown;
-mod merge;
 mod provenance;
 mod run_report;
 #[cfg(test)]
@@ -166,14 +129,11 @@ pub use budget::within_budget;
 pub(crate) use json_out::push_provenance;
 pub use json_out::to_json;
 pub use markdown::to_markdown;
-pub use merge::merge_markdown;
 pub use provenance::{git_rev, host_description, provenance, timestamp_iso8601};
 pub use verdict::verdict;
 pub use write_artifacts::write_artifacts;
 
 #[cfg(test)]
 use crate::families::{self, Kind};
-#[cfg(test)]
-use crate::json;
 #[cfg(test)]
 use provenance::civil;

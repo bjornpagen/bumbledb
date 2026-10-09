@@ -20,25 +20,3 @@ pub fn stats(samples: &mut [u64]) -> Stats {
         mean_ns: samples.iter().sum::<u64>() / n,
     }
 }
-
-/// # Panics
-#[must_use]
-pub fn normalized_p50(samples_ns: &[u64], ghz: &[f64]) -> u64 {
-    assert_eq!(samples_ns.len(), ghz.len());
-    let ghz_ref = ghz.iter().copied().fold(f64::MIN, f64::max);
-    let mut normalized: Vec<u64> = samples_ns
-        .iter()
-        .zip(ghz)
-        .map(|(&ns, &g)| {
-            #[expect(
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                reason = "normalized timing arithmetic accepts the bounded float conversion"
-            )]
-            {
-                (ns as f64 * g / ghz_ref) as u64
-            }
-        })
-        .collect();
-    stats(&mut normalized).p50
-}

@@ -1,26 +1,7 @@
-//! Executable core-side regime runners over the existing ledger corpus.
-//!
-//! These extend the existing measurement machinery (chapter 40: keep and
-//! extend, no second benchmark framework):
-//!
-//! - **cold-open**: `Db::open` + first read, timed together — activation is
-//!   part of the per-user cost, not warmed away;
-//! - **warm**: prepared full-account projection over an open store;
-//! - **post-write**: a real mutation before every timed sample
-//!   (delete-commit and insert-commit alternate so same-command
-//!   normalization cannot cancel the delta), then the first read is timed —
-//!   the PERF-001 first-read rebuild measurement;
-//! - **large-result**: prepared execution through `CompleteResult` and actual
-//!   cursor-page delivery, with separate segments and one measured total;
-//! - **tenant-churn**: many small tenant stores, skewed activation, close
-//!   after use, with before/after file-descriptor counts (not a peak claim).
-//!
-//! Selective keyed probes (APP-FAST's direct-probe leg) run through the
-//! existing verified read families (`bench --families`); duplicating those
-//! queries here would create a second unverified path.
-//!
-//! Protocol 2 replaces the old metadata-count/vector-length scaffolds.
-//! These are native API measurements, not TypeScript or hosted qualification.
+//! The `app-perf` regime lane over the ledger corpus: cold open, warm
+//! prepared reads, the first read after a committed write, large-result
+//! cursor delivery, and tenant churn. Every regime is gated against a
+//! canonical scan before it is timed.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -33,9 +14,64 @@ use crate::corpus_gen::{GenConfig, relation_rows};
 use crate::harness::{self, Modes, Protocol, Stats};
 use crate::report;
 use crate::schema::{Ledger, ids};
-use crate::space::store_source;
+use crate::space::{census, store_source};
 
-use super::{CostAccount, PhaseSplit, Regime};
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Regime {
+    /// Warm prepared reuse.
+    Warm,
+    /// `Db::open` plus the first read, timed together.
+    ColdOpen,
+    /// The first read after a committed insert or delete.
+    PostWrite,
+    /// Execution and cursor delivery of a large result.
+    LargeResult,
+    /// Many small tenant stores opened and closed on a skewed schedule.
+    TenantChurn,
+}
+
+impl Regime {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Warm => "warm",
+            Self::ColdOpen => "cold-open",
+            Self::PostWrite => "post-write",
+            Self::LargeResult => "large-result",
+            Self::TenantChurn => "tenant-churn",
+        }
+    }
+
+    /// # Errors
+    pub fn parse(label: &str) -> Result<Self, String> {
+        REGIMES
+            .into_iter()
+            .find(|regime| regime.label() == label)
+            .ok_or_else(|| {
+                format!(
+                    "unknown regime `{label}` (expected warm, cold-open, post-write, \
+                     large-result, or tenant-churn)"
+                )
+            })
+    }
+}
+
+pub const REGIMES: [Regime; 5] = [
+    Regime::Warm,
+    Regime::ColdOpen,
+    Regime::PostWrite,
+    Regime::LargeResult,
+    Regime::TenantChurn,
+];
+
+/// Execution and delivery p50s of one large-result cell. `end_to_end_ns` is
+/// measured around both and is never their sum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PhaseSplit {
+    pub execute_ns: u64,
+    pub deliver_ns: u64,
+    pub end_to_end_ns: u64,
+}
 
 fn work() -> bumbledb::WorkContext {
     harness::bench_work()
@@ -149,7 +185,9 @@ pub struct RegimeRow {
     pub stats: Stats,
     pub work: u64,
     pub phases: Option<PhaseSplit>,
-    pub account: CostAccount,
+    /// Descriptor growth across the churn schedule, where the platform
+    /// exposes open descriptors.
+    pub fd_growth: Option<u64>,
 }
 
 /// Cold open: time `open + prepare + first projection + drop` over an existing
@@ -190,7 +228,7 @@ pub fn cold_open(dir: &Path, samples: Option<u32>) -> Result<RegimeRow, String> 
         stats: m.stats,
         work: m.work,
         phases: None,
-        account: CostAccount::default(),
+        fd_growth: None,
     })
 }
 
@@ -220,12 +258,13 @@ pub fn warm_scan(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, Str
         stats: m.stats,
         work: m.work,
         phases: None,
-        account: CostAccount::default(),
+        fd_growth: None,
     })
 }
 
-/// Post-write first read (PERF-001 / APP-MUTATE): before every timed sample,
-/// commit a real delta to `POSTING_TAG` (a leaf relation: no other law references its rows, so the delete admits). Deletion commits and reinsertion commits
+/// Post-write first read: before every timed sample, commit a real delta to
+/// `POSTING_TAG` (a leaf relation: no other law references its rows, so the
+/// delete admits). Deletion commits and reinsertion commits
 /// alternate — two separate commands, so one-command normalization cannot
 /// erase the mutation and the store returns to its loaded state every two
 /// samples.
@@ -316,7 +355,7 @@ pub fn post_write_first_read(
         stats: m.stats,
         work: m.work,
         phases: None,
-        account: CostAccount::default(),
+        fd_growth: None,
     })
 }
 
@@ -379,17 +418,15 @@ pub fn large_result(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, 
         stats,
         work: rows_delivered,
         phases: Some(PhaseSplit {
-            prepare_ns: None,
-            execute_ns: Some(execute.p50),
-            deliver_ns: Some(deliver.p50),
+            execute_ns: execute.p50,
+            deliver_ns: deliver.p50,
             end_to_end_ns: stats.p50,
         }),
-        account: CostAccount::default(),
+        fd_growth: None,
     })
 }
 
-/// Count open file descriptors where the platform exposes them; `None`
-/// elsewhere (a hole, never a zero).
+/// Open file descriptors, where the platform exposes them.
 #[must_use]
 pub fn open_fd_count() -> Option<u64> {
     for dir in ["/proc/self/fd", "/dev/fd"] {
@@ -423,9 +460,7 @@ pub fn tenant_churn(
     let query = projection(ids::ACCOUNT);
     for tenant in 0..tenants {
         let dir = base.join(format!("tenant-{tenant}"));
-        let db = Db::create(&dir, Ledger, work())
-            .map_err(|e| format!("tenant {tenant} create: {e:?}"))?
-            .expect("accepted");
+        let db = harness::create_db(&dir, Ledger)?;
         crate::corpus::load_bumbledb(&db, cfg)
             .map_err(|e| format!("tenant {tenant} load: {e:?}"))?;
         let mut prepared = db
@@ -483,10 +518,7 @@ pub fn tenant_churn(
         stats: latency_stats,
         work: rows_read,
         phases: None,
-        account: CostAccount {
-            live_resources: leaked,
-            ..CostAccount::default()
-        },
+        fd_growth: leaked,
     })
 }
 
@@ -505,45 +537,23 @@ fn push_row(out: &mut String, row: &RegimeRow) {
         row.work,
     );
     if let Some(phases) = &row.phases {
-        let _ = write!(out, ",\"end_to_end_p50_ns\":{}", phases.end_to_end_ns);
-        if let Some(ns) = phases.execute_ns {
-            let _ = write!(out, ",\"execute_p50_ns\":{ns}");
-        }
-        if let Some(ns) = phases.deliver_ns {
-            let _ = write!(out, ",\"deliver_p50_ns\":{ns}");
-        }
+        let _ = write!(
+            out,
+            ",\"end_to_end_p50_ns\":{},\"execute_p50_ns\":{},\"deliver_p50_ns\":{}",
+            phases.end_to_end_ns, phases.execute_ns, phases.deliver_ns
+        );
     }
-    if let Some(leaked) = row.account.live_resources {
-        let _ = write!(out, ",\"fd_growth\":{leaked}");
-    }
-    if let Some(visits) = row.account.source_visits {
-        let _ = write!(out, ",\"source_visits\":{visits}");
-    }
-    if let Some(map) = row.account.virtual_map_bytes {
-        let _ = write!(out, ",\"virtual_map_bytes\":{map}");
-    }
-    if let Some(disk) = row.account.disk_bytes {
-        let _ = write!(out, ",\"populated_file_bytes\":{disk}");
-    }
-    if let Some(alloc) = row.account.allocated_disk_bytes {
-        let _ = write!(out, ",\"allocated_disk_bytes\":{alloc}");
-    }
-    if let Some(roster) = row.account.roster_entries {
-        let _ = write!(out, ",\"roster_entries\":{roster}");
+    if let Some(growth) = row.fd_growth {
+        let _ = write!(out, ",\"fd_growth\":{growth}");
     }
     out.push('}');
 }
 
 /// The `app-perf` CLI lane: build the corpus once, run the requested regimes,
-/// write artifacts. `--plan` prints the L21 input table and exits without
-/// timing. Hosted/maintenance stay `not-run-here` with their owner.
+/// write `app-perf.json` and `app-perf.md` into a fresh output directory.
 ///
 /// # Errors
 pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
-    if args.plan {
-        print!("{}", super::plan::render());
-        return Ok(0);
-    }
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(
             "{}-app-perf",
@@ -562,47 +572,34 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
         scale: args.scale,
     };
     let corpus_dir = scratch.join("corpus");
-    let db = Db::create(&corpus_dir, Ledger, work())
-        .map_err(|e| format!("corpus create: {e:?}"))?
-        .expect("accepted");
+    let db = harness::create_db(&corpus_dir, Ledger)?;
     crate::corpus::load_bumbledb(&db, cfg).map_err(|e| format!("corpus load: {e:?}"))?;
-    let map_work = work();
-    let map = db
-        .integration_store()
-        .map_report(&map_work)
-        .map_err(|e| format!("map report: {e:?}"))?;
     let data = store_source::data_mdb(&corpus_dir);
-    let allocated = crate::space::census::allocated_bytes(&data).ok();
-    let roster_entries = db.schema().compiled_theory().ok().map(|theory| {
-        (0..ids::RELATIONS)
-            .map(|rel| {
-                theory
-                    .projections_of_relation(bumbledb::RelationId(rel))
-                    .len()
-            })
-            .sum::<usize>() as u64
-    });
+    let file_bytes = std::fs::metadata(&data)
+        .map_err(|e| format!("store size {}: {e}", data.display()))?
+        .len();
+    let allocated_bytes = census::allocated_bytes(&data)?;
 
-    let wanted = |regime: &str| {
+    let wanted = |regime: Regime| {
         args.regimes
             .as_ref()
-            .is_none_or(|only| only.iter().any(|r| r == regime))
+            .is_none_or(|only| only.contains(&regime))
     };
     let mut rows = Vec::new();
-    if wanted("warm") {
+    if wanted(Regime::Warm) {
         rows.push(warm_scan(&db, args.samples)?);
     }
-    if wanted("post-write") {
+    if wanted(Regime::PostWrite) {
         rows.push(post_write_first_read(&db, cfg, args.samples)?);
     }
-    if wanted("large-result") {
+    if wanted(Regime::LargeResult) {
         rows.push(large_result(&db, args.samples)?);
     }
     drop(db);
-    if wanted("cold-open") {
+    if wanted(Regime::ColdOpen) {
         rows.push(cold_open(&corpus_dir, args.samples)?);
     }
-    if wanted("tenant-churn") {
+    if wanted(Regime::TenantChurn) {
         rows.push(tenant_churn(
             &scratch.join("tenants"),
             args.tenants,
@@ -610,37 +607,25 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
             args.seed,
         )?);
     }
-    if let Some(row) = rows
-        .iter_mut()
-        .find(|row| row.regime != Regime::TenantChurn)
-    {
-        row.account.virtual_map_bytes = Some(map.virtual_map_bytes);
-        row.account.disk_bytes = Some(map.populated_file_bytes);
-        row.account.allocated_disk_bytes = allocated;
-        row.account.roster_entries = roster_entries;
-    }
 
     let mut out = String::new();
-    out.push_str("{\"protocol\":2,\"scope\":\"native-prepared-and-paged\",\"provenance\":");
+    out.push_str("{\"provenance\":");
     report::push_provenance(&mut out, &report::provenance(Path::new(".")));
-    let _ = write!(out, ",\"seed\":{},\"rows\":[", args.seed);
+    let _ = write!(
+        out,
+        ",\"seed\":{},\"store\":{{\"file_bytes\":{file_bytes},\"allocated_bytes\":{allocated_bytes}}},\"rows\":[",
+        args.seed
+    );
     for (index, row) in rows.iter().enumerate() {
         if index > 0 {
             out.push(',');
         }
         push_row(&mut out, row);
     }
-    // The regimes this lane cannot run and who owns them — recorded, not
-    // silently absent.
-    out.push_str(
-        "],\"not_run_here\":[\
-         {\"regime\":\"selective\",\"lane\":\"bench --families (verified keyed probes)\"},\
-         {\"regime\":\"hosted-contention\",\"lane\":\"appperf::hosted driver over the successor log (F3)\"},\
-         {\"regime\":\"maintenance\",\"lane\":\"log checkpoint/GC overlap lane (P05 harness, F3)\"}]}",
-    );
+    out.push_str("]}");
     std::fs::write(out_dir.join("app-perf.json"), &out).map_err(|e| format!("artifact: {e}"))?;
     let mut markdown = String::from(
-        "# App-perf regimes\n\nProtocol 2: native prepared queries and real cursor delivery.\n\nNot comparable to the retired metadata-count/vector-length scaffolds.\n\n| regime | cell | p50 ns | p99 ns | output rows |\n|---|---|---:|---:|---:|\n",
+        "# App-perf regimes\n\n| regime | cell | p50 ns | p99 ns | output rows |\n|---|---|---:|---:|---:|\n",
     );
     for row in &rows {
         let _ = writeln!(
@@ -659,3 +644,6 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
     let _ = std::fs::remove_dir_all(&scratch);
     Ok(0)
 }
+
+#[cfg(test)]
+mod tests;

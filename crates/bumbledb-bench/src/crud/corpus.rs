@@ -3,7 +3,6 @@ use std::path::Path;
 use bumbledb::{Db, RelationId, Value};
 
 use crate::corpus_gen::{Rng, mix};
-use crate::duralane::DurabilityLane;
 use crate::sqlmap;
 
 use super::{CrudSizes, CrudWorld, ids, schema};
@@ -36,23 +35,19 @@ pub fn relation_rows(
 }
 
 /// Loads the crud corpus into a fresh durability-paired twin under `dir`
-/// (delete-and-recreated — scratch, never user data): the engine store through
-/// the lane's constructor, the `SQLite` mirror through the lane's pragma set
-/// ([`DurabilityLane::configure`]) and the schema-derived DDL (which emits the
-/// UNIQUE indexes for both key statements — the upsert lane's `ON CONFLICT`
-/// target), then `ANALYZE`, a truncating WAL checkpoint, and the parity
-/// readback ([`DurabilityLane::assert_parity`]) — a misconfigured twin refuses
-/// here, before any lane runs.
+/// (delete-and-recreated scratch): the engine store, then the `SQLite` mirror
+/// with the durable pragma set and the schema-derived DDL (which emits the
+/// UNIQUE indexes for both key statements, the upsert lane's `ON CONFLICT`
+/// target), `ANALYZE`, a truncating WAL checkpoint, and the parity readback.
 /// # Errors
 pub fn load_stores(
     dir: &Path,
     seed: u64,
     sizes: CrudSizes,
-    lane: DurabilityLane,
 ) -> Result<(Db<CrudWorld>, rusqlite::Connection), String> {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("crud scratch: {e}"))?;
-    let db = lane.store_mode().create(&dir.join("db"), CrudWorld)?;
+    let db = crate::harness::create_db(&dir.join("db"), CrudWorld)?;
     for rel in [ids::DOC, ids::COUNTER] {
         db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, relation_rows(sizes, seed, rel))
@@ -63,7 +58,7 @@ pub fn load_stores(
     }
     let conn = rusqlite::Connection::open(dir.join("oracle.sqlite"))
         .map_err(|e| format!("oracle: {e}"))?;
-    lane.configure(&conn)?;
+    crate::sqlite_run::configure_durable(&conn)?;
     for statement in sqlmap::schema_ddl(schema()) {
         conn.execute(&statement, [])
             .map_err(|e| format!("ddl: {e}"))?;
@@ -80,6 +75,6 @@ pub fn load_stores(
         .map_err(|e| format!("analyze: {e}"))?;
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
         .map_err(|e| format!("checkpoint: {e}"))?;
-    lane.assert_parity(&conn)?;
+    crate::sqlite_run::assert_durable_parity(&conn)?;
     Ok((db, conn))
 }

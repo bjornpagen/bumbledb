@@ -57,52 +57,6 @@ fn measure_calls_exactly_warmups_plus_samples_and_sums_work() {
 }
 
 #[test]
-fn normalization_corrects_slow_clock_samples_and_keeps_real_ones() {
-    let samples = [100u64, 175, 175, 175, 100];
-    let ghz = [3.5f64, 2.0, 2.0, 2.0, 3.5];
-
-    let mut raw = samples.to_vec();
-    assert_eq!(stats(&mut raw).p50, 175);
-    assert_eq!(normalized_p50(&samples, &ghz), 100);
-
-    let samples = [100u64, 300, 100, 100, 100];
-    let ghz = [3.5f64; 5];
-    assert_eq!(normalized_p50(&samples, &ghz), 100);
-    let mut raw = samples.to_vec();
-    assert_eq!(stats(&mut raw).p50, 100);
-    let samples = [300u64, 300, 300, 100, 100];
-    assert_eq!(
-        normalized_p50(&samples, &ghz),
-        300,
-        "real slowness survives"
-    );
-}
-
-#[test]
-#[ignore = "per-rep proxy e2e gate; run manually"]
-fn per_rep_proxy_mode_populates_the_normalized_p50() {
-    let proto = Protocol {
-        warmups: 1,
-        samples: 8,
-    };
-    let m = measure_batched(
-        proto,
-        Modes {
-            alloc_window: false,
-            proxy_per_rep: true,
-        },
-        1,
-        || Ok(std::hint::black_box((0..10_000u64).sum::<u64>())),
-    )
-    .expect("measures");
-    let norm = m.p50_norm.expect("per-rep mode populates p50_norm");
-
-    assert!(norm <= m.stats.p50 + m.stats.p50 / 10);
-    let off = measure_batched(proto, Modes::default(), 1, || Ok(1)).expect("measures");
-    assert!(off.p50_norm.is_none(), "off by default");
-}
-
-#[test]
 fn batched_measurement_divides_time_and_sums_all_work() {
     let proto = Protocol {
         warmups: 2,
@@ -129,15 +83,9 @@ fn the_alloc_window_returns_a_snapshot() {
         warmups: 2,
         samples: 4,
     };
-    let m = measure_batched(
-        proto,
-        Modes {
-            alloc_window: true,
-            proxy_per_rep: false,
-        },
-        1,
-        || Ok(std::hint::black_box(vec![1u8; 4096]).len() as u64),
-    )
+    let m = measure_batched(proto, Modes { alloc_window: true }, 1, || {
+        Ok(std::hint::black_box(vec![1u8; 4096]).len() as u64)
+    })
     .expect("measures");
     let alloc = m.alloc.expect("windowed");
     assert!(alloc.window.allocs >= 4, "each sample allocates");
@@ -147,16 +95,8 @@ fn the_alloc_window_returns_a_snapshot() {
 #[cfg(not(feature = "alloc-counter"))]
 #[test]
 fn the_alloc_window_refuses_without_the_feature() {
-    let err = measure_batched(
-        Protocol::COLD,
-        Modes {
-            alloc_window: true,
-            proxy_per_rep: false,
-        },
-        1,
-        || Ok(0),
-    )
-    .expect_err("must refuse");
+    let err = measure_batched(Protocol::COLD, Modes { alloc_window: true }, 1, || Ok(0))
+        .expect_err("must refuse");
     assert!(err.contains("alloc-counter feature"), "{err}");
 }
 

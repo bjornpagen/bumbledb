@@ -3,8 +3,7 @@ use std::time::Instant;
 use super::stats::stats;
 use super::{Measurement, Protocol};
 
-/// Each round invalidates through `touch`, warms the CPU clock, then times
-/// `f`. Warmup rounds execute identically but do not enter the statistics.
+/// Each round invalidates through `touch`, then times `f`. Warmup rounds execute identically but do not enter the statistics.
 /// # Errors
 pub fn measure_cold<T, F>(proto: Protocol, mut touch: T, mut f: F) -> Result<Measurement, String>
 where
@@ -15,8 +14,6 @@ where
     let mut work = 0u64;
     for round in 0..proto.warmups + proto.samples {
         touch()?;
-
-        crate::clockproxy::warm_up(std::time::Duration::from_millis(2));
         let start = Instant::now();
         let count = f()?;
         let elapsed = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
@@ -28,7 +25,6 @@ where
     Ok(Measurement {
         stats: stats(&mut samples),
         work,
-        p50_norm: None,
         alloc: None,
     })
 }

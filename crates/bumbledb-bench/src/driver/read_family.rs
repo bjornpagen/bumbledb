@@ -5,7 +5,7 @@ use crate::families::{Draw, Kind, param_args, set_bindings};
 use crate::harness::{self, Modes, Rotation};
 use crate::schema::schema;
 use crate::translate::{Translated, translate};
-use crate::{clockproxy, families, report, sqlite_run};
+use crate::{families, report, sqlite_run};
 
 use super::BenchRun;
 
@@ -84,7 +84,6 @@ impl BenchRun<'_> {
         };
         let modes = Modes {
             alloc_window: self.alloc,
-            proxy_per_rep: self.proxy_per_rep,
         };
         let proto = self.proto;
 
@@ -95,26 +94,23 @@ impl BenchRun<'_> {
             self.first_family_warmed = true;
         }
         let initial_batch = self.read_batch.map_or(1, std::num::NonZeroU32::get);
-        let (ours, ghz_ours) = clockproxy::frequency_checked(|| {
-            harness::measure_batched(proto, modes, initial_batch, || run_ours(&mut prepared))
-        })?;
+        let ours =
+            harness::measure_batched(proto, modes, initial_batch, || run_ours(&mut prepared))?;
 
         let batch = if self.read_batch.is_none() && ours.stats.p50 < harness::QUANTUM_FLOOR_NS {
             harness::MAX_READ_BATCH
         } else {
             initial_batch
         };
-        let (ours, ghz_ours) = if self.read_batch.is_none() && batch > 1 {
+        let ours = if self.read_batch.is_none() && batch > 1 {
             eprintln!(
                 "bench: {} p50 under the {} ns quantum floor — re-measuring at batch {batch}",
                 spec.name,
                 harness::QUANTUM_FLOOR_NS
             );
-            clockproxy::frequency_checked(|| {
-                harness::measure_batched(proto, modes, batch, || run_ours(&mut prepared))
-            })?
+            harness::measure_batched(proto, modes, batch, || run_ours(&mut prepared))?
         } else {
-            (ours, ghz_ours)
+            ours
         };
 
         let mut sqlite_families = Vec::with_capacity(sets.len());
@@ -128,11 +124,9 @@ impl BenchRun<'_> {
             )?);
         }
         let mut rotation = Rotation::new((0..sets.len()).collect::<Vec<_>>());
-        let (theirs, ghz_theirs) = clockproxy::frequency_checked(|| {
-            harness::measure_batched(proto, Modes::default(), batch, || {
-                let index = rotation.next_index();
-                sqlite_run::sample_args(&mut sqlite_families[index], &sets[index])
-            })
+        let theirs = harness::measure_batched(proto, Modes::default(), batch, || {
+            let index = rotation.next_index();
+            sqlite_run::sample_args(&mut sqlite_families[index], &sets[index])
         })?;
 
         let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
@@ -145,10 +139,6 @@ impl BenchRun<'_> {
             theirs: theirs.stats,
             ratio_p50,
             alloc: ours.alloc.map(report::AllocReport::from),
-            ghz: Some(ghz_ours.merge(ghz_theirs).into()),
-            ghz_ours: Some(ghz_ours.into()),
-            ghz_theirs: Some(ghz_theirs.into()),
-            p50_norm: ours.p50_norm,
         })
     }
 }

@@ -1,6 +1,5 @@
 use std::fmt::Write as _;
 
-use crate::duralane;
 use crate::json::push_str_lit;
 
 use super::enforcement;
@@ -29,17 +28,13 @@ pub fn markdown(seed: u64, rows: &[LawRow]) -> String {
             row.law, row.notation, row.sqlite
         );
     }
-    for lane in duralane::ALL {
-        let lane_rows: Vec<&LawRow> = rows.iter().filter(|row| row.lane == lane.label()).collect();
-        if lane_rows.is_empty() {
-            continue;
-        }
-        let _ = writeln!(out, "\n## lane `{}`\n\n{}\n", lane.label(), lane.describe());
+    if !rows.is_empty() {
+        let _ = writeln!(out, "\n## families\n\n{}\n", crate::sqlite_run::DURABILITY);
         out.push_str(
             "| family | ours p50 µs | sqlite p50 µs | ratio p50 (ours/sqlite) | work | about |\n\
              |---|---:|---:|---:|---:|---|\n",
         );
-        for row in lane_rows {
+        for row in rows {
             let _ = writeln!(
                 out,
                 "| {} | {} | {} | {:.4} | {} | {} |",
@@ -67,8 +62,6 @@ pub fn markdown(seed: u64, rows: &[LawRow]) -> String {
 fn push_row(out: &mut String, row: &LawRow) {
     out.push_str("{\"family\":");
     push_str_lit(out, row.family);
-    out.push_str(",\"lane\":");
-    push_str_lit(out, row.lane);
     out.push_str(",\"about\":");
     push_str_lit(out, row.about);
     out.push_str(",\"ours\":");
@@ -80,11 +73,10 @@ fn push_row(out: &mut String, row: &LawRow) {
         ",\"ratio_p50\":{:.4},\"work\":{}",
         row.ratio_p50, row.work
     );
-    crate::lanes::push_ghz(out, Some(row.ghz));
     out.push('}');
 }
 
-/// The machine artifact — emitted only after every lane's post-state
+/// The machine artifact, emitted only after the post-state comparison passes.
 #[must_use]
 pub fn json(seed: u64, rows: &[LawRow]) -> String {
     let mut out = String::new();
@@ -109,7 +101,7 @@ pub fn json(seed: u64, rows: &[LawRow]) -> String {
         push_str_lit(&mut out, row.sqlite);
         out.push('}');
     }
-    out.push_str("],\"lanes\":[");
+    out.push_str("],\"rows\":[");
     for (index, row) in rows.iter().enumerate() {
         if index > 0 {
             out.push(',');

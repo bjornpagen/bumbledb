@@ -91,7 +91,6 @@ pub fn cmd_profile(args: &ProfileArgs) -> Result<(), String> {
 
 fn profile_generated(dir: &Path, args: &ProfileArgs) -> Result<Option<ProfileResult>, String> {
     let cfg = gen_config(&args.corpus);
-    let mode = crate::storemode::StoreMode::Durable;
     let fresh = || {
         if let Some(parent) = dir.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("profile parent: {e}"))?;
@@ -100,7 +99,7 @@ fn profile_generated(dir: &Path, args: &ProfileArgs) -> Result<Option<ProfileRes
     };
     if let Some(family) = crate::closure::all().iter().find(|f| f.name == args.family) {
         fresh()?;
-        let (db, conn) = crate::closure::load_stores(dir, cfg, mode)?;
+        let (db, conn) = crate::closure::load_stores(dir, cfg)?;
         let draws = (family.params)(&cfg);
         crate::closure::verify_family(&db, &conn, family, &draws)?;
         return profile_query(&db, &(family.query)(), &draws, args, || {}).map(Some);
@@ -110,7 +109,7 @@ fn profile_generated(dir: &Path, args: &ProfileArgs) -> Result<Option<ProfileRes
         .find(|f| f.name == args.family)
     {
         fresh()?;
-        let (db, conn) = crate::displaced::load_stores(dir, cfg, mode)?;
+        let (db, conn) = crate::displaced::load_stores(dir, cfg)?;
         crate::displaced::verify_family(&db, &conn, family)?;
         let mut foreign = crate::displaced::ForeignStream::new(family.displace_mib);
         return profile_query(

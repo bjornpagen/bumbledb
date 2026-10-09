@@ -1,6 +1,5 @@
 use std::fmt::Write as _;
 
-use crate::duralane::{self, DurabilityLane};
 use crate::json::push_str_lit;
 use crate::scenarios::json_out::push_stats;
 
@@ -24,34 +23,29 @@ pub fn markdown(rows: &[CrudRow], seed: u64) -> String {
          before any timed window. ratio = ours p50 / sqlite p50 (lower is \
          better; <1 = bumbledb faster).\n"
     );
-    for lane in duralane::ALL {
-        let _ = writeln!(out, "## lane {}\n", lane.label());
-        let _ = writeln!(out, "{}\n", lane.describe());
+    let _ = writeln!(out, "{}\n", crate::sqlite_run::DURABILITY);
+    let _ = writeln!(
+        out,
+        "| family | about | ours p50 (µs) | sqlite p50 (µs) | ratio | ours p99 (µs) | sqlite p99 (µs) |"
+    );
+    let _ = writeln!(out, "|---|---|---:|---:|---:|---:|---:|");
+    for row in rows {
         let _ = writeln!(
             out,
-            "| family | about | ours p50 (µs) | sqlite p50 (µs) | ratio | ours p99 (µs) | sqlite p99 (µs) |"
+            "| {} | {} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} |",
+            row.family,
+            row.about,
+            us(row.ours.p50),
+            us(row.theirs.p50),
+            row.ratio_p50,
+            us(row.ours.p99),
+            us(row.theirs.p99),
         );
-        let _ = writeln!(out, "|---|---|---:|---:|---:|---:|---:|");
-        for row in rows.iter().filter(|row| row.lane == lane.label()) {
-            let _ = writeln!(
-                out,
-                "| {} | {} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} |",
-                row.family,
-                row.about,
-                us(row.ours.p50),
-                us(row.theirs.p50),
-                row.ratio_p50,
-                us(row.ours.p99),
-                us(row.theirs.p99),
-            );
-        }
-        out.push('\n');
     }
     let _ = writeln!(
         out,
-        "post-state: Doc + Counter value-identical across engines, both lanes. \
-         Every row above is report-class, never gated — no budget gate reads a \
-         crud number."
+        "\npost-state: Doc + Counter value-identical across engines. Every row \
+         above is report-class, never gated."
     );
 
     out
@@ -65,34 +59,17 @@ pub fn json(rows: &[CrudRow], seed: u64) -> String {
         &mut out,
         &crate::report::provenance(std::path::Path::new(".")),
     );
-    out.push_str(",\"lanes\":[");
-    for (index, lane) in duralane::ALL.iter().enumerate() {
+    out.push_str(",\"config\":");
+    push_str_lit(&mut out, crate::sqlite_run::DURABILITY);
+    out.push_str(",\"rows\":[");
+    for (index, row) in rows.iter().enumerate() {
         if index > 0 {
             out.push(',');
         }
-        push_lane(&mut out, *lane, rows);
+        push_row(&mut out, row);
     }
     out.push_str("],\"poststate\":\"ok\"}");
     out
-}
-
-fn push_lane(out: &mut String, lane: DurabilityLane, rows: &[CrudRow]) {
-    out.push_str("{\"lane\":");
-    push_str_lit(out, lane.label());
-    out.push_str(",\"config\":");
-    push_str_lit(out, lane.describe());
-    out.push_str(",\"rows\":[");
-    for (index, row) in rows
-        .iter()
-        .filter(|row| row.lane == lane.label())
-        .enumerate()
-    {
-        if index > 0 {
-            out.push(',');
-        }
-        push_row(out, row);
-    }
-    out.push_str("]}");
 }
 
 fn push_row(out: &mut String, row: &CrudRow) {
@@ -109,16 +86,5 @@ fn push_row(out: &mut String, row: &CrudRow) {
         ",\"ratio_p50\":{:.4},\"work\":{}",
         row.ratio_p50, row.work
     );
-    out.push_str(",\"ghz\":");
-    match row.ghz {
-        Some(g) => {
-            let _ = write!(
-                out,
-                "{{\"pre\":{:.3},\"post\":{:.3},\"retried\":{},\"contaminated\":{}}}",
-                g.pre, g.post, g.retried, g.contaminated
-            );
-        }
-        None => out.push_str("null"),
-    }
     out.push('}');
 }

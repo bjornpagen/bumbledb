@@ -134,16 +134,12 @@ pub(crate) fn non_posting_relations() -> impl Iterator<Item = RelationId> {
 /// under `scratch` (S-minus-postings, built before any timing starts).
 /// # Errors
 /// # Panics
-pub fn insert_stream_bumbledb(
-    cfg: GenConfig,
-    scratch: &Path,
-    mode: crate::storemode::StoreMode,
-) -> Result<Measurement, String> {
+pub fn insert_stream_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, String> {
     let proto = write_protocol("insert_stream");
     let mut pending = VecDeque::new();
     for sample in 0..proto.warmups + proto.samples {
         let dir = scratch.join(format!("insert-stream-bumbledb-{sample}"));
-        let db = mode.create(&dir, Ledger)?;
+        let db = crate::harness::create_db(&dir, Ledger)?;
         for rel in non_posting_relations() {
             db.write(crate::harness::bench_work(), |tx| {
                 tx.insert_dyn(rel, corpus_gen::relation_rows(cfg, rel))

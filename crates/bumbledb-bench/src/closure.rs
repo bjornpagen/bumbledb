@@ -17,9 +17,7 @@ use crate::corpus_gen::{GenConfig, Scale};
 use crate::families::{Draw, Kind, param_args, scalar_draw};
 use crate::harness::{self, Modes, Protocol, Rotation};
 use crate::translate::{ParamSlot, Translated};
-use crate::{clockproxy, compare, report, sqlite_run, sqlmap};
-
-pub mod history_model;
+use crate::{compare, report, sqlite_run, sqlmap};
 
 #[cfg(test)]
 mod tests;
@@ -233,18 +231,16 @@ pub fn ddl() -> Vec<String> {
 pub fn load_stores(
     dir: &Path,
     cfg: GenConfig,
-    mode: crate::storemode::StoreMode,
 ) -> Result<(Db<Reachability>, rusqlite::Connection), String> {
-    load_stores_sized(dir, ClosSizes::of(cfg.scale), mode)
+    load_stores_sized(dir, ClosSizes::of(cfg.scale))
 }
 
 /// # Errors
 pub fn load_stores_sized(
     dir: &Path,
     sizes: ClosSizes,
-    mode: crate::storemode::StoreMode,
 ) -> Result<(Db<Reachability>, rusqlite::Connection), String> {
-    let db = mode.create(&dir.join("db"), Reachability)?;
+    let db = crate::harness::create_db(&dir.join("db"), Reachability)?;
     for rel in [ids::NODE, ids::EDGE] {
         db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, relation_rows(sizes, rel))
@@ -324,18 +320,15 @@ pub fn bench_families(
     proto: Protocol,
     read_batch: Option<std::num::NonZeroU32>,
     modes: Modes,
-    mode: crate::storemode::StoreMode,
 ) -> Result<Vec<report::ReadFamilyReport>, String> {
     if !all().iter().any(|family| selected(family.name)) {
         return Ok(Vec::new());
     }
 
-    crate::devhonesty::assert_disk_backed(scratch, "the timed closure families")
-        .map_err(|refusal| refusal.to_string())?;
     let dir = scratch.join("closure");
     std::fs::create_dir_all(&dir).map_err(|e| format!("closure scratch: {e}"))?;
     eprintln!("bench: loading the closure corpus");
-    let (db, conn) = load_stores(&dir, cfg, mode)?;
+    let (db, conn) = load_stores(&dir, cfg)?;
 
     let mut out = Vec::new();
     for family in all() {
@@ -362,25 +355,22 @@ pub fn bench_families(
             Ok(buffer.len() as u64)
         };
         let initial_batch = read_batch.map_or(1, std::num::NonZeroU32::get);
-        let (ours, ghz_ours) = clockproxy::frequency_checked(|| {
-            harness::measure_batched(proto, modes, initial_batch, || run_ours(&mut prepared))
-        })?;
+        let ours =
+            harness::measure_batched(proto, modes, initial_batch, || run_ours(&mut prepared))?;
         let batch = if read_batch.is_none() && ours.stats.p50 < harness::QUANTUM_FLOOR_NS {
             harness::MAX_READ_BATCH
         } else {
             initial_batch
         };
-        let (ours, ghz_ours) = if read_batch.is_none() && batch > 1 {
+        let ours = if read_batch.is_none() && batch > 1 {
             eprintln!(
                 "bench: {} p50 under the {} ns quantum floor — re-measuring at batch {batch}",
                 family.name,
                 harness::QUANTUM_FLOOR_NS
             );
-            clockproxy::frequency_checked(|| {
-                harness::measure_batched(proto, modes, batch, || run_ours(&mut prepared))
-            })?
+            harness::measure_batched(proto, modes, batch, || run_ours(&mut prepared))?
         } else {
-            (ours, ghz_ours)
+            ours
         };
 
         let mut mirror = sqlite_run::PreparedFamily::new(
@@ -390,17 +380,14 @@ pub fn bench_families(
         )?;
         let mut cursor = 0usize;
         let sets = draws;
-        let (theirs, ghz_theirs) = clockproxy::frequency_checked(|| {
-            harness::measure_batched(proto, Modes::default(), batch, || {
-                let index = cursor;
-                cursor = (cursor + 1) % sets.len();
-                sqlite_run::sample_args(&mut mirror, &sets[index])
-            })
+        let theirs = harness::measure_batched(proto, Modes::default(), batch, || {
+            let index = cursor;
+            cursor = (cursor + 1) % sets.len();
+            sqlite_run::sample_args(&mut mirror, &sets[index])
         })?;
 
         let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
         let alloc_report = ours.alloc.map(report::AllocReport::from);
-        let merged = ghz_ours.merge(ghz_theirs);
         out.push(report::ReadFamilyReport {
             name: family.name.to_owned(),
             batch,
@@ -410,10 +397,6 @@ pub fn bench_families(
             theirs: theirs.stats,
             ratio_p50,
             alloc: alloc_report,
-            ghz: Some(merged.into()),
-            ghz_ours: Some(ghz_ours.into()),
-            ghz_theirs: Some(ghz_theirs.into()),
-            p50_norm: ours.p50_norm,
         });
     }
     Ok(out)

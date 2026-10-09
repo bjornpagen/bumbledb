@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use super::stats::{normalized_p50, stats};
+use super::stats::stats;
 use super::{Measurement, Modes, Protocol};
 
 /// # Errors
@@ -54,9 +54,6 @@ where
         bumbledb::alloc_counter::reset();
     }
     let mut samples = Vec::with_capacity(proto.samples as usize);
-    let mut sample_ghz = modes
-        .proxy_per_rep
-        .then(|| Vec::with_capacity(proto.samples as usize));
     let mut work = 0u64;
     for _ in 0..proto.samples {
         let mut count = 0u64;
@@ -67,19 +64,13 @@ where
         }
         let elapsed = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
         samples.push(elapsed / u64::from(batch));
-        if let Some(ghz) = &mut sample_ghz {
-            ghz.push(crate::clockproxy::effective_ghz());
-        }
         work += std::hint::black_box(count);
     }
 
     let alloc = modes.alloc_window.then(bumbledb::alloc_counter::snapshot);
-
-    let p50_norm = sample_ghz.as_ref().map(|ghz| normalized_p50(&samples, ghz));
     Ok(Measurement {
         stats: stats(&mut samples),
         work,
-        p50_norm,
         alloc,
     })
 }

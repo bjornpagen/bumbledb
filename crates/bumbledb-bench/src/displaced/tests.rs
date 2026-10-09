@@ -3,7 +3,6 @@ use bumbledb::schema::ValidateDescriptor as _;
 
 use crate::corpus_gen::{GenConfig, Scale};
 use crate::harness::{self, Modes, Protocol};
-use crate::storemode::StoreMode;
 
 use super::{
     DispSizes, FORCED_MAP_DISTINCT, FORCED_MAP_POSITIONS, ForeignStream, forced_spoke_map_bytes,
@@ -71,7 +70,7 @@ fn the_tiny_world_verifies_on_both_engines() {
         seed: 7,
         scale: Scale::Tiny,
     };
-    let (db, conn) = super::load_stores(&dir, cfg, StoreMode::Durable).expect("load");
+    let (db, conn) = super::load_stores(&dir, cfg).expect("load");
     for family in super::all() {
         super::verify_family(&db, &conn, family).expect(family.name);
     }
@@ -87,7 +86,7 @@ fn the_folds_produce_their_group_masses() {
         scale: Scale::Tiny,
     };
     let sizes = DispSizes::of(Scale::Tiny);
-    let (db, _conn) = super::load_stores(&dir, cfg, StoreMode::Durable).expect("load");
+    let (db, _conn) = super::load_stores(&dir, cfg).expect("load");
     let mut buffer = bumbledb::Answers::new();
     let mut prepared = db
         .prepare(&super::probe_query(), crate::harness::bench_work())

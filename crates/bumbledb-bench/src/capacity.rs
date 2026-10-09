@@ -290,7 +290,6 @@ pub fn write_families(
     _cfg: GenConfig,
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
-    mode: crate::storemode::StoreMode,
 ) -> Result<Vec<crate::report::WriteFamilyReport>, String> {
     let names = [
         "commit_capacity_baseline",
@@ -302,11 +301,13 @@ pub fn write_families(
     }
     std::fs::create_dir_all(scratch).map_err(|e| format!("capacity scratch: {e}"))?;
     eprintln!("bench: loading the capacity twin worlds");
-    let budgeted = mode.create(&scratch.join("power"), power::PowerWorld)?;
+    let budgeted = crate::harness::create_db(&scratch.join("power"), power::PowerWorld)?;
     load(&budgeted, Mass::BENCH, power_rows)?;
-    let unbudgeted = mode.create(&scratch.join("baseline"), power_baseline::UnbudgetedWorld)?;
+    let unbudgeted =
+        crate::harness::create_db(&scratch.join("baseline"), power_baseline::UnbudgetedWorld)?;
     load(&unbudgeted, Mass::BENCH, power_rows)?;
-    let rooms = mode.create(&scratch.join("calendar"), calendar::CalendarCapacityWorld)?;
+    let rooms =
+        crate::harness::create_db(&scratch.join("calendar"), calendar::CalendarCapacityWorld)?;
     load(&rooms, Mass::BENCH, calendar_rows)?;
 
     let mut out = Vec::new();
@@ -317,16 +318,13 @@ pub fn write_families(
             return Ok(());
         }
         eprintln!("bench: {name}");
-        let (ours, ghz) = crate::clockproxy::stamped(|| run(write_protocol(name)))?;
+        let ours = run(write_protocol(name))?;
 
         out.push(crate::report::WriteFamilyReport {
             name: name.to_owned(),
             ours: ours.stats,
             theirs: None,
             facts_per_sec: None,
-            ghz: Some(ghz.into()),
-            ghz_ours: Some(ghz.into()),
-            ghz_theirs: None,
         });
         Ok(())
     };
