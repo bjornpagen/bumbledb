@@ -22,19 +22,6 @@ impl core::fmt::Display for FloatCardinalityOverflow {
 
 impl std::error::Error for FloatCardinalityOverflow {}
 
-/// Not constructed; [`NonDefaultFloatEnvironment`] replaces it once `lib.rs`
-/// re-exports the new type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UnsupportedNumericalPlatform;
-
-impl core::fmt::Display for UnsupportedNumericalPlatform {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("unsupported numerical platform")
-    }
-}
-
-impl std::error::Error for UnsupportedNumericalPlatform {}
-
 /// Canonical binary64 operations for hosts. Each arithmetic call checks the
 /// thread's float environment once. Reductions do not deduplicate their
 /// inputs, and an empty reduction is `None`.

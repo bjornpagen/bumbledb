@@ -15,7 +15,7 @@ kernel seam, timing-pin removal.
 | A/E1: `gather_words` bounds | landed `78728ec07` |
 | E4a: fearless_simd filter/fold/gather | landed `01a432a55` |
 | E4b: portable Allen, AVX2 compress | landed `d3b4fe666` |
-| E3: read-only FP environment check | landed `dff5ac835`; `UnsupportedNumericalPlatform` goes after the `lib.rs` swap (open request 1) |
+| E3: read-only FP environment check | landed `dff5ac835`; `UnsupportedNumericalPlatform` deleted after the `lib.rs` swap |
 | E7: columnar computed outputs | landed `1028d2823` |
 | C4: aggregate spill deletion | landed `9c7ec5452`, `stream_finalize` deleted in `2ac680723` |
 | E6: xsum exact SUM/AVG | landed `2ac680723` |
@@ -24,9 +24,8 @@ kernel seam, timing-pin removal.
 
 ## Open requests
 
-1. **engine-storage:** in `lib.rs`, replace `UnsupportedNumericalPlatform` with
-   `NonDefaultFloatEnvironment` in the `exec::kernel::numeric` re-export. Nothing constructs
-   `UnsupportedNumericalPlatform` any more; I delete it once `lib.rs` stops naming it.
+1. ~~engine-storage: `lib.rs` re-exports `NonDefaultFloatEnvironment`~~ landed `af99940a3`;
+   `UnsupportedNumericalPlatform` is deleted.
 2. **engine-query:** lower F64 `Min`/`Max` to `AggSpec::Float { op, slot }` (drop the
    `Sum | Mean` guard in `build.rs`) and change the `AggSpec::Float` doc to "F64 argument: Sum/Mean
    exact, Min/Max over order keys with NaN propagating". The aggregate path already runs
