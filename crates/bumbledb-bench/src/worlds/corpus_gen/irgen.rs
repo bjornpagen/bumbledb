@@ -321,7 +321,6 @@ mod tests {
     use super::random_query;
     use crate::oracle::querygen::target;
     use crate::worlds::corpus_gen::Rng;
-    use bumbledb::Query;
 
     #[test]
     fn the_same_bytes_yield_the_same_query() {
