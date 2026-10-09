@@ -1101,7 +1101,7 @@ pub(super) fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
                         panic!("judgment fixture {name} wrote a closed relation")
                     }
                     Violation::CapacityRayMeasure { .. } => {
-                        panic!("judgment fixture {name} fed a ray to a Duration law (C10)")
+                        panic!("judgment fixture {name} fed a ray to a Duration law")
                     }
                 })
                 .collect();

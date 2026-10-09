@@ -461,7 +461,7 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
             };
             let rules = q.rules().len();
             (
-                "count across rules (R1)",
+                "count across rules",
                 q,
                 Expected::CountAcrossRules { rules },
             )

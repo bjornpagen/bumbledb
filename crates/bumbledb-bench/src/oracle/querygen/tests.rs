@@ -223,7 +223,7 @@ fn the_closed_relation_classes_are_emitted() {
     assert!(cov.closed_handle_literal > 0, "handle literals");
     assert!(cov.closed_handle_set > 0, "handle param sets");
 
-    assert!(cov.ground_fold > 0, "the PRD 07 grounding fold shape");
+    assert!(cov.ground_fold > 0, "the grounding fold shape");
 
     let mut rng = Rng::new(SEED);
     let cases = closed_write_cases(&mut rng, 24);
