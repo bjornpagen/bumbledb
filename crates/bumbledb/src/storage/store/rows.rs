@@ -8,11 +8,11 @@ use std::collections::BTreeMap;
 use bumbledb_theory::schema::RelationId;
 use heed::{RoTxn, RwTxn};
 
-use super::error::{StoreError, StoreResult};
 use super::format::{self, K_NEXT_ROW_ID, RelationMeta, RowId};
 use super::keys::{self, Route};
 use super::store_env::StoreInner;
 use crate::error::CorruptionError;
+use crate::error::{Error, Result};
 use crate::schema::CompiledProjection;
 use crate::schema::compiled::KeyEncoding;
 use crate::work::WorkContext;
@@ -23,18 +23,15 @@ pub(crate) fn home_of_row(
     relation: RelationId,
     row: &[u8],
     work: &WorkContext,
-) -> StoreResult<Route> {
+) -> Result<Route> {
     let Some(projection) = inner.det.home_projection(relation) else {
         return Ok(inner.fingerprinter.row(relation, row));
     };
-    let fields = inner
-        .det
-        .fields_of(relation)
-        .ok_or(StoreError::ForeignSchema)?;
+    let fields = inner.det.fields_of(relation).ok_or(Error::ForeignSchema)?;
     let mut exact = [0; crate::schema::MAX_EXACT_SCALAR_BYTES];
     let exact =
         crate::canonical::exact_scalar_projection(fields, row, projection, work, &mut exact)?
-            .ok_or(StoreError::ForeignSchema)?;
+            .ok_or(Error::ForeignSchema)?;
     keys::padded(exact)
 }
 
@@ -44,7 +41,7 @@ fn home_of_decoded(
     relation: RelationId,
     row: &[u8],
     values: &[crate::Value],
-) -> StoreResult<Route> {
+) -> Result<Route> {
     let Some(projection) = inner.det.home_projection(relation) else {
         return Ok(inner.fingerprinter.row(relation, row));
     };
@@ -52,7 +49,7 @@ fn home_of_decoded(
     keys::padded(
         projection
             .encode_scalar_row(values, &mut exact)
-            .ok_or(StoreError::ForeignSchema)?,
+            .ok_or(Error::ForeignSchema)?,
     )
 }
 
@@ -61,7 +58,7 @@ pub(crate) fn routing(
     inner: &StoreInner,
     compiled: &CompiledProjection,
     projected: &[u8],
-) -> StoreResult<Route> {
+) -> Result<Route> {
     match compiled.encoding {
         KeyEncoding::ExactBounded { .. } => keys::padded(projected),
         KeyEncoding::FingerprintBucket => {
@@ -84,17 +81,13 @@ pub(crate) fn lookup(
     home: &Route,
     row: &[u8],
     work: &WorkContext,
-) -> StoreResult<Lookup> {
+) -> Result<Lookup> {
     let bucket = keys::bucket(keys::row_prefix(relation)?, home);
     let mut found = None;
     let mut conflicting = false;
-    for entry in inner
-        .rows
-        .prefix_iter(txn, &bucket)
-        .map_err(StoreError::from_heed)?
-    {
+    for entry in inner.rows.prefix_iter(txn, &bucket).map_err(Error::from)? {
         work.checkpoint()?;
-        let (key, stored) = entry.map_err(StoreError::from_heed)?;
+        let (key, stored) = entry.map_err(Error::from)?;
         if stored == row {
             found = Some(keys::parse(key)?.row);
             break;
@@ -111,7 +104,7 @@ pub(crate) fn contains(
     relation: RelationId,
     row: &[u8],
     work: &WorkContext,
-) -> StoreResult<bool> {
+) -> Result<bool> {
     let home = home_of_row(inner, relation, row, work)?;
     Ok(lookup(inner, txn, relation, &home, row, work)?
         .found
@@ -124,11 +117,11 @@ pub(crate) fn fetch<'txn>(
     relation: RelationId,
     home: &Route,
     row: RowId,
-) -> StoreResult<Option<&'txn [u8]>> {
+) -> Result<Option<&'txn [u8]>> {
     inner
         .rows
         .get(txn, &keys::entry(keys::row_prefix(relation)?, home, row))
-        .map_err(StoreError::from_heed)
+        .map_err(Error::from)
 }
 
 /// One relation's rows in key order: home, ordinal and canonical bytes.
@@ -136,14 +129,11 @@ pub(crate) fn scan<'txn>(
     inner: &StoreInner,
     txn: &'txn RoTxn<'_, heed::AnyTls>,
     relation: RelationId,
-) -> StoreResult<impl Iterator<Item = StoreResult<(keys::Parsed, &'txn [u8])>> + use<'txn>> {
+) -> Result<impl Iterator<Item = Result<(keys::Parsed, &'txn [u8])>> + use<'txn>> {
     let prefix = keys::row_prefix(relation)?;
-    let range = inner
-        .rows
-        .prefix_iter(txn, &prefix)
-        .map_err(StoreError::from_heed)?;
+    let range = inner.rows.prefix_iter(txn, &prefix).map_err(Error::from)?;
     Ok(range.map(|entry| {
-        let (key, value) = entry.map_err(StoreError::from_heed)?;
+        let (key, value) = entry.map_err(Error::from)?;
         Ok((keys::parse(key)?, value))
     }))
 }
@@ -156,36 +146,28 @@ pub(crate) fn visit_bucket<'txn>(
     compiled: &CompiledProjection,
     routing: &Route,
     work: &WorkContext,
-    visit: &mut dyn FnMut(RowId, &'txn [u8]) -> StoreResult<bool>,
-) -> StoreResult<()> {
+    visit: &mut dyn FnMut(RowId, &'txn [u8]) -> Result<bool>,
+) -> Result<()> {
     if inner.det.is_home(compiled) {
         let bucket = keys::bucket(keys::row_prefix(compiled.relation)?, routing);
-        for entry in inner
-            .rows
-            .prefix_iter(txn, &bucket)
-            .map_err(StoreError::from_heed)?
-        {
+        for entry in inner.rows.prefix_iter(txn, &bucket).map_err(Error::from)? {
             work.checkpoint()?;
-            let (key, bytes) = entry.map_err(StoreError::from_heed)?;
+            let (key, bytes) = entry.map_err(Error::from)?;
             if !visit(keys::parse(key)?.row, bytes)? {
                 return Ok(());
             }
         }
     } else {
         let bucket = keys::bucket(keys::det_prefix(compiled.id), routing);
-        for entry in inner
-            .dets
-            .prefix_iter(txn, &bucket)
-            .map_err(StoreError::from_heed)?
-        {
+        for entry in inner.dets.prefix_iter(txn, &bucket).map_err(Error::from)? {
             work.checkpoint()?;
-            let (key, home) = entry.map_err(StoreError::from_heed)?;
+            let (key, home) = entry.map_err(Error::from)?;
             let row = keys::parse(key)?.row;
             let home: &Route = home.try_into().map_err(|_| {
-                StoreError::Corruption(CorruptionError::MalformedKey("determinant home"))
+                Error::Corruption(CorruptionError::MalformedKey("determinant home"))
             })?;
             let bytes = fetch(inner, txn, compiled.relation, home, row)?
-                .ok_or(StoreError::Corruption(CorruptionError::DanglingIndexEntry))?;
+                .ok_or(Error::Corruption(CorruptionError::DanglingIndexEntry))?;
             if !visit(row, bytes)? {
                 return Ok(());
             }
@@ -204,7 +186,7 @@ pub(crate) fn count_bucket_bounded(
     routing: &Route,
     limit: u64,
     work: &WorkContext,
-) -> StoreResult<Option<u64>> {
+) -> Result<Option<u64>> {
     let (db, prefix) = if inner.det.is_home(compiled) {
         (&inner.rows, keys::row_prefix(compiled.relation)?)
     } else {
@@ -212,12 +194,9 @@ pub(crate) fn count_bucket_bounded(
     };
     let bucket = keys::bucket(prefix, routing);
     let mut count = 0u64;
-    for entry in db
-        .prefix_iter(txn, &bucket)
-        .map_err(StoreError::from_heed)?
-    {
+    for entry in db.prefix_iter(txn, &bucket).map_err(Error::from)? {
         work.checkpoint()?;
-        entry.map_err(StoreError::from_heed)?;
+        entry.map_err(Error::from)?;
         if count == limit {
             return Ok(None);
         }
@@ -270,7 +249,7 @@ impl<'a, 't> RowWriter<'a, 't> {
         self.home_keys_preserved
     }
 
-    fn shift_count(&mut self, relation: RelationId, delta: i64) -> StoreResult<()> {
+    fn shift_count(&mut self, relation: RelationId, delta: i64) -> Result<()> {
         let touched = match self.touched.entry(relation) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
@@ -284,37 +263,29 @@ impl<'a, 't> RowWriter<'a, 't> {
         touched.count = touched
             .count
             .checked_add_signed(delta)
-            .ok_or(StoreError::Corruption(CorruptionError::MetaMissing(
+            .ok_or(Error::Corruption(CorruptionError::MetaMissing(
                 "row count underflow",
             )))?;
         Ok(())
     }
 
-    fn allocate(
-        inner: &StoreInner,
-        txn: &RwTxn<'_>,
-        next_id: &mut Option<u64>,
-    ) -> StoreResult<RowId> {
+    fn allocate(inner: &StoreInner, txn: &RwTxn<'_>, next_id: &mut Option<u64>) -> Result<RowId> {
         let next = match *next_id {
             Some(next) => next,
             None => format::read_u64(&inner.meta, txn, K_NEXT_ROW_ID, "next row id")?,
         };
-        *next_id = Some(next.checked_add(1).ok_or(StoreError::RowIdExhausted)?);
+        *next_id = Some(
+            next.checked_add(1)
+                .ok_or(Error::Exhausted(crate::error::Counter::RowIds))?,
+        );
         Ok(RowId(next))
     }
 
     /// Insert one canonical row; `Some(ordinal)` when it was absent.
-    pub(crate) fn insert(
-        &mut self,
-        relation: RelationId,
-        row: &[u8],
-    ) -> StoreResult<Option<RowId>> {
+    pub(crate) fn insert(&mut self, relation: RelationId, row: &[u8]) -> Result<Option<RowId>> {
         let inner = self.inner;
         let work = self.work;
-        let fields = inner
-            .det
-            .fields_of(relation)
-            .ok_or(StoreError::ForeignSchema)?;
+        let fields = inner.det.fields_of(relation).ok_or(Error::ForeignSchema)?;
         let has_home = inner.det.home_projection(relation).is_some();
         let Self {
             txn,
@@ -324,7 +295,7 @@ impl<'a, 't> RowWriter<'a, 't> {
             ..
         } = self;
         let mut allocated = None;
-        decode.with_decoded(fields, row, |values| -> StoreResult<()> {
+        decode.with_decoded(fields, row, |values| -> Result<()> {
             let home = home_of_decoded(inner, relation, row, values)?;
             let found = lookup(inner, txn, relation, &home, row, work)?;
             if has_home {
@@ -368,15 +339,12 @@ impl<'a, 't> RowWriter<'a, 't> {
     }
 
     /// Remove one canonical row; true when it was present.
-    pub(crate) fn remove(&mut self, relation: RelationId, row: &[u8]) -> StoreResult<bool> {
+    pub(crate) fn remove(&mut self, relation: RelationId, row: &[u8]) -> Result<bool> {
         let inner = self.inner;
         let work = self.work;
-        let fields = inner
-            .det
-            .fields_of(relation)
-            .ok_or(StoreError::ForeignSchema)?;
+        let fields = inner.det.fields_of(relation).ok_or(Error::ForeignSchema)?;
         let Self { txn, decode, .. } = self;
-        let removed = decode.with_decoded(fields, row, |values| -> StoreResult<bool> {
+        let removed = decode.with_decoded(fields, row, |values| -> Result<bool> {
             let home = home_of_decoded(inner, relation, row, values)?;
             let Some(id) = lookup(inner, txn, relation, &home, row, work)?.found else {
                 return Ok(false);
@@ -408,7 +376,7 @@ impl<'a, 't> RowWriter<'a, 't> {
 
     /// Flush relation metadata and the row-id high-water mark; returns the
     /// relations whose rows changed.
-    pub(crate) fn finish(self) -> StoreResult<Vec<RelationId>> {
+    pub(crate) fn finish(self) -> Result<Vec<RelationId>> {
         let inner = self.inner;
         let mut changed = Vec::with_capacity(self.touched.len());
         for (relation, touched) in &self.touched {

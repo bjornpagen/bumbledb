@@ -9,12 +9,12 @@ use std::sync::Arc;
 use bumbledb_theory::schema::RelationId;
 use heed::{RoTxn, WithoutTls};
 
-use super::error::{StoreError, StoreResult};
 use super::format::{K_HEAD, K_HOST, RelationVersion, RowId, StoreIdentity};
 use super::gate::GatePass;
 use super::keys::HOST_KEY_MAX;
 use super::rows;
 use super::store_env::StoreInner;
+use crate::error::{Error, Result};
 use crate::schema::{CompiledProjection, ProjectionId};
 use crate::storage::GenerationId;
 use crate::work::WorkContext;
@@ -47,7 +47,7 @@ impl<'snapshot> SnapshotProjection<'snapshot> {
         projected: &[u8],
         limit: u64,
         work: &WorkContext,
-    ) -> StoreResult<Option<u64>> {
+    ) -> Result<Option<u64>> {
         let snapshot = self.snapshot;
         let routing = rows::routing(&snapshot.inner, self.compiled, projected)?;
         rows::count_bucket_bounded(
@@ -65,8 +65,8 @@ impl<'snapshot> SnapshotProjection<'snapshot> {
         &self,
         projected: &[u8],
         work: &WorkContext,
-        visit: &mut dyn FnMut(RowId, &'snapshot [u8]) -> StoreResult<bool>,
-    ) -> StoreResult<()> {
+        visit: &mut dyn FnMut(RowId, &'snapshot [u8]) -> Result<bool>,
+    ) -> Result<()> {
         let snapshot = self.snapshot;
         let routing = rows::routing(&snapshot.inner, self.compiled, projected)?;
         rows::visit_bucket(
@@ -108,11 +108,11 @@ impl OwnedSnapshot {
         self.generation
     }
 
-    pub(crate) fn relation_version(&self, relation: RelationId) -> StoreResult<RelationVersion> {
+    pub(crate) fn relation_version(&self, relation: RelationId) -> Result<RelationVersion> {
         Ok(super::format::read_relation_meta(&self.inner.meta, &self.txn, relation)?.version)
     }
 
-    pub(crate) fn row_count(&self, relation: RelationId) -> StoreResult<u64> {
+    pub(crate) fn row_count(&self, relation: RelationId) -> Result<u64> {
         Ok(super::format::read_relation_meta(&self.inner.meta, &self.txn, relation)?.count)
     }
 
@@ -128,25 +128,22 @@ impl OwnedSnapshot {
         &self.inner
     }
 
-    pub(crate) fn head(&self) -> StoreResult<Option<&[u8]>> {
-        self.inner
-            .meta
-            .get(&self.txn, K_HEAD)
-            .map_err(StoreError::from_heed)
+    pub(crate) fn head(&self) -> Result<Option<&[u8]>> {
+        self.inner.meta.get(&self.txn, K_HEAD).map_err(Error::from)
     }
 
-    pub(crate) fn host_record(&self, key: &[u8]) -> StoreResult<Option<&[u8]>> {
+    pub(crate) fn host_record(&self, key: &[u8]) -> Result<Option<&[u8]>> {
         let mut buffer = [0u8; 1 + HOST_KEY_MAX];
         let len = super::host::host_key(key, &mut buffer)?;
         self.inner
             .meta
             .get(&self.txn, &buffer[..len])
-            .map_err(StoreError::from_heed)
+            .map_err(Error::from)
     }
 
     /// Every host record under `prefix`, in key order; the visitor borrows
     /// each key and value for one call.
-    pub(crate) fn host_scan<E: From<StoreError>>(
+    pub(crate) fn host_scan<E: From<Error>>(
         &self,
         prefix: &[u8],
         work: &WorkContext,
@@ -158,10 +155,10 @@ impl OwnedSnapshot {
             .inner
             .meta
             .prefix_iter(&self.txn, &buffer[..len])
-            .map_err(StoreError::from_heed)?;
+            .map_err(Error::from)?;
         for entry in range {
-            work.checkpoint().map_err(StoreError::Work)?;
-            let (key, value) = entry.map_err(StoreError::from_heed)?;
+            work.checkpoint().map_err(Error::from)?;
+            let (key, value) = entry.map_err(Error::from)?;
             debug_assert_eq!(key.first(), Some(&K_HOST));
             visit(&key[1..], value)?;
         }
@@ -172,7 +169,7 @@ impl OwnedSnapshot {
     pub(crate) fn rows(
         &self,
         relation: RelationId,
-    ) -> StoreResult<impl Iterator<Item = StoreResult<(RowId, &[u8])>>> {
+    ) -> Result<impl Iterator<Item = Result<(RowId, &[u8])>>> {
         Ok(rows::scan(&self.inner, &self.txn, relation)?
             .map(|entry| entry.map(|(key, bytes)| (key.row, bytes))))
     }
@@ -180,7 +177,7 @@ impl OwnedSnapshot {
     pub(crate) fn row_bytes(
         &self,
         relation: RelationId,
-    ) -> StoreResult<impl Iterator<Item = StoreResult<&[u8]>>> {
+    ) -> Result<impl Iterator<Item = Result<&[u8]>>> {
         Ok(
             rows::scan(&self.inner, &self.txn, relation)?
                 .map(|entry| entry.map(|(_, bytes)| bytes)),
@@ -192,7 +189,7 @@ impl OwnedSnapshot {
         relation: RelationId,
         row: &[u8],
         work: &WorkContext,
-    ) -> StoreResult<bool> {
+    ) -> Result<bool> {
         rows::contains(&self.inner, &self.txn, relation, row, work)
     }
 
@@ -203,8 +200,8 @@ impl OwnedSnapshot {
         projection: ProjectionId,
         projected: &[u8],
         work: &WorkContext,
-        visit: &mut dyn FnMut(RowId, &'snapshot [u8]) -> StoreResult<bool>,
-    ) -> StoreResult<()> {
+        visit: &mut dyn FnMut(RowId, &'snapshot [u8]) -> Result<bool>,
+    ) -> Result<()> {
         let Some(projection) = self.projection(projection) else {
             return Ok(());
         };
@@ -231,8 +228,8 @@ impl OwnedSnapshot {
     pub(crate) fn export(
         &self,
         work: &WorkContext,
-        sink: &mut dyn FnMut(RelationId, &[u8]) -> StoreResult<()>,
-    ) -> StoreResult<()> {
+        sink: &mut dyn FnMut(RelationId, &[u8]) -> Result<()>,
+    ) -> Result<()> {
         let mut bucket: Vec<&[u8]> = Vec::new();
         for relation in self.inner.det.relations() {
             let mut home = None;
@@ -252,7 +249,7 @@ impl OwnedSnapshot {
 
     /// BLAKE3 over the canonical export, each row framed by its relation and
     /// length: equal digests mean equal content on any platform.
-    pub(crate) fn content_digest(&self, work: &WorkContext) -> StoreResult<[u8; 32]> {
+    pub(crate) fn content_digest(&self, work: &WorkContext) -> Result<[u8; 32]> {
         let mut digest = crate::digest::Digest::new();
         self.export(work, &mut |relation, row| {
             digest.update(&relation.0.to_be_bytes());
@@ -267,8 +264,8 @@ impl OwnedSnapshot {
 fn flush(
     relation: RelationId,
     bucket: &mut Vec<&[u8]>,
-    sink: &mut dyn FnMut(RelationId, &[u8]) -> StoreResult<()>,
-) -> StoreResult<()> {
+    sink: &mut dyn FnMut(RelationId, &[u8]) -> Result<()>,
+) -> Result<()> {
     bucket.sort_unstable();
     for row in bucket.drain(..) {
         sink(relation, row)?;

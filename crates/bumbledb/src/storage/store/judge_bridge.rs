@@ -4,11 +4,11 @@
 use bumbledb_theory::schema::RelationId;
 
 use super::candidate::CandidateState;
-use super::error::{StoreError, StoreResult};
 use super::snapshot::OwnedSnapshot;
 use crate::Value;
 use crate::canonical::DecodeScratch;
 use crate::changes::ChangeKind;
+use crate::error::{Error, Result};
 use crate::schema::compiled::CompiledProjection;
 use crate::schema::judge::{
     CandidateFacts, DeltaFacts, DeltaShape, JudgeBudget, JudgeError, JudgedViolation, Judgment,
@@ -20,19 +20,17 @@ use crate::work::WorkContext;
 /// A judgment's rejection, if any.
 pub(crate) type Verdict = Option<Box<[JudgedViolation]>>;
 
-fn verdict(judged: Result<Judgment, JudgeError<StoreError>>) -> StoreResult<Verdict> {
+fn verdict(judged: Result<Judgment, JudgeError<Error>>) -> Result<Verdict> {
     match judged {
         Ok(Judgment::Admitted) => Ok(None),
         Ok(Judgment::Rejected(violations)) => Ok(Some(violations)),
-        Err(JudgeError::Work(error)) => Err(StoreError::Work(error)),
+        Err(JudgeError::Work(error)) => Err(Error::from(error)),
         Err(JudgeError::State(error)) => Err(error),
         Err(JudgeError::UndefinedDuration { statement }) => {
-            Err(StoreError::CapacityRayMeasure { statement })
+            Err(Error::CapacityRayMeasure { statement })
         }
-        Err(JudgeError::MeasureOverflow { statement }) => {
-            Err(StoreError::MeasureOverflow { statement })
-        }
-        Err(JudgeError::Compile(error)) => Err(StoreError::Compile(error)),
+        Err(JudgeError::MeasureOverflow { statement }) => Err(Error::MeasureOverflow { statement }),
+        Err(JudgeError::Compile(error)) => Err(Error::Compile(error)),
     }
 }
 
@@ -41,7 +39,7 @@ pub(crate) fn judge_incremental(
     schema: &Schema,
     state: &CandidateState<'_>,
     work: &WorkContext,
-) -> StoreResult<Verdict> {
+) -> Result<Verdict> {
     let view = CandidateView::new(state, schema, work);
     verdict(judge_final_state_delta_local(
         schema,
@@ -57,7 +55,7 @@ pub(crate) fn judge_complete_candidate(
     schema: &Schema,
     state: &CandidateState<'_>,
     work: &WorkContext,
-) -> StoreResult<Verdict> {
+) -> Result<Verdict> {
     let view = CandidateView::new(state, schema, work);
     verdict(judge_final_state(
         schema,
@@ -72,7 +70,7 @@ pub(crate) fn judge_snapshot(
     schema: &Schema,
     snapshot: &OwnedSnapshot,
     work: &WorkContext,
-) -> StoreResult<Verdict> {
+) -> Result<Verdict> {
     let facts = SnapshotFacts {
         snapshot,
         schema,
@@ -93,7 +91,7 @@ pub(crate) struct SnapshotFacts<'a> {
 }
 
 impl CandidateFacts for SnapshotFacts<'_> {
-    type Error = StoreError;
+    type Error = Error;
 
     fn visit_rows(
         &self,
@@ -155,8 +153,8 @@ impl<'v, 'a> CandidateView<'v, 'a> {
         &self,
         relation: RelationId,
         kind: ChangeKind,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, StoreError>,
-    ) -> StoreResult<()> {
+        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Error>,
+    ) -> Result<()> {
         let shape = self.delta_shape(relation);
         if match kind {
             ChangeKind::Add => !shape.adds,
@@ -184,7 +182,7 @@ impl<'v, 'a> CandidateView<'v, 'a> {
 }
 
 impl CandidateFacts for CandidateView<'_, '_> {
-    type Error = StoreError;
+    type Error = Error;
 
     fn visit_rows(
         &self,
@@ -225,16 +223,16 @@ impl DeltaFacts for CandidateView<'_, '_> {
     fn visit_added_rows(
         &self,
         relation: RelationId,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, StoreError>,
-    ) -> Result<(), StoreError> {
+        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Error>,
+    ) -> Result<(), Error> {
         self.visit_change_kind(relation, ChangeKind::Add, visit)
     }
 
     fn visit_removed_rows(
         &self,
         relation: RelationId,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, StoreError>,
-    ) -> Result<(), StoreError> {
+        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Error>,
+    ) -> Result<(), Error> {
         self.visit_change_kind(relation, ChangeKind::Remove, visit)
     }
 
@@ -242,9 +240,9 @@ impl DeltaFacts for CandidateView<'_, '_> {
         &self,
         statement: StatementId,
         determinant: &[Value],
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, StoreError>,
-    ) -> Result<Option<()>, StoreError> {
-        let theory = self.schema.compiled_theory().map_err(StoreError::Compile)?;
+        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Error>,
+    ) -> Result<Option<()>, Error> {
+        let theory = self.schema.compiled_theory().map_err(Error::Compile)?;
         let Some(compiled) = theory.projection_of_statement(statement) else {
             return Ok(None);
         };
@@ -255,8 +253,8 @@ impl DeltaFacts for CandidateView<'_, '_> {
         &self,
         projection: &CompiledProjection,
         determinant: &[Value],
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, StoreError>,
-    ) -> Result<Option<()>, StoreError> {
+        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Error>,
+    ) -> Result<Option<()>, Error> {
         visit_compiled_bucket(self, projection, determinant, &mut |_, row| visit(row))
     }
 
@@ -274,8 +272,8 @@ fn visit_compiled_bucket(
     view: &CandidateView<'_, '_>,
     compiled: &CompiledProjection,
     determinant: &[Value],
-    visit: RankedRowVisitor<'_, StoreError>,
-) -> Result<Option<()>, StoreError> {
+    visit: RankedRowVisitor<'_, Error>,
+) -> Result<Option<()>, Error> {
     let projected = super::det_index::determinant_bytes(compiled, determinant, view.work)?;
     let fields = view.schema.relation(compiled.relation).fields();
     // The bucket visit owns its decode workspace; a nested visit allocates

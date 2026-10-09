@@ -123,50 +123,7 @@ impl CanonicalRow {
         for values in values.chunks(FIELD_QUANTUM) {
             work.checkpoint()?;
             for value in values {
-                match value {
-                    Value::Bool(v) => bytes.extend_from_slice(&[0, u8::from(*v)]),
-                    Value::U64(v) => {
-                        bytes.push(1);
-                        bytes.extend_from_slice(&v.to_be_bytes());
-                    }
-                    Value::I64(v) => {
-                        bytes.push(2);
-                        bytes.extend_from_slice(&v.to_be_bytes());
-                    }
-                    Value::F64(v) => {
-                        bytes.push(3);
-                        bytes.extend_from_slice(&v.to_be_bytes());
-                    }
-                    Value::String(v) => {
-                        bytes.push(4);
-                        append_bytes(&mut bytes, v.as_bytes(), work)?;
-                    }
-                    Value::FixedBytes(v) => {
-                        bytes.push(5);
-                        append_bytes(&mut bytes, v, work)?;
-                    }
-                    Value::IntervalU64(v) => {
-                        bytes.push(6);
-                        bytes.extend_from_slice(&v.start().to_be_bytes());
-                        bytes.extend_from_slice(&v.end().to_be_bytes());
-                    }
-                    Value::IntervalI64(v) => {
-                        bytes.push(7);
-                        bytes.extend_from_slice(&v.start().to_be_bytes());
-                        bytes.extend_from_slice(&v.end().to_be_bytes());
-                    }
-                    Value::Uuid(v) => {
-                        bytes.push(8);
-                        bytes.extend_from_slice(v.as_bytes());
-                    }
-                    Value::IntervalF64(v) => {
-                        // Wire endpoints are the canonical binary64 payload bits,
-                        // big endian — never the index order keys.
-                        bytes.push(9);
-                        bytes.extend_from_slice(&v.start().to_be_bytes());
-                        bytes.extend_from_slice(&v.end().to_be_bytes());
-                    }
-                }
+                append_value(&mut bytes, value, work)?;
             }
         }
         debug_assert_eq!(bytes.len(), size);
@@ -231,6 +188,59 @@ const COPY_QUANTUM: usize = 4096;
 // Poll once per bounded scalar batch; variable-width values retain their own
 // COPY_QUANTUM polling inside a batch.
 const FIELD_QUANTUM: usize = 64;
+
+/// Appends one value's canonical encoding: its tag, then its payload.
+pub(crate) fn append_value(
+    bytes: &mut Vec<u8>,
+    value: &Value,
+    work: &WorkContext,
+) -> Result<(), RowError> {
+    match value {
+        Value::Bool(v) => bytes.extend_from_slice(&[0, u8::from(*v)]),
+        Value::U64(v) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&v.to_be_bytes());
+        }
+        Value::I64(v) => {
+            bytes.push(2);
+            bytes.extend_from_slice(&v.to_be_bytes());
+        }
+        Value::F64(v) => {
+            bytes.push(3);
+            bytes.extend_from_slice(&v.to_be_bytes());
+        }
+        Value::String(v) => {
+            bytes.push(4);
+            append_bytes(bytes, v.as_bytes(), work)?;
+        }
+        Value::FixedBytes(v) => {
+            bytes.push(5);
+            append_bytes(bytes, v, work)?;
+        }
+        Value::IntervalU64(v) => {
+            bytes.push(6);
+            bytes.extend_from_slice(&v.start().to_be_bytes());
+            bytes.extend_from_slice(&v.end().to_be_bytes());
+        }
+        Value::IntervalI64(v) => {
+            bytes.push(7);
+            bytes.extend_from_slice(&v.start().to_be_bytes());
+            bytes.extend_from_slice(&v.end().to_be_bytes());
+        }
+        Value::Uuid(v) => {
+            bytes.push(8);
+            bytes.extend_from_slice(v.as_bytes());
+        }
+        Value::IntervalF64(v) => {
+            // Wire endpoints are the canonical binary64 payload bits, big
+            // endian, never the index order keys.
+            bytes.push(9);
+            bytes.extend_from_slice(&v.start().to_be_bytes());
+            bytes.extend_from_slice(&v.end().to_be_bytes());
+        }
+    }
+    Ok(())
+}
 
 fn append_bytes(out: &mut Vec<u8>, input: &[u8], work: &WorkContext) -> Result<(), RowError> {
     out.extend_from_slice(&(input.len() as u64).to_be_bytes());
@@ -479,32 +489,6 @@ pub fn decode(
         .try_reserve_exact(fields.len())
         .map_err(|_| RowError::Allocation)?;
     walk(fields, bytes, work, Some(&mut values), |_, _| Ok(()))?;
-    Ok(DecodedRow { values })
-}
-
-/// The schema's fixed-width closed extension enters the same owned row
-/// representation as a stored canonical row. Only one row is decoded at a
-/// time; a closed source need not acquire a resident relation image.
-pub(crate) fn decode_sealed(
-    relation: &crate::schema::Relation,
-    bytes: &[u8],
-    work: &WorkContext,
-) -> crate::error::Result<DecodedRow> {
-    work.checkpoint()
-        .map_err(crate::api::prepared::source::work_error)?;
-    let mut values = Vec::new();
-    values
-        .try_reserve_exact(relation.fields().len())
-        .map_err(|_| {
-            crate::error::Error::from_store(crate::storage::store::StoreError::Allocation)
-        })?;
-    crate::encoding::decode_values_keyed_into(
-        relation.layout().encoded(bytes),
-        &[],
-        &[],
-        |_| unreachable!("sealed closed extensions refuse text fields"),
-        &mut values,
-    )?;
     Ok(DecodedRow { values })
 }
 

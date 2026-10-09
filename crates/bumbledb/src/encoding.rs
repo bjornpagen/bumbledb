@@ -1,39 +1,19 @@
-//! Canonical per-type encodings and the fact codec.
-//!
-//! The byte-level truth of the whole system: everything above stores, hashes,
-//! and compares exactly these bytes. Row-shaped trusted input uses
-//! [`crate::canonical`] as the ONE checked decode boundary; this module
-//! supplies dense column-word layouts and scalar order keys for images and
-//! hot loops.
+//! Order-preserving scalar words for query images and keys: byte order is
+//! value order. Stored rows use [`crate::canonical`].
 mod decode;
 mod encode;
-mod layout;
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
-pub(crate) use decode::FieldDecodeError;
-pub use decode::{decode_bool, decode_f64, decode_fixed_interval_start, decode_i64, field_bytes};
-#[cfg(test)]
-pub use decode::{
-    decode_bool_at, decode_field, decode_fixed_bytes, decode_interval_f64, decode_interval_i64,
-    decode_interval_u64, decode_u64, decode_uuid,
-};
-pub(crate) use decode::{decode_values_keyed_into, interval_words, split_halves};
-pub use encode::{append_field, encode_bool, encode_f64, encode_i64, encode_literal, encode_u64};
-#[cfg(test)]
-pub use encode::{encode_fact, encode_uuid};
-
-#[cfg(test)]
-pub(crate) use encode::{encode_interval_f64, encode_interval_u64};
-
-pub use bumbledb_theory::schema::ValueType;
+pub use decode::decode_u64;
+pub use decode::{decode_f64, decode_i64};
+pub use encode::{encode_bool, encode_f64, encode_i64, encode_u64};
 
 /// A query-image text token: the dense id a prepared query's process-scoped
-/// interner mints per distinct text (nothing persisted — the on-disk
-/// dictionary is deleted; stored rows own their text inline). Ids allocate
-/// from 0; [`InternId::SENTINEL`] is never minted — the miss token on
-/// query-word paths and the one owner of the `u64::MAX` reserved value.
+/// interner mints per distinct text; stored rows own their text inline. Ids
+/// allocate from 0; [`InternId::SENTINEL`] (`u64::MAX`) is never minted and is
+/// the miss token on query-word paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InternId(u64);
 
@@ -56,8 +36,6 @@ impl InternId {
     }
 }
 
-use bumbledb_theory::{Interval, schema::IntervalElement};
-
 /// The widest `bytes<N>` field, in bytes.
 pub const MAX_FIXED_BYTES: usize = bumbledb_theory::schema::MAX_FIXED_BYTES as usize;
 
@@ -67,9 +45,8 @@ pub const fn fixed_bytes_words(len: u16) -> usize {
     (len as usize).div_ceil(8)
 }
 
-/// One `bytes<N>` value at the encoding layer: the raw bytes inline in a
-/// fixed 64-byte buffer (`Copy`, borrow-free — the fixed-width law), pad
-/// equality.
+/// One `bytes<N>` value: the raw bytes inline in a fixed 64-byte buffer
+/// (`Copy`, borrow-free), zero-padded to whole words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FixedBytesValue {
     bytes: [u8; MAX_FIXED_BYTES],
@@ -78,7 +55,7 @@ pub struct FixedBytesValue {
 
 impl FixedBytesValue {
     /// # Panics
-    /// On a programmer-invariant violation: a width outside
+    /// On a width outside `1..=64`.
     #[must_use]
     pub fn new(raw: &[u8]) -> Self {
         assert!(
@@ -99,110 +76,4 @@ impl FixedBytesValue {
     }
 }
 
-/// A decoded field value at the encoding layer.
-/// `String` carries an intern id here; resolving an id to raw bytes is
-/// the dictionary's job. Bytes payloads
-/// carry no width — `N` lives on the layout's [`ValueType::FixedBytes`].
-/// Every variant is fixed-width, so the type is `Copy` and carries no
-/// borrow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ValueRef {
-    Bool(bool),
-    U64(u64),
-    I64(i64),
-    F64(bumbledb_theory::F64),
-
-    /// The application-owned identity scalar: sixteen exact bytes, stored
-    /// and indexed verbatim (byte order is its total order).
-    Uuid(bumbledb_theory::Uuid),
-
-    String(InternId),
-
-    Bytes([u8; MAX_FIXED_BYTES]),
-
-    IntervalU64(Interval<u64>),
-
-    IntervalI64(Interval<i64>),
-
-    /// A checked dense-line interval; physical words are the two F64
-    /// order keys, so `(start, end)` sorts lexicographically.
-    IntervalF64(Interval<bumbledb_theory::F64>),
-}
-
-impl ValueRef {
-    /// # Panics
-    #[must_use]
-    pub fn bytes(raw: &[u8]) -> Self {
-        assert!(
-            !raw.is_empty() && raw.len() <= MAX_FIXED_BYTES,
-            "bytes<N> widths are 1..=64"
-        );
-        let mut bytes = [0u8; MAX_FIXED_BYTES];
-        bytes[..raw.len()].copy_from_slice(raw);
-        Self::Bytes(bytes)
-    }
-}
-
 const I64_SIGN_BIT: u64 = 1 << 63;
-
-/// The byte layout of one relation's facts, computed from its ordered field
-/// types: per-field offset and width, and the total fact width.
-/// Facts are dense — each offset is exactly the sum of the preceding widths,
-/// with no padding anywhere: unaligned loads are near-free on the target
-/// machine, so intra-row alignment would be pure waste
-/// .
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FactLayout {
-    fields: Box<[(usize, ValueType)]>,
-    fact_width: usize,
-}
-
-impl FactLayout {
-    #[must_use]
-    pub const fn fact_width(&self) -> usize {
-        self.fact_width
-    }
-
-    #[must_use]
-    pub const fn field_count(&self) -> usize {
-        self.fields.len()
-    }
-
-    #[must_use]
-    pub fn field_offset(&self, field_idx: usize) -> usize {
-        self.fields[field_idx].0
-    }
-
-    #[must_use]
-    pub fn field_type(&self, field_idx: usize) -> ValueType {
-        self.fields[field_idx].1
-    }
-
-    /// View already-encoded fact bytes through this layout. Width is a
-    /// programmer invariant: encoders write exactly `fact_width` bytes at
-    /// the layout's types, checked in debug builds.
-    #[must_use]
-    pub(crate) fn encoded<'bytes, 'layout>(
-        &'layout self,
-        bytes: &'bytes [u8],
-    ) -> FactView<'bytes, 'layout> {
-        debug_assert_eq!(bytes.len(), self.fact_width);
-        FactView {
-            bytes,
-            layout: self,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FactView<'bytes, 'layout> {
-    bytes: &'bytes [u8],
-    layout: &'layout FactLayout,
-}
-
-impl<'layout> FactView<'_, 'layout> {
-    #[must_use]
-    pub(crate) const fn layout(self) -> &'layout FactLayout {
-        self.layout
-    }
-}

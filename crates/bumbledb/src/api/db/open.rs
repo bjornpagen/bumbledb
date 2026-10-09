@@ -31,7 +31,7 @@ pub(super) fn create_validated<S>(
             ));
         }
     }
-    let store = Store::create(path, &schema, database, options).map_err(Error::from_store)?;
+    let store = Store::create(path, &schema, database, options)?;
     Ok(Admission::Accepted(Db::assemble(store, schema, work)?))
 }
 
@@ -71,7 +71,7 @@ impl<S: Theory> Db<S> {
     pub fn open_with(path: &Path, schema: S, options: Options, work: WorkContext) -> Result<Self> {
         let schema = schema.descriptor().validate()?;
         work.checkpoint().map_err(Error::from)?;
-        let store = Store::open(path, &schema, options).map_err(Error::from_store)?;
+        let store = Store::open(path, &schema, options)?;
         Self::assemble(store, schema, work)
     }
 }
@@ -121,8 +121,7 @@ impl<S> Db<S> {
                     .commit()
                     .map(|_| ())
             },
-        )
-        .map_err(Error::from_store)?;
+        )?;
         Self::assemble(store, schema, work)
     }
 }

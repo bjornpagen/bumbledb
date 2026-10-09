@@ -3,8 +3,8 @@
 //! failed seals dropping everything, and batch decisions.
 
 use super::*;
+use crate::error::HostKeyFault;
 use crate::storage::store::Applied;
-use crate::storage::store::error::HostKeyFault;
 use crate::storage::store::host::Head;
 
 fn note_row(id: u64, body: &str) -> Vec<u8> {
@@ -180,7 +180,7 @@ fn host_key_grammar_is_checked_before_any_write() {
             records: &unordered,
             head: Head::Keep,
         }),
-        Err(StoreError::HostKey(HostKeyFault::NotStrictlyOrdered))
+        Err(Error::HostKey(HostKeyFault::NotStrictlyOrdered))
     ));
     let big_key = vec![7u8; 600];
     let oversized = [HostRecord::Delete { key: &big_key }];
@@ -189,7 +189,7 @@ fn host_key_grammar_is_checked_before_any_write() {
             records: &oversized,
             head: Head::Keep,
         }),
-        Err(StoreError::HostKey(HostKeyFault::TooLong { actual: 600 }))
+        Err(Error::HostKey(HostKeyFault::TooLong { actual: 600 }))
     ));
     drop(owner);
     let snapshot = store.snapshot(&work()).expect("snapshot");
@@ -247,7 +247,7 @@ fn a_foreign_schema_change_set_refuses() {
     );
     assert!(matches!(
         try_commit_changes(&store, &foreign),
-        Err(StoreError::ForeignSchema)
+        Err(Error::ForeignSchema)
     ));
 }
 

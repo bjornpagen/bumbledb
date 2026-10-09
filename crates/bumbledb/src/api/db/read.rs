@@ -10,7 +10,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use super::{Db, OwnedRead, ReadFrame};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::work::WorkContext;
 
 impl<S> Db<S> {
@@ -22,7 +22,7 @@ impl<S> Db<S> {
     /// # Errors
     /// Storage failure opening the snapshot, or stopped work.
     pub fn snapshot(&self, work: &WorkContext) -> Result<OwnedRead<S>> {
-        let snapshot = self.store.snapshot(work).map_err(Error::from_store)?;
+        let snapshot = self.store.snapshot(work)?;
         Ok(OwnedRead {
             schema: Arc::clone(&self.schema),
             snapshot,
@@ -82,7 +82,7 @@ impl<S> Db<S> {
         work: WorkContext,
         f: impl FnOnce(&ReadFrame<'_, S>) -> Result<R>,
     ) -> Result<R> {
-        let snapshot = self.store.snapshot(&work).map_err(Error::from_store)?;
+        let snapshot = self.store.snapshot(&work)?;
         f(&ReadFrame {
             schema: &self.schema,
             snapshot: &snapshot,

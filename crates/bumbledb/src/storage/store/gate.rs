@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use super::error::{StoreError, StoreResult};
+use crate::error::{Error, Result};
 use crate::work::WorkContext;
 
 /// How often a draining close re-checks the caller's cancellation flag.
@@ -71,11 +71,11 @@ fn snapshot_of(state: &GateState) -> GateSnapshot {
 
 impl TransactionGate {
     /// Admit one transaction; a closing store refuses.
-    pub(crate) fn enter(&self, work: &WorkContext) -> StoreResult<GatePass> {
+    pub(crate) fn enter(&self, work: &WorkContext) -> Result<GatePass> {
         work.checkpoint()?;
         let mut state = lock(&self.state);
         if state.closing {
-            return Err(StoreError::Closed);
+            return Err(Error::Closed);
         }
         let id = state.next_pass;
         state.next_pass += 1;
@@ -151,7 +151,7 @@ mod tests {
         let (drained, snapshot) = gate.begin_close(&stopped);
         assert!(!drained);
         assert_eq!(snapshot.live, 1);
-        assert!(matches!(gate.enter(&work()), Err(StoreError::Closed)));
+        assert!(matches!(gate.enter(&work()), Err(Error::Closed)));
         drop(held);
         assert_eq!(
             gate.begin_close(&work()),
@@ -163,7 +163,7 @@ mod tests {
                 }
             )
         );
-        assert!(matches!(gate.enter(&work()), Err(StoreError::Closed)));
+        assert!(matches!(gate.enter(&work()), Err(Error::Closed)));
     }
 
     #[test]
@@ -185,7 +185,7 @@ mod tests {
         let gate = TransactionGate::default();
         let stopped = work();
         stopped.cancel();
-        assert!(matches!(gate.enter(&stopped), Err(StoreError::Work(_))));
+        assert!(matches!(gate.enter(&stopped), Err(Error::Cancelled)));
         assert_eq!(gate.live().live, 0);
     }
 }

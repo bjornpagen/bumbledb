@@ -105,7 +105,7 @@ impl<S> Db<S> {
         work: WorkContext,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
     ) -> Result<WriteOutcome<R>> {
-        let mut owner = self.store.writer(&work).map_err(Error::from_store)?;
+        let mut owner = self.store.writer(&work)?;
         self.write_owned(&mut owner, work, f)
     }
 
@@ -120,7 +120,7 @@ impl<S> Db<S> {
         witness: &Witness<S>,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
     ) -> Result<WriteOutcome<R>> {
-        let mut owner = self.store.writer(&work).map_err(Error::from_store)?;
+        let mut owner = self.store.writer(&work)?;
         if let Some(moved) = self.moved(&owner, witness)? {
             return Ok(moved);
         }
@@ -135,7 +135,7 @@ impl<S> Db<S> {
         changes: &crate::ChangeSet,
         work: &WorkContext,
     ) -> Result<WriteOutcome<()>> {
-        let mut owner = self.store.writer(work).map_err(Error::from_store)?;
+        let mut owner = self.store.writer(work)?;
         self.commit(&mut owner, changes, (), work)
     }
 
@@ -148,7 +148,7 @@ impl<S> Db<S> {
         witness: &Witness<S>,
         work: &WorkContext,
     ) -> Result<WriteOutcome<()>> {
-        let mut owner = self.store.writer(work).map_err(Error::from_store)?;
+        let mut owner = self.store.writer(work)?;
         if let Some(moved) = self.moved(&owner, witness)? {
             return Ok(moved);
         }
@@ -163,7 +163,7 @@ impl<S> Db<S> {
         if witness.environment != self.store.identity().environment {
             return Err(Error::ForeignWitness);
         }
-        let current = owner.parent_generation().map_err(Error::from_store)?;
+        let current = owner.parent_generation()?;
         Ok(
             (current != witness.generation).then_some(WriteOutcome::Moved {
                 witnessed: witness.generation,
@@ -178,7 +178,7 @@ impl<S> Db<S> {
         work: WorkContext,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
     ) -> Result<WriteOutcome<R>> {
-        let parent = self.store.snapshot(&work).map_err(Error::from_store)?;
+        let parent = self.store.snapshot(&work)?;
         let mut tx = WriteTx::new(&self.schema, &parent, &work);
         let value = f(&mut tx)?;
         if let Some(source) = tx.poisoned() {
@@ -200,18 +200,14 @@ impl<S> Db<S> {
         value: R,
         work: &WorkContext,
     ) -> Result<WriteOutcome<R>> {
-        match owner
-            .prepare_judged(self.schema.as_ref(), changes)
-            .map_err(Error::from_store)?
-        {
+        match owner.prepare_judged(self.schema.as_ref(), changes)? {
             Candidate::Rejected(judged) => Ok(WriteOutcome::Rejected(
                 super::violations::violations_from_judged(self.schema.as_ref(), judged, work)?,
             )),
             Candidate::Admitted(prepared) => {
                 let commit = prepared
                     .seal(HostChanges::NONE)
-                    .and_then(crate::storage::store::candidate::SealedWrite::commit)
-                    .map_err(Error::from_store)?;
+                    .and_then(crate::storage::store::candidate::SealedWrite::commit)?;
                 Ok(WriteOutcome::Committed(Committed {
                     value,
                     generation: commit.generation,

@@ -152,7 +152,7 @@ fn a_paused_owner_keeps_the_lock_and_death_releases_it() {
     wait_for_marker(&mut child, "CRASH_CHILD_HOLDING");
     // While the child lives, ownership refuses — time never mints an owner.
     match Store::open(&path, &schema(), Options::default()) {
-        Err(StoreError::StoreLocked { .. }) => {}
+        Err(Error::Locked { .. }) => {}
         other => panic!("expected StoreLocked under a live child, got {other:?}"),
     }
     child.kill().expect("kill child");

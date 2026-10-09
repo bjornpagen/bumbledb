@@ -14,7 +14,7 @@ fn a_candidate_past_the_ceiling_is_full_and_commits_nothing() {
     let before = store.committed_generation(&work()).expect("generation");
     let huge = note(1, &"x".repeat(2 << 20));
     match try_commit_changes(&store, &change_set(&schema(), &[(NOTE, huge)], &[])) {
-        Err(StoreError::Full { ceiling }) => assert_eq!(ceiling, SMALL_CEILING),
+        Err(Error::Full { ceiling }) => assert_eq!(ceiling, SMALL_CEILING),
         other => panic!("expected Full, got {other:?}"),
     }
     assert_eq!(

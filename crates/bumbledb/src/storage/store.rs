@@ -18,7 +18,6 @@
 
 pub(crate) mod candidate;
 pub(crate) mod det_index;
-pub(crate) mod error;
 pub(crate) mod fingerprint;
 pub(crate) mod format;
 pub(crate) mod gate;
@@ -32,7 +31,6 @@ pub(crate) mod store_env;
 pub(crate) mod verify;
 
 pub use candidate::{Applied, Commit};
-pub(crate) use error::StoreError;
 pub use format::DatabaseId;
 pub(crate) use format::{RelationVersion, StoreIdentity};
 pub use host::{Head, HostChanges, HostRecord};

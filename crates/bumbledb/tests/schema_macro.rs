@@ -1394,8 +1394,7 @@ mod fixed_width_intervals {
             }
         );
 
-        let schema = descriptor.validate().expect("valid");
-        assert_eq!(schema.relations()[0].layout().fact_width(), 24);
+        descriptor.validate().expect("valid");
     }
 
     #[test]

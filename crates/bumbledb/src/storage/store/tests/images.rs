@@ -74,7 +74,7 @@ fn an_image_of_another_schema_or_format_refuses_and_leaves_no_destination() {
     let dest = dir.path().join("installed");
     assert!(matches!(
         Store::install_image(&image, &dest, &other_schema(), Options::default()),
-        Err(StoreError::SchemaMismatch)
+        Err(Error::SchemaMismatch)
     ));
     assert!(!dest.exists());
     let garbage = dir.path().join("garbage.mdb");

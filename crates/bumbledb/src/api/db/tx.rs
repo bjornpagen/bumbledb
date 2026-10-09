@@ -238,9 +238,7 @@ impl<'a, S> WriteTx<'a, S> {
     }
 
     fn parent_contains(&self, relation: RelationId, row: &[u8]) -> Result<bool> {
-        self.parent
-            .contains(relation, row, self.work)
-            .map_err(Error::from_store)
+        self.parent.contains(relation, row, self.work)
     }
 
     /// Final-state presence of one canonical row.
@@ -264,9 +262,7 @@ impl<'a, S> WriteTx<'a, S> {
             Entry::Occupied(mut relation_entry) => {
                 let pending = relation_entry.get_mut();
                 let changed = pending.apply(row, want, |bytes| {
-                    self.parent
-                        .contains(relation, bytes, self.work)
-                        .map_err(Error::from_store)
+                    self.parent.contains(relation, bytes, self.work)
                 })?;
                 if pending.rows.is_empty() {
                     relation_entry.remove();
@@ -274,10 +270,7 @@ impl<'a, S> WriteTx<'a, S> {
                 changed
             }
             Entry::Vacant(entry) => {
-                let in_parent = self
-                    .parent
-                    .contains(relation, row.as_bytes(), self.work)
-                    .map_err(Error::from_store)?;
+                let in_parent = self.parent.contains(relation, row.as_bytes(), self.work)?;
                 if in_parent == (want == ChangeKind::Add) {
                     false
                 } else {

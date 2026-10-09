@@ -110,21 +110,18 @@ pub(super) fn find_snapshot_row<'s>(
         .iter()
         .map(|&position| key_values[position].clone())
         .collect();
-    let projected = crate::storage::store::det_index::determinant_bytes(key, &scalar_values, work)
-        .map_err(crate::error::Error::from_store)?;
+    let projected = crate::storage::store::det_index::determinant_bytes(key, &scalar_values, work)?;
     let fields = schema.relation(relation).fields();
     let mut hit = None;
-    snapshot
-        .visit_projection(key.id, &projected, work, &mut |_id, bytes| {
-            work.checkpoint()?;
-            let decoded = crate::canonical::decode(fields, bytes, work)?;
-            if projection_matches(decoded.values(), projection, key_values) {
-                hit = Some(bytes);
-                return Ok(false);
-            }
-            Ok(true)
-        })
-        .map_err(crate::error::Error::from_store)?;
+    snapshot.visit_projection(key.id, &projected, work, &mut |_id, bytes| {
+        work.checkpoint()?;
+        let decoded = crate::canonical::decode(fields, bytes, work)?;
+        if projection_matches(decoded.values(), projection, key_values) {
+            hit = Some(bytes);
+            return Ok(false);
+        }
+        Ok(true)
+    })?;
     Ok(hit)
 }
 
@@ -140,12 +137,10 @@ pub(super) fn find_snapshot_row_scan<'s>(
     work: &crate::work::WorkContext,
 ) -> Result<Option<&'s [u8]>> {
     let fields = schema.relation(relation).fields();
-    let iterator = snapshot
-        .rows(relation)
-        .map_err(crate::error::Error::from_store)?;
+    let iterator = snapshot.rows(relation)?;
     for entry in iterator {
         work.checkpoint().map_err(store_work)?;
-        let (_, row) = entry.map_err(crate::error::Error::from_store)?;
+        let (_, row) = entry?;
         let decoded = crate::canonical::decode(fields, row, work).map_err(super::tx::row_error)?;
         if projection_matches(decoded.values(), projection, key_values) {
             return Ok(Some(row));

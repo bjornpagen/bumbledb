@@ -2,7 +2,7 @@
 //! every key derivation, fingerprint and law taken from the engine itself.
 
 use crate::Db;
-use crate::error::{Error, Result, Violations};
+use crate::error::{Result, Violations};
 use crate::storage::store::VerifyCorruption;
 use crate::storage::store::verify::VerifyFinding;
 use crate::work::WorkContext;
@@ -27,9 +27,8 @@ impl<S> Db<S> {
     /// # Errors
     /// Storage failure or cancellation; never a shortened report.
     pub fn verify_store(&self, work: &WorkContext) -> Result<StoreReport> {
-        let snapshot = self.store.snapshot(work).map_err(Error::from_store)?;
-        let findings = crate::storage::store::verify::sweep(&snapshot, self.schema(), work)
-            .map_err(Error::from_store)?;
+        let snapshot = self.store.snapshot(work)?;
+        let findings = crate::storage::store::verify::sweep(&snapshot, self.schema(), work)?;
         let mut corruption = Vec::new();
         let mut judged = Vec::new();
         for finding in findings {

@@ -4,9 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use super::error::{StoreError, StoreResult};
 use super::format::DatabaseId;
 use super::store_env::{DATA_FILE, Options, Store, init_directory};
+use crate::error::{Error, Result};
 use crate::schema::Schema;
 
 pub(crate) struct Staging {
@@ -36,9 +36,9 @@ fn sync_dirent_chain(dir: &Path) -> std::io::Result<()> {
 
 impl Staging {
     /// Reserve a fresh sibling of `dest`, which must not exist.
-    pub(crate) fn begin(dest: &Path) -> StoreResult<Self> {
+    pub(crate) fn begin(dest: &Path) -> Result<Self> {
         if dest.exists() {
-            return Err(StoreError::DestinationExists {
+            return Err(Error::DestinationExists {
                 path: dest.to_path_buf(),
             });
         }
@@ -81,7 +81,7 @@ impl Staging {
 
     /// Sync the staged files, rename into the destination, sync the parent,
     /// and open the published store.
-    pub(crate) fn publish(mut self, schema: &Schema, options: Options) -> StoreResult<Store> {
+    pub(crate) fn publish(mut self, schema: &Schema, options: Options) -> Result<Store> {
         for entry in std::fs::read_dir(&self.path)? {
             let entry = entry?;
             if entry.file_type()?.is_file() {
@@ -90,7 +90,7 @@ impl Staging {
         }
         sync_dirent_chain(&self.path)?;
         if self.dest.exists() {
-            return Err(StoreError::DestinationExists {
+            return Err(Error::DestinationExists {
                 path: self.dest.clone(),
             });
         }
@@ -109,8 +109,8 @@ impl Store {
         schema: &Schema,
         database: DatabaseId,
         options: Options,
-        populate: impl FnOnce(&Store) -> StoreResult<()>,
-    ) -> StoreResult<Self> {
+        populate: impl FnOnce(&Store) -> Result<()>,
+    ) -> Result<Self> {
         let staging = Staging::begin(dest)?;
         init_directory(staging.path(), schema, database, options)?;
         {
@@ -128,7 +128,7 @@ impl Store {
         dest: &Path,
         schema: &Schema,
         options: Options,
-    ) -> StoreResult<Self> {
+    ) -> Result<Self> {
         let staging = Staging::begin(dest)?;
         let data = staging.data_path();
         if std::fs::rename(image, &data).is_err() {

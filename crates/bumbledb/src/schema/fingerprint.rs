@@ -7,10 +7,9 @@ use super::wire::{
     ClosednessTag, EncodedHi, IntervalElementTag, StatementFormTag, ValueTypeTag, WeightTag,
 };
 use super::{
-    FieldId, IntervalElement, LiteralSet, RelationId, Schema, Side, StatementId, StatementView,
-    ValueType, Weight,
+    FieldId, IntervalElement, RelationId, Schema, Side, StatementId, StatementView, ValueType,
+    Weight,
 };
-use crate::encoding::encode_literal;
 use bumbledb_theory::Value;
 
 /// Hashed first, so no other encoding of a schema can alias this one.
@@ -70,12 +69,12 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
             }
             StatementView::Containment(_, statement) => {
                 out.push(StatementFormTag::Containment.tag());
-                put_side(out, schema, &statement.source);
-                put_side(out, schema, &statement.target);
+                put_side(out, &statement.source);
+                put_side(out, &statement.target);
             }
             StatementView::Capacity(_, statement) => {
                 out.push(StatementFormTag::Capacity.tag());
-                put_side(out, schema, &statement.target);
+                put_side(out, &statement.target);
                 match statement.weight.to_weight() {
                     Weight::Unit => out.push(WeightTag::Unit.tag()),
                     Weight::Field(field) => {
@@ -89,7 +88,7 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
                 }
                 out.extend_from_slice(&statement.lo.to_le_bytes());
                 EncodedHi::from_bound(statement.hi.to_bound()).write(out);
-                put_side(out, schema, &statement.source);
+                put_side(out, &statement.source);
             }
         }
     }
@@ -133,7 +132,7 @@ fn put_field_id(out: &mut Vec<u8>, id: FieldId) {
     out.extend_from_slice(&id.0.to_le_bytes());
 }
 
-fn put_side(out: &mut Vec<u8>, schema: &Schema, side: &Side) {
+fn put_side(out: &mut Vec<u8>, side: &Side) {
     put_relation_id(out, side.relation);
     put_len(out, side.projection.len());
     for field in &side.projection {
@@ -142,20 +141,10 @@ fn put_side(out: &mut Vec<u8>, schema: &Schema, side: &Side) {
     put_len(out, side.selection.len());
     for (field, literals) in &side.selection {
         put_field_id(out, *field);
-
-        let desc = schema.relation(side.relation).field(*field).value_type;
-
-        match literals {
-            LiteralSet::One(literal) => {
-                put_len(out, 1);
-                put_literal(out, desc, literal);
-            }
-            LiteralSet::Many(values) => {
-                put_len(out, values.len());
-                for literal in values {
-                    put_literal(out, desc, literal);
-                }
-            }
+        let literals = literals.literals();
+        put_len(out, literals.len());
+        for literal in literals {
+            put_literal(out, literal);
         }
     }
 }
@@ -192,14 +181,10 @@ fn element_tag(element: IntervalElement) -> u8 {
     }
 }
 
-/// No variant tag: the selected field's type is already in the stream
-/// (relations encode before statements), so the literal's shape is a function
-/// of bytes already hashed and no two schemas can alias here.
-fn put_literal(out: &mut Vec<u8>, desc: bumbledb_theory::schema::ValueType, literal: &Value) {
-    match literal {
-        Value::String(text) => put_bytes(out, text.as_bytes()),
-        encoded => encode_literal(encoded, desc, out),
-    }
+/// A literal in the stored-row value codec: its tag, then its payload.
+fn put_literal(out: &mut Vec<u8>, literal: &Value) {
+    crate::canonical::append_value(out, literal, &crate::WorkContext::new())
+        .expect("a fresh work context is never cancelled");
 }
 
 #[cfg(test)]
@@ -610,6 +595,7 @@ mod tests {
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&1u16.to_le_bytes());
         expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.push(1); // the literal's u64 tag in the stored-row codec
         expected.extend_from_slice(&1u64.to_be_bytes());
         expected.extend_from_slice(&0u32.to_le_bytes());
         expected.extend_from_slice(&1u32.to_le_bytes());

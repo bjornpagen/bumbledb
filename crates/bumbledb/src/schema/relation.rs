@@ -1,8 +1,6 @@
-//! Field, layout, and statement-index accessors on a validated relation.
+//! Field and statement-index accessors on a validated relation.
 
-use super::{
-    CapacityId, ContainmentId, FactLayout, FieldDescriptor, FieldId, KeyId, Relation, RelationBody,
-};
+use super::{CapacityId, ContainmentId, FieldDescriptor, FieldId, KeyId, Relation, RelationBody};
 
 impl Relation {
     #[must_use]
@@ -24,11 +22,6 @@ impl Relation {
     #[must_use]
     pub fn field(&self, id: FieldId) -> &FieldDescriptor {
         &self.fields[usize::from(id.0)]
-    }
-
-    #[must_use]
-    pub const fn layout(&self) -> &FactLayout {
-        &self.layout
     }
 
     #[must_use]

@@ -14,7 +14,6 @@ use heed::types::Bytes;
 use heed::{Database, EnvFlags, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
 use super::det_index::DeterminantTable;
-use super::error::{StoreError, StoreResult};
 use super::fingerprint::Fingerprinter;
 use super::format::{
     self, DET_DB, DatabaseId, EnvironmentId, FORMAT, K_DATABASE, K_FORMAT, K_GENERATION,
@@ -23,6 +22,7 @@ use super::format::{
 use super::gate::{GatePass, TransactionGate};
 use super::snapshot::OwnedSnapshot;
 use crate::error::CorruptionError;
+use crate::error::{Error, Result};
 use crate::schema::Schema;
 use crate::schema::fingerprint::{SchemaFingerprint, fingerprint};
 use crate::storage::GenerationId;
@@ -90,19 +90,19 @@ pub(crate) struct StoreInner {
 impl StoreInner {
     /// A write-path LMDB failure: map exhaustion is the typed fixed-ceiling
     /// refusal, everything else keeps its LMDB identity.
-    pub(crate) fn txn_error(&self, error: heed::Error) -> StoreError {
+    pub(crate) fn txn_error(&self, error: heed::Error) -> Error {
         full_or(error, self.ceiling)
     }
 
     #[cfg(test)]
-    pub(crate) fn fail_host_write(&self, index: usize) -> StoreResult<()> {
+    pub(crate) fn fail_host_write(&self, index: usize) -> Result<()> {
         if *self
             .fail_host_after
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             == Some(index)
         {
-            return Err(StoreError::Full {
+            return Err(Error::Full {
                 ceiling: self.ceiling,
             });
         }
@@ -110,11 +110,11 @@ impl StoreInner {
     }
 }
 
-fn full_or(error: heed::Error, ceiling: u64) -> StoreError {
+fn full_or(error: heed::Error, ceiling: u64) -> Error {
     if matches!(error, heed::Error::Mdb(heed::MdbError::MapFull)) {
-        StoreError::Full { ceiling }
+        Error::Full { ceiling }
     } else {
-        StoreError::from_heed(error)
+        Error::from(error)
     }
 }
 
@@ -178,7 +178,7 @@ pub(crate) struct GatedRwTxn<'env> {
 }
 
 impl GatedRwTxn<'_> {
-    pub(crate) fn commit(self) -> StoreResult<()> {
+    pub(crate) fn commit(self) -> Result<()> {
         let ceiling = self.ceiling;
         self.txn.commit().map_err(|error| full_or(error, ceiling))
     }
@@ -190,10 +190,10 @@ impl GatedRwTxn<'_> {
               a process are LMDB UB. The kernel directory lock is taken before \
               every open, so each directory has one live environment."
 )]
-fn open_env(path: &Path, options: Options) -> StoreResult<heed::Env<WithoutTls>> {
+fn open_env(path: &Path, options: Options) -> Result<heed::Env<WithoutTls>> {
     let mut open = EnvOpenOptions::new().read_txn_without_tls();
     open.map_size(
-        usize::try_from(options.map_ceiling).map_err(|_| StoreError::Full {
+        usize::try_from(options.map_ceiling).map_err(|_| Error::Full {
             ceiling: options.map_ceiling,
         })?,
     )
@@ -207,7 +207,7 @@ fn open_env(path: &Path, options: Options) -> StoreResult<heed::Env<WithoutTls>>
         }
     }
     // SAFETY: one open per directory, enforced by the held kernel lock.
-    unsafe { open.open(path) }.map_err(StoreError::from_heed)
+    unsafe { open.open(path) }.map_err(Error::from)
 }
 
 /// Owns the directory lock itself, not one handle to it: a subprocess may
@@ -225,7 +225,7 @@ impl Drop for DirectoryLock {
     }
 }
 
-fn acquire_lock(path: &Path) -> StoreResult<DirectoryLock> {
+fn acquire_lock(path: &Path) -> Result<DirectoryLock> {
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -233,10 +233,10 @@ fn acquire_lock(path: &Path) -> StoreResult<DirectoryLock> {
         .open(path.join(LOCK_FILE))?;
     match file.try_lock() {
         Ok(()) => Ok(DirectoryLock { file }),
-        Err(std::fs::TryLockError::WouldBlock) => Err(StoreError::StoreLocked {
+        Err(std::fs::TryLockError::WouldBlock) => Err(Error::Locked {
             path: path.to_path_buf(),
         }),
-        Err(std::fs::TryLockError::Error(err)) => Err(StoreError::from(err)),
+        Err(std::fs::TryLockError::Error(err)) => Err(Error::from(err)),
     }
 }
 
@@ -244,10 +244,10 @@ fn open_database(
     env: &heed::Env<WithoutTls>,
     rtxn: &RoTxn<'_, WithoutTls>,
     name: &str,
-) -> StoreResult<Database<Bytes, Bytes>> {
+) -> Result<Database<Bytes, Bytes>> {
     env.open_database(rtxn, Some(name))
-        .map_err(StoreError::from_heed)?
-        .ok_or(StoreError::Corruption(CorruptionError::MetaMissing(
+        .map_err(Error::from)?
+        .ok_or(Error::Corruption(CorruptionError::MetaMissing(
             "named database",
         )))
 }
@@ -260,14 +260,14 @@ impl Store {
         schema: &Schema,
         database: DatabaseId,
         options: Options,
-    ) -> StoreResult<Self> {
+    ) -> Result<Self> {
         let staging = super::staging::Staging::begin(path)?;
         init_directory(staging.path(), schema, database, options)?;
         staging.publish(schema, options)
     }
 
     /// Open an existing store; refusal mutates nothing.
-    pub(crate) fn open(path: &Path, schema: &Schema, options: Options) -> StoreResult<Self> {
+    pub(crate) fn open(path: &Path, schema: &Schema, options: Options) -> Result<Self> {
         Self::open_with(path, schema, options, Fingerprinter::Blake3)
     }
 
@@ -277,7 +277,7 @@ impl Store {
         path: &Path,
         schema: &Schema,
         fp: [u8; super::fingerprint::FP_LEN],
-    ) -> StoreResult<Self> {
+    ) -> Result<Self> {
         drop(Self::create(
             path,
             schema,
@@ -297,22 +297,22 @@ impl Store {
         schema: &Schema,
         options: Options,
         fingerprinter: Fingerprinter,
-    ) -> StoreResult<Self> {
+    ) -> Result<Self> {
         let det = DeterminantTable::compile(schema)?;
         let lock = acquire_lock(path)?;
         let env = open_env(path, options)?;
         let schema_fp = fingerprint(schema);
-        let rtxn = env.read_txn().map_err(StoreError::from_heed)?;
+        let rtxn = env.read_txn().map_err(Error::from)?;
         let meta: Database<Bytes, Bytes> = env
             .open_database(&rtxn, Some(META_DB))
-            .map_err(StoreError::from_heed)?
-            .ok_or_else(|| StoreError::UnrecognizedStore {
+            .map_err(Error::from)?
+            .ok_or_else(|| Error::NotABumbleDb {
                 path: path.to_path_buf(),
             })?;
         let database = format::verify_meta(&meta, &rtxn, path, &schema_fp)?;
         let rows = open_database(&env, &rtxn, ROWS_DB)?;
         let dets = open_database(&env, &rtxn, DET_DB)?;
-        rtxn.commit().map_err(StoreError::from_heed)?;
+        rtxn.commit().map_err(Error::from)?;
         Ok(Self {
             inner: Arc::new(StoreInner {
                 env,
@@ -351,14 +351,14 @@ impl Store {
     }
 
     /// One coherent owned snapshot.
-    pub(crate) fn snapshot(&self, work: &WorkContext) -> StoreResult<OwnedSnapshot> {
+    pub(crate) fn snapshot(&self, work: &WorkContext) -> Result<OwnedSnapshot> {
         let pass = self.inner.gate.enter(work)?;
         let txn = self
             .inner
             .env
             .clone()
             .static_read_txn()
-            .map_err(StoreError::from_heed)?;
+            .map_err(Error::from)?;
         let generation = read_generation(&self.inner, &txn)?;
         Ok(OwnedSnapshot::capture(
             Arc::clone(&self.inner),
@@ -370,10 +370,7 @@ impl Store {
 
     /// The single writer. Reentrant acquisition from the owning thread
     /// refuses instead of deadlocking.
-    pub(crate) fn writer(
-        &self,
-        work: &WorkContext,
-    ) -> StoreResult<super::candidate::WriteOwner<'_>> {
+    pub(crate) fn writer(&self, work: &WorkContext) -> Result<super::candidate::WriteOwner<'_>> {
         let caller = writer_thread_key();
         let slot = &self.inner.writer;
         let mut holder = slot
@@ -383,7 +380,7 @@ impl Store {
         loop {
             match *holder {
                 None => break,
-                Some(owner) if owner == caller => return Err(StoreError::ReentrantWriter),
+                Some(owner) if owner == caller => return Err(Error::ReentrantWriter),
                 Some(_) => {
                     work.checkpoint()?;
                     holder = slot
@@ -405,7 +402,7 @@ impl Store {
     }
 
     /// Begin one gated write transaction; the caller holds the writer.
-    pub(crate) fn gated_write_txn(&self, work: &WorkContext) -> StoreResult<GatedRwTxn<'_>> {
+    pub(crate) fn gated_write_txn(&self, work: &WorkContext) -> Result<GatedRwTxn<'_>> {
         let pass = self.inner.gate.enter(work)?;
         let txn = self
             .inner
@@ -420,18 +417,18 @@ impl Store {
     }
 
     /// Length of `data.mdb`: the populated file, not the virtual map.
-    pub(crate) fn file_bytes(&self) -> StoreResult<u64> {
+    pub(crate) fn file_bytes(&self) -> Result<u64> {
         Ok(std::fs::metadata(self.inner.path.join(DATA_FILE))?.len())
     }
 
     /// Write a compacted copy of the committed state to `dest`, a new file.
-    pub(crate) fn write_image(&self, dest: &Path, work: &WorkContext) -> StoreResult<()> {
+    pub(crate) fn write_image(&self, dest: &Path, work: &WorkContext) -> Result<()> {
         let _pass = self.inner.gate.enter(work)?;
         let file = self
             .inner
             .env
             .copy_to_path(dest, heed::CompactionOption::Enabled)
-            .map_err(StoreError::from_heed)?;
+            .map_err(Error::from)?;
         file.sync_all()?;
         Ok(())
     }
@@ -453,9 +450,9 @@ impl Store {
     }
 
     /// The committed generation through a private gated view.
-    pub(crate) fn committed_generation(&self, work: &WorkContext) -> StoreResult<GenerationId> {
+    pub(crate) fn committed_generation(&self, work: &WorkContext) -> Result<GenerationId> {
         let _pass = self.inner.gate.enter(work)?;
-        let rtxn = self.inner.env.read_txn().map_err(StoreError::from_heed)?;
+        let rtxn = self.inner.env.read_txn().map_err(Error::from)?;
         read_generation(&self.inner, &rtxn)
     }
 }
@@ -463,7 +460,7 @@ impl Store {
 pub(crate) fn read_generation(
     inner: &StoreInner,
     txn: &RoTxn<'_, heed::AnyTls>,
-) -> StoreResult<GenerationId> {
+) -> Result<GenerationId> {
     Ok(GenerationId::from_storage(format::read_u64(
         &inner.meta,
         txn,
@@ -479,17 +476,17 @@ pub(crate) fn init_directory(
     schema: &Schema,
     database: DatabaseId,
     options: Options,
-) -> StoreResult<()> {
+) -> Result<()> {
     let _lock = acquire_lock(staging)?;
     let env = open_env(staging, options)?;
-    let mut wtxn = env.write_txn().map_err(StoreError::from_heed)?;
+    let mut wtxn = env.write_txn().map_err(Error::from)?;
     let meta: Database<Bytes, Bytes> = env
         .create_database(&mut wtxn, Some(META_DB))
-        .map_err(StoreError::from_heed)?;
+        .map_err(Error::from)?;
     for name in [ROWS_DB, DET_DB] {
         let _: Database<Bytes, Bytes> = env
             .create_database(&mut wtxn, Some(name))
-            .map_err(StoreError::from_heed)?;
+            .map_err(Error::from)?;
     }
     for (key, value) in [
         (K_FORMAT, FORMAT.as_slice()),
@@ -504,11 +501,10 @@ pub(crate) fn init_directory(
         ),
         (K_NEXT_ROW_ID, 1u64.to_be_bytes().as_slice()),
     ] {
-        meta.put(&mut wtxn, key, value)
-            .map_err(StoreError::from_heed)?;
+        meta.put(&mut wtxn, key, value).map_err(Error::from)?;
     }
-    wtxn.commit().map_err(StoreError::from_heed)?;
-    env.force_sync().map_err(StoreError::from_heed)?;
+    wtxn.commit().map_err(Error::from)?;
+    env.force_sync().map_err(Error::from)?;
     Ok(())
 }
 

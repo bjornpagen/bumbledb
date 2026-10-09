@@ -23,7 +23,6 @@ pub(crate) mod tests;
 mod validate;
 mod wire;
 
-use crate::encoding::FactLayout;
 use bumbledb_theory::Value;
 
 pub use bumbledb_theory::schema::spec;
@@ -266,8 +265,6 @@ pub struct SealedRow {
     pub handle: Box<str>,
     pub values: Box<[Value]>,
     pub row: crate::canonical::CanonicalRow,
-    /// The fixed-width fact codec; deleted once nothing reads it.
-    pub fact: Box<[u8]>,
 }
 
 /// A relation's kind: ordinary, or closed with its rows. Closed relations
@@ -294,7 +291,6 @@ impl RelationBody {
 pub struct Relation {
     name: Box<str>,
     fields: Box<[FieldDescriptor]>,
-    layout: FactLayout,
 
     keys: Box<[KeyId]>,
 

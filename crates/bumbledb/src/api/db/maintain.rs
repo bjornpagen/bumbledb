@@ -22,9 +22,7 @@ impl<S> Db<S> {
             });
         }
         std::fs::create_dir_all(dest)?;
-        self.store
-            .write_image(&dest.join(DATA_FILE), &work)
-            .map_err(Error::from_store)?;
+        self.store.write_image(&dest.join(DATA_FILE), &work)?;
         std::fs::File::open(dest)?.sync_all()?;
         Ok(())
     }
@@ -34,16 +32,14 @@ impl<S> Db<S> {
     /// # Errors
     /// I/O failure reading the file metadata.
     pub fn disk_size(&self) -> Result<u64> {
-        self.store.file_bytes().map_err(Error::from_store)
+        self.store.file_bytes()
     }
 
     /// The committed generation.
     /// # Errors
     /// Storage failure or cancellation.
     pub fn generation(&self, work: WorkContext) -> Result<GenerationId> {
-        self.store
-            .committed_generation(&work)
-            .map_err(Error::from_store)
+        self.store.committed_generation(&work)
     }
 
     /// Bounded close: stop admitting transactions and report.

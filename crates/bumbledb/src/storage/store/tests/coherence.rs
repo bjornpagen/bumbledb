@@ -56,7 +56,7 @@ fn a_pinned_snapshot_keeps_its_rows_generation_and_host_bytes() {
     assert_eq!(pinned.host_record(b"r/2").expect("record"), None);
     let mut scanned = Vec::new();
     pinned
-        .host_scan::<StoreError>(b"r/", &work(), &mut |key, value| {
+        .host_scan::<Error>(b"r/", &work(), &mut |key, value| {
             scanned.push((key.to_vec(), value.to_vec()));
             Ok(())
         })

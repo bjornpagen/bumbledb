@@ -1,79 +1,61 @@
 //! `From` conversions into [`Error`] and the `std::error::Error` impl.
 
 use super::{
-    CorruptionError, Counter, DynIdError, Error, FactShapeError, IoFailure, LmdbFailure,
-    SchemaError, ValidationError,
+    CorruptionError, DynIdError, Error, FactShapeError, IoFailure, LmdbFailure, SchemaError,
+    ValidationError,
 };
 use crate::canonical::RowError;
 use crate::changes::ChangeError;
-use crate::storage::store::StoreError;
+use crate::work::WorkError;
 
 impl From<heed::Error> for Error {
-    fn from(err: heed::Error) -> Self {
-        Self::from_store(StoreError::from_heed(err))
+    fn from(error: heed::Error) -> Self {
+        match error {
+            heed::Error::Mdb(heed::MdbError::ReadersFull) => Self::ReadersFull,
+            heed::Error::Io(io) => Self::Io(IoFailure::from_io(&io)),
+            other => Self::Lmdb(LmdbFailure::from(other)),
+        }
     }
 }
 
 impl Error {
-    pub(crate) fn from_store(error: StoreError) -> Self {
-        match error {
-            StoreError::Io(io) => Self::Io(io),
-            StoreError::Lmdb(lmdb) => Self::Lmdb(lmdb),
-            StoreError::UnrecognizedStore { path } => Self::NotABumbleDb { path },
-            StoreError::SchemaMismatch => Self::SchemaMismatch,
-            StoreError::StoreLocked { path } => Self::Locked { path },
-            StoreError::DestinationExists { path } => Self::DestinationExists { path },
-            StoreError::Full { ceiling } => Self::Full { ceiling },
-            StoreError::ReaderSlotsExhausted => Self::ReadersFull,
-            StoreError::Closed => Self::Closed,
-            StoreError::ReentrantWriter => Self::ReentrantWriter,
-            StoreError::RowIdExhausted => Self::Exhausted(Counter::RowIds),
-            StoreError::GenerationExhausted => Self::Exhausted(Counter::Generations),
-            StoreError::ForeignSchema => Self::ForeignSchema,
-            StoreError::HostKey(fault) => Self::HostKey(fault),
-            StoreError::CapacityRayMeasure { statement } => Self::CapacityRayMeasure { statement },
-            StoreError::MeasureOverflow { statement } => Self::MeasureOverflow { statement },
-            StoreError::Changes(
-                ChangeError::Work(work) | ChangeError::Row(RowError::Work(work)),
-            ) => Self::Store(Box::new(StoreError::Work(work))),
-            StoreError::Changes(
-                ChangeError::Allocation | ChangeError::Row(RowError::Allocation),
-            ) => Self::Store(Box::new(StoreError::Allocation)),
-            StoreError::Changes(changes) => Self::Changes(changes),
-            StoreError::Corruption(corruption) => Self::Corruption(corruption),
-            StoreError::Compile(compile) => Self::Compile(compile),
-            error @ (StoreError::Work(_) | StoreError::Allocation) => Self::Store(Box::new(error)),
-        }
-    }
-
     /// The operation stopped because its [`crate::WorkContext`] was cancelled.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.kind() == super::ErrorKind::Cancelled
+        matches!(self, Self::Cancelled)
     }
 }
 
-impl From<StoreError> for Error {
-    fn from(error: StoreError) -> Self {
-        Self::from_store(error)
+impl From<WorkError> for Error {
+    fn from(error: WorkError) -> Self {
+        match error {
+            WorkError::Cancelled => Self::Cancelled,
+            WorkError::Allocation => Self::Allocation,
+        }
     }
 }
 
+/// Cancellation and refused allocation inside a change or row error are the
+/// cancellation and allocation errors.
 impl From<ChangeError> for Error {
     fn from(error: ChangeError) -> Self {
-        Self::from_store(StoreError::Changes(error))
+        match error {
+            ChangeError::Work(work) | ChangeError::Row(RowError::Work(work)) => work.into(),
+            ChangeError::Allocation | ChangeError::Row(RowError::Allocation) => Self::Allocation,
+            other => Self::Changes(other),
+        }
     }
 }
 
 impl From<RowError> for Error {
     fn from(error: RowError) -> Self {
-        Self::from_store(StoreError::Changes(ChangeError::Row(error)))
+        ChangeError::Row(error).into()
     }
 }
 
-impl From<crate::work::WorkError> for Error {
-    fn from(error: crate::work::WorkError) -> Self {
-        Self::from_store(StoreError::Work(error))
+impl From<crate::schema::CompileError> for Error {
+    fn from(error: crate::schema::CompileError) -> Self {
+        Self::Compile(error)
     }
 }
 
@@ -134,7 +116,6 @@ impl std::error::Error for Error {
             Self::Changes(err) => Some(err),
             Self::Compile(err) => Some(err),
             Self::Scalar { source, .. } => Some(source),
-            Self::Store(err) => Some(err.as_ref()),
             _ => None,
         }
     }

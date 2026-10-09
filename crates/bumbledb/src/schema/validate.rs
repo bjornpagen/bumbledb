@@ -12,7 +12,6 @@ use super::{
     SchemaDescriptor, SealedRow, StatementId, StatementRef,
 };
 use crate::canonical::CanonicalRow;
-use crate::encoding::FactLayout;
 use crate::error::SchemaError;
 
 /// The admission boundary: a [`SchemaDescriptor`] (theory data) seals into
@@ -215,27 +214,17 @@ struct RelationIndexes {
 
 fn seal_relation(relation: CheckedRelation, indexes: RelationIndexes) -> Relation {
     let CheckedRelation { name, fields, rows } = relation;
-    let layout = FactLayout::new(&fields.iter().map(|f| f.value_type).collect::<Vec<_>>());
     let body = match rows {
         None => RelationBody::Ordinary,
         Some(rows) => RelationBody::Closed {
             extension: rows
                 .into_vec()
                 .into_iter()
-                .map(|row| {
-                    let canonical =
-                        CanonicalRow::encode(&fields, &row.values, &crate::WorkContext::new())
-                            .expect("checked closed rows encode");
-                    let mut fact = Vec::with_capacity(layout.fact_width());
-                    for (value, field) in row.values.iter().zip(&fields) {
-                        crate::encoding::encode_literal(value, field.value_type, &mut fact);
-                    }
-                    SealedRow {
-                        handle: row.handle,
-                        values: row.values,
-                        row: canonical,
-                        fact: fact.into_boxed_slice(),
-                    }
+                .map(|row| SealedRow {
+                    row: CanonicalRow::encode(&fields, &row.values, &crate::WorkContext::new())
+                        .expect("checked closed rows encode"),
+                    handle: row.handle,
+                    values: row.values,
                 })
                 .collect(),
         },
@@ -243,7 +232,6 @@ fn seal_relation(relation: CheckedRelation, indexes: RelationIndexes) -> Relatio
     Relation {
         name,
         fields,
-        layout,
         keys: indexes.keys.into_boxed_slice(),
         outgoing: indexes.outgoing.into_boxed_slice(),
         capacity_sources: indexes.capacity_sources.into_boxed_slice(),

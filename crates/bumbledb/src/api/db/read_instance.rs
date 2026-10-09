@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::api::prepared::{Answers, BindArgs, CompleteResult, ParamArg, PreparedQuery};
 use crate::canonical::DecodedRow;
-use crate::error::{DynIdError, Error, Result};
+use crate::error::{DynIdError, Result};
 use crate::image::cache::ImageCache;
 use crate::ir::{Query, Value};
 use crate::schema::Schema;
@@ -233,9 +233,9 @@ impl<S> ReadFrame<'_, S> {
                 crate::canonical::decode(fields, row.row.as_bytes(), self.work).map_err(row_error)
             })));
         }
-        let iterator = self.snapshot.rows(rel).map_err(Error::from_store)?;
+        let iterator = self.snapshot.rows(rel)?;
         Ok(ScanRows::Store(iterator.map(move |entry| {
-            let (_, bytes) = entry.map_err(Error::from_store)?;
+            let (_, bytes) = entry?;
             crate::canonical::decode(fields, bytes, self.work).map_err(row_error)
         })))
     }
@@ -251,9 +251,9 @@ impl<S> ReadFrame<'_, S> {
                     .map(|row| F::decode(RowReader::new(row.row.as_bytes())?)),
             ));
         }
-        let iterator = self.snapshot.rows(F::RELATION).map_err(Error::from_store)?;
+        let iterator = self.snapshot.rows(F::RELATION)?;
         Ok(ScanRows::Store(iterator.map(move |entry| {
-            let (_, bytes) = entry.map_err(Error::from_store)?;
+            let (_, bytes) = entry?;
             F::decode(RowReader::new(bytes)?)
         })))
     }
@@ -277,9 +277,7 @@ impl<S> ReadFrame<'_, S> {
             return Ok(rows.iter().any(|row| row.values.as_ref() == values));
         }
         let bytes = super::tx::encode_values(self.schema.as_ref(), relation, values, self.work)?;
-        self.snapshot
-            .contains(relation, &bytes, self.work)
-            .map_err(Error::from_store)
+        self.snapshot.contains(relation, &bytes, self.work)
     }
 
     /// # Errors
@@ -394,7 +392,7 @@ fn count_rows(snapshot: &OwnedSnapshot, schema: &Schema, relation: RelationId) -
     };
     match rel.body().closed_rows() {
         Some(rows) => Ok(rows.len() as u64),
-        None => snapshot.row_count(relation).map_err(Error::from_store),
+        None => snapshot.row_count(relation),
     }
 }
 

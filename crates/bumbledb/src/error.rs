@@ -582,8 +582,13 @@ pub enum Counter {
     Generations,
 }
 
-/// A host record key outside the grammar.
-pub use crate::storage::store::error::HostKeyFault;
+/// A host key outside the grammar: longer than the key limit, or not
+/// strictly after the previous key of the same seal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostKeyFault {
+    TooLong { actual: usize },
+    NotStrictlyOrdered,
+}
 
 /// The one engine error. Domain rejections are not errors: they are
 /// [`crate::WriteOutcome::Rejected`] and [`Admission::Rejected`].
@@ -674,12 +679,13 @@ pub enum Error {
     /// An in-memory representation reached its fixed capacity.
     Capacity(Capacity),
     ResultBytesOverflow,
-    /// Cancellation or refused allocation, until it becomes
-    /// `Error::Cancelled` / `Error::Allocation`.
-    Store(Box<crate::storage::store::StoreError>),
+    /// The operation's [`crate::WorkContext`] was cancelled.
+    Cancelled,
+    /// The host refused an in-memory allocation.
+    Allocation,
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// The variant of an [`Error`], without its payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -755,12 +761,8 @@ impl Error {
             Self::Overflow(_) => ErrorKind::Overflow,
             Self::Scalar { .. } => ErrorKind::Scalar,
             Self::Capacity(_) | Self::ResultBytesOverflow => ErrorKind::Capacity,
-            Self::Store(error) => match **error {
-                crate::storage::store::StoreError::Work(crate::WorkError::Cancelled) => {
-                    ErrorKind::Cancelled
-                }
-                _ => ErrorKind::Allocation,
-            },
+            Self::Cancelled => ErrorKind::Cancelled,
+            Self::Allocation => ErrorKind::Allocation,
         }
     }
 }

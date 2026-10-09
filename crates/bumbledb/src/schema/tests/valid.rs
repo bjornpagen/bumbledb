@@ -23,8 +23,6 @@ fn valid_schema_constructs_with_statement_indices() {
     assert_eq!(account.keys(), &[KeyId(1)]);
     assert_eq!(account.outgoing(), &[ContainmentId(0)]);
     assert_eq!(schema.dependents(KeyId(1)), &[]);
-
-    assert_eq!(account.layout().fact_width(), 24);
 }
 
 #[test]
@@ -154,7 +152,7 @@ fn nullary_relation_constructs() {
     }
     .validate()
     .expect("nullary relations are legal");
-    assert_eq!(schema.relation(RelationId(0)).layout().fact_width(), 0);
+    assert!(schema.relation(RelationId(0)).fields().is_empty());
 }
 
 #[test]
@@ -379,7 +377,7 @@ fn currency() -> RelationDescriptor {
 }
 
 #[test]
-fn a_closed_relation_seals_pre_encoded_ground_axioms() {
+fn a_closed_relation_seals_its_rows_as_values_and_canonical_rows() {
     let schema = SchemaDescriptor {
         relations: vec![currency()],
         statements: vec![],
@@ -392,20 +390,25 @@ fn a_closed_relation_seals_pre_encoded_ground_axioms() {
     assert_eq!(relation.fields()[0].name.as_ref(), "id");
     assert_eq!(relation.fields()[0].value_type, ValueType::U64);
     assert_eq!(relation.fields()[1].name.as_ref(), "minor_units");
-    assert_eq!(relation.layout().fact_width(), 16);
 
     let rows = relation.body().closed_rows().expect("closed");
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].handle.as_ref(), "Usd");
     assert_eq!(rows[1].handle.as_ref(), "Eur");
-    let fact = |id: u64, units: u64| {
-        let mut fact = Vec::new();
-        fact.extend_from_slice(&id.to_be_bytes());
-        fact.extend_from_slice(&units.to_be_bytes());
-        fact.into_boxed_slice()
-    };
-    assert_eq!(rows[0].fact, fact(0, 2));
-    assert_eq!(rows[1].fact, fact(1, 2));
+    for (index, row) in rows.iter().enumerate() {
+        let id = u64::try_from(index).expect("two rows");
+        let values = [Value::U64(id), Value::U64(2)];
+        assert_eq!(&*row.values, &values);
+        assert_eq!(
+            row.row,
+            crate::canonical::CanonicalRow::encode(
+                relation.fields(),
+                &values,
+                &crate::WorkContext::new()
+            )
+            .expect("encode")
+        );
+    }
 
     assert_eq!(relation.keys(), &[KeyId(0)]);
 }

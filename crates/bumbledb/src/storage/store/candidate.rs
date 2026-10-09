@@ -7,13 +7,13 @@
 use bumbledb_theory::schema::{RelationId, StatementId};
 use heed::{RoTxn, RwTxn};
 
-use super::error::{StoreError, StoreResult};
 use super::format::{K_GENERATION, RowId};
 use super::host::HostChanges;
 use super::judge_bridge::Verdict;
 use super::rows::{self, RowWriter};
 use super::store_env::{GatedRwTxn, Store, StoreInner, WriterGuard, read_generation};
 use crate::changes::{ChangeKind, ChangeSet};
+use crate::error::{Error, Result};
 use crate::schema::judge::JudgedViolation;
 use crate::schema::{CompiledProjection, Schema};
 use crate::storage::GenerationId;
@@ -65,9 +65,9 @@ fn apply_rows(
     txn: &mut RwTxn<'_>,
     changes: &ChangeSet,
     work: &WorkContext,
-) -> StoreResult<AppliedRows> {
+) -> Result<AppliedRows> {
     if changes.schema() != inner.schema_fp {
-        return Err(StoreError::ForeignSchema);
+        return Err(Error::ForeignSchema);
     }
     let mut writer = RowWriter::new(inner, txn, work);
     let mut applied = Applied::default();
@@ -108,7 +108,7 @@ impl<'store> WriteOwner<'store> {
     }
 
     /// The committed parent generation, read while exclusivity is held.
-    pub(crate) fn parent_generation(&self) -> StoreResult<GenerationId> {
+    pub(crate) fn parent_generation(&self) -> Result<GenerationId> {
         self.store.committed_generation(&self.work)
     }
 
@@ -118,7 +118,7 @@ impl<'store> WriteOwner<'store> {
         &'owner mut self,
         schema: &Schema,
         changes: &ChangeSet,
-    ) -> StoreResult<Candidate<'owner, 'store>> {
+    ) -> Result<Candidate<'owner, 'store>> {
         self.work.checkpoint()?;
         let inner = &self.store.inner;
         let mut txn = self.store.gated_write_txn(&self.work)?;
@@ -146,7 +146,7 @@ impl<'store> WriteOwner<'store> {
     pub(crate) fn prepare_decided<'owner>(
         &'owner mut self,
         changes: &[ChangeSet],
-    ) -> StoreResult<PreparedWrite<'owner, 'store>> {
+    ) -> Result<PreparedWrite<'owner, 'store>> {
         self.work.checkpoint()?;
         let inner = &self.store.inner;
         let mut txn = self.store.gated_write_txn(&self.work)?;
@@ -168,8 +168,8 @@ impl<'store> WriteOwner<'store> {
     pub(crate) fn prepare_rows<'owner, 'row>(
         &'owner mut self,
         relation: RelationId,
-        rows: &mut dyn Iterator<Item = StoreResult<&'row [u8]>>,
-    ) -> StoreResult<PreparedWrite<'owner, 'store>> {
+        rows: &mut dyn Iterator<Item = Result<&'row [u8]>>,
+    ) -> Result<PreparedWrite<'owner, 'store>> {
         let inner = &self.store.inner;
         let mut txn = self.store.gated_write_txn(&self.work)?;
         let parent = read_generation(inner, &txn.txn)?;
@@ -196,7 +196,7 @@ impl<'store> WriteOwner<'store> {
         &mut self,
         schema: &Schema,
         changes: &[ChangeSet],
-    ) -> StoreResult<Vec<Decided>> {
+    ) -> Result<Vec<Decided>> {
         self.work.checkpoint()?;
         let inner = &self.store.inner;
         let mut txn = self.store.gated_write_txn(&self.work)?;
@@ -228,7 +228,7 @@ impl<'store> WriteOwner<'store> {
     /// A transaction against the unchanged parent for host records only.
     pub(crate) fn prepare_unchanged<'owner>(
         &'owner mut self,
-    ) -> StoreResult<PreparedWrite<'owner, 'store>> {
+    ) -> Result<PreparedWrite<'owner, 'store>> {
         let txn = self.store.gated_write_txn(&self.work)?;
         let parent = read_generation(&self.store.inner, &txn.txn)?;
         Ok(PreparedWrite {
@@ -271,7 +271,7 @@ impl<'a> CandidateState<'a> {
     pub(crate) fn rows(
         &self,
         relation: RelationId,
-    ) -> StoreResult<impl Iterator<Item = StoreResult<(RowId, &'a [u8])>> + use<'a>> {
+    ) -> Result<impl Iterator<Item = Result<(RowId, &'a [u8])>> + use<'a>> {
         Ok(rows::scan(self.inner, self.txn, relation)?
             .map(|entry| entry.map(|(key, bytes)| (key.row, bytes))))
     }
@@ -282,8 +282,8 @@ impl<'a> CandidateState<'a> {
         compiled: &CompiledProjection,
         projected: &[u8],
         work: &WorkContext,
-        visit: &mut dyn FnMut(RowId, &'a [u8]) -> StoreResult<bool>,
-    ) -> StoreResult<()> {
+        visit: &mut dyn FnMut(RowId, &'a [u8]) -> Result<bool>,
+    ) -> Result<()> {
         let routing = rows::routing(self.inner, compiled, projected)?;
         rows::visit_bucket(self.inner, self.txn, compiled, &routing, work, visit)
     }
@@ -313,10 +313,7 @@ impl<'owner, 'store> PreparedWrite<'owner, 'store> {
 
     /// Seal host records and the head into the same transaction; the
     /// generation advances once when facts or host bytes changed.
-    pub(crate) fn seal(
-        mut self,
-        host: HostChanges<'_>,
-    ) -> StoreResult<SealedWrite<'owner, 'store>> {
+    pub(crate) fn seal(mut self, host: HostChanges<'_>) -> Result<SealedWrite<'owner, 'store>> {
         let inner = &self.owner.store.inner;
         let host_mutated = super::host::apply(inner, &mut self.txn.txn, host, &self.owner.work)?;
         let changed = host_mutated || self.applied.iter().any(|applied| applied.changed());
@@ -326,7 +323,7 @@ impl<'owner, 'store> PreparedWrite<'owner, 'store> {
                 .value()
                 .checked_add(1)
                 .map(GenerationId::from_storage)
-                .ok_or(StoreError::GenerationExhausted)?;
+                .ok_or(Error::Exhausted(crate::error::Counter::Generations))?;
             inner
                 .meta
                 .put(
@@ -369,7 +366,7 @@ pub(crate) struct SealedWrite<'owner, 'store> {
 }
 
 impl SealedWrite<'_, '_> {
-    pub(crate) fn commit(self) -> StoreResult<Commit> {
+    pub(crate) fn commit(self) -> Result<Commit> {
         let commit = Commit {
             generation: self.generation,
             changed: self.changed,
@@ -391,7 +388,7 @@ impl WriteOwner<'_> {
         &mut self,
         schema: &Schema,
         changes: &ChangeSet,
-    ) -> StoreResult<(Verdict, Verdict)> {
+    ) -> Result<(Verdict, Verdict)> {
         let inner = &self.store.inner;
         let mut txn = self.store.gated_write_txn(&self.work)?;
         let rows = apply_rows(inner, &mut txn.txn, changes, &self.work)?;

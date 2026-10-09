@@ -4,10 +4,10 @@
 
 use heed::RwTxn;
 
-use super::error::{HostKeyFault, StoreError, StoreResult};
 use super::format::{K_HEAD, K_HOST};
 use super::keys::HOST_KEY_MAX;
 use super::store_env::StoreInner;
+use crate::error::{Error, HostKeyFault, Result};
 use crate::work::WorkContext;
 
 /// One host record change. Keys in one [`HostChanges`] are strictly
@@ -42,36 +42,32 @@ impl HostChanges<'static> {
 }
 
 /// The physical meta key of one host key.
-pub(crate) fn host_key(key: &[u8], buffer: &mut [u8; 1 + HOST_KEY_MAX]) -> StoreResult<usize> {
+pub(crate) fn host_key(key: &[u8], buffer: &mut [u8; 1 + HOST_KEY_MAX]) -> Result<usize> {
     if key.len() > HOST_KEY_MAX {
-        return Err(StoreError::HostKey(HostKeyFault::TooLong {
-            actual: key.len(),
-        }));
+        return Err(Error::HostKey(HostKeyFault::TooLong { actual: key.len() }));
     }
     buffer[0] = K_HOST;
     buffer[1..=key.len()].copy_from_slice(key);
     Ok(1 + key.len())
 }
 
-fn validate(host: &HostChanges<'_>) -> StoreResult<()> {
+fn validate(host: &HostChanges<'_>) -> Result<()> {
     let mut previous: Option<&[u8]> = None;
     for record in host.records {
         let (HostRecord::Put { key, .. } | HostRecord::Delete { key }) = *record;
         if key.len() > HOST_KEY_MAX {
-            return Err(StoreError::HostKey(HostKeyFault::TooLong {
-                actual: key.len(),
-            }));
+            return Err(Error::HostKey(HostKeyFault::TooLong { actual: key.len() }));
         }
         if previous.is_some_and(|previous| previous >= key) {
-            return Err(StoreError::HostKey(HostKeyFault::NotStrictlyOrdered));
+            return Err(Error::HostKey(HostKeyFault::NotStrictlyOrdered));
         }
         previous = Some(key);
     }
     Ok(())
 }
 
-fn put(inner: &StoreInner, txn: &mut RwTxn<'_>, key: &[u8], value: &[u8]) -> StoreResult<bool> {
-    if inner.meta.get(txn, key).map_err(StoreError::from_heed)? == Some(value) {
+fn put(inner: &StoreInner, txn: &mut RwTxn<'_>, key: &[u8], value: &[u8]) -> Result<bool> {
+    if inner.meta.get(txn, key).map_err(Error::from)? == Some(value) {
         return Ok(false);
     }
     inner
@@ -81,7 +77,7 @@ fn put(inner: &StoreInner, txn: &mut RwTxn<'_>, key: &[u8], value: &[u8]) -> Sto
     Ok(true)
 }
 
-fn delete(inner: &StoreInner, txn: &mut RwTxn<'_>, key: &[u8]) -> StoreResult<bool> {
+fn delete(inner: &StoreInner, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<bool> {
     inner
         .meta
         .delete(txn, key)
@@ -95,7 +91,7 @@ pub(crate) fn apply(
     txn: &mut RwTxn<'_>,
     host: HostChanges<'_>,
     work: &WorkContext,
-) -> StoreResult<bool> {
+) -> Result<bool> {
     validate(&host)?;
     let mut buffer = [0u8; 1 + HOST_KEY_MAX];
     let mut mutated = false;

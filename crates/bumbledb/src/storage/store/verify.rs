@@ -16,7 +16,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb_theory::schema::RelationId;
 
-use super::error::{StoreError, StoreResult};
 use super::format::{
     self, FORMAT, K_DATABASE, K_FORMAT, K_GENERATION, K_NEXT_ROW_ID, K_SCHEMA, RowId,
 };
@@ -24,6 +23,7 @@ use super::keys;
 use super::rows;
 use super::snapshot::OwnedSnapshot;
 use crate::canonical::RowError;
+use crate::error::{Error, Result};
 use crate::schema::judge::JudgedViolation;
 use crate::schema::{ProjectionId, Schema};
 use crate::work::WorkContext;
@@ -86,7 +86,7 @@ pub(crate) fn sweep(
     snapshot: &OwnedSnapshot,
     schema: &Schema,
     work: &WorkContext,
-) -> StoreResult<Vec<VerifyFinding>> {
+) -> Result<Vec<VerifyFinding>> {
     let inner = snapshot.store_inner();
     let txn = snapshot.read_txn();
     let mut findings = Vec::new();
@@ -96,9 +96,9 @@ pub(crate) fn sweep(
     // Structural faults make judgment undefined; report them instead.
     let mut judgment_safe = true;
 
-    for entry in inner.rows.iter(txn).map_err(StoreError::from_heed)? {
+    for entry in inner.rows.iter(txn).map_err(Error::from)? {
         work.checkpoint()?;
-        let (key, bytes) = entry.map_err(StoreError::from_heed)?;
+        let (key, bytes) = entry.map_err(Error::from)?;
         let Ok(parsed) = keys::parse(key) else {
             judgment_safe = false;
             findings.push(corrupt(VerifyCorruption::MalformedKey { what: "row key" }));
@@ -126,7 +126,7 @@ pub(crate) fn sweep(
         }
         let decoded = match crate::canonical::decode(view.fields(), bytes, work) {
             Ok(decoded) => decoded,
-            Err(RowError::Work(error)) => return Err(StoreError::Work(error)),
+            Err(RowError::Work(error)) => return Err(Error::from(error)),
             Err(error) => {
                 judgment_safe = false;
                 findings.push(corrupt(VerifyCorruption::MalformedRow {
@@ -151,8 +151,7 @@ pub(crate) fn sweep(
                 }
                 let route = rows::routing(inner, compiled, projected)?;
                 let key = keys::entry(keys::det_prefix(compiled.id), &route, parsed.row);
-                if inner.dets.get(txn, &key).map_err(StoreError::from_heed)?
-                    != Some(parsed.route.as_slice())
+                if inner.dets.get(txn, &key).map_err(Error::from)? != Some(parsed.route.as_slice())
                 {
                     findings.push(corrupt(VerifyCorruption::MissingDeterminant {
                         projection: compiled.id,
@@ -165,9 +164,9 @@ pub(crate) fn sweep(
     }
     drop(ordinals);
 
-    for entry in inner.dets.iter(txn).map_err(StoreError::from_heed)? {
+    for entry in inner.dets.iter(txn).map_err(Error::from)? {
         work.checkpoint()?;
-        let (key, home) = entry.map_err(StoreError::from_heed)?;
+        let (key, home) = entry.map_err(Error::from)?;
         let Ok(parsed) = keys::parse(key) else {
             findings.push(corrupt(VerifyCorruption::MalformedKey {
                 what: "determinant key",
@@ -201,7 +200,7 @@ pub(crate) fn sweep(
         };
         let fields = schema.relation(compiled.relation).fields();
         match crate::canonical::decode(fields, bytes, work) {
-            Err(RowError::Work(error)) => return Err(StoreError::Work(error)),
+            Err(RowError::Work(error)) => return Err(Error::from(error)),
             Err(_) => {}
             Ok(decoded) => {
                 let values = compiled.scalar_values(decoded.values());
@@ -216,7 +215,7 @@ pub(crate) fn sweep(
         }
     }
 
-    let meta_entry = |key: &[u8]| inner.meta.get(txn, key).map_err(StoreError::from_heed);
+    let meta_entry = |key: &[u8]| inner.meta.get(txn, key).map_err(Error::from);
     if meta_entry(K_FORMAT)? != Some(FORMAT.as_slice()) {
         findings.push(corrupt(VerifyCorruption::MetaMissing { what: "format" }));
     }

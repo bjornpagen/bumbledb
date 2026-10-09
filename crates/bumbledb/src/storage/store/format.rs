@@ -7,8 +7,8 @@
 use heed::RoTxn;
 use heed::types::Bytes;
 
-use super::error::{StoreError, StoreResult};
 use crate::error::CorruptionError;
+use crate::error::{Error, Result};
 use crate::schema::fingerprint::SchemaFingerprint;
 use bumbledb_theory::schema::RelationId;
 
@@ -119,11 +119,11 @@ impl RelationVersion {
         Self(word)
     }
 
-    fn next(self) -> StoreResult<Self> {
+    fn next(self) -> Result<Self> {
         self.0
             .checked_add(1)
             .map(Self)
-            .ok_or(StoreError::GenerationExhausted)
+            .ok_or(Error::Exhausted(crate::error::Counter::Generations))
     }
 }
 
@@ -141,7 +141,7 @@ pub(crate) struct RelationMeta {
 }
 
 impl RelationMeta {
-    pub(crate) fn changed(self, count: u64) -> StoreResult<Self> {
+    pub(crate) fn changed(self, count: u64) -> Result<Self> {
         Ok(Self {
             count,
             version: self.version.next()?,
@@ -157,13 +157,13 @@ impl RelationMeta {
 }
 
 /// The relation ids a store can address: one `u16` per relation.
-pub(crate) fn relation_word(relation: RelationId) -> StoreResult<[u8; 2]> {
+pub(crate) fn relation_word(relation: RelationId) -> Result<[u8; 2]> {
     u16::try_from(relation.0)
         .map(u16::to_be_bytes)
-        .map_err(|_| StoreError::ForeignSchema)
+        .map_err(|_| Error::ForeignSchema)
 }
 
-pub(crate) fn relation_key(relation: RelationId) -> StoreResult<[u8; 3]> {
+pub(crate) fn relation_key(relation: RelationId) -> Result<[u8; 3]> {
     let [high, low] = relation_word(relation)?;
     Ok([K_RELATION, high, low])
 }
@@ -172,16 +172,16 @@ pub(crate) fn read_relation_meta(
     meta: &heed::Database<Bytes, Bytes>,
     txn: &RoTxn<'_, heed::AnyTls>,
     relation: RelationId,
-) -> StoreResult<RelationMeta> {
+) -> Result<RelationMeta> {
     let Some(bytes) = meta
         .get(txn, &relation_key(relation)?)
-        .map_err(StoreError::from_heed)?
+        .map_err(Error::from)?
     else {
         return Ok(RelationMeta::default());
     };
     let bytes: &[u8; 16] = bytes
         .try_into()
-        .map_err(|_| StoreError::Corruption(CorruptionError::MetaMissing("relation meta")))?;
+        .map_err(|_| Error::Corruption(CorruptionError::MetaMissing("relation meta")))?;
     let (count, version) = bytes.split_at(8);
     Ok(RelationMeta {
         count: u64::from_be_bytes(count.try_into().expect("8 bytes")),
@@ -194,13 +194,13 @@ pub(crate) fn read_u64(
     txn: &RoTxn<'_, heed::AnyTls>,
     key: &[u8],
     what: &'static str,
-) -> StoreResult<u64> {
+) -> Result<u64> {
     let bytes = meta
         .get(txn, key)
-        .map_err(StoreError::from_heed)?
-        .ok_or(StoreError::Corruption(CorruptionError::MetaMissing(what)))?;
+        .map_err(Error::from)?
+        .ok_or(Error::Corruption(CorruptionError::MetaMissing(what)))?;
     Ok(u64::from_be_bytes(bytes.try_into().map_err(|_| {
-        StoreError::Corruption(CorruptionError::MetaMissing(what))
+        Error::Corruption(CorruptionError::MetaMissing(what))
     })?))
 }
 
@@ -210,26 +210,24 @@ pub(crate) fn verify_meta(
     txn: &RoTxn<'_, heed::AnyTls>,
     path: &std::path::Path,
     schema_fp: &SchemaFingerprint,
-) -> StoreResult<DatabaseId> {
-    if meta.get(txn, K_FORMAT).map_err(StoreError::from_heed)? != Some(FORMAT.as_slice()) {
-        return Err(StoreError::UnrecognizedStore {
+) -> Result<DatabaseId> {
+    if meta.get(txn, K_FORMAT).map_err(Error::from)? != Some(FORMAT.as_slice()) {
+        return Err(Error::NotABumbleDb {
             path: path.to_path_buf(),
         });
     }
     let stored = meta
         .get(txn, K_SCHEMA)
-        .map_err(StoreError::from_heed)?
-        .ok_or(StoreError::Corruption(CorruptionError::MetaMissing(
-            "schema",
-        )))?;
+        .map_err(Error::from)?
+        .ok_or(Error::Corruption(CorruptionError::MetaMissing("schema")))?;
     if stored != schema_fp.0 {
-        return Err(StoreError::SchemaMismatch);
+        return Err(Error::SchemaMismatch);
     }
     let database = meta
         .get(txn, K_DATABASE)
-        .map_err(StoreError::from_heed)?
+        .map_err(Error::from)?
         .and_then(|bytes| <[u8; 16]>::try_from(bytes).ok())
-        .ok_or(StoreError::Corruption(CorruptionError::MetaMissing(
+        .ok_or(Error::Corruption(CorruptionError::MetaMissing(
             "database id",
         )))?;
     Ok(DatabaseId(database))

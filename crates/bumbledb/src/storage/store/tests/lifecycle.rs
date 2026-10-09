@@ -39,7 +39,7 @@ fn create_refuses_an_existing_destination() {
     let (_dir, path) = store_dir("store-create-exists");
     drop(create_default(&path));
     match Store::create(&path, &schema(), DatabaseId::mint(), Options::default()) {
-        Err(StoreError::DestinationExists { path: reported }) => assert_eq!(reported, path),
+        Err(Error::DestinationExists { path: reported }) => assert_eq!(reported, path),
         other => panic!("expected DestinationExists, got {other:?}"),
     }
 }
@@ -50,7 +50,7 @@ fn a_second_open_refuses_while_the_owner_lives_and_succeeds_after_drop() {
     let owner = create_default(&path);
     assert!(matches!(
         Store::open(&path, &schema(), Options::default()),
-        Err(StoreError::StoreLocked { .. })
+        Err(Error::Locked { .. })
     ));
     drop(owner);
     drop(open_default(&path));
@@ -69,7 +69,7 @@ fn duplicated_lock_description_does_not_outlive_the_final_environment_owner() {
         if held.is_some() {
             assert!(matches!(
                 Store::open(&path, &schema(), Options::default()),
-                Err(StoreError::StoreLocked { .. })
+                Err(Error::Locked { .. })
             ));
         }
         drop(held);
@@ -77,7 +77,7 @@ fn duplicated_lock_description_does_not_outlive_the_final_environment_owner() {
         drop(inherited);
         assert!(matches!(
             Store::open(&path, &schema(), Options::default()),
-            Err(StoreError::StoreLocked { .. })
+            Err(Error::Locked { .. })
         ));
         drop(reopened);
         drop(open_default(&path));
@@ -91,7 +91,7 @@ fn a_directory_without_this_format_refuses_and_is_left_untouched() {
     std::fs::write(path.join("data.mdb"), b"not an lmdb file").expect("garbage");
     assert!(matches!(
         Store::open(&path, &schema(), Options::default()),
-        Err(StoreError::UnrecognizedStore { .. } | StoreError::Lmdb(_))
+        Err(Error::NotABumbleDb { .. } | Error::Lmdb(_))
     ));
     assert_eq!(
         std::fs::read(path.join("data.mdb")).expect("still there"),
@@ -113,7 +113,7 @@ fn any_other_format_entry_refuses() {
         }
         assert!(matches!(
             Store::open(&path, &schema(), Options::default()),
-            Err(StoreError::UnrecognizedStore { .. })
+            Err(Error::NotABumbleDb { .. })
         ));
     }
 }
@@ -124,7 +124,7 @@ fn a_foreign_schema_refuses_to_open() {
     drop(create_default(&path));
     assert!(matches!(
         Store::open(&path, &other_schema(), Options::default()),
-        Err(StoreError::SchemaMismatch)
+        Err(Error::SchemaMismatch)
     ));
     drop(open_default(&path));
 }
@@ -167,7 +167,7 @@ fn close_reports_live_snapshots_and_refuses_new_admission() {
             ..
         }
     ));
-    assert!(matches!(store.snapshot(&work()), Err(StoreError::Closed)));
+    assert!(matches!(store.snapshot(&work()), Err(Error::Closed)));
     assert_eq!(pinned.row_count(NOTE).expect("still readable"), 0);
     drop(pinned);
     assert_eq!(store.close(&work()), CloseReport::Closed);
@@ -182,7 +182,7 @@ fn the_lock_releases_after_the_owner_and_all_snapshots_drop() {
     };
     assert!(matches!(
         Store::open(&path, &schema(), Options::default()),
-        Err(StoreError::StoreLocked { .. })
+        Err(Error::Locked { .. })
     ));
     drop(snapshot);
     drop(open_default(&path));
@@ -200,7 +200,7 @@ fn row_id_exhaustion_aborts_the_batch_without_advancing_the_high_water_mark() {
     );
     assert!(matches!(
         try_commit_changes(&store, &two),
-        Err(StoreError::RowIdExhausted)
+        Err(Error::Exhausted(crate::error::Counter::RowIds))
     ));
     assert_eq!(store.snapshot(&work()).unwrap().row_count(NOTE).unwrap(), 0);
     let one = change_set(&schema(), &[(NOTE, note(1, "first"))], &[]);
@@ -219,16 +219,13 @@ fn the_writer_is_exclusive_and_reentrancy_refuses() {
     let owner = store.writer(&context).expect("first writer");
     assert!(matches!(
         store.writer(&context),
-        Err(StoreError::ReentrantWriter)
+        Err(Error::ReentrantWriter)
     ));
     let stopped = work();
     stopped.cancel();
     std::thread::scope(|scope| {
         let waiting = scope.spawn(|| store.writer(&stopped).map(drop));
-        assert!(matches!(
-            waiting.join().unwrap(),
-            Err(StoreError::Work(crate::WorkError::Cancelled))
-        ));
+        assert!(matches!(waiting.join().unwrap(), Err(Error::Cancelled)));
     });
     drop(owner);
     drop(store.writer(&context).expect("writer after release"));
@@ -242,10 +239,10 @@ fn install_populated_leaves_no_destination_on_population_failure() {
         &schema(),
         DatabaseId::mint(),
         Options::default(),
-        |_| Err(StoreError::ReentrantWriter),
+        |_| Err(Error::ReentrantWriter),
     )
     .expect_err("population failure");
-    assert!(matches!(error, StoreError::ReentrantWriter));
+    assert!(matches!(error, Error::ReentrantWriter));
     assert!(!path.exists());
     let parent = path.parent().expect("parent");
     assert_eq!(
@@ -268,7 +265,7 @@ fn install_populated_publishes_a_complete_store() {
             commit_changes(store, &changes)
                 .changed
                 .then_some(())
-                .ok_or(StoreError::Closed)
+                .ok_or(Error::Closed)
         },
     )
     .expect("installed");

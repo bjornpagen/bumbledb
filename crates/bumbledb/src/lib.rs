@@ -192,7 +192,6 @@ pub use bumbledb_macros::{params, query, schema};
 #[doc(hidden)]
 pub mod __private {
     pub use crate::api::db::plumbing::{fixed_interval_i64, fixed_interval_u64};
-    pub use crate::encoding::{ValueRef, append_field};
 }
 
 #[cfg(test)]

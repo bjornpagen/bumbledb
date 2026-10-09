@@ -73,7 +73,7 @@ impl<S> Db<S> {
     pub fn host_writer(&self, work: &WorkContext) -> Result<WriterSession<'_, S>> {
         Ok(WriterSession {
             db: self,
-            owner: self.store.writer(work).map_err(Error::from_store)?,
+            owner: self.store.writer(work)?,
             work: work.clone(),
         })
     }
@@ -107,8 +107,7 @@ impl<S: Theory> Db<S> {
         work: WorkContext,
     ) -> Result<Self> {
         let schema = schema.descriptor().validate()?;
-        let store =
-            Store::install_image(image, dest, &schema, options).map_err(Error::from_store)?;
+        let store = Store::install_image(image, dest, &schema, options)?;
         Self::assemble(store, schema, work)
     }
 }
@@ -118,7 +117,7 @@ impl<'db, S> WriterSession<'db, S> {
     /// # Errors
     /// Storage failure or cancellation.
     pub fn generation(&self) -> Result<GenerationId> {
-        self.owner.parent_generation().map_err(Error::from_store)
+        self.owner.parent_generation()
     }
 
     /// Judge each change set in order against the committed state plus the
@@ -129,8 +128,7 @@ impl<'db, S> WriterSession<'db, S> {
     pub fn decide_all(&mut self, changes: &[ChangeSet]) -> Result<Vec<Judged>> {
         let schema = self.db.schema.as_ref();
         self.owner
-            .decide_all(schema, changes)
-            .map_err(Error::from_store)?
+            .decide_all(schema, changes)?
             .into_iter()
             .map(|decided| match decided.rejection {
                 None => Ok(Judged::Accepted(decided.applied)),
@@ -149,10 +147,7 @@ impl<'db, S> WriterSession<'db, S> {
         changes: &[ChangeSet],
     ) -> Result<Prepared<'session, 'db, S>> {
         Ok(Prepared {
-            inner: self
-                .owner
-                .prepare_decided(changes)
-                .map_err(Error::from_store)?,
+            inner: self.owner.prepare_decided(changes)?,
             marker: PhantomData,
         })
     }
@@ -162,7 +157,7 @@ impl<'db, S> WriterSession<'db, S> {
     /// Storage failure or cancellation.
     pub fn unchanged<'session>(&'session mut self) -> Result<Prepared<'session, 'db, S>> {
         Ok(Prepared {
-            inner: self.owner.prepare_unchanged().map_err(Error::from_store)?,
+            inner: self.owner.prepare_unchanged()?,
             marker: PhantomData,
         })
     }
@@ -181,7 +176,7 @@ impl<'session, 'db, S> Prepared<'session, 'db, S> {
     /// drops the whole transaction.
     pub fn seal(self, host: HostChanges<'_>) -> Result<Sealed<'session, 'db, S>> {
         Ok(Sealed {
-            inner: self.inner.seal(host).map_err(Error::from_store)?,
+            inner: self.inner.seal(host)?,
             marker: PhantomData,
         })
     }
@@ -196,7 +191,7 @@ impl<S> Sealed<'_, '_, S> {
     /// # Errors
     /// `Full` or storage failure; nothing committed.
     pub fn commit(self) -> Result<Commit> {
-        self.inner.commit().map_err(Error::from_store)
+        self.inner.commit()
     }
 
     pub fn abort(self) {
@@ -209,14 +204,14 @@ impl<S> ReadFrame<'_, S> {
     /// # Errors
     /// Storage failure.
     pub fn head(&self) -> Result<Option<&[u8]>> {
-        self.snapshot.head().map_err(Error::from_store)
+        self.snapshot.head()
     }
 
     /// One host record from this snapshot.
     /// # Errors
     /// A key longer than [`MAX_KEY`], or storage failure.
     pub fn host_record(&self, key: &[u8]) -> Result<Option<&[u8]>> {
-        self.snapshot.host_record(key).map_err(Error::from_store)
+        self.snapshot.host_record(key)
     }
 
     /// Every host record under `prefix`, in key order. Keys and values
@@ -237,12 +232,12 @@ impl<S> ReadFrame<'_, S> {
         let exported = self.snapshot.export(self.work, &mut |relation, row| {
             visit(relation, row).map_err(|error| {
                 failed = Some(error);
-                store::StoreError::Work(crate::WorkError::Cancelled)
+                Error::Cancelled
             })
         });
         match failed {
             Some(error) => Err(error),
-            None => exported.map_err(Error::from_store),
+            None => exported,
         }
     }
 
@@ -251,9 +246,7 @@ impl<S> ReadFrame<'_, S> {
     /// # Errors
     /// Storage failure or cancellation.
     pub fn content_digest(&self) -> Result<[u8; 32]> {
-        self.snapshot
-            .content_digest(self.work)
-            .map_err(Error::from_store)
+        self.snapshot.content_digest(self.work)
     }
 }
 
@@ -280,10 +273,9 @@ impl<S: Theory> Population<S> {
         work: WorkContext,
     ) -> Result<Self> {
         let schema = schema.descriptor().validate()?;
-        let staging = Staging::begin(dest).map_err(Error::from_store)?;
-        store::store_env::init_directory(staging.path(), &schema, database, options)
-            .map_err(Error::from_store)?;
-        let store = Store::open(staging.path(), &schema, options).map_err(Error::from_store)?;
+        let staging = Staging::begin(dest)?;
+        store::store_env::init_directory(staging.path(), &schema, database, options)?;
+        let store = Store::open(staging.path(), &schema, options)?;
         Ok(Self {
             store,
             staging,
@@ -338,16 +330,14 @@ impl<S> Population<S> {
             }
             .into());
         }
-        let rows = from.snapshot.rows(old).map_err(Error::from_store)?;
-        let mut owner = self.store.writer(&self.work).map_err(Error::from_store)?;
-        let prepared = owner
-            .prepare_rows(new, &mut rows.map(|entry| entry.map(|(_, bytes)| bytes)))
-            .map_err(Error::from_store)?;
+        let rows = from.snapshot.rows(old)?;
+        let mut owner = self.store.writer(&self.work)?;
+        let prepared =
+            owner.prepare_rows(new, &mut rows.map(|entry| entry.map(|(_, bytes)| bytes)))?;
         let added = prepared.applied().added;
         prepared
             .seal(HostChanges::NONE)
-            .and_then(SealedWrite::commit)
-            .map_err(Error::from_store)?;
+            .and_then(SealedWrite::commit)?;
         Ok(added)
     }
 
@@ -355,15 +345,12 @@ impl<S> Population<S> {
     /// # Errors
     /// A foreign-schema change set, `Full`, storage failure or cancellation.
     pub fn apply(&mut self, changes: &ChangeSet) -> Result<Applied> {
-        let mut owner = self.store.writer(&self.work).map_err(Error::from_store)?;
-        let prepared = owner
-            .prepare_decided(std::slice::from_ref(changes))
-            .map_err(Error::from_store)?;
+        let mut owner = self.store.writer(&self.work)?;
+        let prepared = owner.prepare_decided(std::slice::from_ref(changes))?;
         let applied = prepared.applied();
         prepared
             .seal(HostChanges::NONE)
-            .and_then(SealedWrite::commit)
-            .map_err(Error::from_store)?;
+            .and_then(SealedWrite::commit)?;
         Ok(applied)
     }
 
@@ -379,9 +366,8 @@ impl<S> Population<S> {
             work,
             ..
         } = self;
-        let snapshot = store.snapshot(&work).map_err(Error::from_store)?;
-        let verdict = store::judge_bridge::judge_snapshot(&schema, &snapshot, &work)
-            .map_err(Error::from_store)?;
+        let snapshot = store.snapshot(&work)?;
+        let verdict = store::judge_bridge::judge_snapshot(&schema, &snapshot, &work)?;
         drop(snapshot);
         if let Some(judged) = verdict {
             return Ok(Admission::Rejected(
@@ -389,21 +375,18 @@ impl<S> Population<S> {
             ));
         }
         {
-            let mut owner = store.writer(&work).map_err(Error::from_store)?;
+            let mut owner = store.writer(&work)?;
             owner
                 .prepare_unchanged()
                 .and_then(|prepared| prepared.seal(host))
-                .and_then(SealedWrite::commit)
-                .map_err(Error::from_store)?;
+                .and_then(SealedWrite::commit)?;
         }
         let options = store::Options {
             map_ceiling: store.ceiling(),
             durability: store.durability(),
         };
         drop(store);
-        let published = staging
-            .publish(&schema, options)
-            .map_err(Error::from_store)?;
+        let published = staging.publish(&schema, options)?;
         let schema = Arc::try_unwrap(schema).unwrap_or_else(|shared| (*shared).clone());
         Ok(Admission::Accepted(Db::assemble(published, schema, work)?))
     }

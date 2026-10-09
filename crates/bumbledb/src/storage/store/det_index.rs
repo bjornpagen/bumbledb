@@ -7,7 +7,7 @@
 
 use bumbledb_theory::schema::{RelationId, StatementId};
 
-use super::error::{StoreError, StoreResult};
+use crate::error::{Error, Result};
 use crate::schema::compiled::{
     CompileError, CompiledProjection, CompiledTheory, DistinctnessWitness, KeyEncoding,
     MAX_EXACT_SCALAR_BYTES, ProjectionId, encode_scalar_group_into,
@@ -26,7 +26,7 @@ pub(crate) struct DeterminantTable {
 
 /// One emitted projection of a row: the compiled projection and its
 /// projected determinant bytes.
-pub(crate) type Emit<'a> = &'a mut dyn FnMut(&CompiledProjection, &[u8]) -> StoreResult<()>;
+pub(crate) type Emit<'a> = &'a mut dyn FnMut(&CompiledProjection, &[u8]) -> Result<()>;
 
 impl DeterminantTable {
     pub(crate) fn compile(schema: &Schema) -> Result<Self, CompileError> {
@@ -110,7 +110,7 @@ impl DeterminantTable {
         values: &[crate::Value],
         work: &WorkContext,
         emit: Emit<'_>,
-    ) -> StoreResult<()> {
+    ) -> Result<()> {
         for id in self.theory.projections_of_relation(relation) {
             let projection = self.theory.projection(*id).expect("indexed id");
             work.checkpoint()?;
@@ -119,7 +119,7 @@ impl DeterminantTable {
             let projected = match projection.encoding {
                 KeyEncoding::ExactBounded { .. } => projection
                     .encode_scalar_row(values, &mut exact)
-                    .ok_or(StoreError::ForeignSchema)?,
+                    .ok_or(Error::ForeignSchema)?,
                 KeyEncoding::FingerprintBucket => {
                     let scalars = projection.scalar_values(values);
                     fingerprinted = determinant_bytes(projection, &scalars, work)?;
@@ -171,14 +171,14 @@ pub(crate) fn determinant_bytes(
     projection: &CompiledProjection,
     values: &[crate::Value],
     work: &WorkContext,
-) -> StoreResult<DeterminantBytes> {
+) -> Result<DeterminantBytes> {
     match projection.encoding {
         KeyEncoding::ExactBounded { scalar_width } => {
             let mut bytes = [0; MAX_EXACT_SCALAR_BYTES];
             let encoded = encode_scalar_group_into(values, &projection.scalar_fields, &mut bytes)
-                .ok_or(StoreError::ForeignSchema)?;
+                .ok_or(Error::ForeignSchema)?;
             if encoded.len() != usize::from(scalar_width) {
-                return Err(StoreError::ForeignSchema);
+                return Err(Error::ForeignSchema);
             }
             Ok(DeterminantBytes::Exact {
                 bytes,
@@ -245,7 +245,7 @@ mod tests {
         projection.encoding = KeyEncoding::ExactBounded { scalar_width: 8 };
         assert_eq!(
             determinant_bytes(&projection, &[Value::Uuid(uuid)], &context).unwrap_err(),
-            StoreError::ForeignSchema
+            Error::ForeignSchema
         );
         projection.scalar_fields = Box::new([]);
         projection.encoding = KeyEncoding::ExactBounded { scalar_width: 0 };
@@ -307,7 +307,7 @@ mod tests {
         context.cancel();
         assert_eq!(
             determinant_bytes(&projection, &values, &context).unwrap_err(),
-            StoreError::from(RowError::Work(WorkError::Cancelled))
+            Error::from(RowError::Work(WorkError::Cancelled))
         );
         assert_eq!(
             second.as_slice(),
@@ -455,14 +455,14 @@ mod tests {
                     panic!("invalid shape must not reach sink")
                 })
                 .unwrap_err();
-            assert_eq!(error, StoreError::ForeignSchema);
+            assert_eq!(error, Error::ForeignSchema);
         }
         context.cancel();
         assert!(matches!(
             det.emit_decoded(RelationId(0), &[Value::U64(42)], &context, &mut |_, _| {
                 panic!("cancelled work must not reach sink")
             }),
-            Err(StoreError::Work(crate::WorkError::Cancelled))
+            Err(Error::Cancelled)
         ));
     }
 
@@ -677,7 +677,7 @@ mod tests {
             0..32,
             &mut |_| {
                 seen += 1;
-                Ok::<_, StoreError>(VisitControl::Sufficient)
+                Ok::<_, Error>(VisitControl::Sufficient)
             },
         )
         .expect("existence");
@@ -690,7 +690,7 @@ mod tests {
             0..32,
             &mut |_| {
                 seen += 1;
-                Ok::<_, StoreError>(VisitControl::Stop)
+                Ok::<_, Error>(VisitControl::Stop)
             },
         )
         .expect("stop");

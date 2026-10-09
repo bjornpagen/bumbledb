@@ -11,9 +11,9 @@
 
 use bumbledb_theory::schema::RelationId;
 
-use super::error::{StoreError, StoreResult};
 use super::format::{RowId, relation_word};
 use crate::error::CorruptionError;
+use crate::error::{Error, Result};
 use crate::schema::ProjectionId;
 
 pub(crate) const HOME_LEN: usize = 16;
@@ -26,11 +26,11 @@ pub(crate) const HOST_KEY_MAX: usize = 510;
 /// a fingerprint.
 pub(crate) type Route = [u8; HOME_LEN];
 
-pub(crate) fn padded(bytes: &[u8]) -> StoreResult<Route> {
+pub(crate) fn padded(bytes: &[u8]) -> Result<Route> {
     let mut route = [0; HOME_LEN];
     route
         .get_mut(..bytes.len())
-        .ok_or(StoreError::ForeignSchema)?
+        .ok_or(Error::ForeignSchema)?
         .copy_from_slice(bytes);
     Ok(route)
 }
@@ -49,7 +49,7 @@ pub(crate) fn entry(prefix: [u8; 2], route: &Route, row: RowId) -> [u8; KEY_LEN]
     key
 }
 
-pub(crate) fn row_prefix(relation: RelationId) -> StoreResult<[u8; 2]> {
+pub(crate) fn row_prefix(relation: RelationId) -> Result<[u8; 2]> {
     relation_word(relation)
 }
 
@@ -65,10 +65,10 @@ pub(crate) struct Parsed {
     pub(crate) row: RowId,
 }
 
-pub(crate) fn parse(key: &[u8]) -> StoreResult<Parsed> {
+pub(crate) fn parse(key: &[u8]) -> Result<Parsed> {
     let key: &[u8; KEY_LEN] = key
         .try_into()
-        .map_err(|_| StoreError::Corruption(CorruptionError::MalformedKey("physical key width")))?;
+        .map_err(|_| Error::Corruption(CorruptionError::MalformedKey("physical key width")))?;
     let (prefix, rest) = key.split_at(2);
     let (route, row) = rest.split_at(HOME_LEN);
     Ok(Parsed {

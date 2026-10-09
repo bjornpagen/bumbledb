@@ -20,10 +20,10 @@ use crate::work::WorkContext;
 use crate::{ChangeSet, Value};
 
 use super::candidate::{Candidate, Commit};
-use super::error::{StoreError, StoreResult};
 use super::format::DatabaseId;
 use super::host::{HostChanges, HostRecord};
 use super::store_env::{Options, Store};
+use crate::error::{Error, Result};
 
 mod candidate;
 mod ceiling;
@@ -134,7 +134,7 @@ pub(super) fn commit_changes(store: &Store, changes: &ChangeSet) -> Commit {
     try_commit_changes(store, changes).expect("committed changes")
 }
 
-pub(super) fn try_commit_changes(store: &Store, changes: &ChangeSet) -> StoreResult<Commit> {
+pub(super) fn try_commit_changes(store: &Store, changes: &ChangeSet) -> Result<Commit> {
     let context = work();
     let mut owner = store.writer(&context)?;
     owner
@@ -191,9 +191,9 @@ pub(super) fn small_ceiling() -> Options {
     }
 }
 
-pub(super) fn assert_full<T>(result: StoreResult<T>) {
+pub(super) fn assert_full<T>(result: Result<T>) {
     match result {
-        Err(StoreError::Full { .. }) => {}
+        Err(Error::Full { .. }) => {}
         Err(other) => panic!("expected Full, got {other:?}"),
         Ok(_) => panic!("expected Full, got success"),
     }
