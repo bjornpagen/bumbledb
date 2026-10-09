@@ -208,7 +208,7 @@ fn random_noise_never_decodes_into_a_panic() {
         let mut bytes: Vec<u8> = (0..len).map(|_| rng.next().to_be_bytes()[0]).collect();
         if round % 2 == 0 {
             // Keep a valid header so the noise reaches the field decoders.
-            let header = valid.len().min(22);
+            let header = valid.len().min(30);
             bytes.splice(0..0, valid[..header].iter().copied());
         }
         let _ = Entry::parse(&schema, &bytes);
@@ -222,14 +222,15 @@ fn random_noise_never_decodes_into_a_panic() {
 fn giant_counts_are_refused_before_allocating() {
     let schema = schema();
     let mut bytes = entries(&schema)[1].encode();
-    // magic(4) kind(1) nonce(16) tag(1), then the command count.
-    bytes[22..26].copy_from_slice(&u32::MAX.to_be_bytes());
+    // The family tag, the nonce and the body tag, then the command count.
+    let count = b"bdb.entry.v1\0".len() + 16 + 1;
+    bytes[count..count + 4].copy_from_slice(&u32::MAX.to_be_bytes());
     assert_eq!(
         Entry::parse(&schema, &bytes).err(),
         Some(FrameError::Length)
     );
     let mut empty = entries(&schema)[1].encode();
-    empty.truncate(22);
+    empty.truncate(count);
     empty.extend_from_slice(&0u32.to_be_bytes());
     assert_eq!(Entry::parse(&schema, &empty).err(), Some(FrameError::Value));
 }

@@ -1,27 +1,34 @@
-//! The one binary frame codec for every log artifact: a 4-byte magic naming
-//! this format, a kind byte, then big-endian fields. Decoding is total: any
-//! byte string yields a value or a [`FrameError`], never a panic, and a
+//! The one binary frame codec for every log artifact: a family tag naming
+//! the artifact and its format, then big-endian fields. Decoding is total:
+//! any byte string yields a value or a [`FrameError`], never a panic, and a
 //! decoded frame re-encodes to the same bytes.
 
 use bumbledb::ChangeError;
 
-const MAGIC: [u8; 4] = *b"BDL\x01";
-
-/// What a frame holds. The kind byte follows the magic.
+/// What a frame holds, named by its family tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    Entry = 1,
-    Command = 2,
-    Receipt = 3,
-    Head = 4,
+    Entry,
+    Command,
+    Receipt,
+    Head,
+}
+
+impl Kind {
+    const fn tag(self) -> &'static [u8] {
+        match self {
+            Self::Entry => b"bdb.entry.v1\0",
+            Self::Command => b"bdb.command.v1\0",
+            Self::Receipt => b"bdb.receipt.v1\0",
+            Self::Head => b"bdb.head.v1\0",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {
-    /// The bytes are not a frame of this format.
-    Magic,
-    /// A frame of another kind.
-    Kind(u8),
+    /// The bytes do not start with the expected family tag.
+    Family,
     /// An unknown variant tag.
     Tag(u8),
     Truncated,
@@ -55,8 +62,7 @@ pub(crate) struct Writer(Vec<u8>);
 impl Writer {
     pub(crate) fn new(kind: Kind) -> Self {
         let mut bytes = Vec::with_capacity(64);
-        bytes.extend_from_slice(&MAGIC);
-        bytes.push(kind as u8);
+        bytes.extend_from_slice(kind.tag());
         Self(bytes)
     }
 
@@ -102,14 +108,7 @@ pub(crate) struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     pub(crate) fn new(bytes: &'a [u8], kind: Kind) -> Result<Self, FrameError> {
-        let (magic, rest) = bytes.split_first_chunk::<4>().ok_or(FrameError::Magic)?;
-        if *magic != MAGIC {
-            return Err(FrameError::Magic);
-        }
-        let (&found, rest) = rest.split_first().ok_or(FrameError::Truncated)?;
-        if found != kind as u8 {
-            return Err(FrameError::Kind(found));
-        }
+        let rest = bytes.strip_prefix(kind.tag()).ok_or(FrameError::Family)?;
         Ok(Self { rest })
     }
 

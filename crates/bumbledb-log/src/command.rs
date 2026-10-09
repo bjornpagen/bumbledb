@@ -5,7 +5,7 @@ use bumbledb::{ChangeSet, Schema, WorkContext};
 use crate::frame::{FrameError, Kind, Reader, Writer};
 use crate::ids::{CommandDigest, RequestId, Revision};
 
-const DIGEST_CONTEXT: &str = "bumbledb-log 2026-10 command digest";
+const DIGEST_CONTEXT: &str = "bdb.command.v1 digest";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Precondition {

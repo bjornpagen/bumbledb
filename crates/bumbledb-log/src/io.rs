@@ -91,8 +91,8 @@ pub fn log_key(seq: Seq) -> String {
 
 pub const CHECKPOINT_PREFIX: &str = "ckpt/";
 
-/// `ckpt/{u64::MAX - seq}-{schema}-{digest}`: a lexicographic LIST returns
-/// the newest checkpoint first.
+/// `ckpt/{u64::MAX - seq}-{schema}-{digest}.bdb`: a lexicographic LIST
+/// returns the newest checkpoint first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CheckpointKey {
     pub seq: Seq,
@@ -104,7 +104,7 @@ impl CheckpointKey {
     #[must_use]
     pub fn format(&self) -> String {
         format!(
-            "{CHECKPOINT_PREFIX}{:020}-{}-{}",
+            "{CHECKPOINT_PREFIX}{:020}-{}-{}.bdb",
             u64::MAX - self.seq.get(),
             hex(&self.schema.0),
             hex(&self.digest.0)
@@ -113,7 +113,7 @@ impl CheckpointKey {
 
     #[must_use]
     pub fn parse(key: &str) -> Option<Self> {
-        let rest = key.strip_prefix(CHECKPOINT_PREFIX)?;
+        let rest = key.strip_prefix(CHECKPOINT_PREFIX)?.strip_suffix(".bdb")?;
         let mut parts = rest.split('-');
         let inverted = parts.next()?;
         let schema = unhex(parts.next()?)?;
@@ -134,7 +134,7 @@ impl CheckpointKey {
 /// Where a migration's image lives, named by its content.
 #[must_use]
 pub fn image_key(digest: ImageDigest) -> String {
-    format!("mig/{}", hex(&digest.0))
+    format!("mig/{}.bdb", hex(&digest.0))
 }
 
 fn hex(bytes: &[u8]) -> String {

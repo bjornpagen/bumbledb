@@ -19,7 +19,7 @@ use crate::io::{
 use crate::receipt::Receipt;
 use crate::replica::{CacheError, Image, Judgment, Migrated, Population, Replica, Update};
 
-const NONCE_CONTEXT: &str = "bumbledb-log 2026-10 entry nonce";
+const NONCE_CONTEXT: &str = "bdb.entry.v1 nonce";
 /// Encoded bytes of one decided command besides its changes.
 const DECIDED_OVERHEAD: usize = 128;
 
