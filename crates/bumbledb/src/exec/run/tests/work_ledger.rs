@@ -35,48 +35,39 @@ fn sibling_width_batch_preserves_first_refusal_and_successful_prefix() {
             let mut executor = Executor::new(&plan);
             let sentinel = Cursor::Row(u32::MAX);
             let mut scratch = NodeScratch {
-                // Survivors are deliberately not element-ordered.
-                survivors: vec![2, 0, 1, 3],
+                batch: BatchBuffers {
+                    // Survivors are deliberately not element-ordered.
+                    survivors: vec![2, 0, 1, 3],
+                    probe_keys: vec![first_key, u64::MAX, first_key, first_key],
+                    hashes: [first_key, u64::MAX, first_key, first_key]
+                        .map(|key| crate::exec::colt::hash_key(&[key]))
+                        .to_vec(),
+                    mask: vec![9; 4],
+                    ..BatchBuffers::default()
+                },
                 parents: vec![0, 1, 2, 3],
                 pending_cursors: vec![Cursor::Row(0), Colt::root(), Cursor::Row(0), Cursor::Row(0)],
-                probe_keys: vec![first_key, u64::MAX, first_key, first_key],
-                hashes: [first_key, u64::MAX, first_key, first_key]
-                    .map(|key| crate::exec::colt::hash_key(&[key]))
-                    .to_vec(),
                 children: vec![vec![sentinel; if children { 4 } else { 0 }]],
-                mask: vec![9; 4],
                 ..NodeScratch::default()
+            };
+            let probe = SiblingProbe {
+                node: 0,
+                sub: 0,
+                level: 0,
+                arity: 1,
+                cursor: ProbeCursor::Carried {
+                    column: 0,
+                    width: 1,
+                },
             };
             let mut counters = Probes::default();
             if fixed {
-                executor.probe_sibling_batch::<1, _>(
-                    &mut scratch,
-                    &mut colt,
-                    0,
-                    0,
-                    0,
-                    Some(0),
-                    1,
-                    Colt::root(),
-                    1,
-                    &mut counters,
-                );
+                executor.probe_sibling_batch::<1, _>(&mut scratch, &mut colt, probe, &mut counters);
             } else {
-                executor.probe_sibling_batch::<0, _>(
-                    &mut scratch,
-                    &mut colt,
-                    0,
-                    0,
-                    0,
-                    Some(0),
-                    1,
-                    Colt::root(),
-                    1,
-                    &mut counters,
-                );
+                executor.probe_sibling_batch::<0, _>(&mut scratch, &mut colt, probe, &mut counters);
             }
             assert_eq!(counters.0, vec![true, false]);
-            assert_eq!(scratch.mask, vec![1, 0, 9, 9]);
+            assert_eq!(scratch.batch.mask, vec![1, 0, 9, 9]);
             assert_eq!(
                 scratch.children[0],
                 if children {
@@ -86,7 +77,7 @@ fn sibling_width_batch_preserves_first_refusal_and_successful_prefix() {
                 },
                 "misses and presence-only probes never write child output"
             );
-            assert_eq!(scratch.survivors, vec![2, 0, 1, 3]);
+            assert_eq!(scratch.batch.survivors, vec![2, 0, 1, 3]);
             assert!(colt.forced_capacity(Colt::root()).is_none());
             let DriveState::Poisoned(Poison::Work(error)) = executor.drive_state else {
                 panic!("force refusal must poison the executor");

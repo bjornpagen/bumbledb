@@ -2,7 +2,7 @@
 //! or abutting intervals and one side is constant for the current binding,
 //! a per-key directory narrows the cover positions to a candidate window.
 //! The ordinary residual pass still checks every candidate exactly.
-use super::{Bindings, Colt, Cursor, Executor, Source, ValidatedPlan};
+use super::{Bindings, Colt, CoverAt, Cursor, Executor, Source, ValidatedPlan};
 use crate::exec::colt::SuffixRun;
 use crate::image::ColumnView;
 use crate::interval::overlap::Probe;
@@ -23,13 +23,16 @@ impl Executor {
         &mut self,
         plan: &ValidatedPlan,
         node_idx: usize,
-        cover_occ: usize,
-        cover_cursor: Cursor,
-        cover_level: usize,
+        cover: CoverAt,
         colt: &Colt,
         bindings: &Bindings,
         allen_sources: &[(Source, Source)],
     ) -> bool {
+        let CoverAt {
+            occ: cover_occ,
+            cursor: cover_cursor,
+            level: cover_level,
+        } = cover;
         let mut driver: Option<(usize, u64, u64)> = None;
         for (r_idx, (lhs, rhs)) in allen_sources.iter().enumerate() {
             let ((Source::Batch(word), Source::Slot(slot))

@@ -219,7 +219,6 @@ impl<S> PreparedQuery<S> {
             &ctx,
             &mut RuleScratch {
                 bindings: &mut self.runtime.bindings,
-                key_scratch: &mut self.runtime.key_scratch,
                 occ_images: &occ_images,
                 retired: &mut retired,
             },
@@ -254,19 +253,20 @@ impl<S> PreparedQuery<S> {
             }
             None => crate::image::intern::InternerHandle::without_text(source.work()),
         };
-        let row = &mut rule.row;
         let hit = crate::exec::dispatch::key_probe_row(
             key_probe,
-            source,
-            self.program.schema.as_ref(),
-            &interner,
-            &self.bound.resolved_params,
-            row,
-            &mut self.runtime.key_scratch,
+            crate::exec::dispatch::ProbeCtx {
+                source,
+                schema: self.program.schema.as_ref(),
+                interner: &interner,
+                params: &self.bound.resolved_params,
+            },
+            &mut rule.probe,
         )?;
         if !hit {
             return Ok(());
         }
+        let row = &rule.probe.row;
         out.cells.reserve(key_probe_finds.len());
         for (field, ty) in key_probe_finds {
             let words = row.span_words(*field);

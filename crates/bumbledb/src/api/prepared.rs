@@ -307,7 +307,6 @@ struct Runtime {
     bindings: Bindings,
     answer_scratch: Vec<u64>,
     resolve_memo: ResolveMemo,
-    key_scratch: crate::image::view::ResolvedWords,
     #[cfg(test)]
     last_visits: usize,
 }
@@ -336,7 +335,7 @@ pub(crate) enum PreparedPipeline {
     /// variable finds. The arm stores [`KeyProbeRule`] so a
     /// [`PreparedRule::FreeJoin`] is unrepresentable.
     PointProbe {
-        rule: KeyProbeRule,
+        rule: Box<KeyProbeRule>,
         finds: Vec<(bumbledb_theory::schema::FieldId, ValueType)>,
     },
     Cq {
@@ -449,10 +448,8 @@ pub(crate) struct FreeJoinRule {
 
 pub(crate) struct KeyProbeRule {
     plan: KeyProbePlan,
-    /// Fixed-schema decoded row scratch, shared by the direct and sink
-    /// paths. Every candidate decode replaces its words, including after
-    /// a miss or failed execution; no row contents are memoized.
-    row: crate::image::canon::RowWords,
+    /// Shared by the direct and sink paths.
+    probe: crate::exec::dispatch::ProbeBuffers,
     distinct_witness: Option<crate::plan::fj::DistinctWitness>,
     finds: Vec<FindSpec>,
     /// As [`FreeJoinRule::dedup_spans`] — the R2 shared-slot key over
@@ -516,11 +513,11 @@ impl<S> PreparedQuery<S> {
         self.runtime.derived = reach::DerivedImages::default();
         self.visit_rules_mut(|rule| match rule {
             PreparedRule::FreeJoin(rule) => rule.release_memory(),
-            PreparedRule::KeyProbe(rule) => rule.row.release_memory(),
+            PreparedRule::KeyProbe(rule) => rule.probe.release_memory(),
         });
         self.visit_rec_arms_mut(FreeJoinRule::release_memory);
         match &mut self.pipeline {
-            PreparedPipeline::PointProbe { rule, .. } => rule.row.release_memory(),
+            PreparedPipeline::PointProbe { rule, .. } => rule.probe.release_memory(),
             PreparedPipeline::Cq { interiors, .. } => {
                 for interior in interiors {
                     interior.sink.release_memory();
@@ -540,7 +537,6 @@ impl<S> PreparedQuery<S> {
         self.runtime.bindings = Bindings::new(0);
         self.runtime.answer_scratch = Vec::new();
         self.runtime.resolve_memo = ResolveMemo::new();
-        self.runtime.key_scratch = crate::image::view::ResolvedWords::default();
         self.bound.resolved_params = Vec::new();
         self.bound.param_word_memo = Vec::new();
         self.bound.missed_params = Vec::new();

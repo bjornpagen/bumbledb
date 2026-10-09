@@ -244,7 +244,6 @@ impl<S> PreparedQuery<S> {
                         &ctx,
                         &mut RuleScratch {
                             bindings: &mut self.runtime.bindings,
-                            key_scratch: &mut self.runtime.key_scratch,
                             occ_images: &occ_images,
                             retired: &mut retired,
                         },
@@ -284,7 +283,6 @@ impl<S> PreparedQuery<S> {
                     rec_id,
                     &mut self.runtime.derived,
                     &mut self.runtime.bindings,
-                    &mut self.runtime.key_scratch,
                     &mut self.runtime.execution_texts,
                     counters,
                 )?
@@ -311,7 +309,6 @@ fn run_reach<Cnt: Counters>(
     rec_id: usize,
     derived: &mut DerivedImages,
     bindings: &mut Bindings,
-    key_scratch: &mut crate::image::view::ResolvedWords,
     retained_texts: &mut crate::image::TextOwners,
     counters: &mut Cnt,
 ) -> Result<bool> {
@@ -341,7 +338,6 @@ fn run_reach<Cnt: Counters>(
             ctx,
             &mut RuleScratch {
                 bindings,
-                key_scratch,
                 occ_images: &derived.occ_images,
                 retired: &mut derived.retired,
             },
@@ -386,7 +382,6 @@ fn run_reach<Cnt: Counters>(
                 ctx,
                 &mut RuleScratch {
                     bindings,
-                    key_scratch,
                     occ_images: &derived.occ_images,
                     retired: &mut derived.retired,
                 },

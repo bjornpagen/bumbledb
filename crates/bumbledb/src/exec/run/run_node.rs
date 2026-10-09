@@ -1,49 +1,48 @@
 //! The leaf pass over one node's cover batch (single-node and last-node).
 use super::anti_probe::anti_probe_pass;
+use super::filter::{allen_pass, gather_probe_keys, residual_pass, resolve_points};
 use super::{
-    BatchToken, Bindings, Colt, Counters, Cursor, Executor, Flow, KeyCount, LeafBatch, NodeScratch,
-    Sink, Source, ValidatedPlan, better_cover, grow_scratch,
+    BatchToken, Colt, Counters, CoverAt, Cursor, Executor, Flow, JoinCtx, KeyCount, LeafBatch,
+    LeafRows, NodeScratch, ProbeCursor, SiblingProbe, Sink, ValidatedPlan, better_cover,
+    grow_scratch,
 };
 
 impl Executor {
     pub(super) fn run_node<S: Sink, C: Counters>(
         &mut self,
-        plan: &ValidatedPlan,
+        cx: &mut JoinCtx<'_, S, C>,
         node_idx: usize,
         scratch: &mut NodeScratch,
-        colts: &mut [Colt],
-        bindings: &mut Bindings,
-        sink: &mut S,
-        counters: &mut C,
     ) -> Flow {
+        let plan = cx.plan;
         assert!(
             node_idx + 1 == plan.nodes().len(),
             "run_node is the leaf pass; middle nodes pump"
         );
 
         if matches!(self.leaf, super::LeafPrecompute::Fast { .. })
-            && let Some(flow) = self.run_leaf_fast(plan, node_idx, colts, bindings, sink, counters)
+            && let Some(flow) = self.run_leaf_fast(cx, node_idx)
         {
             return flow;
         }
-        counters.node_entry(node_idx);
+        cx.counters.node_entry(node_idx);
 
-        let cover_sub = self.choose_cover(plan, node_idx, colts);
+        let cover_sub = self.choose_cover(plan, node_idx, cx.colts);
         let node = &plan.nodes()[node_idx];
         let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
         let (cover_cursor, cover_level) = self.cursors[cover_occ];
         if S::may_use_distinct_traversal()
             && self.physical_distinct.is_some()
             && self
-                .colt_ok(colts[cover_occ].force_distinct_iteration(cover_cursor, cover_level))
+                .colt_ok(cx.colts[cover_occ].force_distinct_iteration(cover_cursor, cover_level))
                 .is_none()
         {
             return Flow::Error;
         }
-        counters.cover_choice(
+        cx.counters.cover_choice(
             node_idx,
             cover_sub,
-            colts[cover_occ].key_count(cover_cursor),
+            cx.colts[cover_occ].key_count(cover_cursor),
         );
 
         let arity = self.slot_map[node_idx][cover_sub].len();
@@ -52,7 +51,7 @@ impl Executor {
         let needs_children = !scratch.children[cover_sub].is_empty();
 
         let gate_cover = arity == 0 && !self.point_probed[cover_occ];
-        scratch.prepare_sources(
+        scratch.layout.prepare(
             &self.slot_map[node_idx],
             &self.precompute[node_idx],
             cover_sub,
@@ -61,12 +60,14 @@ impl Executor {
         let overlap = self.overlap_enumerate(
             plan,
             node_idx,
-            cover_occ,
-            cover_cursor,
-            cover_level,
-            &colts[cover_occ],
-            bindings,
-            &scratch.allen_sources,
+            CoverAt {
+                occ: cover_occ,
+                cursor: cover_cursor,
+                level: cover_level,
+            },
+            &cx.colts[cover_occ],
+            cx.bindings,
+            &scratch.layout.allen_sources,
         );
         let mut overlap_drained = 0usize;
 
@@ -77,7 +78,7 @@ impl Executor {
             let (yielded, next_token) = if overlap {
                 let take = (self.overlap_hits.len() - overlap_drained).min(self.batch);
                 super::overlap_leaf::overlap_gather(
-                    &colts[cover_occ],
+                    &cx.colts[cover_occ],
                     cover_level,
                     arity,
                     &self.overlap_hits[overlap_drained..overlap_drained + take],
@@ -89,7 +90,7 @@ impl Executor {
             } else {
                 let max = if gate_cover { 1 } else { self.batch };
                 let batch = if needs_children {
-                    colts[cover_occ].iter_batch(
+                    cx.colts[cover_occ].iter_batch(
                         cover_cursor,
                         cover_level,
                         token,
@@ -98,7 +99,7 @@ impl Executor {
                         max,
                     )
                 } else {
-                    colts[cover_occ].iter_keys_batch(
+                    cx.colts[cover_occ].iter_keys_batch(
                         cover_cursor,
                         cover_level,
                         token,
@@ -114,250 +115,147 @@ impl Executor {
             if yielded == 0 {
                 break;
             }
-            counters.batch(node_idx, yielded);
+            cx.counters.batch(node_idx, yielded);
             token = next_token;
             // Poll cancellation during exploration, even when no row
             // survives to the sink.
             if !self.note_explored(yielded) {
                 break 'outer;
             }
-            scratch.survivors.clear();
+            scratch.batch.survivors.clear();
             scratch
+                .batch
                 .survivors
                 .extend(0..u32::try_from(yielded).expect("batch fits u32"));
 
+            let rows = LeafRows {
+                keys: &scratch.entry_keys,
+                arity,
+                bindings: cx.bindings,
+            };
+            let pre = &self.precompute[node_idx];
             // Reject comparison failures before probing sibling tries.
-
-            for (r_idx, (lhs_src, rhs_src)) in scratch.residual_sources.iter().enumerate() {
-                let spec = &self.precompute[node_idx].residual_slots[r_idx];
-                let n = scratch.survivors.len();
-                grow_scratch(&mut scratch.mask, n);
-                for k in 0..n {
-                    let e = scratch.survivors[k];
-                    let entry = usize::try_from(e).expect("batch fits usize");
-                    let value = |src: &Source, offset: usize| match *src {
-                        Source::Batch(word) => scratch.entry_keys[entry * arity + word + offset],
-                        Source::Slot(slot) => bindings.get(slot + offset),
-                    };
-                    let pass = super::compare_wide(
-                        spec.op,
-                        spec.width,
-                        |offset| value(lhs_src, offset),
-                        |offset| value(rhs_src, offset),
-                    );
-                    counters.residual(node_idx, pass);
-                    scratch.mask[k] = u8::from(pass);
-                }
-                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
-            }
-
-            for (r_idx, (lhs_src, rhs_src)) in scratch.allen_sources.iter().enumerate() {
-                let mask = self.precompute[node_idx].allen_residual_slots[r_idx].mask;
-                let n = scratch.survivors.len();
-                let filter_mask = match (*lhs_src, *rhs_src) {
-                    (Source::Batch(lw), Source::Batch(rw)) => {
-                        grow_scratch(&mut scratch.allen_gather, 4 * n);
-                        let (a_starts, rest) = scratch.allen_gather[..4 * n].split_at_mut(n);
-                        let (a_ends, rest) = rest.split_at_mut(n);
-                        let (b_starts, b_ends) = rest.split_at_mut(n);
-                        for (k, &e) in scratch.survivors[..n].iter().enumerate() {
-                            let entry = usize::try_from(e).expect("batch fits usize");
-                            a_starts[k] = scratch.entry_keys[entry * arity + lw];
-                            a_ends[k] = scratch.entry_keys[entry * arity + lw + 1];
-                            b_starts[k] = scratch.entry_keys[entry * arity + rw];
-                            b_ends[k] = scratch.entry_keys[entry * arity + rw + 1];
-                        }
-                        crate::exec::kernel::allen_code_batch(
-                            a_starts,
-                            a_ends,
-                            b_starts,
-                            b_ends,
-                            &mut scratch.allen_codes,
-                        );
-                        Some(mask)
-                    }
-                    (Source::Batch(word), Source::Slot(slot)) => {
-                        allen_classify_const(
-                            &scratch.survivors[..n],
-                            &scratch.entry_keys,
-                            arity,
-                            word,
-                            (bindings.get(slot), bindings.get(slot + 1)),
-                            &mut scratch.allen_gather,
-                            &mut scratch.allen_codes,
-                        );
-                        Some(mask)
-                    }
-                    (Source::Slot(slot), Source::Batch(word)) => {
-                        allen_classify_const(
-                            &scratch.survivors[..n],
-                            &scratch.entry_keys,
-                            arity,
-                            word,
-                            (bindings.get(slot), bindings.get(slot + 1)),
-                            &mut scratch.allen_gather,
-                            &mut scratch.allen_codes,
-                        );
-                        Some(mask.converse())
-                    }
-                    (Source::Slot(ls), Source::Slot(rs)) => {
-                        let code = crate::allen::classify_bounds(
-                            &bindings.get(ls),
-                            &bindings.get(ls + 1),
-                            &bindings.get(rs),
-                            &bindings.get(rs + 1),
-                        );
-                        scratch.mask.clear();
-                        scratch.mask.resize(n, u8::from(mask.contains(code)));
-                        None
-                    }
-                };
-                if let Some(filter_mask) = filter_mask {
-                    crate::exec::kernel::allen_filter_batch(
-                        &scratch.allen_codes,
-                        filter_mask,
-                        &mut scratch.mask,
-                    );
-                }
-                for &keep in &scratch.mask[..n] {
-                    counters.residual(node_idx, keep != 0);
-                }
-                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
-            }
+            residual_pass(
+                &pre.residual_slots,
+                &scratch.layout.residual_sources,
+                &rows,
+                &mut scratch.batch,
+                node_idx,
+                cx.counters,
+            );
+            allen_pass(
+                &pre.allen_residual_slots,
+                &scratch.layout.allen_sources,
+                &rows,
+                &mut scratch.batch,
+                node_idx,
+                cx.counters,
+            );
 
             // Probe siblings only for bindings that survived the residuals.
-
-            let value_of = |sources: &[Source],
-                            entry_keys: &[u64],
-                            bindings: &Bindings,
-                            entry: usize,
-                            i: usize| match sources[i] {
-                Source::Batch(word) => entry_keys[entry * arity + word],
-                Source::Slot(slot) => bindings.get(slot),
-            };
-            for sub_idx in 0..plan.nodes()[node_idx].subatoms.len() {
-                if sub_idx == cover_sub || scratch.survivors.is_empty() {
+            for sub_idx in 0..node.subatoms.len() {
+                if sub_idx == cover_sub || scratch.batch.survivors.is_empty() {
                     continue;
                 }
-                let subatom = &plan.nodes()[node_idx].subatoms[sub_idx];
                 let sub_arity = self.slot_map[node_idx][sub_idx].len();
-                let occ = usize::from(subatom.occ.0);
+                let occ = usize::from(node.subatoms[sub_idx].occ.0);
                 let (s_cursor, s_level) = self.cursors[occ];
                 if self
-                    .colt_ok(colts[occ].ensure_forced(s_cursor, s_level))
+                    .colt_ok(cx.colts[occ].ensure_forced(s_cursor, s_level))
                     .is_none()
                 {
                     break 'outer;
                 }
 
                 let pinned = matches!(s_cursor, Cursor::Row(_));
-                let n = scratch.survivors.len();
-
-                grow_scratch(&mut scratch.hashes, n);
-
-                {
-                    let survivors = &scratch.survivors[..n];
-                    let entry_keys = &scratch.entry_keys[..];
-                    let sources = &scratch.sources[sub_idx];
-                    let probe_keys = &mut scratch.probe_keys[..n * sub_arity.max(1)];
-                    let hashes = &mut scratch.hashes[..n];
-                    for (k, &e) in survivors.iter().enumerate() {
-                        let entry = usize::try_from(e).expect("batch fits usize");
-                        for i in 0..sub_arity {
-                            probe_keys[k * sub_arity + i] =
-                                value_of(sources, entry_keys, bindings, entry, i);
-                        }
-                        if !pinned {
-                            counters.probe_hash(node_idx, sub_idx);
-                            hashes[k] = crate::exec::colt::hash_key(
-                                &probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                            );
-                        }
+                let n = scratch.batch.survivors.len();
+                grow_scratch(&mut scratch.batch.hashes, n);
+                gather_probe_keys(
+                    &LeafRows {
+                        keys: &scratch.entry_keys,
+                        arity,
+                        bindings: cx.bindings,
+                    },
+                    &scratch.layout.sources[sub_idx],
+                    &scratch.batch.survivors,
+                    &mut scratch.batch.probe_keys[..n * sub_arity.max(1)],
+                    &mut scratch.batch.hashes[..n],
+                    !pinned,
+                );
+                if !pinned {
+                    for _ in 0..n {
+                        cx.counters.probe_hash(node_idx, sub_idx);
                     }
                 }
 
-                counters.probe_batch(node_idx, sub_idx, n);
-                grow_scratch(&mut scratch.mask, n);
+                cx.counters.probe_batch(node_idx, sub_idx, n);
+                grow_scratch(&mut scratch.batch.mask, n);
                 self.probe_sibling_batch::<0, C>(
                     scratch,
-                    &mut colts[occ],
-                    node_idx,
-                    sub_idx,
-                    s_level,
-                    None,
-                    0,
-                    s_cursor,
-                    sub_arity,
-                    counters,
+                    &mut cx.colts[occ],
+                    SiblingProbe {
+                        node: node_idx,
+                        sub: sub_idx,
+                        level: s_level,
+                        arity: sub_arity,
+                        cursor: ProbeCursor::Shared(s_cursor),
+                    },
+                    cx.counters,
                 );
                 if !matches!(self.drive_state, super::DriveState::Running) {
                     break 'outer;
                 }
-                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+                crate::exec::kernel::compact_u32_by_mask(
+                    &mut scratch.batch.survivors,
+                    &scratch.batch.mask,
+                );
             }
 
+            let rows = LeafRows {
+                keys: &scratch.entry_keys,
+                arity,
+                bindings: cx.bindings,
+            };
             // Only surviving sibling matches need interval membership checks.
-
             for (spec, point_sources) in self.precompute[node_idx]
                 .point_probes
                 .iter()
-                .zip(&scratch.point_sources)
+                .zip(&scratch.layout.point_sources)
             {
-                let sub_idx = plan.nodes()[node_idx]
+                let sub_idx = node
                     .subatoms
                     .iter()
                     .position(|sub| usize::from(sub.occ.0) == spec.occ);
-                let n = scratch.survivors.len();
-                grow_scratch(&mut scratch.mask, n);
+                let buf = &mut scratch.batch;
+                let n = buf.survivors.len();
+                grow_scratch(&mut buf.mask, n);
                 for k in 0..n {
-                    let e = scratch.survivors[k];
-                    let entry = usize::try_from(e).expect("batch fits usize");
-                    scratch.point_checks.clear();
-                    for &(start_col, end_col, src, dense) in point_sources {
-                        let point = match src {
-                            Source::Batch(base) => scratch.entry_keys[entry * arity + base],
-                            Source::Slot(slot) => bindings.get(slot),
-                        };
-                        // The dense finite-probe guard: nonfinite F64
-                        // probe words are ordinary nonmatches.
-                        let point = if dense {
-                            crate::image::view::dense_probe_word(point)
-                        } else {
-                            point
-                        };
-                        scratch.point_checks.push((start_col, end_col, point));
-                    }
+                    let entry = buf.survivors[k] as usize;
+                    resolve_points(&rows, entry, point_sources, &mut buf.point_checks);
                     let cursor = sub_idx.map_or(self.cursors[spec.occ].0, |sub_idx| {
                         scratch.children[sub_idx][entry]
                     });
-                    let pass = colts[spec.occ].any_position_matches(cursor, &scratch.point_checks);
-                    counters.residual(node_idx, pass);
-                    scratch.mask[k] = u8::from(pass);
+                    let pass = cx.colts[spec.occ].any_position_matches(cursor, &buf.point_checks);
+                    cx.counters.residual(node_idx, pass);
+                    buf.mask[k] = u8::from(pass);
                 }
-                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+                crate::exec::kernel::compact_u32_by_mask(&mut buf.survivors, &buf.mask);
             }
 
             if let Err(error) = anti_probe_pass(
                 &self.precompute[node_idx].anti_probes,
+                &scratch.layout,
+                &rows,
+                &mut scratch.batch,
+                cx.colts,
                 node_idx,
-                arity,
-                colts,
-                &scratch.entry_keys,
-                &mut scratch.survivors,
-                &mut scratch.probe_keys,
-                &mut scratch.hashes,
-                &mut scratch.mask,
-                &scratch.anti_sources,
-                &mut scratch.point_checks,
-                &scratch.anti_point_sources,
-                |_, slot| bindings.get(slot),
-                counters,
+                cx.counters,
             ) {
                 self.poison(super::Poison::Work(error));
                 break 'outer;
             }
 
-            if scratch.survivors.is_empty() {
+            if scratch.batch.survivors.is_empty() {
                 if gate_cover {
                     break;
                 }
@@ -366,20 +264,19 @@ impl Executor {
             let batch = LeafBatch {
                 keys: &scratch.entry_keys,
                 arity,
-                survivors: &scratch.survivors,
+                survivors: &scratch.batch.survivors,
                 key_slots: &self.slot_map[node_idx][cover_sub],
-                bindings,
+                bindings: cx.bindings,
             };
-            let batch_flow =
-                super::emit_node_batch(sink, plan.nodes()[node_idx].suffix_skip, &batch);
+            let batch_flow = super::emit_node_batch(cx.sink, node.suffix_skip, &batch);
 
             let emitted = if batch_flow == Flow::SkipSuffix {
                 1
             } else {
-                scratch.survivors.len()
+                scratch.batch.survivors.len()
             };
             for _ in 0..emitted {
-                counters.emit();
+                cx.counters.emit();
             }
             if batch_flow.is_terminal() {
                 self.poison(match batch_flow {
@@ -391,10 +288,10 @@ impl Executor {
             }
             if batch_flow == Flow::SkipSuffix {
                 debug_assert!(
-                    sink.skip_capability() == super::SkipCapability::Licensed,
+                    cx.sink.skip_capability() == super::SkipCapability::Licensed,
                     "a SkipSuffix crossed a node under a non-skipping sink"
                 );
-                counters.skip(node_idx);
+                cx.counters.skip(node_idx);
                 flow = Flow::SkipSuffix;
                 break 'outer;
             }
@@ -423,24 +320,4 @@ impl Executor {
         }
         best.expect("validated plans have non-empty cover sets").0
     }
-}
-
-fn allen_classify_const(
-    survivors: &[u32],
-    entry_keys: &[u64],
-    arity: usize,
-    word: usize,
-    (b_start, b_end): (u64, u64),
-    gather: &mut Vec<u64>,
-    codes: &mut Vec<u8>,
-) {
-    let n = survivors.len();
-    grow_scratch(gather, 2 * n);
-    let (starts, ends) = gather[..2 * n].split_at_mut(n);
-    for (k, &e) in survivors.iter().enumerate() {
-        let entry = usize::try_from(e).expect("batch fits usize");
-        starts[k] = entry_keys[entry * arity + word];
-        ends[k] = entry_keys[entry * arity + word + 1];
-    }
-    crate::exec::kernel::allen_code_batch_const(starts, ends, b_start, b_end, codes);
 }

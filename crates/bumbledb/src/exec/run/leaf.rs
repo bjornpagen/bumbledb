@@ -1,44 +1,37 @@
 //! Leaf dispatch: a pinned row or a fused suffix scan.
-use super::{
-    Bindings, Colt, Counters, Cursor, Executor, Flow, LeafBatch, Sink, Source, ValidatedPlan,
-};
+use super::{Counters, Cursor, Executor, Flow, JoinCtx, LeafBatch, Sink, Source};
 
 impl Executor {
     /// Use a pinned row or a directly scannable suffix when the sink permits it.
     pub(super) fn run_leaf_fast<S: Sink, C: Counters>(
         &mut self,
-        plan: &ValidatedPlan,
+        cx: &mut JoinCtx<'_, S, C>,
         node_idx: usize,
-        colts: &mut [Colt],
-        bindings: &mut Bindings,
-        sink: &mut S,
-        counters: &mut C,
     ) -> Option<Flow> {
-        let node = &plan.nodes()[node_idx];
+        let node = &cx.plan.nodes()[node_idx];
         let occ = usize::from(node.subatoms[0].occ.0);
         let (cursor, level) = self.cursors[occ];
         match cursor {
-            Cursor::Row(position) => Some(self.run_leaf_pinned(
-                plan, node_idx, occ, level, position, colts, bindings, sink, counters,
-            )),
-            Cursor::Node(_) => self.run_leaf_scan(
-                plan, node_idx, occ, level, cursor, colts, bindings, sink, counters,
-            ),
+            Cursor::Row(position) => Some(self.run_leaf_pinned(cx, node_idx, occ, level, position)),
+            Cursor::Node(_) => self.run_leaf_scan(cx, node_idx, occ, level, cursor),
         }
     }
 
     fn run_leaf_pinned<S: Sink, C: Counters>(
         &mut self,
-        plan: &ValidatedPlan,
+        cx: &mut JoinCtx<'_, S, C>,
         node_idx: usize,
         occ: usize,
         level: usize,
         position: u32,
-        colts: &mut [Colt],
-        bindings: &mut Bindings,
-        sink: &mut S,
-        counters: &mut C,
     ) -> Flow {
+        let JoinCtx {
+            plan,
+            colts,
+            bindings,
+            sink,
+            counters,
+        } = cx;
         let node = &plan.nodes()[node_idx];
         let super::LeafPrecompute::Fast {
             scan_residuals,
@@ -87,7 +80,7 @@ impl Executor {
             key_slots,
             bindings,
         };
-        let flow = super::emit_node_batch(sink, node.suffix_skip, &batch);
+        let flow = super::emit_node_batch(*sink, node.suffix_skip, &batch);
         counters.emit();
         if flow.is_terminal() {
             return flow;

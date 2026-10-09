@@ -1,7 +1,6 @@
 use super::*;
 
-use crate::exec::dispatch::{KeyProbeKind, key_probe_row};
-use crate::image::canon::RowWords;
+use crate::exec::dispatch::{KeyProbeKind, ProbeBuffers, ProbeCtx, key_probe_row};
 use crate::image::intern::InternerHandle;
 use crate::ir::ParamId;
 use crate::work::{GenerationHandle, GenerationState};
@@ -67,22 +66,22 @@ fn cancelled_text_resolution_is_not_a_membership_or_indexed_key_miss() {
             ));
             let interner = InternerHandle::new(&generation, &work);
             let params = [Const::Text(interner.intern("alpha").unwrap())];
-            let mut row = RowWords::new(&[
+            let mut buf = ProbeBuffers::new(&[
                 ValueType::U64,
                 ValueType::U64,
                 ValueType::String,
                 ValueType::I64,
             ]);
-            let mut key = crate::image::view::ResolvedWords::default();
             let mut probe = || {
                 key_probe_row(
                     &rule.plan,
-                    &source,
-                    fix.db.schema(),
-                    &interner,
-                    &params,
-                    &mut row,
-                    &mut key,
+                    ProbeCtx {
+                        source: &source,
+                        schema: fix.db.schema(),
+                        interner: &interner,
+                        params: &params,
+                    },
+                    &mut buf,
                 )
             };
             assert!(probe().expect("live membership/key hit"));
@@ -149,7 +148,7 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
     let PreparedPipeline::PointProbe { rule, .. } = &prepared.pipeline else {
         unreachable!("point probe");
     };
-    let row_address = rule.row.span_words(FieldId(0)).as_ptr();
+    let row_address = rule.probe.row.span_words(FieldId(0)).as_ptr();
 
     fix.execute_into(&mut prepared, &[BindValue::U64(999)], &mut out)
         .expect("miss is empty, not an error");
@@ -162,7 +161,7 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
     };
     assert_eq!(
         row_address,
-        rule.row.span_words(FieldId(0)).as_ptr(),
+        rule.probe.row.span_words(FieldId(0)).as_ptr(),
         "prepared point probes retain their row allocation"
     );
     // Param-type error: typed, before any probe.

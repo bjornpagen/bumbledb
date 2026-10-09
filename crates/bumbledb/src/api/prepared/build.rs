@@ -74,7 +74,7 @@ fn prepare_source<S>(
 ) -> Result<PreparedQuery<S>> {
     let schema = Arc::clone(schema);
     let images = SourceImages::bind(source, cache);
-    let witness = { validate(&schema, query)? };
+    let witness = validate(&schema, query)?;
     let mut signatures: Vec<&crate::ir::validate::Signature> = Vec::new();
     let mut interiors = Vec::with_capacity(witness.interiors().len());
     for i in 0..witness.interiors().len() {
@@ -107,18 +107,37 @@ fn prepare_source<S>(
         }
     };
     let rendered = crate::ir::render::render(&schema, query);
-    let pinned = source.pinned();
     prepare_witnessed(
-        pinned,
         &images,
-        Arc::clone(cache),
-        schema,
+        ProgramSeed {
+            pinned: source.pinned(),
+            cache: Arc::clone(cache),
+            schema,
+            rendered,
+        },
         &witness,
-        rendered,
-        interiors,
-        reach,
-        &signatures,
+        PreparedPrefix {
+            interiors,
+            reach,
+            signatures,
+        },
     )
+}
+
+/// What a prepared query pins before its main rules are prepared.
+struct ProgramSeed {
+    pinned: PinnedSource,
+    cache: Arc<ImageCache>,
+    schema: Arc<Schema>,
+    rendered: String,
+}
+
+/// The prepared interiors and recursive component, with the signatures the
+/// main rules read (interiors in order, then the recursive component).
+struct PreparedPrefix<'w> {
+    interiors: Vec<PreparedInterior>,
+    reach: PreparedReach,
+    signatures: Vec<&'w crate::ir::validate::Signature>,
 }
 
 enum PreparedReach {
@@ -134,17 +153,24 @@ enum PreparedReach {
 /// per-rule prepare → sink and binding artifacts, over an already-sealed
 /// witness.
 fn prepare_witnessed<S>(
-    pinned_source: PinnedSource,
     images: &SourceImages<'_>,
-    cache: Arc<ImageCache>,
-    schema: Arc<Schema>,
+    seed: ProgramSeed,
     witness: &crate::ir::validate::ValidatedQuery,
-    rendered: String,
-    interiors: Vec<PreparedInterior>,
-    reach: PreparedReach,
-    signatures: &[&crate::ir::validate::Signature],
+    prefix: PreparedPrefix<'_>,
 ) -> Result<PreparedQuery<S>> {
-    let normalized = { normalize_rules(&schema, signatures, witness.rules()) };
+    let ProgramSeed {
+        pinned: pinned_source,
+        cache,
+        schema,
+        rendered,
+    } = seed;
+    let PreparedPrefix {
+        interiors,
+        reach,
+        signatures,
+    } = prefix;
+    let signatures = signatures.as_slice();
+    let normalized = normalize_rules(&schema, signatures, witness.rules());
 
     let survivors = ground_main(normalized, witness, &schema);
 
@@ -284,7 +310,6 @@ fn prepare_witnessed<S>(
             bindings,
             answer_scratch: Vec::new(),
             resolve_memo: ResolveMemo::new(),
-            key_scratch: crate::image::view::ResolvedWords::default(),
             #[cfg(test)]
             last_visits: 0,
         },
@@ -305,7 +330,7 @@ pub(super) fn seal_no_text_probe(
     let PreparedPipeline::PointProbe { rule, finds } = pipeline else {
         return false;
     };
-    !rule.row.has_text()
+    !rule.probe.row.has_text()
         && schema
             .relation(rule.plan.relation)
             .fields()
@@ -621,10 +646,9 @@ fn prepare_key_rule(
         .iter()
         .map(|field| field.value_type)
         .collect();
-    let row = crate::image::canon::RowWords::prepared(&field_types);
     KeyProbeRule {
+        probe: crate::exec::dispatch::ProbeBuffers::new(&field_types),
         plan,
-        row,
         distinct_witness,
         finds,
         dedup_spans: Box::default(),
@@ -930,7 +954,10 @@ fn seal_cq_pipeline(
         match rules.pop() {
             Some(PreparedRule::KeyProbe(rule)) => {
                 if let Some(finds) = key_probe_find_table(&rule.plan, &rule.finds, columns) {
-                    return PreparedPipeline::PointProbe { rule, finds };
+                    return PreparedPipeline::PointProbe {
+                        rule: Box::new(rule),
+                        finds,
+                    };
                 }
                 rules.push(PreparedRule::KeyProbe(rule));
             }

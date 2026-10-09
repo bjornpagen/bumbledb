@@ -1,21 +1,18 @@
 //! The single in-order pass over a middle node's pending entries.
 use super::{
-    BatchToken, Bindings, Colt, Counters, Executor, KeyCount, NodeScratch, PipeTables, Sink,
-    ValidatedPlan, better_cover,
+    BatchToken, Counters, CoverBatch, Executor, JoinCtx, KeyCount, NodeScratch, PipeTables, Sink,
+    better_cover,
 };
 
 impl Executor {
     pub(super) fn pump<S: Sink, C: Counters>(
         &mut self,
         tables: &PipeTables,
-        plan: &ValidatedPlan,
+        cx: &mut JoinCtx<'_, S, C>,
         node_idx: usize,
         buffers: &mut [NodeScratch],
-        colts: &mut [Colt],
-        bindings: &mut Bindings,
-        sink: &mut S,
-        counters: &mut C,
     ) {
+        let plan = cx.plan;
         let n_nodes = plan.nodes().len();
         debug_assert!(node_idx + 1 < n_nodes, "the leaf runs per parent");
         let (scratch, below) = buffers.split_first_mut().expect("one buffer per plan node");
@@ -36,16 +33,16 @@ impl Executor {
             if below_absorb && self.origin_cancelled(scratch.pending_origins[entry]) {
                 continue;
             }
-            counters.node_entry(node_idx);
+            cx.counters.node_entry(node_idx);
             let mut best: Option<(usize, KeyCount)> = None;
             for &cover in &node.covers {
                 let sub_idx = usize::from(cover);
                 let occ = usize::from(node.subatoms[sub_idx].occ.0);
                 let cursor = match tables.carried_index(node_idx, occ) {
                     Some(col) => scratch.pending_cursors[entry * carried_w + col],
-                    None => colts[occ].start(),
+                    None => cx.colts[occ].start(),
                 };
-                let count = colts[occ].key_count(cursor);
+                let count = cx.colts[occ].key_count(cursor);
                 let better = match &best {
                     None => true,
                     Some((_, incumbent)) => better_cover(count, *incumbent),
@@ -55,7 +52,7 @@ impl Executor {
                 }
             }
             let (cover_sub, count) = best.expect("validated plans have non-empty cover sets");
-            counters.cover_choice(node_idx, cover_sub, count);
+            cx.counters.cover_choice(node_idx, cover_sub, count);
             let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
             let cover_level = tables.entry_level[node_idx][cover_occ];
 
@@ -65,15 +62,23 @@ impl Executor {
                 && fill > 0
             {
                 self.probe_pass(
-                    tables, plan, node_idx, open_sub, open_arity, fill, scratch, below, colts,
-                    bindings, sink, counters,
+                    tables,
+                    cx,
+                    CoverBatch {
+                        node: node_idx,
+                        cover_sub: open_sub,
+                        arity: open_arity,
+                        fill,
+                    },
+                    scratch,
+                    below,
                 );
                 fill = 0;
             }
             group = Some((cover_sub, cur_arity));
             let cover_cursor = match tables.carried_index(node_idx, cover_occ) {
                 Some(col) => scratch.pending_cursors[entry * carried_w + col],
-                None => colts[cover_occ].start(),
+                None => cx.colts[cover_occ].start(),
             };
 
             let gate_cover = cur_arity == 0 && !self.point_probed[cover_occ];
@@ -82,7 +87,9 @@ impl Executor {
             if S::may_use_distinct_traversal()
                 && self.physical_distinct.is_some()
                 && self
-                    .colt_ok(colts[cover_occ].force_distinct_iteration(cover_cursor, cover_level))
+                    .colt_ok(
+                        cx.colts[cover_occ].force_distinct_iteration(cover_cursor, cover_level),
+                    )
                     .is_none()
             {
                 break;
@@ -97,7 +104,7 @@ impl Executor {
                 }
                 let want = if gate_cover { 1 } else { self.batch - fill };
                 let batch = if needs_children {
-                    colts[cover_occ].iter_batch(
+                    cx.colts[cover_occ].iter_batch(
                         cover_cursor,
                         cover_level,
                         token,
@@ -106,7 +113,7 @@ impl Executor {
                         want,
                     )
                 } else {
-                    colts[cover_occ].iter_keys_batch(
+                    cx.colts[cover_occ].iter_keys_batch(
                         cover_cursor,
                         cover_level,
                         token,
@@ -119,7 +126,7 @@ impl Executor {
                 };
 
                 if yielded > 0 {
-                    counters.batch(node_idx, yielded);
+                    cx.counters.batch(node_idx, yielded);
                 }
 
                 scratch
@@ -138,8 +145,16 @@ impl Executor {
                 }
                 if fill == self.batch {
                     self.probe_pass(
-                        tables, plan, node_idx, cover_sub, cur_arity, fill, scratch, below, colts,
-                        bindings, sink, counters,
+                        tables,
+                        cx,
+                        CoverBatch {
+                            node: node_idx,
+                            cover_sub,
+                            arity: cur_arity,
+                            fill,
+                        },
+                        scratch,
+                        below,
                     );
                     fill = 0;
                     if !gate_cover && yielded == want {
@@ -155,8 +170,16 @@ impl Executor {
             && let Some((open_sub, open_arity)) = group
         {
             self.probe_pass(
-                tables, plan, node_idx, open_sub, open_arity, fill, scratch, below, colts,
-                bindings, sink, counters,
+                tables,
+                cx,
+                CoverBatch {
+                    node: node_idx,
+                    cover_sub: open_sub,
+                    arity: open_arity,
+                    fill,
+                },
+                scratch,
+                below,
             );
         }
         scratch.pending_len = 0;

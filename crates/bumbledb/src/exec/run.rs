@@ -296,8 +296,121 @@ const PREFETCH_WIDTH_FLOOR: usize = 4;
 
 type PointSource = (usize, usize, Source, bool);
 
-/// Retained per-node execution buffers. Source layouts depend only on the
-/// selected cover; data buffers change per batch and execution.
+/// One execution's borrowed world: the validated plan, one trie per
+/// occurrence, the binding array, the sink and the structural observer.
+struct JoinCtx<'a, S, C> {
+    plan: &'a ValidatedPlan,
+    colts: &'a mut [Colt],
+    bindings: &'a mut Bindings,
+    sink: &'a mut S,
+    counters: &'a mut C,
+}
+
+/// Where a batch element's operand words live: its own cover key words
+/// (`Source::Batch`), or the binding row it extends (`Source::Slot`).
+trait BatchRows {
+    fn word(&self, element: usize, source: Source, offset: usize) -> u64;
+
+    /// The operand's word when it is the same for every element of the batch.
+    fn constant(&self, source: Source, offset: usize) -> Option<u64>;
+}
+
+/// A leaf batch: every element extends the one current binding row.
+struct LeafRows<'a> {
+    keys: &'a [u64],
+    arity: usize,
+    bindings: &'a Bindings,
+}
+
+impl BatchRows for LeafRows<'_> {
+    #[inline]
+    fn word(&self, element: usize, source: Source, offset: usize) -> u64 {
+        match source {
+            Source::Batch(word) => self.keys[element * self.arity + word + offset],
+            Source::Slot(slot) => self.bindings.get(slot + offset),
+        }
+    }
+
+    #[inline]
+    fn constant(&self, source: Source, offset: usize) -> Option<u64> {
+        match source {
+            Source::Batch(_) => None,
+            Source::Slot(slot) => Some(self.bindings.get(slot + offset)),
+        }
+    }
+}
+
+/// A pipelined batch: each element extends its parent's pending binding row
+/// (`slot_count` words per parent).
+struct PendingRows<'a> {
+    keys: &'a [u64],
+    arity: usize,
+    parents: &'a [u32],
+    bindings: &'a [u64],
+    slot_count: usize,
+}
+
+impl BatchRows for PendingRows<'_> {
+    #[inline]
+    fn word(&self, element: usize, source: Source, offset: usize) -> u64 {
+        match source {
+            Source::Batch(word) => self.keys[element * self.arity + word + offset],
+            Source::Slot(slot) => {
+                self.bindings[self.parents[element] as usize * self.slot_count + slot + offset]
+            }
+        }
+    }
+
+    #[inline]
+    fn constant(&self, _: Source, _: usize) -> Option<u64> {
+        None
+    }
+}
+
+/// Where each probe, residual and membership operand of a node is read for
+/// one cover choice; rebuilt only when the cover changes.
+#[derive(Default)]
+struct SourceLayout {
+    cover: Option<usize>,
+
+    /// One key layout per subatom.
+    sources: Vec<Vec<Source>>,
+
+    residual_sources: Vec<(Source, Source)>,
+
+    allen_sources: Vec<(Source, Source)>,
+
+    anti_sources: Vec<Vec<Source>>,
+
+    point_sources: Vec<Vec<PointSource>>,
+
+    anti_point_sources: Vec<Vec<PointSource>>,
+}
+
+/// Per-batch working buffers. They grow to the batch high-water mark and
+/// every pass writes its active window before reading it.
+#[derive(Default)]
+struct BatchBuffers {
+    survivors: Vec<u32>,
+
+    probe_keys: Vec<u64>,
+
+    hashes: Vec<u64>,
+
+    mask: Vec<u8>,
+
+    point_checks: Vec<(usize, usize, u64)>,
+
+    allen_gather: Vec<u64>,
+
+    allen_codes: Vec<u8>,
+
+    point_rows: Vec<u32>,
+
+    point_row_ks: Vec<u32>,
+}
+
+/// Retained per-node execution buffers.
 #[derive(Default)]
 struct NodeScratch {
     entry_keys: Vec<u64>,
@@ -306,37 +419,9 @@ struct NodeScratch {
     /// Empty means no current or later consumer needs that subatom's child.
     children: Vec<Vec<Cursor>>,
 
-    survivors: Vec<u32>,
+    layout: SourceLayout,
 
-    probe_keys: Vec<u64>,
-
-    hashes: Vec<u64>,
-
-    sources: Vec<Vec<Source>>,
-
-    source_cover: Option<usize>,
-
-    residual_sources: Vec<(Source, Source)>,
-
-    allen_sources: Vec<(Source, Source)>,
-
-    allen_gather: Vec<u64>,
-
-    allen_codes: Vec<u8>,
-
-    anti_sources: Vec<Vec<Source>>,
-
-    point_checks: Vec<(usize, usize, u64)>,
-
-    point_sources: Vec<Vec<PointSource>>,
-
-    anti_point_sources: Vec<Vec<PointSource>>,
-
-    point_rows: Vec<u32>,
-
-    point_row_ks: Vec<u32>,
-
-    mask: Vec<u8>,
+    batch: BatchBuffers,
 
     parents: Vec<u32>,
 
@@ -349,6 +434,44 @@ struct NodeScratch {
     pending_len: usize,
 
     pending_origins: Vec<u32>,
+}
+
+/// The chosen cover subatom's trie position at this node.
+#[derive(Clone, Copy)]
+struct CoverAt {
+    occ: usize,
+    cursor: Cursor,
+    level: usize,
+}
+
+/// A middle node's accumulated cover batch: `fill` entries of `arity` key
+/// words from subatom `cover_sub`.
+#[derive(Clone, Copy)]
+struct CoverBatch {
+    node: usize,
+    cover_sub: usize,
+    arity: usize,
+    fill: usize,
+}
+
+/// One sibling subatom's membership probe over the batch survivors.
+#[derive(Clone, Copy)]
+struct SiblingProbe {
+    node: usize,
+    sub: usize,
+    level: usize,
+    arity: usize,
+    cursor: ProbeCursor,
+}
+
+/// Where each survivor's probe starts.
+#[derive(Clone, Copy)]
+enum ProbeCursor {
+    /// One cursor for the whole batch.
+    Shared(Cursor),
+    /// The cursor the element's parent carried: column `column` of its
+    /// `width`-wide row in `pending_cursors`.
+    Carried { column: usize, width: usize },
 }
 
 #[derive(Clone, Copy)]
@@ -513,6 +636,7 @@ mod cancel;
 mod counters;
 mod cover;
 mod execute;
+mod filter;
 mod leaf;
 mod leaf_precompute;
 mod ledger;

@@ -409,22 +409,22 @@ fn run_key_probe(
     let interner = InternerHandle::new(&generation, source.work());
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new((0..plan.slot_count()).collect());
-    let mut key = crate::image::view::ResolvedWords::default();
     let field_types: Vec<_> = schema
         .relation(plan.relation)
         .fields()
         .iter()
         .map(|field| field.value_type)
         .collect();
-    let mut row = crate::image::canon::RowWords::new(&field_types);
+    let mut buf = ProbeBuffers::new(&field_types);
     execute_key_probe(
         plan,
-        &source,
-        schema,
-        &interner,
-        params,
-        &mut row,
-        &mut key,
+        ProbeCtx {
+            source: &source,
+            schema,
+            interner: &interner,
+            params,
+        },
+        &mut buf,
         &mut bindings,
         &mut sink,
         &mut crate::exec::run::NoopCounters,
@@ -542,19 +542,20 @@ fn uniqueness_reuses_row_storage_without_interning_rejected_candidates() {
         let generation = cache.acquire();
         let source = fixture.source();
         let interner = InternerHandle::new(&generation, source.work());
-        let mut row = crate::image::canon::RowWords::new(&[ValueType::U64, payload_type]);
-        let mut scratch = crate::image::view::ResolvedWords::default();
+        let mut buf = ProbeBuffers::new(&[ValueType::U64, payload_type]);
         for id in [2, 99, 1] {
             let hit = key_probe_row(
                 &plan,
-                &source,
-                &schema,
-                &interner,
-                &[Const::Word(id)],
-                &mut row,
-                &mut scratch,
+                ProbeCtx {
+                    source: &source,
+                    schema: &schema,
+                    interner: &interner,
+                    params: &[Const::Word(id)],
+                },
+                &mut buf,
             )
             .expect("probe");
+            let row = &buf.row;
             assert_eq!(hit, id != 99);
             if hit {
                 assert_eq!(row.span_words(FieldId(0)), &[id]);
@@ -618,9 +619,18 @@ fn full_fact_membership_lookup_with_an_interval_field() {
             .iter()
             .map(|f| f.value_type)
             .collect();
-        let mut row = crate::image::canon::RowWords::new(&field_types);
-        let mut key = crate::image::view::ResolvedWords::default();
-        key_probe_row(&plan, &source, &schema, &interner, &[], &mut row, &mut key).expect("probe")
+        let mut buf = ProbeBuffers::new(&field_types);
+        key_probe_row(
+            &plan,
+            ProbeCtx {
+                source: &source,
+                schema: &schema,
+                interner: &interner,
+                params: &[],
+            },
+            &mut buf,
+        )
+        .expect("probe")
     };
     assert!(probe((5, 10)), "exact membership hits");
     assert!(!probe((5, 11)), "one past the end misses");
@@ -666,17 +676,16 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
     let interner = InternerHandle::new(&generation, source.work());
     let mut bindings = Bindings::new(1);
     let mut sink = AggregateSink::new(vec![FindSpec::Agg(AggSpec::Count)], 1);
-    let mut key = crate::image::view::ResolvedWords::default();
-    let mut row =
-        crate::image::canon::RowWords::new(&[ValueType::U64, ValueType::U64, ValueType::String]);
+    let mut buf = ProbeBuffers::new(&[ValueType::U64, ValueType::U64, ValueType::String]);
     execute_key_probe(
         &plan,
-        &source,
-        &schema,
-        &interner,
-        &[],
-        &mut row,
-        &mut key,
+        ProbeCtx {
+            source: &source,
+            schema: &schema,
+            interner: &interner,
+            params: &[],
+        },
+        &mut buf,
         &mut bindings,
         &mut sink,
         &mut crate::exec::run::NoopCounters,

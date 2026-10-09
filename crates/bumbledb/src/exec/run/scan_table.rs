@@ -1,8 +1,5 @@
 //! The scan-pushdown leaf arm and its residual position filter.
-use super::{
-    Bindings, Colt, Counters, Cursor, Executor, Flow, LeafScan, Operand, Sink, Source,
-    ValidatedPlan,
-};
+use super::{Counters, Cursor, Executor, Flow, JoinCtx, LeafScan, Operand, Sink, Source};
 use std::ops::ControlFlow;
 
 impl Executor {
@@ -10,16 +7,19 @@ impl Executor {
     /// Unsupported scans may fall back; cancellation and sink errors may not.
     pub(super) fn run_leaf_scan<S: Sink, C: Counters>(
         &mut self,
-        plan: &ValidatedPlan,
+        cx: &mut JoinCtx<'_, S, C>,
         node_idx: usize,
         occ: usize,
         level: usize,
         cursor: Cursor,
-        colts: &mut [Colt],
-        bindings: &mut Bindings,
-        sink: &mut S,
-        counters: &mut C,
     ) -> Option<Flow> {
+        let JoinCtx {
+            plan,
+            colts,
+            bindings,
+            sink,
+            counters,
+        } = cx;
         // A physical set traversal licenses deduplicated COLT keys, never
         // raw source-position multiplicity. The generic leaf forces keys.
         if S::may_use_distinct_traversal() && self.physical_distinct.is_some() {

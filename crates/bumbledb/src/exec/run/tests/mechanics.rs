@@ -199,7 +199,7 @@ fn reused_executor_follows_reordered_dynamic_covers() {
                     .unwrap();
                 let chosen = usize::from(s_len < r_len);
                 assert_eq!(counters.cover_choices[0], (0, chosen, true));
-                assert_eq!(executor.scratch[0].source_cover, Some(chosen));
+                assert_eq!(executor.scratch[0].layout.cover, Some(chosen));
                 assert_eq!(sink.rows, expected, "pipeline {pipeline}, cover {chosen}");
                 for children in &executor.scratch[0].children[..2] {
                     assert!(children.is_empty());
@@ -233,16 +233,16 @@ fn point_source_layouts_follow_reordered_covers_without_retaining_values() {
             point_parts: vec![(4, 5, 5, true), (6, 7, 2, false)],
         }],
     };
-    let mut scratch = NodeScratch {
+    let mut layout = SourceLayout {
         sources: vec![vec![], vec![]],
         point_sources: vec![vec![]],
         anti_sources: vec![vec![]],
         anti_point_sources: vec![vec![]],
-        ..NodeScratch::default()
+        ..SourceLayout::default()
     };
     let slots = [vec![2, 5], vec![5, 2]];
     for (round, cover) in [0, 1, 1, 0].into_iter().enumerate() {
-        scratch.prepare_sources(&slots, &pre, cover);
+        layout.prepare(&slots, &pre, cover);
         let values: Vec<_> = (0..8).map(|slot| (round * 100 + slot) as u64).collect();
         let batch: Vec<_> = slots[cover].iter().map(|&slot| values[slot]).collect();
         let resolve = |sources: &[PointSource]| -> Vec<_> {
@@ -258,11 +258,11 @@ fn point_source_layouts_follow_reordered_covers_without_retaining_values() {
                 .collect()
         };
         assert_eq!(
-            resolve(&scratch.point_sources[0]),
+            resolve(&layout.point_sources[0]),
             vec![(0, 1, values[2], false), (2, 3, values[7], true)]
         );
         assert_eq!(
-            resolve(&scratch.anti_point_sources[0]),
+            resolve(&layout.anti_point_sources[0]),
             vec![(4, 5, values[5], true), (6, 7, values[2], false)]
         );
     }

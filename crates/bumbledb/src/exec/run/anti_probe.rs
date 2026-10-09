@@ -1,35 +1,28 @@
 //! After residual compaction, probe each negated occurrence per surviving
 //! binding. A hit rejects the binding. The negated trie holds all its key
 //! variables at one level: this checks existence, not a continuation to emit.
+use super::filter::resolve_points;
 use super::{
-    AntiProbeForm, AntiProbeSpec, Colt, Counters, PREFETCH_WIDTH_FLOOR, PointSource, Source,
-    grow_scratch,
+    AntiProbeForm, AntiProbeSpec, BatchBuffers, BatchRows, Colt, Counters, PREFETCH_WIDTH_FLOOR,
+    SourceLayout, grow_scratch,
 };
 use crate::work::WorkError;
 
-pub(super) fn anti_probe_pass<C: Counters>(
+pub(super) fn anti_probe_pass<R: BatchRows, C: Counters>(
     specs: &[AntiProbeSpec],
-    node_idx: usize,
-    arity: usize,
+    layout: &SourceLayout,
+    rows: &R,
+    buf: &mut BatchBuffers,
     colts: &mut [Colt],
-    entry_keys: &[u64],
-    survivors: &mut Vec<u32>,
-    probe_keys: &mut [u64],
-    hashes: &mut Vec<u64>,
-    mask: &mut Vec<u8>,
-    anti_sources: &[Vec<Source>],
-    point_checks: &mut Vec<(usize, usize, u64)>,
-    anti_point_sources: &[Vec<PointSource>],
-    read_slot: impl Fn(usize, usize) -> u64,
+    node_idx: usize,
     counters: &mut C,
 ) -> Result<(), WorkError> {
     for (a_idx, spec) in specs.iter().enumerate() {
-        if survivors.is_empty() {
+        if buf.survivors.is_empty() {
             return Ok(());
         }
-        let n = survivors.len();
-
-        let point_sources = &anti_point_sources[a_idx];
+        let n = buf.survivors.len();
+        let point_sources = &layout.anti_point_sources[a_idx];
 
         match &spec.form {
             AntiProbeForm::Gate if spec.point_parts.is_empty() => {
@@ -39,67 +32,49 @@ pub(super) fn anti_probe_pass<C: Counters>(
                     counters.anti_probe(node_idx, hit);
                 }
                 if hit {
-                    survivors.clear();
+                    buf.survivors.clear();
                 }
             }
             AntiProbeForm::Gate => {
                 let start = colts[spec.occ].start();
-                grow_scratch(mask, n);
+                grow_scratch(&mut buf.mask, n);
                 for k in 0..n {
-                    let element = usize::try_from(survivors[k]).expect("batch fits usize");
-                    point_checks.clear();
-                    for &(start_col, end_col, src, dense) in point_sources {
-                        let point = match src {
-                            Source::Batch(base) => entry_keys[element * arity + base],
-                            Source::Slot(slot) => read_slot(element, slot),
-                        };
-                        // The dense finite-probe guard:
-                        // a nonfinite point satisfies no membership, so
-                        // the negated atom's conjunction has no witness.
-                        let point = if dense {
-                            crate::image::view::dense_probe_word(point)
-                        } else {
-                            point
-                        };
-                        point_checks.push((start_col, end_col, point));
-                    }
-                    let hit = colts[spec.occ].any_position_matches(start, point_checks);
+                    let element = buf.survivors[k] as usize;
+                    resolve_points(rows, element, point_sources, &mut buf.point_checks);
+                    let hit = colts[spec.occ].any_position_matches(start, &buf.point_checks);
                     counters.anti_probe(node_idx, hit);
-                    mask[k] = u8::from(!hit);
+                    buf.mask[k] = u8::from(!hit);
                 }
-                crate::exec::kernel::compact_u32_by_mask(survivors, mask);
+                crate::exec::kernel::compact_u32_by_mask(&mut buf.survivors, &buf.mask);
             }
             AntiProbeForm::Keyed { key_words, .. } => {
-                let sources = &anti_sources[a_idx];
+                let sources = &layout.anti_sources[a_idx];
                 let start = colts[spec.occ].start();
                 let probe = colts[spec.occ].prepare_probe(start, 0)?;
 
                 let kw = key_words.get();
-                grow_scratch(hashes, n);
+                grow_scratch(&mut buf.hashes, n);
                 {
-                    let probe_keys = &mut probe_keys[..n * kw];
-                    let hashes = &mut hashes[..n];
-                    for (k, &e) in survivors.iter().enumerate() {
-                        let element = usize::try_from(e).expect("batch fits usize");
-                        for (word, source) in sources.iter().enumerate() {
-                            probe_keys[k * kw + word] = match *source {
-                                Source::Batch(col) => entry_keys[element * arity + col],
-                                Source::Slot(slot) => read_slot(element, slot),
-                            };
+                    let probe_keys = &mut buf.probe_keys[..n * kw];
+                    let hashes = &mut buf.hashes[..n];
+                    for (k, &element) in buf.survivors.iter().enumerate() {
+                        let key = &mut probe_keys[k * kw..(k + 1) * kw];
+                        for (word, &source) in key.iter_mut().zip(sources) {
+                            *word = rows.word(element as usize, source, 0);
                         }
-                        hashes[k] = crate::exec::colt::hash_key(&probe_keys[k * kw..(k + 1) * kw]);
+                        hashes[k] = crate::exec::colt::hash_key(key);
                     }
                 }
 
                 if n >= PREFETCH_WIDTH_FLOOR {
-                    probe.prefetch_batch(&hashes[..n], !spec.point_parts.is_empty());
+                    probe.prefetch_batch(&buf.hashes[..n], !spec.point_parts.is_empty());
                 }
 
-                grow_scratch(mask, n);
+                grow_scratch(&mut buf.mask, n);
                 {
-                    let probe_keys = &probe_keys[..n * kw];
-                    let hashes = &hashes[..n];
-                    let mask = &mut mask[..n];
+                    let probe_keys = &buf.probe_keys[..n * kw];
+                    let hashes = &buf.hashes[..n];
+                    let mask = &mut buf.mask[..n];
                     if spec.point_parts.is_empty() {
                         for k in 0..n {
                             let hit = probe.contains_prehashed_width::<0>(
@@ -109,38 +84,23 @@ pub(super) fn anti_probe_pass<C: Counters>(
                             counters.anti_probe(node_idx, hit);
                             mask[k] = u8::from(!hit);
                         }
-                        crate::exec::kernel::compact_u32_by_mask(survivors, mask);
-                        continue;
-                    }
-                    for k in 0..n {
-                        let element = usize::try_from(survivors[k]).expect("batch fits usize");
-                        let child = probe
-                            .get_prehashed_width::<0>(&probe_keys[k * kw..(k + 1) * kw], hashes[k]);
-                        let hit = match child {
-                            None => false,
-                            Some(child) => {
-                                point_checks.clear();
-                                for &(start_col, end_col, src, dense) in point_sources {
-                                    let point = match src {
-                                        Source::Batch(base) => entry_keys[element * arity + base],
-                                        Source::Slot(slot) => read_slot(element, slot),
-                                    };
-                                    // The dense finite-probe guard.
-                                    let point = if dense {
-                                        crate::image::view::dense_probe_word(point)
-                                    } else {
-                                        point
-                                    };
-                                    point_checks.push((start_col, end_col, point));
-                                }
-                                probe.any_position_matches(child, point_checks)
-                            }
-                        };
-                        counters.anti_probe(node_idx, hit);
-                        mask[k] = u8::from(!hit);
+                    } else {
+                        for k in 0..n {
+                            let element = buf.survivors[k] as usize;
+                            let child = probe.get_prehashed_width::<0>(
+                                &probe_keys[k * kw..(k + 1) * kw],
+                                hashes[k],
+                            );
+                            let hit = child.is_some_and(|child| {
+                                resolve_points(rows, element, point_sources, &mut buf.point_checks);
+                                probe.any_position_matches(child, &buf.point_checks)
+                            });
+                            counters.anti_probe(node_idx, hit);
+                            mask[k] = u8::from(!hit);
+                        }
                     }
                 }
-                crate::exec::kernel::compact_u32_by_mask(survivors, mask);
+                crate::exec::kernel::compact_u32_by_mask(&mut buf.survivors, &buf.mask);
             }
         }
     }

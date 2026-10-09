@@ -1,8 +1,8 @@
 //! Executor construction and the per-execution entry point.
 use super::{
-    AllenResidualSpec, AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Drive, Executor,
-    LeafPrecompute, NodePrecompute, NodeScratch, PipeTables, PointProbeSpec, ResidualSpec, Sink,
-    Source, ValidatedPlan,
+    AllenResidualSpec, AntiProbeSpec, BATCH, BatchBuffers, Bindings, Colt, Counters, Cursor, Drive,
+    Executor, JoinCtx, LeafPrecompute, NodePrecompute, NodeScratch, PipeTables, PointProbeSpec,
+    ResidualSpec, Sink, Source, SourceLayout, ValidatedPlan,
 };
 use crate::plan::fj::PlanNode;
 use std::num::NonZeroUsize;
@@ -132,14 +132,10 @@ impl NodePrecompute {
     }
 }
 
-impl NodeScratch {
-    pub(super) fn prepare_sources(
-        &mut self,
-        slots: &[Vec<usize>],
-        pre: &NodePrecompute,
-        cover: usize,
-    ) {
-        if self.source_cover == Some(cover) {
+impl SourceLayout {
+    /// Resolves every operand against `cover`'s key layout.
+    pub(super) fn prepare(&mut self, slots: &[Vec<usize>], pre: &NodePrecompute, cover: usize) {
+        if self.cover == Some(cover) {
             return;
         }
         let cover_slots = &slots[cover];
@@ -192,7 +188,7 @@ impl NodeScratch {
                 (start, end, Source::of(slot, cover_slots), dense)
             }));
         }
-        self.source_cover = Some(cover);
+        self.cover = Some(cover);
     }
 }
 
@@ -324,9 +320,6 @@ impl Executor {
                     .max(max_arity);
                 NodeScratch {
                     entry_keys: vec![0; batch * max_arity],
-                    survivors: Vec::with_capacity(batch),
-                    probe_keys: vec![0; batch * max_key],
-                    hashes: Vec::with_capacity(batch),
                     children: node
                         .subatoms
                         .iter()
@@ -335,26 +328,25 @@ impl Executor {
                             vec![Cursor::Row(0); if needs_child(sub_idx) { batch } else { 0 }]
                         })
                         .collect(),
-
-                    sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
-                    source_cover: None,
-                    residual_sources: Vec::new(),
-                    allen_sources: Vec::new(),
-                    allen_gather: Vec::new(),
-                    allen_codes: Vec::new(),
-                    anti_sources: pre.anti_probes.iter().map(|_| Vec::new()).collect(),
-                    point_checks: Vec::new(),
-                    point_sources: pre.point_probes.iter().map(|_| Vec::new()).collect(),
-                    anti_point_sources: pre.anti_probes.iter().map(|_| Vec::new()).collect(),
-                    point_rows: Vec::new(),
-                    point_row_ks: Vec::new(),
-                    mask: Vec::with_capacity(batch),
+                    layout: SourceLayout {
+                        cover: None,
+                        sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
+                        residual_sources: Vec::new(),
+                        allen_sources: Vec::new(),
+                        anti_sources: pre.anti_probes.iter().map(|_| Vec::new()).collect(),
+                        point_sources: pre.point_probes.iter().map(|_| Vec::new()).collect(),
+                        anti_point_sources: pre.anti_probes.iter().map(|_| Vec::new()).collect(),
+                    },
+                    batch: BatchBuffers {
+                        survivors: Vec::with_capacity(batch),
+                        probe_keys: vec![0; batch * max_key],
+                        hashes: Vec::with_capacity(batch),
+                        mask: Vec::with_capacity(batch),
+                        ..BatchBuffers::default()
+                    },
                     parents: Vec::with_capacity(batch),
-                    pending_bindings: Vec::new(),
-                    pending_cursors: Vec::new(),
-                    pending_len: 0,
-                    pending_origins: Vec::new(),
                     element_origins: Vec::with_capacity(batch),
+                    ..NodeScratch::default()
                 }
             })
             .collect()
@@ -439,12 +431,17 @@ impl Executor {
         // Move the buffer roster once, not each node's large scratch struct
         // on every parent/batch. Recursive calls split disjoint suffix borrows.
         let mut scratch = std::mem::take(&mut self.scratch);
+        let mut cx = JoinCtx {
+            plan,
+            colts,
+            bindings,
+            sink,
+            counters,
+        };
         match &self.drive {
-            Drive::Pipeline(_) => {
-                self.run_pipeline(plan, &mut scratch, colts, bindings, sink, counters);
-            }
+            Drive::Pipeline(_) => self.run_pipeline(&mut cx, &mut scratch),
             Drive::Leaf => {
-                let flow = self.run_node(plan, 0, &mut scratch[0], colts, bindings, sink, counters);
+                let flow = self.run_node(&mut cx, 0, &mut scratch[0]);
                 if flow.is_terminal() {
                     self.poison(match flow {
                         super::Flow::Stop => super::Poison::SinkStop,
@@ -453,6 +450,7 @@ impl Executor {
                 }
             }
         }
+        let sink = cx.sink;
 
         self.scratch = scratch;
         // Flush explored work before surfacing any outcome. Reusable COLT
@@ -481,18 +479,14 @@ impl Executor {
 
     fn run_pipeline<S: Sink, C: Counters>(
         &mut self,
-        plan: &ValidatedPlan,
+        cx: &mut JoinCtx<'_, S, C>,
         scratch: &mut [NodeScratch],
-        colts: &mut [Colt],
-        bindings: &mut Bindings,
-        sink: &mut S,
-        counters: &mut C,
     ) {
         let tables = match &self.drive {
             Drive::Pipeline(tables) => std::rc::Rc::clone(tables),
             Drive::Leaf => unreachable!("dispatched on Pipeline"),
         };
-        let slot_count = bindings.slot_count();
+        let slot_count = cx.bindings.slot_count();
         for scratch in &mut *scratch {
             scratch.pending_bindings.clear();
             scratch.pending_cursors.clear();
@@ -508,20 +502,11 @@ impl Executor {
         scratch[0].pending_bindings.resize(slot_count, 0);
         scratch[0].pending_len = 1;
         scratch[0].pending_origins.push(0);
-        self.pump(&tables, plan, 0, scratch, colts, bindings, sink, counters);
+        self.pump(&tables, cx, 0, scratch);
 
-        for i in 1..plan.nodes().len() - 1 {
+        for i in 1..cx.plan.nodes().len() - 1 {
             if scratch[i].pending_len > 0 {
-                self.pump(
-                    &tables,
-                    plan,
-                    i,
-                    &mut scratch[i..],
-                    colts,
-                    bindings,
-                    sink,
-                    counters,
-                );
+                self.pump(&tables, cx, i, &mut scratch[i..]);
             }
         }
     }

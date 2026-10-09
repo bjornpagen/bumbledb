@@ -27,14 +27,13 @@
 //! storage.
 
 use super::fact_word::FactOperand;
-use super::{KeyProbePart, KeyProbePlan};
+use super::{KeyProbePart, KeyProbePlan, ProbeBuffers, ProbeCtx};
 use crate::api::prepared::source::QuerySource;
 use crate::error::{Error, Result};
 use crate::image::canon::RowWords;
 use crate::image::intern::InternerHandle;
 use crate::image::view::{Const, Loaded, OperandAddr, Operands, holds};
 use crate::ir::Value;
-use crate::schema::Schema;
 use bumbledb_theory::schema::{IntervalElement, ValueType};
 
 /// Resolve one probe constant to its column words (interval constants are
@@ -177,62 +176,50 @@ impl Operands for ProbeRow<'_> {
     }
 }
 
-/// The determinant/full-fact probe. `Ok(true)` leaves the matched row's
-/// words (text interned) in `row`.
+/// The determinant or full-row probe. `Ok(true)` leaves the matched row's
+/// words (text interned) in `buf.row`.
 /// # Errors
 /// Storage failure, stopped work, or corrupt stored bytes.
 pub(crate) fn key_probe_row(
     plan: &KeyProbePlan,
-    source: &QuerySource<'_>,
-    schema: &Schema,
-    interner: &InternerHandle<'_>,
-    params: &[Const],
-    row: &mut RowWords,
-    scratch: &mut crate::image::view::ResolvedWords,
+    cx: ProbeCtx<'_>,
+    buf: &mut ProbeBuffers,
 ) -> Result<bool> {
-    let relation = schema.relation(plan.relation);
-    let fields = relation.fields();
+    let ProbeCtx {
+        source,
+        schema,
+        interner,
+        params,
+    } = cx;
+    let fields = schema.relation(plan.relation).fields();
 
     // Word ranges are sealed once at prepare, not allocated on every probe.
     let key_words = plan.kind.key();
-    scratch.clear();
+    buf.key.clear();
     for part in key_words {
-        const_words(interner, source.work(), &part.value, params, scratch)?;
+        const_words(interner, source.work(), &part.value, params, &mut buf.key)?;
         debug_assert_eq!(
-            scratch.words.len(),
+            buf.key.words.len(),
             usize::from(part.end),
             "validated key word width"
         );
     }
 
-    let scratch = &mut scratch.words;
-
     let hit = match &plan.kind {
         super::KeyProbeKind::Membership { .. } => {
-            // All fields bound: reconstruct the canonical fact and ask for
-            // exact membership. A word that cannot embed (for example an
-            // inverted interval from a hostile template) is a nonmatch.
-            let mut values = Vec::with_capacity(fields.len());
-            let mut ok = true;
-            for part in key_words {
-                let ty = &fields[usize::from(part.field.0)].value_type;
-                if let Some(value) = value_of_words(interner, ty, &scratch[part.words()]) {
-                    values.push(value);
-                } else {
-                    ok = false;
-                    break;
-                }
-            }
-            if ok {
+            // All fields bound: reconstruct the canonical row and ask for
+            // exact membership. A word that cannot embed (an inverted
+            // interval from a hostile template) is a nonmatch.
+            if key_values(interner, fields, key_words.iter(), buf) {
                 let encoded =
-                    crate::canonical::CanonicalRow::encode(fields, &values, source.work())
+                    crate::canonical::CanonicalRow::encode(fields, &buf.values, source.work())
                         .map_err(row_error)?;
                 if source.contains(plan.relation, encoded.as_bytes())? {
-                    // The row IS the probe: decode the canonical bytes we
-                    // just built (intern mode) so finds and filters read
-                    // the same words a scan would produce.
+                    // The row is the probe: decode the canonical bytes just
+                    // built (intern mode) so finds and filters read the same
+                    // words a scan would produce.
                     crate::api::prepared::decode_row(
-                        row,
+                        &mut buf.row,
                         fields,
                         encoded.as_bytes(),
                         interner,
@@ -249,25 +236,17 @@ pub(crate) fn key_probe_row(
         }
         super::KeyProbeKind::Uniqueness { projection, .. } => {
             let indexed = match source {
-                QuerySource::Store { .. } => probe_uniqueness_indexed(
-                    source,
-                    *projection,
-                    fields,
-                    key_words,
-                    scratch,
-                    interner,
-                    row,
-                )?,
+                QuerySource::Store { .. } => {
+                    probe_uniqueness_indexed(cx, *projection, fields, key_words, buf)?
+                }
                 QuerySource::Heap { .. } => None,
             };
             match indexed {
                 Some(hit) => hit,
-                // Heap sources (and, defensively, a statement the compiled
-                // determinant table does not carry): the bounded reference
-                // walk — the exact oracle for the indexed path.
-                None => probe_uniqueness_scan(
-                    plan, source, schema, fields, key_words, scratch, interner, row,
-                )?,
+                // Heap sources (and a statement the compiled determinant
+                // table does not carry): the bounded reference walk, which
+                // is also the exact oracle for the indexed path.
+                None => probe_uniqueness_scan(plan, cx, fields, key_words, buf)?,
             }
         }
     };
@@ -275,7 +254,10 @@ pub(crate) fn key_probe_row(
         return Ok(false);
     }
 
-    let ops = ProbeRow { row, interner };
+    let ops = ProbeRow {
+        row: &buf.row,
+        interner,
+    };
     let eq = interner.text_eq();
     for filter in &plan.remaining_filters {
         if !holds(filter, &ops, params, eq)?.unwrap_or(false) {
@@ -285,21 +267,40 @@ pub(crate) fn key_probe_row(
     Ok(true)
 }
 
+/// Fills `buf.values` with the key's values, one per part. `false` when a
+/// word does not embed as a value of its field.
+fn key_values<'p>(
+    interner: &InternerHandle<'_>,
+    fields: &[bumbledb_theory::schema::FieldDescriptor],
+    parts: impl Iterator<Item = &'p KeyProbePart>,
+    buf: &mut ProbeBuffers,
+) -> bool {
+    buf.values.clear();
+    for part in parts {
+        let ty = &fields[usize::from(part.field.0)].value_type;
+        match value_of_words(interner, ty, &buf.key.words[part.words()]) {
+            Some(value) => buf.values.push(value),
+            None => return false,
+        }
+    }
+    true
+}
+
 /// The indexed uniqueness probe over one committed store snapshot:
 /// determinant bucket plus exact span confirmation. `Ok(Some(true))` leaves
-/// the matched row's words (text interned) in `row`; `Ok(None)` means the
-/// compiled determinant table does not carry the statement (defensive —
-/// classification only emits sealed keys of ordinary relations) and the
-/// caller must fall back to the reference walk.
+/// the matched row's words (text interned) in `buf.row`; `Ok(None)` means
+/// the compiled determinant table does not carry the statement and the
+/// caller falls back to the reference walk.
 fn probe_uniqueness_indexed(
-    source: &QuerySource<'_>,
+    cx: ProbeCtx<'_>,
     projection: crate::schema::ProjectionId,
     fields: &[bumbledb_theory::schema::FieldDescriptor],
     key_words: &[KeyProbePart],
-    scratch: &[u64],
-    interner: &InternerHandle<'_>,
-    row: &mut RowWords,
+    buf: &mut ProbeBuffers,
 ) -> Result<Option<bool>> {
+    let ProbeCtx {
+        source, interner, ..
+    } = cx;
     let QuerySource::Store { snapshot, work, .. } = source else {
         return Ok(None);
     };
@@ -316,25 +317,22 @@ fn probe_uniqueness_indexed(
     let encoded;
     let projected: &[u8] = match key.encoding {
         crate::schema::KeyEncoding::ExactBounded { scalar_width } => {
-            if encode_exact_words(key, key_words, scratch, &mut exact).is_none() {
+            if encode_exact_words(key, key_words, &buf.key.words, &mut exact).is_none() {
                 return Ok(Some(false));
             }
             &exact[..usize::from(scalar_width)]
         }
         crate::schema::KeyEncoding::FingerprintBucket => {
-            let mut determinant = Vec::with_capacity(key.scalar_positions.len());
-            for &position in &key.scalar_positions {
-                let part = &key_words[position];
-                let ty = &fields[usize::from(part.field.0)].value_type;
-                match value_of_words(interner, ty, &scratch[part.words()]) {
-                    Some(value) => determinant.push(value),
-                    None => return Ok(Some(false)),
-                }
+            let scalar_parts = key.scalar_positions.iter().map(|&p| &key_words[p]);
+            if !key_values(interner, fields, scalar_parts, buf) {
+                return Ok(Some(false));
             }
-            encoded = crate::storage::store::det_index::determinant_bytes(key, &determinant, work)?;
+            encoded = crate::storage::store::det_index::determinant_bytes(key, &buf.values, work)?;
             &encoded
         }
     };
+    let ProbeBuffers { row, key, .. } = buf;
+    let scratch = &key.words;
     let has_text = row.has_text();
     let mut hit = false;
     let mut visit_err: Option<Error> = None;
@@ -431,20 +429,21 @@ fn encode_exact_field(ty: &ValueType, words: &[u64], out: &mut [u8]) -> Option<u
 }
 
 /// The bounded reference walk (heap sources, and the indexed path's exact
-/// oracle): decode every source row in lookup-only text mode and compare
-/// the determinant spans exactly. A scan, and named one.
+/// oracle): decode every candidate row in lookup-only text mode and compare
+/// the determinant spans exactly.
 fn probe_uniqueness_scan(
     plan: &KeyProbePlan,
-    source: &QuerySource<'_>,
-    schema: &Schema,
+    cx: ProbeCtx<'_>,
     fields: &[bumbledb_theory::schema::FieldDescriptor],
     key_words: &[KeyProbePart],
-    scratch: &[u64],
-    interner: &InternerHandle<'_>,
-    row: &mut RowWords,
+    buf: &mut ProbeBuffers,
 ) -> Result<bool> {
-    let mut found = false;
-    let has_text = row.has_text();
+    let ProbeCtx {
+        source,
+        schema,
+        interner,
+        ..
+    } = cx;
     let theory = schema
         .compiled_theory()
         .map_err(crate::api::prepared::source::compile_error)?;
@@ -454,21 +453,24 @@ fn probe_uniqueness_scan(
             .unwrap_or(crate::schema::CompiledTheory::full_row_witness()),
         super::KeyProbeKind::Membership { .. } => crate::schema::CompiledTheory::full_row_witness(),
     };
-    let fields_owned = key_words.iter().map(|part| part.field).collect::<Vec<_>>();
+    let key_fields: Vec<_> = key_words.iter().map(|part| part.field).collect();
+    let ProbeBuffers { row, key, .. } = buf;
+    let scratch = &key.words;
     let words: Vec<u64> = key_words
         .iter()
         .map(|part| scratch[usize::from(part.start)])
         .collect();
+    let has_text = row.has_text();
+    let mut found = false;
     if let Some(_outcome) = source.consume_compiled_visits(
         schema,
         plan.relation,
         witness,
-        &fields_owned,
+        &key_fields,
         &words,
         &mut |bytes| {
             crate::api::prepared::decode_row(row, fields, bytes, interner, source.work(), false)?;
-            let matches = key_spans_match(interner, key_words, row, scratch)?;
-            if matches {
+            if key_spans_match(interner, key_words, row, scratch)? {
                 if has_text {
                     crate::api::prepared::decode_row(
                         row,

@@ -9,7 +9,7 @@ use crate::error::Result;
 use crate::exec::run::{Counters, Sink};
 use crate::exec::sink::FindSpec;
 use crate::image::intern::InternerHandle;
-use crate::image::view::{Const, ResolvedWords, apply};
+use crate::image::view::{Const, apply};
 use crate::image::{SourceImages, ViewEpoch};
 use crate::plan::fj::ScalarSetTraversal;
 
@@ -25,7 +25,6 @@ pub(super) struct RuleCtx<'a> {
 /// The scratch one rule run borrows.
 pub(super) struct RuleScratch<'a> {
     pub(super) bindings: &'a mut Bindings,
-    pub(super) key_scratch: &'a mut ResolvedWords,
     pub(super) occ_images: &'a OccImages,
     pub(super) retired: &'a mut Vec<Vec<u32>>,
 }
@@ -96,12 +95,13 @@ pub(super) fn run_rule<S: RuleSink, C: Counters>(
             }
             crate::exec::dispatch::execute_key_probe(
                 &rule.plan,
-                ctx.images.source(),
-                ctx.schema,
-                ctx.interner,
-                ctx.params,
-                &mut rule.row,
-                scratch.key_scratch,
+                crate::exec::dispatch::ProbeCtx {
+                    source: ctx.images.source(),
+                    schema: ctx.schema,
+                    interner: ctx.interner,
+                    params: ctx.params,
+                },
+                &mut rule.probe,
                 scratch.bindings,
                 sink,
                 counters,

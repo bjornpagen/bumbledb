@@ -11,7 +11,7 @@ use crate::schema::{
     CompiledProjection, CompiledTheory, DistinctnessWitness, Schema, VisitControl, VisitOutcome,
 };
 use crate::storage::store::{OwnedSnapshot, StoreIdentity};
-use crate::work::{WorkContext, WorkError};
+use crate::work::WorkContext;
 use bumbledb_theory::schema::RelationId;
 use std::cell::Cell;
 
@@ -23,10 +23,6 @@ pub(crate) fn unbounded_work() -> WorkContext {
 /// Independent cancellation state for an ordinary heap-instance execution.
 pub(crate) fn heap_default_work() -> WorkContext {
     WorkContext::new()
-}
-
-pub(crate) fn work_error(error: WorkError) -> Error {
-    Error::from(error)
 }
 
 /// Heap row access, type-erased over the instance's schema typestate.
@@ -149,7 +145,7 @@ impl<'a> QuerySource<'a> {
     /// Storage failure.
     pub(crate) fn row_count(&self, relation: RelationId) -> Result<u64> {
         match self {
-            Self::Store { snapshot, .. } => Ok(snapshot.row_count(relation)?),
+            Self::Store { snapshot, .. } => snapshot.row_count(relation),
             Self::Heap { rows, .. } => Ok(rows.rows(relation).len() as u64),
         }
     }
@@ -220,7 +216,7 @@ impl<'a> QuerySource<'a> {
     /// Storage failure or stopped work.
     pub(crate) fn contains(&self, relation: RelationId, row: &[u8]) -> Result<bool> {
         match self {
-            Self::Store { snapshot, work, .. } => Ok(snapshot.contains(relation, row, work)?),
+            Self::Store { snapshot, work, .. } => snapshot.contains(relation, row, work),
             Self::Heap { rows, work, .. } => {
                 work.checkpoint()?;
                 Ok(rows
@@ -248,7 +244,7 @@ impl<'a> QuerySource<'a> {
         let values = key_values_from_words(compiled, &compiled.projection, words)?;
         let projected =
             crate::storage::store::det_index::determinant_bytes(compiled, &values, work)?;
-        Ok(projection.count_bounded(&projected, limit, work)?)
+        projection.count_bounded(&projected, limit, work)
     }
 
     /// Projection-bound or existence-only walk through the compiled witness.

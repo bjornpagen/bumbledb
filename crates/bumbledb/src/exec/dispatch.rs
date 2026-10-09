@@ -1,9 +1,6 @@
-//! KeyProbe-probe access path dispatch: the point-lookup fast path that routes qualifying
-//! read-side readers).
-//! The dispatch is a **representation**, not a runtime mode: classification
-//! happens once at prepare time into the prepared rule sum; the branch
-//! exists exactly once. No images are touched on the key-probe path —
-//! it works identically on a cold, just-committed database (the latency
+//! The key-probe access path: a rule whose key is fully bound reads one row
+//! through the source's key index or exact membership, with no images and no
+//! join. Classification happens once at prepare into the prepared rule sum.
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::VarId;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
@@ -16,7 +13,7 @@ mod key_probe_fact;
 mod tests;
 
 pub use classify::classify;
-pub use execute_key_probe::execute_key_probe;
+pub(crate) use execute_key_probe::execute_key_probe;
 pub(crate) use fact_word::FactOperand;
 pub(crate) use key_probe_fact::key_probe_row;
 
@@ -109,5 +106,40 @@ impl KeyProbePlan {
     #[must_use]
     pub fn slot_count(&self) -> usize {
         self.vars.last().map_or(0, |v| v.slot + v.width)
+    }
+}
+
+/// What a key probe reads: the source, its schema, the text resolver and the
+/// bound parameters.
+#[derive(Clone, Copy)]
+pub(crate) struct ProbeCtx<'a> {
+    pub(crate) source: &'a crate::api::prepared::source::QuerySource<'a>,
+    pub(crate) schema: &'a crate::schema::Schema,
+    pub(crate) interner: &'a crate::image::intern::InternerHandle<'a>,
+    pub(crate) params: &'a [Const],
+}
+
+/// One key-probe rule's buffers, reused across probes: the decoded candidate
+/// row, the resolved key words, and the key's values. Every probe replaces
+/// their contents; nothing is memoized.
+pub(crate) struct ProbeBuffers {
+    pub(crate) row: crate::image::canon::RowWords,
+    key: crate::image::view::ResolvedWords,
+    values: Vec<crate::ir::Value>,
+}
+
+impl ProbeBuffers {
+    pub(crate) fn new(field_types: &[bumbledb_theory::schema::ValueType]) -> Self {
+        Self {
+            row: crate::image::canon::RowWords::prepared(field_types),
+            key: crate::image::view::ResolvedWords::default(),
+            values: Vec::with_capacity(field_types.len()),
+        }
+    }
+
+    pub(crate) fn release_memory(&mut self) {
+        self.row.release_memory();
+        self.key = crate::image::view::ResolvedWords::default();
+        self.values = Vec::new();
     }
 }
