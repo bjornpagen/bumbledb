@@ -1,13 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Effect, ManagedRuntime } from "effect"
+import { Db } from "../src/engine.ts"
 import {
 	alternatives,
 	ChangeSet,
 	Compute,
 	closed,
 	closedId,
-	Db,
 	describeQuery,
 	interval,
 	key,

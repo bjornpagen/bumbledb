@@ -36,7 +36,10 @@ test("every ts fence in README.md type-checks against src/index.ts at HEAD", fun
 		const tsconfig = {
 			extends: path.join(packageRoot, "tsconfig.json"),
 			compilerOptions: {
-				paths: { "@bjornpagen/bumbledb": [path.join(packageRoot, "src", "index.ts")] },
+				paths: {
+					"@bjornpagen/bumbledb": [path.join(packageRoot, "src", "index.ts")],
+					"@bjornpagen/bumbledb/engine": [path.join(packageRoot, "src", "engine.ts")]
+				},
 				typeRoots: [path.join(packageRoot, "node_modules", "@types")]
 			},
 			include: [],

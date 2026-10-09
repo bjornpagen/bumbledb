@@ -34,7 +34,7 @@ import { argumentError, DbError } from "./runtime-errors.ts"
 import type { DirectoryHandle } from "./runtime-native.ts"
 import { runtimeNative } from "./runtime-native.ts"
 import type { AnySchema } from "./schema.ts"
-import { schemaDescriptor, schemasAgree } from "./schema.ts"
+import { schemasAgree } from "./schema.ts"
 import type { Key, QueryTemplate, Rel } from "./shape.ts"
 import type { KeyStatement } from "./statements.ts"
 import { integerValue, recordValue } from "./values.ts"
@@ -604,39 +604,6 @@ const Db = Object.freeze({
 	}
 })
 
-/**
- * Private log integration: wraps a published core snapshot
- * handle — minted by the internal log machine's native open/snapshot verbs
- * — in the exact core `QueryReader` plus the scoped session acquisition
- * (the log adds identity, stamps and freshness around this capability,
- * never a second reader).
- * The argument is the log package's branded handle for the same native
- * registry entry, so the one cast below is a cross-package respelling of
- * one native capability — the native side re-judges kind/generation/owner
- * on every verb, so a forged object refuses there, typed.
- */
-function internalPublishedReader<S extends AnySchema>(
-	core: object,
-	theory: S
-): {
-	readonly get: QueryReader<S>["get"]
-	readonly execute: QueryReader<S>["execute"]
-	readonly prepare: QueryReader<S>["prepare"]
-} {
-	const state: SnapshotState<S> = { theory: schemaDescriptor(theory), handle: core as SnapshotHandle }
-	return Object.freeze({
-		get<K extends KeyStatement<Rel<S>, readonly string[]>>(key: K, value: NoInfer<Key<K>>) {
-			return getOn(state, key, value)
-		},
-		execute<P extends ParamsRecord, A>(queryValue: QueryTemplate<S, P, A>, params: P) {
-			return executeOn<S, A>(state, queryValue as AnyQuery, params)
-		},
-		prepare<P extends ParamsRecord, A>(queryValue: QueryTemplate<S, P, A>) {
-			return prepareOn(state, queryValue)
-		}
-	})
-}
-
 export type {
 	ApplyOutcome,
 	CoreWitness,
@@ -649,4 +616,4 @@ export type {
 	WriteExpected,
 	WriteOptions
 }
-export { Db, internalPublishedReader }
+export { Db }

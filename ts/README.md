@@ -66,7 +66,6 @@ import {
 	capacity,
 	ChangeSet,
 	contained,
-	Db,
 	f64,
 	i64,
 	uuid,
@@ -84,6 +83,7 @@ import {
 	weigh,
 	within
 } from "@bjornpagen/bumbledb"
+import { Db } from "@bjornpagen/bumbledb/engine"
 
 // Relations describe stored records. Identity fields are ordinary
 // application-owned Uuid values — the database issues no identity.

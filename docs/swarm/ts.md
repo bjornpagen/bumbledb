@@ -6,9 +6,9 @@ Owns: `ts/**` (except `ts/src/native/binding.d.ts`), `ts-log/**`, `examples/**`.
 
 | Item | State |
 |---|---|
-| D19/D10 pins (pnpm 12.10.1, node >=26, effect 4.0.2, TS 7.0.2, biome 2.5.15) | in progress |
-| F3 dev loop (relative imports, tests on src, dev addon path) | planned |
-| F4 ts-log deleted, hosted lives in `ts/src/database/` | planned |
+| D19/D10 pins (pnpm 12.10.1, node >=26, effect 4.0.2, TS 7.0.2, biome 2.5.15) | landed `6a93e541e` |
+| F3 dev loop (relative imports, tests on src, dev addon path) | landed `6ae55f5a0` |
+| F4 ts-log deleted; exports `"."` and `"./engine"` | landed |
 | F5 `native/op.ts` | planned |
 | F6 scope-only resources, `#private`, one `DbError` | planned |
 | D17 TS side | waits on bridge `compileSchema`/`validateQuery` |
@@ -46,4 +46,22 @@ TS imports native types only from `ts/src/native/binding.d.ts` (yours) via `impo
   `SubmitOutcome` union on your board; the TS executor mirrors them 1:1.
 
 ## API announcements
-(none yet)
+
+### Landed
+- `@bjornpagen/bumbledb-log` (ts-log) is deleted. `@bjornpagen/bumbledb/internal/log` is deleted.
+- `@bjornpagen/bumbledb` exports `"."` (authoring, runtime, errors; `Database`/`Migration` later)
+  and `"./engine"` (`Db`, `Snapshot`, `PreparedQuery`, `QueryReader`, `ApplyOutcome`, ...).
+- Dev loop: `cd ts && node scripts/build.ts dev` (debug addon at `ts/bumbledb.<platform>-<arch>.node`),
+  then `pnpm test` runs `node --test` straight on `src` (no `dist`). `node scripts/build.ts release`
+  builds the optimized addon into `npm/<platform>-<arch>/` plus `dist/`;
+  `node scripts/build.ts stage <out>` packs the main package (platform packages pinned as optional
+  dependencies) and each platform package that holds an addon.
+- Deleted from `ts/scripts`: absence-gate, pin, declarations, platform, native-artifact, stage,
+  runtime-identities, generate-law-scale, errors. No pack provenance, no version roster.
+
+### For ci
+- `examples/consumers/{log-ts,native-ledger}` are deleted (they used bumbledb-log).
+  `examples/consumers/core-ts/consumer.ts` imports `Db` from `@bjornpagen/bumbledb/engine`.
+  `examples/consumers/rust/src/main.rs` stays with `consumer::run()`; I adapt it to engine API
+  changes as they land.
+- The packed smoke can run `node ts/scripts/build.ts release && node ts/scripts/build.ts stage <dir>`.

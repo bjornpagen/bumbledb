@@ -11,15 +11,6 @@ import type { SchemaSpec, ValueSpec, ValueTypeSpec } from "./spec.ts"
  */
 type DbHandle = { readonly __brand: "bumbledb.db" }
 
-/** Admitted owned instance attached through directory publish — not a JS builder. */
-
-/**
- * The sealed per-theory log schema (`crates/bumbledb-log` successor
- * lanes): the validated core schema plus its fingerprint, shared by the
- * command/decision grammar. Immutable plain data; no lifecycle verbs.
- */
-type LogSchemaHandle = { readonly __brand: "bumbledb.logSchema" }
-
 /** A discrete half-open interval `[start, end)` over u64/i64. */
 interface IntervalValue {
 	readonly start: bigint
@@ -183,176 +174,6 @@ type ConditionTreeIr =
 
 type StatementKindTag = "functionality" | "containment" | "capacity"
 
-// ---------------------------------------------------------------------------
-// Successor log grammar wire (C06 through the C09 bridge). The 0.x
-// braids/codec/manifest/sidecar lanes and their mint tables are deleted.
-// ---------------------------------------------------------------------------
-
-/**
- * A grammar lane's domain outcome: the payload, or a refusal row whose
- * `kind` is an identity string spelled exactly as `bumbledb-log`'s
- * identities emitter spells it (`logIdentities()` / log-identities.json).
- */
-type LogResult<T, K extends string> =
-	| { readonly ok: true; readonly value: T }
-	| { readonly ok: false; readonly kind: K; readonly message: string }
-
-/** `FrameError` kinds (the `frame` identity family). */
-type LogFrameKind =
-	| "limitExceeded"
-	| "lengthOverflow"
-	| "allocation"
-	| "truncated"
-	| "family"
-	| "layout"
-	| "kind"
-	| "tag"
-	| "invalidEpoch"
-	| "stateIdentityMismatch"
-	| "emptyChangeSummary"
-	| "emptyEvidence"
-	| "invalidTerminalStamp"
-	| "invalidPreconditionEvidence"
-	| "invalidPolicy"
-	| "invalidSequence"
-	| "invalidCount"
-	| "trailingBytes"
-
-/** Receipt-row kinds: the frame family plus the foreign-scope refusal. */
-type LogReceiptKind = LogFrameKind | "foreignRow"
-
-/** Command-lane kinds: frame family plus the two command-only arms. */
-type LogCommandKind = LogFrameKind | "core" | "schemaMismatch"
-
-/** Chain-step refusals from the decode-and-verify lane. */
-type LogChainKind = "wrongParent" | "wrongSequence"
-
-/** The complete database scope of every command/receipt/decision. */
-interface LogIdentity {
-	/** Application-owned Uuid, canonical hyphenated UUID. */
-	readonly databaseId: string
-	readonly incarnationId: string
-	/** The core schema fingerprint, 64 lowercase hex characters. */
-	readonly schemaId: string
-}
-
-interface LogStateStamp {
-	readonly incarnation: string
-	readonly dataRevision: bigint
-}
-
-interface LogDecisionStamp {
-	readonly seq: bigint
-	readonly hash: Uint8Array
-}
-
-type LogCondition = { readonly kind: "unconditional" } | { readonly kind: "exactState"; readonly state: LogStateStamp }
-
-interface LogCommandId {
-	readonly receiptEpoch: bigint
-	readonly requestId: string
-}
-
-interface LogCommandMetadata {
-	readonly identity: LogIdentity
-	readonly id: LogCommandId
-	readonly condition: LogCondition
-}
-
-interface LogCommandRef {
-	readonly identity: LogIdentity
-	readonly receiptEpoch: bigint
-	readonly requestId: string
-	readonly digest: Uint8Array
-}
-
-type LogOutcomeWire =
-	| { readonly kind: "committed"; readonly added: bigint; readonly removed: bigint; readonly result?: Uint8Array }
-	| { readonly kind: "noChange"; readonly result?: Uint8Array }
-	| { readonly kind: "preconditionFailed"; readonly expected: LogStateStamp; readonly observed: LogStateStamp }
-	| { readonly kind: "invariantRejected"; readonly evidence: Uint8Array }
-
-interface LogReceipt {
-	readonly command: LogCommandRef
-	readonly decisionAt: LogDecisionStamp
-	readonly stateAt: LogStateStamp
-	readonly outcome: LogOutcomeWire
-}
-
-interface LogLimits {
-	readonly envelopeBytes: bigint
-	readonly changeBytes: bigint
-	readonly evidenceBytes: bigint
-	readonly resultBytes: bigint
-}
-
-type LogAccess =
-	| { readonly kind: "active" }
-	| {
-			readonly kind: "frozen"
-			readonly operation: string
-			readonly intent:
-				| { readonly kind: "erasure" }
-				| { readonly kind: "transition"; readonly contractDigest: Uint8Array; readonly target: string }
-	  }
-
-type LogLifecycle =
-	| {
-			readonly kind: "live"
-			readonly access: LogAccess
-			readonly decision: LogDecisionStamp
-			readonly state: LogStateStamp
-			readonly receipts: { readonly openEpoch: bigint; readonly retiredThrough: bigint }
-	  }
-	| {
-			readonly kind: "deleted"
-			readonly operation: string
-			readonly reason:
-				| { readonly kind: "erasure" }
-				| {
-						readonly kind: "transitionAborted"
-						readonly sourceDatabase: string
-						readonly sourceIncarnation: string
-						readonly contractDigest: Uint8Array
-				  }
-	  }
-
-type LogActivation =
-	| { readonly kind: "notActivated" }
-	| {
-			readonly kind: "activated"
-			readonly operation: string
-			readonly targetGenesis: Uint8Array
-			readonly cause:
-				| { readonly kind: "create" }
-				| { readonly kind: "restore" }
-				| { readonly kind: "transition"; readonly contractDigest: Uint8Array }
-	  }
-
-interface LogAuthority {
-	readonly identity: LogIdentity
-	readonly revision: bigint
-	readonly lifecycle: LogLifecycle
-	readonly activation: LogActivation
-}
-
-type LogGenesisProvenance =
-	| { readonly kind: "create" }
-	| { readonly kind: "restore"; readonly sourceEvidence: Uint8Array }
-	| {
-			readonly kind: "transition"
-			readonly sourceDatabase: string
-			readonly sourceIncarnation: string
-			readonly contractDigest: Uint8Array
-	  }
-
-interface LogGenesis {
-	readonly identity: LogIdentity
-	readonly initialApplicationDigest: Uint8Array
-	readonly initialSystemDigest: Uint8Array
-	readonly provenance: LogGenesisProvenance
-}
-
 interface ManifestField {
 	readonly name: string
 	readonly id: number
@@ -492,39 +313,6 @@ interface Native {
 	blake3Hash(data: Uint8Array): Uint8Array
 
 	descriptor(spec: SchemaSpec): SealedDescriptor
-
-	// --- successor log grammar (small frames; command/decision lanes are
-	// executor verbs in #runtime-native.ts) ---
-
-	logIdentities(): string
-
-	logSchema(spec: SchemaSpec): LogSchemaHandle
-
-	logSchemaFingerprint(schema: LogSchemaHandle): string
-
-	logReceiptKey(id: LogCommandId): Uint8Array
-
-	logReceiptEncode(receipt: LogReceipt, limits: LogLimits): LogResult<Uint8Array, LogReceiptKind>
-
-	logReceiptDecode(
-		expected: { readonly identity: LogIdentity; readonly receiptEpoch: bigint; readonly requestId: string },
-		bytes: Uint8Array,
-		limits: LogLimits
-	): LogResult<LogReceipt, LogReceiptKind>
-
-	logReceiptDecodeAt(id: LogCommandId, bytes: Uint8Array, limits: LogLimits): LogResult<LogReceipt, LogReceiptKind>
-
-	logControlEncode(authority: LogAuthority, cap: bigint): LogResult<Uint8Array, LogFrameKind>
-
-	logControlDecode(bytes: Uint8Array, cap: bigint): LogResult<LogAuthority, LogFrameKind>
-
-	logGenesisEncode(record: LogGenesis, cap: bigint): LogResult<Uint8Array, LogFrameKind>
-
-	logGenesisDecode(bytes: Uint8Array, cap: bigint): LogResult<LogGenesis, LogFrameKind>
-
-	logGenesisStamp(record: LogGenesis, cap: bigint): LogResult<LogDecisionStamp, LogFrameKind>
-
-	logBlankDigests(): { readonly application: Uint8Array; readonly system: Uint8Array }
 }
 
 let binding: Native | undefined
@@ -546,52 +334,6 @@ const native: Native = new Proxy({} as Native, {
 
 function nativeBindingIsLoaded(): boolean {
 	return binding !== undefined
-}
-
-/**
- * @internal blake3 of the given bytes via the resident native binding —
- * the engine's own hash, lent to the replication driver
- * (`@bjornpagen/bumbledb-log`). Not SDK API; the export is deliberately
- * undocumented in the package surface. Small identity-sized inputs only.
- */
-function internalBlake3(data: Uint8Array): Uint8Array {
-	return bridged("bumbledb blake3", function hashBytes() {
-		return ensureNativeBinding().blake3Hash(data)
-	})
-}
-
-/**
- * @internal the engine's own sealed descriptor as data — relation ids,
- * field ids and types in sealed order, closed rosters with resolved
- * axiom rows, materialized statements in engine order, and the real
- * fingerprint. Runs the pure seal path; no store opens. Not SDK API;
- * the export is deliberately undocumented in the package surface.
- */
-function internalDescriptor(spec: SchemaSpec): SealedDescriptor {
-	return bridged("bumbledb descriptor", function sealSpec() {
-		return ensureNativeBinding().descriptor(spec)
-	})
-}
-
-/**
- * @internal the successor identity table emitted by the log core's one
- * speller (`bumbledb_log::identities::emit`). Not SDK API.
- */
-function internalLogIdentities(): string {
-	return bridged("bumbledb-log identities", function emitIdentities() {
-		return ensureNativeBinding().logIdentities()
-	})
-}
-
-/**
- * @internal the sealed per-theory log schema off the same `SchemaSpec`
- * every other lane speaks — one validated core schema, lent to the
- * replication driver (`@bjornpagen/bumbledb-log`). Not SDK API.
- */
-function internalLogSchema(spec: SchemaSpec): LogSchemaHandle {
-	return bridged("bumbledb-log schema", function sealSchema() {
-		return ensureNativeBinding().logSchema(spec)
-	})
 }
 
 function isEngineThrow(value: unknown): value is { kind: ErrorFamilyKind; message: string } {
@@ -642,28 +384,6 @@ export type {
 	HeadTermIr,
 	InteriorIr,
 	IntervalValue,
-	LogAccess,
-	LogActivation,
-	LogAuthority,
-	LogChainKind,
-	LogCommandId,
-	LogCommandKind,
-	LogCommandMetadata,
-	LogCommandRef,
-	LogCondition,
-	LogDecisionStamp,
-	LogFrameKind,
-	LogGenesis,
-	LogGenesisProvenance,
-	LogIdentity,
-	LogLifecycle,
-	LogLimits,
-	LogOutcomeWire,
-	LogReceipt,
-	LogReceiptKind,
-	LogResult,
-	LogSchemaHandle,
-	LogStateStamp,
 	NumericCastIr,
 	OpenKind,
 	ParsedQuery,
@@ -685,13 +405,4 @@ export type {
 	ViolationFact,
 	WriteTag
 }
-export {
-	bridged,
-	errorFromThrow,
-	internalBlake3,
-	internalDescriptor,
-	internalLogIdentities,
-	internalLogSchema,
-	native,
-	nativeBindingIsLoaded
-}
+export { bridged, errorFromThrow, native, nativeBindingIsLoaded }

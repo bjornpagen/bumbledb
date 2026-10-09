@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Effect, ManagedRuntime, Result } from "effect"
+import { Db } from "../src/engine.ts"
 import {
 	bool,
 	ChangeSet,
@@ -8,7 +9,6 @@ import {
 	closed,
 	closedId,
 	contained,
-	Db,
 	i64,
 	interval,
 	key,

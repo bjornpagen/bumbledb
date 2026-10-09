@@ -1,10 +1,7 @@
 /**
- * Packed core-TypeScript consumer (D07/D22/D27): the shared `Learning`
- * schema, reusable typed queries, one scoped ChangeSet, the shared
- * QueryReader helper, direct local admission, a witnessed correction,
- * computed query heads, scoped collect/pages, and joined
- * close. Importing this module performs no native work.
- *
+ * An installed-package consumer of the TypeScript SDK: one schema, typed queries, a scoped
+ * ChangeSet, a QueryReader helper, apply, a witnessed correction, computed query heads and
+ * scoped result reads. Importing this module performs no native work.
  */
 import {
 	alternatives,
@@ -14,7 +11,6 @@ import {
 	capacity,
 	ChangeSet,
 	contained,
-	Db,
 	describeQuery,
 	f64,
 	i64,
@@ -27,7 +23,6 @@ import {
 	on,
 	query,
 	queryFromDescription,
-	type QueryReader,
 	ref,
 	relation,
 	schema,
@@ -37,6 +32,7 @@ import {
 	weigh,
 	within
 } from "@bjornpagen/bumbledb"
+import { Db, type QueryReader } from "@bjornpagen/bumbledb/engine"
 import { Effect, ManagedRuntime, Option, Stream } from "effect"
 import { randomUUID } from "node:crypto"
 

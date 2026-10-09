@@ -1,20 +1,6 @@
 /** Exact-version internal bridge, shared by core and log. Not a public API. */
 
-import type {
-	DbHandle,
-	LogChainKind,
-	LogCommandKind,
-	LogCommandMetadata,
-	LogCommandRef,
-	LogCondition,
-	LogDecisionStamp,
-	LogIdentity,
-	LogLimits,
-	LogOutcomeWire,
-	LogSchemaHandle,
-	LogStateStamp,
-	Violation
-} from "./native.ts"
+import type { DbHandle, Violation } from "./native.ts"
 import { native } from "./native.ts"
 import type { SchemaSpec } from "./spec.ts"
 
@@ -51,45 +37,6 @@ export type ManagedDbOutcome =
 			readonly kind: "schemaError" | "newtypeMismatch" | "fingerprintMismatch" | "destinationExists"
 			readonly message: string
 			readonly diagnostic?: Extract<import("./runtime-errors.ts").DbError["reason"], { _tag: "Engine" }>["diagnostic"]
-	  }
-
-export type LogTakeWire =
-	| { readonly ok: false; readonly kind: LogCommandKind | LogChainKind; readonly message: string }
-	| {
-			/** Command sealed: envelope bytes + reference. */
-			readonly ok: true
-			readonly bytes: Uint8Array
-			readonly ref: LogCommandRef
-	  }
-	| {
-			/** Command parsed. */
-			readonly ok: true
-			readonly identity: LogIdentity
-			readonly receiptEpoch: bigint
-			readonly requestId: string
-			readonly condition: LogCondition
-			readonly changes: Uint8Array
-			readonly result: Uint8Array
-			readonly ref: LogCommandRef
-	  }
-	| {
-			/** Decision framed. */
-			readonly ok: true
-			readonly bytes: Uint8Array
-			readonly digest: Uint8Array
-	  }
-	| {
-			/** Decision decoded (and chain-verified when a parent was given). */
-			readonly ok: true
-			readonly identity: LogIdentity
-			readonly seq: bigint
-			readonly parent: LogDecisionStamp
-			readonly beforeState: LogStateStamp
-			readonly afterState: LogStateStamp
-			readonly commandBytes: Uint8Array
-			readonly command: LogCommandRef
-			readonly outcome: LogOutcomeWire
-			readonly digest: Uint8Array
 	  }
 
 export interface OptionsWire {
@@ -148,33 +95,6 @@ interface RuntimeNative {
 	): OperationHandle
 	runtimeDbTake(operation: OperationHandle): ManagedDbOutcome
 	runtimeManagedDbClose(db: DbHandle, callback: (report: CloseWire) => void): void
-
-	// --- successor log grammar on the executor (hashing over
-	// whole canonical change payloads; C06 through C09) ---
-	runtimeLogCommandSeal(
-		runtime: RuntimeHandle,
-		schema: LogSchemaHandle,
-		metadata: LogCommandMetadata,
-		changes: Uint8Array,
-		result: Uint8Array | null,
-		limits: LogLimits,
-		callback: () => void
-	): OperationHandle
-	runtimeLogCommandParse(
-		runtime: RuntimeHandle,
-		schema: LogSchemaHandle,
-		bytes: Uint8Array,
-		limits: LogLimits,
-		callback: () => void
-	): OperationHandle
-	runtimeLogDecisionDecode(
-		runtime: RuntimeHandle,
-		bytes: Uint8Array,
-		parent: LogDecisionStamp | null,
-		limits: LogLimits,
-		callback: () => void
-	): OperationHandle
-	runtimeLogTake(operation: OperationHandle): LogTakeWire
 }
 
 // The checked source/fresh-addon roster test pins this private declaration.

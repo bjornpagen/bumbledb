@@ -21,7 +21,6 @@ import {
 	closedId,
 	Compute,
 	contained,
-	Db,
 	decodeBoundaryField,
 	describeQuery,
 	duration,
@@ -48,14 +47,9 @@ import {
 	weigh,
 	within
 } from "@bjornpagen/bumbledb"
-import type {
-	ApplyOutcome,
-	CompleteResult,
-	Fact,
-	FloatIntervalValue,
-	IntervalValue,
-	QueryReader
-} from "@bjornpagen/bumbledb"
+import { Db } from "@bjornpagen/bumbledb/engine"
+import type { CompleteResult, Fact, FloatIntervalValue, IntervalValue } from "@bjornpagen/bumbledb"
+import type { ApplyOutcome, QueryReader } from "@bjornpagen/bumbledb/engine"
 
 declare const localPath: string
 ```

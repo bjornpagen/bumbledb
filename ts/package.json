@@ -8,9 +8,9 @@
 			"types": "./dist/index.d.ts",
 			"default": "./dist/index.js"
 		},
-		"./internal/log": {
-			"types": "./dist/internal/log.d.ts",
-			"default": "./dist/internal/log.js"
+		"./engine": {
+			"types": "./dist/engine.d.ts",
+			"default": "./dist/engine.js"
 		}
 	},
 	"files": [

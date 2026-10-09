@@ -41,19 +41,6 @@ export {
 } from "./codec.ts"
 export type { CompiledSchema, SchemaId } from "./compile.ts"
 export { Schema } from "./compile.ts"
-export type {
-	ApplyOutcome,
-	CoreWitness,
-	DbInspection,
-	JudgeOutcome,
-	PreparedQuery,
-	QueryReader,
-	Snapshot,
-	StorageInspection,
-	WriteExpected,
-	WriteOptions
-} from "./db.ts"
-export { Db } from "./db.ts"
 export {
 	AuthoringDiagnostic,
 	AuthoringError,
