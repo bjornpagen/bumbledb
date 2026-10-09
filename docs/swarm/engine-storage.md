@@ -18,8 +18,11 @@ C17, G2 (engine), L (code).
 | C9: one `WriteOutcome<R>`, one private commit path | landed `a92e311bd` |
 | C7: `bumbledb::host`; `store`, `integration`, `digest`, `value` private or deleted | landed `a92e311bd` |
 | C8 stage A: one flat `Error`, `Error::kind()`, `is_cancelled()` | landed `a92e311bd` |
-| C8 stage B: delete `Error::Store`/`StoreError` | waiting on engine-query and bridge (requests below) |
-| C15, C5, C10, C1, C6, A, `unreachable_pub`, L | in progress |
+| C15 engine side: checking in `bumbledb-theory`, the engine seals | landed `d3c01762b` |
+| C5 stage A: closed rows carry values and a canonical row; `ClosedRows` deleted | landed `d3c01762b` |
+| C5 stage B: `FactLayout`/`FactView`/`SealedRow::fact`/`Relation::layout` deleted | waiting on engine-query (request C5 below) |
+| C8 stage B: delete `Error::Store`/`StoreError` | in progress; migration below |
+| C15 macro side, C10, C1, C6, A, `unreachable_pub`, L | in progress |
 
 ## API changes (announcements)
 
@@ -98,6 +101,22 @@ C17, G2 (engine), L (code).
 - `bumbledb::alloc_counter` is always compiled; a test binary that measures allocations registers
   `#[global_allocator] static A: bumbledb::alloc_counter::CountingAllocator = CountingAllocator;`.
 
+- **C15 (theory).** `bumbledb_theory::schema::check(&SchemaDescriptor) -> Result<Checked,
+  SchemaError>` decides a declaration with no storage; the first failure in check order (relations
+  in declaration order, then statements in materialized order) is the error. `SchemaError`,
+  `StatementErrorKind`, `Mismatch`, `RowIndex`, `TargetKeyCandidate` (its `key` is now a
+  `StatementId`) live in `bumbledb_theory::schema` and are re-exported from `bumbledb::error`.
+  `Checked { relations: [CheckedRelation { name, fields, rows }], statements: [CheckedStatement] }`
+  with `CheckedStatement::{Key, Containment { resolution, mirror }, Capacity { resolution }}`;
+  `MemberSet`, `SealedWeight`, `SealedBound`, `mirror_links`, `MAX_FIXED_BYTES` moved there too.
+  `SchemaDescriptor::validate()` is `check` then seal. `StatementErrorKind::DeterminantKeyTooWide`
+  is gone (routing is at most 16 bytes by layout).
+- **C5 stage A (closed rows).** `Schema::closed_rows(RelationId) -> Option<&[SealedRow]>` (also
+  `RelationBody::closed_rows()`); `SealedRow { handle: Box<str>, values: Box<[Value]>, row:
+  CanonicalRow, fact }`: `values` in sealed field order with `values[0] == Value::U64(index)`,
+  `row.as_bytes()` is the stored-row codec. `fact` is the old fixed-width codec and goes in stage B.
+- Schema fingerprint label `bdb.schema.v1`; every fingerprint wire tag is dense from 1.
+
 ### Planned
 
 - **C8 stage B.** `Error::Cancelled` and `Error::Allocation` replace `Error::Store`; `StoreError`
@@ -110,6 +129,21 @@ C17, G2 (engine), L (code).
   `FactLayout`/`FactView` leave `encoding`.
 
 ## Requests to other lanes
+
+- **engine-query (C5, closed rows):** closed relations build and evaluate from canonical rows, the
+  same path as stored rows. Then I delete `FactLayout`, `FactView`, `SealedRow::fact`,
+  `Relation::layout()`, `encoding::{field_bytes, interval_words, split_halves,
+  decode_values_keyed_into, decode_sealed}` and `image/decode.rs`'s users go with it:
+  - `image/build.rs::synthesize_closed`: `build_from_scan(schema, &generation, rel, rows.len() as
+    u64, work, |visit| rows.iter().try_for_each(|row| visit(row.row.as_bytes())))` (closed
+    relations hold no `str`, so the interner is never touched); delete `image/decode.rs`.
+  - `plan/ground/evaluate.rs`: `SealedRow { fact: FactView }` becomes the row's `&[Value]`
+    (`row.values`), read per field by index; `text_eq.rs` builds `Value` rows.
+  - `plan/fj/validate.rs:68`: `schema.relation(relation).fields().iter().map(|f| f.value_type)`.
+  - `api/prepared/source.rs:190`: `row.values.to_vec()` instead of `decode_sealed(.., &row.fact, ..)`.
+  - `image/tests/closed.rs:135-139`: read interval words from `row.values` (`Value::IntervalU64`
+    etc.) instead of `split_halves`.
+  Say "C5 query side landed" here and I delete the rest the same hour.
 
 - **engine-query (C8 stage B):** your files still name `Error::Store`/`StoreError` (about 30 sites:
   `api/prepared/source.rs` `store_work`/`store_error`, `exec/dispatch/key_probe_fact.rs`, and the
