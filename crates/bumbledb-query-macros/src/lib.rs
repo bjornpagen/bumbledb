@@ -1622,7 +1622,7 @@ impl Emitter<'_> {
                 bytes.escape_ascii()
             ),
             Lit::Str(text) => {
-                format!("{value}::String(::std::boxed::Box::from({text}.as_bytes()))")
+                format!("{value}::String(::std::boxed::Box::<str>::from({text}))")
             }
             Lit::Bytes(text) => {
                 format!("{value}::FixedBytes(::std::boxed::Box::from(&{text}[..]))")

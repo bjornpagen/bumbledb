@@ -410,6 +410,24 @@ fn closed_reference_handles_are_a_fixed_point() {
     assert_eq!(*qualified, *reparsed);
 }
 
+/// A string literal selection lowers to the `Value::String` it spells and
+/// renders back to the same literal.
+#[test]
+fn string_literal_selection_golden() {
+    let named = query!(Ledger {
+        (h) | Holder(id: h, name == "Ada \"the\" Countess\n");
+    });
+    let rule = &named.rules()[0];
+    assert_eq!(
+        rule.atoms[0].bindings[1].1,
+        bumbledb::Term::Literal(bumbledb::Value::String("Ada \"the\" Countess\n".into()))
+    );
+    assert_eq!(
+        pin("string-literal", Ledger, &named),
+        "(v0) | Holder(id: v0, name == \"Ada \\\"the\\\" Countess\\n\");"
+    );
+}
+
 /// Every named-aggregate head form in one rule; the names stay at the
 /// call site (result columns are positional — the render drops them).
 #[test]
