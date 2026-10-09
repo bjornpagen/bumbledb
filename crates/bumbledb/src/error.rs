@@ -62,24 +62,11 @@ pub struct Exceeded<T> {
 /// Impossible stored bytes: a hard error, never a skip or a default.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CorruptionError {
-    InvalidBool(u8),
-
     /// Order-key bytes representing a noncanonical F64.
     NonCanonicalF64([u8; 8]),
 
-    InvalidInterval([u8; 16]),
-
-    /// A fixed-width interval whose start plus width reaches the ceiling.
-    InvalidFixedIntervalStart([u8; 8]),
-
     /// A query text token the answering image's interner never minted.
     DanglingInternId(InternId),
-
-    WrongFactWidth {
-        relation: RelationId,
-        row_id: u64,
-        mismatch: Mismatch<usize>,
-    },
 
     RowCountMismatch {
         relation: RelationId,
@@ -87,8 +74,6 @@ pub enum CorruptionError {
     },
 
     MalformedValue(&'static str),
-
-    NonzeroFixedBytesPad([u8; 8]),
 
     /// A required `meta` entry is absent or malformed.
     MetaMissing(&'static str),
@@ -100,17 +85,12 @@ pub enum CorruptionError {
     DanglingIndexEntry,
 }
 
-/// A dynamic-surface id that does not resolve: relation, field, fresh
-/// field, or key statement. These are not fact shapes.
+/// A dynamic-surface id that does not resolve: a relation, or a key
+/// statement of it. These are not fact shapes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DynIdError {
     UnknownRelation {
         relation: RelationId,
-    },
-
-    UnknownField {
-        relation: RelationId,
-        field: FieldId,
     },
 
     NotAKeyStatement {
@@ -197,16 +177,6 @@ impl<T> Admission<T> {
             Self::Rejected(violations) => Admission::Rejected(violations),
         }
     }
-}
-
-/// One probe's witnessed judgment: either the obligation holds or it
-/// cites exactly one violation. Checkers return this; they never mint
-/// an error as a semantic verdict.
-#[must_use]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Check {
-    Holds,
-    Violated(Violation),
 }
 
 /// Scalar put-conflict vs pointwise neighbor probe — two conviction

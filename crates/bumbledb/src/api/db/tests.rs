@@ -141,14 +141,7 @@ fn pending_owners_release_duplicates_and_opposite_mutations_and_transfer_into_se
     );
     assert!(tx.contains_dyn(ENTRY, &entry_row("alpha", 3)).unwrap());
     assert!(crate::alloc_counter::snapshot().absolute.live_bytes <= retained);
-    let accepted = crate::AcceptedCollection::from_value_rows(
-        ENTRY,
-        db.schema.relation(ENTRY).fields(),
-        [entry_row("alpha", 3)],
-    )
-    .unwrap();
-    tx.delete_accepted(&accepted).unwrap();
-    drop(accepted);
+    tx.delete_dyn(ENTRY, [entry_row("alpha", 3)]).unwrap();
     assert!(
         crate::alloc_counter::snapshot().absolute.live_bytes <= baseline,
         "opposite mutation releases payload and empty trees"
@@ -1538,7 +1531,7 @@ fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
 }
 
 #[test]
-fn accepted_reports_are_exact_and_delete_never_mints() {
+fn accepted_insert_reports_are_exact_and_delete_never_mints() {
     let dir = TempDir::new("db-accepted-reports");
     let db = create(&dir);
     let fields = db.schema().relation(ENTRY).fields().to_vec();
@@ -1551,7 +1544,10 @@ fn accepted_reports_are_exact_and_delete_never_mints() {
     db.write(operation(), |tx| {
         let report = tx.insert_accepted(&rows)?;
         assert_eq!((report.submitted(), report.changed()), (3, 2));
-        let report = tx.delete_accepted(&rows)?;
+        let report = tx.delete_dyn(
+            ENTRY,
+            [entry_row("a", 1), entry_row("a", 1), entry_row("b", 2)],
+        )?;
         assert_eq!((report.submitted(), report.changed()), (3, 2));
         Ok(())
     })

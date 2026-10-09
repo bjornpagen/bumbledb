@@ -404,13 +404,6 @@ impl<'a, S> WriteTx<'a, S> {
         self.apply_accepted(collection, ChangeKind::Add)
     }
 
-    /// # Errors
-    /// As [`WriteTx::insert_dyn`]; the collection's shape proof already ran.
-    #[doc(hidden)]
-    pub fn delete_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
-        self.apply_accepted(collection, ChangeKind::Remove)
-    }
-
     fn encode_dyn_collection(
         &mut self,
         rel: RelationId,

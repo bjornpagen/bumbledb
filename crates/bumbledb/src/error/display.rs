@@ -109,9 +109,6 @@ impl fmt::Display for DynIdError {
             Self::UnknownRelation { relation } => {
                 write!(f, "relation {}: not in this schema", relation.0)
             }
-            Self::UnknownField { relation, field } => {
-                write!(f, "relation {} has no field {}", relation.0, field.0)
-            }
             Self::NotAKeyStatement {
                 relation,
                 statement,
@@ -155,27 +152,10 @@ impl fmt::Display for CorruptionError {
             Self::NonCanonicalF64(bytes) => {
                 write!(f, "noncanonical stored F64 order bytes: {bytes:02x?}")
             }
-            Self::InvalidBool(byte) => write!(f, "invalid Bool byte {byte:#04x}"),
-            Self::InvalidInterval(bytes) => {
-                write!(f, "interval bytes {bytes:02x?}: start >= end")
-            }
-            Self::InvalidFixedIntervalStart(bytes) => write!(
-                f,
-                "fixed-width interval start {bytes:02x?}: start + w at or past the domain ceiling"
-            ),
             Self::DanglingInternId(id) => write!(
                 f,
                 "text token {} was never minted by the query image's interner",
                 id.raw()
-            ),
-            Self::WrongFactWidth {
-                relation,
-                row_id,
-                mismatch,
-            } => write!(
-                f,
-                "relation {}: row {row_id} is {} bytes, the schema says {}",
-                relation.0, mismatch.witnessed, mismatch.required
             ),
             Self::RowCountMismatch { relation, stored } => write!(
                 f,
@@ -183,12 +163,6 @@ impl fmt::Display for CorruptionError {
                 relation.0
             ),
             Self::MalformedValue(kind) => write!(f, "malformed stored value: {kind}"),
-            Self::NonzeroFixedBytesPad(tail) => {
-                write!(
-                    f,
-                    "bytes<N> trailing word {tail:02x?} has a nonzero pad byte"
-                )
-            }
             Self::MetaMissing(what) => write!(f, "meta entry `{what}` is absent or malformed"),
             Self::MalformedKey(what) => write!(f, "malformed physical key: {what}"),
             Self::DanglingIndexEntry => f.write_str("an index entry names no row"),

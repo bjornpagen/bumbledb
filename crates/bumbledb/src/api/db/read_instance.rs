@@ -286,19 +286,7 @@ impl<S> ReadFrame<'_, S> {
         &'lease self,
         key: K,
     ) -> Result<Option<K::Fact>> {
-        self.get_with_work(self.work, key)
-    }
-
-    /// As [`Self::get`], under an explicit work context (native wire).
-    /// # Errors
-    /// As [`Self::get`].
-    #[doc(hidden)]
-    pub fn get_with_work<'lease, K: Key<'lease, Schema = S>>(
-        &'lease self,
-        work: &WorkContext,
-        key: K,
-    ) -> Result<Option<K::Fact>> {
-        get_fact(self.snapshot, self.schema, key, work)
+        get_fact(self.snapshot, self.schema, key, self.work)
     }
 
     /// # Errors

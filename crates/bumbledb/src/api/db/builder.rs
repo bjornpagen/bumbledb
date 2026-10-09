@@ -27,6 +27,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::canonical::DecodedRow;
+use crate::changes::ChangeKind;
 use crate::error::{Admission, DynIdError, Error, Result};
 use crate::ir::Value;
 use crate::schema::judge::{Facts, JudgeBudget, Judgment, RowVisitor, judge_complete};
@@ -107,16 +108,15 @@ impl<S> InstanceBuilder<S> {
         &mut self,
         relation: RelationId,
         rows: Vec<Vec<u8>>,
-        insert: bool,
+        kind: ChangeKind,
     ) -> MutationReport {
         let submitted = rows.len() as u64;
         let mut changed = 0u64;
         let staged = self.staged.entry(relation).or_default();
         for row in rows {
-            let moved = if insert {
-                staged.insert(row.into_boxed_slice())
-            } else {
-                staged.remove(row.as_slice())
+            let moved = match kind {
+                ChangeKind::Add => staged.insert(row.into_boxed_slice()),
+                ChangeKind::Remove => staged.remove(row.as_slice()),
             };
             if moved {
                 changed += 1;
@@ -157,7 +157,7 @@ impl<S> InstanceBuilder<S> {
             fact.append_values(values)?;
             encode_values(builder.schema.as_ref(), F::RELATION, values, &builder.work)
         })?;
-        Ok(self.apply_rows(F::RELATION, rows, true))
+        Ok(self.apply_rows(F::RELATION, rows, ChangeKind::Add))
     }
 
     /// # Errors
@@ -171,7 +171,7 @@ impl<S> InstanceBuilder<S> {
             fact.append_values(values)?;
             encode_values(builder.schema.as_ref(), F::RELATION, values, &builder.work)
         })?;
-        Ok(self.apply_rows(F::RELATION, rows, false))
+        Ok(self.apply_rows(F::RELATION, rows, ChangeKind::Remove))
     }
 
     /// # Errors
@@ -185,7 +185,7 @@ impl<S> InstanceBuilder<S> {
         let Some(coll) = self.accept_dyn(rel, facts)? else {
             return Ok(MutationReport::EMPTY);
         };
-        self.apply_accepted(&coll, true)
+        self.apply_accepted(&coll, ChangeKind::Add)
     }
 
     /// # Errors
@@ -198,21 +198,7 @@ impl<S> InstanceBuilder<S> {
         let Some(coll) = self.accept_dyn(rel, facts)? else {
             return Ok(MutationReport::EMPTY);
         };
-        self.apply_accepted(&coll, false)
-    }
-
-    /// # Errors
-    /// As [`InstanceBuilder::load_dyn`]; the shape proof already ran.
-    #[doc(hidden)]
-    pub fn load_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
-        self.apply_accepted(collection, true)
-    }
-
-    /// # Errors
-    /// As [`InstanceBuilder::load_dyn`]; the shape proof already ran.
-    #[doc(hidden)]
-    pub fn delete_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
-        self.apply_accepted(collection, false)
+        self.apply_accepted(&coll, ChangeKind::Remove)
     }
 
     fn accept_dyn(
@@ -239,7 +225,7 @@ impl<S> InstanceBuilder<S> {
     fn apply_accepted(
         &mut self,
         coll: &AcceptedCollection,
-        insert: bool,
+        kind: ChangeKind,
     ) -> Result<MutationReport> {
         if coll.rows() == 0 {
             return Ok(MutationReport::EMPTY);
@@ -280,7 +266,7 @@ impl<S> InstanceBuilder<S> {
                 Err(error) => return Err(self.poison(error)),
             }
         }
-        Ok(self.apply_rows(rel, rows, insert))
+        Ok(self.apply_rows(rel, rows, kind))
     }
 
     /// # Errors

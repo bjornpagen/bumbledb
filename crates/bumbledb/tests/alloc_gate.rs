@@ -16,7 +16,7 @@ use bumbledb::schema::{
 };
 use bumbledb::{
     Answers, BindValue, ConditionTree, Db, NonEmpty, ParamArg, PreparedQuery, ProjectionRule,
-    ReadInstance,
+    ReadFrame,
 };
 
 mod common;
@@ -801,7 +801,7 @@ fn marks_write_family(db: &Db<SchemaDescriptor>) {
 fn gate(
     label: &str,
     prepared: &mut PreparedQuery<SchemaDescriptor>,
-    snap: &ReadInstance<'_, SchemaDescriptor>,
+    snap: &ReadFrame<'_, SchemaDescriptor>,
     param_set: &[Vec<BindValue<'_>>],
 ) {
     let mut out = Answers::new();
@@ -842,7 +842,7 @@ fn gate(
 fn gate_args(
     label: &str,
     prepared: &mut PreparedQuery<SchemaDescriptor>,
-    snap: &ReadInstance<'_, SchemaDescriptor>,
+    snap: &ReadFrame<'_, SchemaDescriptor>,
     arg_set: &[Vec<ParamArg<'_>>],
 ) {
     let mut out = Answers::new();
@@ -882,7 +882,7 @@ fn silent(
     label: &str,
     step: &str,
     prepared: &mut PreparedQuery<SchemaDescriptor>,
-    snap: &ReadInstance<'_, SchemaDescriptor>,
+    snap: &ReadFrame<'_, SchemaDescriptor>,
     params: &[BindValue<'_>],
     out: &mut Answers,
 ) {
@@ -915,7 +915,7 @@ fn silent(
 fn escalation_gate(
     label: &str,
     prepared: &mut PreparedQuery<SchemaDescriptor>,
-    snap: &ReadInstance<'_, SchemaDescriptor>,
+    snap: &ReadFrame<'_, SchemaDescriptor>,
     params: &[Vec<BindValue<'_>>],
 ) {
     let mut out = Answers::new();
