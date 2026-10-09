@@ -278,6 +278,13 @@ impl Builder<'_> {
                             ));
                         }
                         None => {
+                            if let bumbledb::AtomSource::Edb(relation) = atom.source
+                                && self.schema.relation(relation).fields()[usize::from(field.0)]
+                                    .value_type
+                                    != bumbledb::schema::ValueType::F64
+                            {
+                                self.never_nan.insert(*var);
+                            }
                             self.columns.insert(*var, VarCols::Scalar(column));
                         }
                     },
@@ -388,6 +395,15 @@ impl Builder<'_> {
         }
     }
 
+    /// Whether `term` is known never to be NaN.
+    fn never_nan(&self, term: &Term) -> bool {
+        match term {
+            Term::Var(var) => self.never_nan.contains(var),
+            Term::Literal(value) => !matches!(value, Value::F64(_)),
+            Term::Param(_) | Term::ParamSet(_) => false,
+        }
+    }
+
     pub(super) fn comparison(&mut self, comparison: &Comparison) -> Result<(), String> {
         if matches!(comparison.op, CmpOp::Eq)
             && let Some((param, other)) = set_side(comparison)
@@ -424,11 +440,25 @@ impl Builder<'_> {
             (CmpOp::PointIn, Rendered::Pair(ls, le), Rendered::One(point)) => {
                 format!("{ls} <= {point} AND {point} < {le}")
             }
+            (op @ (CmpOp::Eq | CmpOp::Ne), Rendered::One(l), Rendered::One(r)) => {
+                format!("{l} {} {r}", op_sql(op))
+            }
+            // F64 order is IEEE: NaN is unordered against everything. When
+            // neither side is known not to be F64, the NaN blob is excluded;
+            // order operators apply only to numbers, so it matches nothing
+            // else.
             (
-                op @ (CmpOp::Eq | CmpOp::Ne | CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge),
+                op @ (CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge),
                 Rendered::One(l),
                 Rendered::One(r),
-            ) => format!("{l} {} {r}", op_sql(op)),
+            ) => {
+                if self.never_nan(&comparison.lhs) || self.never_nan(&comparison.rhs) {
+                    format!("{l} {} {r}", op_sql(op))
+                } else {
+                    let nan = crate::oracle::float::sql_literal(bumbledb::F64::NAN);
+                    format!("({l} {} {r} AND {l} <> {nan} AND {r} <> {nan})", op_sql(op))
+                }
+            }
             _ => return Err("comparison mixes interval and scalar operands".to_owned()),
         };
         self.conditions.push(conjunct);

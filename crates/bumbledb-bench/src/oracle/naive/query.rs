@@ -1094,14 +1094,13 @@ fn leaf_comparison(
         CmpOp::Eq => left == right,
         CmpOp::Ne => left != right,
         CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
-            let ordering = cmp_value(&left, &right);
-            match op {
+            order(&left, &right).is_some_and(|ordering| match op {
                 CmpOp::Lt => ordering.is_lt(),
                 CmpOp::Le => ordering.is_le(),
                 CmpOp::Gt => ordering.is_gt(),
                 CmpOp::Ge => ordering.is_ge(),
                 _ => unreachable!(),
-            }
+            })
         }
         CmpOp::Allen { mask } => {
             let (a, b) = (endpoints(&left), endpoints(&right));
@@ -1114,6 +1113,53 @@ fn leaf_comparison(
             point_in(endpoints(&left), t)
         }
     })
+}
+
+/// The order the comparison operators see: IEEE on F64, so NaN is
+/// unordered against everything; an integer against an F64 compares their
+/// exact values.
+fn order(left: &Value, right: &Value) -> Option<std::cmp::Ordering> {
+    let is_nan = |value: &Value| matches!(value, Value::F64(v) if v.to_f64().is_nan());
+    if is_nan(left) || is_nan(right) {
+        return None;
+    }
+    let integer = |value: &Value| match value {
+        Value::U64(n) => Some(i128::from(*n)),
+        Value::I64(n) => Some(i128::from(*n)),
+        _ => None,
+    };
+    match (left, right) {
+        (Value::F64(f), other) if integer(other).is_some() => {
+            Some(integer_against_float(integer(other).expect("an integer"), f.to_f64()).reverse())
+        }
+        (other, Value::F64(f)) if integer(other).is_some() => Some(integer_against_float(
+            integer(other).expect("an integer"),
+            f.to_f64(),
+        )),
+        _ => Some(cmp_value(left, right)),
+    }
+}
+
+/// `n` against a non-NaN `f`, exactly: every finite binary64 below 2^127 in
+/// magnitude has an exact integer floor.
+fn integer_against_float(n: i128, f: f64) -> std::cmp::Ordering {
+    const BOUND: f64 = 170_141_183_460_469_231_731_687_303_715_884_105_728.0; // 2^127
+    if f >= BOUND {
+        return std::cmp::Ordering::Less;
+    }
+    if f < -BOUND {
+        return std::cmp::Ordering::Greater;
+    }
+    let floor = f.floor();
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "floor is integral and inside i128 by the bounds above"
+    )]
+    let whole = floor as i128;
+    match n.cmp(&whole) {
+        std::cmp::Ordering::Equal if f > floor => std::cmp::Ordering::Less,
+        other => other,
+    }
 }
 
 fn basic_holds(basic: Basic, a: (i128, i128), b: (i128, i128)) -> bool {

@@ -94,7 +94,7 @@ fn contradiction_draws_are_empty_on_both_sides() {
     let mut rng = Rng::new(CFG.seed);
     let mut ops = vec![Op::Write(base_delta())];
     let mut draws = Vec::new();
-    for _ in 0..20 {
+    for _ in 0..crate::fixture::sweep(20) {
         let query = contradiction_query(&mut rng, CFG);
         for draw in params_for(&query, &mut rng, CFG) {
             let mut params: Vec<ParamValue> =

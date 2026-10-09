@@ -80,6 +80,7 @@ pub(super) fn rule_core<'q>(
         conditions: Vec::new(),
         deferred: Vec::new(),
         columns: BTreeMap::new(),
+        never_nan: std::collections::BTreeSet::new(),
         param_index: std::mem::take(&mut params.index),
         params: std::mem::take(&mut params.params),
         shape: params.shape,

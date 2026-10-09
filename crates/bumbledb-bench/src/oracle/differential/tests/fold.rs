@@ -263,7 +263,8 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
 
     let mut rng = Rng::new(CFG.seed);
     let mut compared = 0u64;
-    for _ in 0..30 {
+    let queries = crate::fixture::sweep(30);
+    for _ in 0..queries {
         let query = random_query(&mut rng, CFG);
         for draw in params_for(&query, &mut rng, CFG) {
             let mut params: Vec<ParamValue> =
@@ -284,5 +285,5 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
             compared += 1;
         }
     }
-    assert_eq!(compared, 120, "30 queries x 4 draws");
+    assert_eq!(compared, queries * 4, "four draws per query");
 }

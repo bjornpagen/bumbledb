@@ -50,6 +50,17 @@ pub(crate) fn string(text: &str) -> Value {
     Value::String(text.into())
 }
 
+/// A seeded sweep's case count: `n`, or sixteen times `n` under
+/// `BUMBLEDB_DEEP=1`. The extra cases extend the same seed sequence.
+#[cfg(test)]
+pub(crate) fn sweep(n: u64) -> u64 {
+    if std::env::var_os("BUMBLEDB_DEEP").is_some_and(|deep| deep == "1") {
+        n * 16
+    } else {
+        n
+    }
+}
+
 /// A scratch path unique to this test process, so concurrent test runs never
 /// share a store.
 #[cfg(test)]

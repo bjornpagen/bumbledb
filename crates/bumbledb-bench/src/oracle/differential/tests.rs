@@ -132,7 +132,7 @@ fn write_ops(rng: &mut Rng) -> (Vec<Delta>, u64) {
     let mut mirror = NaiveDb::new(&schema());
     let mut deltas = Vec::new();
     let mut pattern_cases = 0u64;
-    for _ in 0..200 {
+    for _ in 0..crate::fixture::sweep(200) {
         let delta = match rng.below(11) {
             0..=3 => {
                 let reference = rng.below(8);

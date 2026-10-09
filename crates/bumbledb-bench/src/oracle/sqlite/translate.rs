@@ -97,6 +97,9 @@ struct Builder<'q> {
 
     columns: BTreeMap<VarId, VarCols>,
 
+    /// Variables bound to a stored column that is not F64, so never NaN.
+    never_nan: std::collections::BTreeSet<VarId>,
+
     param_index: BTreeMap<ParamSlot, usize>,
     params: Vec<ParamSlot>,
 

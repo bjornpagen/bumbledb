@@ -16,7 +16,9 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 | H4 rusqlite 0.32 → 0.40.2 (u64 counts read as `i64`, `progress_handler` results propagated) | landed |
 | Provenance from `rustc -vV` at build time (`build.rs`; `provenance.toolchain` in every report) | landed |
 | E2 `micro --levels all|a,b` (every kernel at every level vs its scalar twin via `bumbledb::kernels`, outputs checked bit-identical before timing) and the `float_stats` world (8-field `Reading`, 1% NaN; global and grouped SUM/AVG/MIN/MAX at 10k groups and one group per row, `v > c`, `qty * price`, `(a - b) / c`), gated against the naive evaluator | landed |
-| Adapt: `testing` feature, C7, C8, C9, C3/C4 | as they land |
+| Adapt: E5 (naive and SQLite order F64 like IEEE: NaN unordered; six seeded digests re-blessed), E8 (naive orders an integer against an F64 exactly), ValidationError fold, C17 `disk_size()`, C3/C4 | landed |
+| `BUMBLEDB_DEEP=1` widens the randomized differential sweeps sixteenfold (same seeds, extended) | landed |
+| Adapt: C7, C8, C9, E5 MIN/MAX | as they land |
 
 ## Layout (crate `bumbledb_bench`)
 

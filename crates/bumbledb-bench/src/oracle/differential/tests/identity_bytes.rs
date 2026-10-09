@@ -98,7 +98,7 @@ impl Rng {
 fn write_ops(rng: &mut Rng) -> Vec<Delta> {
     let mut mirror = NaiveDb::new(&schema());
     let mut deltas = Vec::new();
-    for _ in 0..160 {
+    for _ in 0..crate::fixture::sweep(160) {
         let delta = match rng.below(10) {
             0..=3 => {
                 let k = rng.below(24);
