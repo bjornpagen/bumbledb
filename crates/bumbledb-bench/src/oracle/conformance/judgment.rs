@@ -12,7 +12,7 @@ use bumbledb::{Db, Interval, Value};
 use crate::oracle::differential::{self, Verdict};
 use crate::oracle::naive::{Delta, NaiveDb, Violation};
 
-use super::ScratchDir;
+use crate::fixture::TempDir;
 
 type Facts = Vec<(RelationId, Vec<Value>)>;
 
@@ -1118,10 +1118,14 @@ pub(super) fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
 /// On an engine-vs-naive disagreement, a refused base commit, or a
 /// closed-relation write in a fixture.
 fn render_fixture(fixture: &JudgmentFixture) -> String {
-    let dir = ScratchDir::new(&format!("judgment-{}", fixture.name));
-    let db = Db::create(&dir.0, fixture.schema.clone(), crate::harness::bench_work())
-        .expect("create judgment fixture store")
-        .expect("accepted");
+    let dir = TempDir::new(&format!("judgment-{}", fixture.name));
+    let db = Db::create(
+        dir.path(),
+        fixture.schema.clone(),
+        crate::harness::bench_work(),
+    )
+    .expect("create judgment fixture store")
+    .expect("accepted");
     let mut naive = NaiveDb::new(&fixture.schema);
     let base = Delta {
         deletes: vec![],
@@ -1333,10 +1337,14 @@ mod tests {
             .into_iter()
             .find(|fixture| fixture.name == "judgment-containment-both-directions")
             .expect("the fixture is on the roster");
-        let dir = ScratchDir::new("judgment-both-directions-pin");
-        let db = Db::create(&dir.0, fixture.schema.clone(), crate::harness::bench_work())
-            .expect("create the pin store")
-            .expect("accepted");
+        let dir = TempDir::new("judgment-both-directions-pin");
+        let db = Db::create(
+            dir.path(),
+            fixture.schema.clone(),
+            crate::harness::bench_work(),
+        )
+        .expect("create the pin store")
+        .expect("accepted");
         let base = Delta {
             deletes: vec![],
             inserts: fixture.base.clone(),

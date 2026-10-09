@@ -68,10 +68,9 @@ pub(crate) fn scratch_path(tag: impl std::fmt::Display) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("bumbledb-bench-{}-{tag}", std::process::id()))
 }
 
-#[cfg(test)]
+/// A scratch directory removed on drop.
 pub(crate) struct TempDir(std::path::PathBuf);
 
-#[cfg(test)]
 impl TempDir {
     pub(crate) fn new(tag: &str) -> Self {
         // Process id and clock keep concurrent and wedged runs off one LMDB lock.
@@ -95,7 +94,6 @@ impl TempDir {
     }
 }
 
-#[cfg(test)]
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);

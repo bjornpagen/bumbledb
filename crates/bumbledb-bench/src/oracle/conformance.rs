@@ -19,6 +19,7 @@ use bumbledb::{
     RelationId, Rule, Term, Value, VarId,
 };
 
+use crate::fixture::TempDir;
 use crate::oracle::differential::{self, Answers};
 use crate::oracle::naive::{Delta, NaiveDb, ParamValue, StepBudget, Tuple};
 use crate::oracle::querygen::{self, ParamDraw, target};
@@ -95,31 +96,7 @@ pub struct World {
     pub naive: NaiveDb,
     dict: BTreeMap<Box<str>, u64>,
     dict_order: Vec<Box<str>>,
-    _dir: ScratchDir,
-}
-
-struct ScratchDir(PathBuf);
-
-impl ScratchDir {
-    fn new(tag: &str) -> Self {
-        // Process id and clock keep concurrent and wedged runs off one LMDB lock.
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock after epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "bumbledb-conformance-{tag}-{}-{nanos}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&path);
-        Self(path)
-    }
-}
-
-impl Drop for ScratchDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
+    _dir: TempDir,
 }
 
 #[must_use]
@@ -128,8 +105,8 @@ pub fn build_world(seed: u64) -> World {
         seed,
         scale: Scale::Tiny,
     };
-    let dir = ScratchDir::new(&format!("{seed:08x}"));
-    let db = target::publish_admitted(&dir.0);
+    let dir = TempDir::new(&format!("conformance-{seed:08x}"));
+    let db = target::publish_admitted(dir.path());
     let mut naive = NaiveDb::new(&target::descriptor());
     let mut delta = Delta::default();
     for rel in 0..target::TARGET_RELATIONS {
