@@ -2,7 +2,6 @@
 //! Image construction does no counting. Temporary tables belong to the
 //! requesting operation, not the cache; a failed computation publishes nothing.
 use super::{ColumnView, RelationImage};
-use crate::api::prepared::source::work_error;
 use crate::error::{Error, Result};
 use crate::exec::sink::STEP_QUANTUM;
 use crate::work::WorkContext;
@@ -11,7 +10,7 @@ impl RelationImage {
     /// Compute once on demand. Concurrent callers may compute independently:
     /// none waits behind another operation's allocation or cancellation.
     pub(crate) fn distinct_count(&self, column: usize, work: &WorkContext) -> Result<u64> {
-        work.checkpoint().map_err(work_error)?;
+        work.checkpoint()?;
         let cached = &self.distincts[column];
         if let Some(&count) = cached.get() {
             return Ok(count);
@@ -31,7 +30,7 @@ impl RelationImage {
             ColumnView::Bytes(bytes) => {
                 let mut mask = [0u64; 4];
                 for chunk in bytes.chunks(STEP_QUANTUM as usize) {
-                    work.checkpoint().map_err(work_error)?;
+                    work.checkpoint()?;
                     for &byte in chunk {
                         mask[usize::from(byte >> 6)] |= 1 << (byte & 63);
                     }
@@ -84,7 +83,7 @@ impl<'a> CountWork<'a> {
 
     fn finish(&mut self) -> Result<()> {
         self.pending = 0;
-        self.work.checkpoint().map_err(work_error)
+        Ok(self.work.checkpoint()?)
     }
 }
 
@@ -95,12 +94,12 @@ struct WordSet {
 }
 
 fn allocation_error() -> Error {
-    Error::from_store(crate::storage::store::StoreError::Allocation)
+    Error::from(crate::work::WorkError::Allocation)
 }
 
 impl WordSet {
     fn allocate(capacity: usize, work: &WorkContext) -> Result<Self> {
-        work.checkpoint().map_err(work_error)?;
+        work.checkpoint()?;
         let mut slots = Vec::new();
         slots
             .try_reserve_exact(capacity)
@@ -222,11 +221,11 @@ mod tests {
         let image = image(&(0..1000).collect::<Vec<_>>());
         let work = unbounded_work();
         work.cancel();
-        assert!(matches!(
-            image.distinct_count(0, &work),
-            Err(crate::error::Error::Store(error))
-                if matches!(*error, crate::storage::store::StoreError::Work(WorkError::Cancelled))
-        ));
+        assert!(
+            image
+                .distinct_count(0, &work)
+                .is_err_and(|error| error.is_cancelled())
+        );
         assert!(image.distincts[0].get().is_none());
         assert_eq!(image.distinct_count(0, &unbounded_work()).unwrap(), 1000);
         assert!(
@@ -360,9 +359,7 @@ mod tests {
         count.pending = super::STEP_QUANTUM - 1;
         work.cancel();
         let error = table.insert(words[1], &mut count).unwrap_err();
-        assert!(matches!(error, crate::Error::Store(error) if matches!(
-            error.as_ref(), crate::storage::store::StoreError::Work(WorkError::Cancelled)
-        )));
+        assert!(error.is_cancelled());
         assert_eq!(
             table.len, 1,
             "a cancelled collision probe publishes no new slot"
@@ -416,9 +413,7 @@ mod tests {
             buffer
                 .refill_drained(None, &fields, 2, &generation, |_, write| {
                     write(&[9, 9, 1]);
-                    Err(crate::api::prepared::source::work_error(
-                        WorkError::Cancelled,
-                    ))
+                    Err(crate::Error::from(WorkError::Cancelled))
                 })
                 .is_err()
         );

@@ -463,7 +463,7 @@ impl Executor {
                 crate::error::Error::Overflow(crate::error::OverflowKind::OriginCapacity),
             ),
             super::DriveState::Poisoned(super::Poison::Work(error)) => {
-                Err(crate::api::prepared::source::work_error(error))
+                Err(crate::error::Error::from(error))
             }
             super::DriveState::Poisoned(super::Poison::SinkStop) => {
                 sink.take_error().map_or(Ok(()), Err)

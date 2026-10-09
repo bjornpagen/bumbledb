@@ -375,10 +375,7 @@ fn unique_projection_refusals_publish_no_partial_rows_and_allow_reuse() {
                 let source =
                     crate::api::prepared::source::QuerySource::store(instance.snapshot(), &work);
                 let result = prepared.execute_source(&source, &[] as &[BindValue], &mut out);
-                let expected = matches!(&result, Err(Error::Store(store)) if matches!(
-                    &**store,
-                    crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled)
-                ));
+                let expected = result.as_ref().is_err_and(Error::is_cancelled);
                 assert!(expected, "unexpected execution result: {result:?}");
                 assert!(
                     out.is_empty(),

@@ -227,14 +227,10 @@ impl From<WorkError> for InternError {
 
 impl From<InternError> for crate::error::Error {
     fn from(error: InternError) -> Self {
-        match error {
-            InternError::Work(work) => {
-                crate::error::Error::from_store(crate::storage::store::StoreError::Work(work))
-            }
-            InternError::Allocation => {
-                crate::error::Error::from_store(crate::storage::store::StoreError::Allocation)
-            }
-        }
+        Self::from(match error {
+            InternError::Work(work) => work,
+            InternError::Allocation => crate::work::WorkError::Allocation,
+        })
     }
 }
 

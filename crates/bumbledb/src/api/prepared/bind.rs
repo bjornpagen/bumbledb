@@ -413,7 +413,7 @@ impl LiteralResolution<'_, '_> {
         negated: bool,
         slot: &mut FilterPredicate,
     ) -> Result<bool> {
-        self.work.checkpoint().map_err(super::source::work_error)?;
+        self.work.checkpoint()?;
         crate::image::view::resolve_filter_into(
             self.interner,
             template,
@@ -429,7 +429,7 @@ impl LiteralResolution<'_, '_> {
         selection: &crate::plan::fj::Selection,
         out: &mut ResolvedWords,
     ) -> Result<bool> {
-        self.work.checkpoint().map_err(super::source::work_error)?;
+        self.work.checkpoint()?;
         if let Const::PendingIntern { bytes } = &selection.value {
             if matches!(out.texts.as_slice(), [text] if out.words.as_slice() == [text.word]) {
                 return Ok(true);

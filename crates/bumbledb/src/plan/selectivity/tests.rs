@@ -184,11 +184,10 @@ fn resident_statistics_are_exact_and_cached_without_retained_counting_tables() {
         40,
     );
     work.cancel();
-    assert!(matches!(
-        super::distinct_of(&source, &schema, POSTING, FieldId(3), Some(&image), 40),
-        Err(crate::Error::Store(error))
-            if matches!(*error, crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled))
-    ));
+    assert!(
+        super::distinct_of(&source, &schema, POSTING, FieldId(3), Some(&image), 40)
+            .is_err_and(|error| error.is_cancelled())
+    );
     let source = fixture.source();
     for (field, expected) in [(1, 3), (2, 2), (3, 7)] {
         assert_eq!(

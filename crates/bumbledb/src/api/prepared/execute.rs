@@ -75,7 +75,7 @@ impl<S> PreparedQuery<S> {
         let source = QuerySource::store(instance.snapshot(), work);
         let mut out = Answers::new();
         self.execute_source(&source, params, &mut out)?;
-        work.checkpoint().map_err(super::source::work_error)?;
+        work.checkpoint()?;
         Ok(out)
     }
 
@@ -125,7 +125,7 @@ impl<S> PreparedQuery<S> {
             source
                 .work()
                 .checkpoint()
-                .map_err(super::source::work_error)
+                .map_err(crate::error::Error::from)
         });
         if result.is_err() {
             out.clear();

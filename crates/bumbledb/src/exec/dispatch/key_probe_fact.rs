@@ -28,7 +28,7 @@
 
 use super::fact_word::FactOperand;
 use super::{KeyProbePart, KeyProbePlan};
-use crate::api::prepared::source::{QuerySource, work_error};
+use crate::api::prepared::source::QuerySource;
 use crate::error::{Error, Result};
 use crate::image::canon::RowWords;
 use crate::image::intern::InternerHandle;
@@ -46,8 +46,7 @@ fn const_words(
     params: &[Const],
     out: &mut crate::image::view::ResolvedWords,
 ) -> Result<()> {
-    work.checkpoint()
-        .map_err(crate::api::prepared::source::work_error)?;
+    work.checkpoint()?;
     match value {
         Const::Word(scalar) => out.words.push(*scalar),
         Const::Text(text) => out.push_text(text.clone()),
@@ -301,7 +300,6 @@ fn probe_uniqueness_indexed(
     interner: &InternerHandle<'_>,
     row: &mut RowWords,
 ) -> Result<Option<bool>> {
-    use crate::api::prepared::source::store_error;
     let QuerySource::Store { snapshot, work, .. } = source else {
         return Ok(None);
     };
@@ -333,50 +331,46 @@ fn probe_uniqueness_indexed(
                     None => return Ok(Some(false)),
                 }
             }
-            encoded = crate::storage::store::det_index::determinant_bytes(key, &determinant, work)
-                .map_err(store_error)?;
+            encoded = crate::storage::store::det_index::determinant_bytes(key, &determinant, work)?;
             &encoded
         }
     };
     let has_text = row.has_text();
     let mut hit = false;
     let mut visit_err: Option<Error> = None;
-    projection
-        .probe(projected, work, &mut |_id, bytes| {
-            if visit_err.is_some() || hit {
+    projection.probe(projected, work, &mut |_id, bytes| {
+        if visit_err.is_some() || hit {
+            return Ok(false);
+        }
+        work.checkpoint()?;
+        source.note_visits(1);
+        if let Err(error) =
+            crate::api::prepared::decode_row(row, fields, bytes, interner, work, false)
+        {
+            visit_err = Some(error);
+            return Ok(false);
+        }
+        let matches = match key_spans_match(interner, key_words, row, scratch) {
+            Ok(matched) => matched,
+            Err(error) => {
+                visit_err = Some(error);
                 return Ok(false);
             }
-            work.checkpoint()
-                .map_err(crate::storage::store::StoreError::Work)?;
-            source.note_visits(1);
-            if let Err(error) =
-                crate::api::prepared::decode_row(row, fields, bytes, interner, work, false)
+        };
+        if matches {
+            if has_text
+                && let Err(error) =
+                    crate::api::prepared::decode_row(row, fields, bytes, interner, work, true)
             {
                 visit_err = Some(error);
                 return Ok(false);
             }
-            let matches = match key_spans_match(interner, key_words, row, scratch) {
-                Ok(matched) => matched,
-                Err(error) => {
-                    visit_err = Some(error);
-                    return Ok(false);
-                }
-            };
-            if matches {
-                if has_text
-                    && let Err(error) =
-                        crate::api::prepared::decode_row(row, fields, bytes, interner, work, true)
-                {
-                    visit_err = Some(error);
-                    return Ok(false);
-                }
-                hit = true;
-                Ok(false)
-            } else {
-                Ok(true)
-            }
-        })
-        .map_err(store_error)?;
+            hit = true;
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    })?;
     if let Some(error) = visit_err {
         return Err(error);
     }
@@ -523,9 +517,8 @@ fn key_spans_match(
 
 fn row_error(error: crate::canonical::RowError) -> Error {
     match error {
-        crate::canonical::RowError::Work(work) => work_error(work),
-        crate::canonical::RowError::Allocation => {
-            crate::api::prepared::source::store_error(crate::storage::store::StoreError::Allocation)
+        crate::canonical::RowError::Work(_) | crate::canonical::RowError::Allocation => {
+            Error::from(error)
         }
         _ => Error::Corruption(crate::error::CorruptionError::MalformedValue(
             "key-probe canonical reconstruction",

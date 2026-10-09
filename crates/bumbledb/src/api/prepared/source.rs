@@ -10,7 +10,7 @@ use crate::schema::fingerprint::{SchemaFingerprint, fingerprint};
 use crate::schema::{
     CompiledProjection, CompiledTheory, DistinctnessWitness, Schema, VisitControl, VisitOutcome,
 };
-use crate::storage::store::{OwnedSnapshot, StoreError, StoreIdentity};
+use crate::storage::store::{OwnedSnapshot, StoreIdentity};
 use crate::work::{WorkContext, WorkError};
 use bumbledb_theory::schema::RelationId;
 use std::cell::Cell;
@@ -26,11 +26,7 @@ pub(crate) fn heap_default_work() -> WorkContext {
 }
 
 pub(crate) fn work_error(error: WorkError) -> Error {
-    Error::from_store(StoreError::Work(error))
-}
-
-pub(crate) fn store_error(error: StoreError) -> Error {
-    Error::from_store(error)
+    Error::from(error)
 }
 
 /// Heap row access, type-erased over the instance's schema typestate.
@@ -141,9 +137,9 @@ impl<'a> QuerySource<'a> {
     /// Storage failure reading the version.
     pub(crate) fn relation_epoch(&self, relation: RelationId) -> Result<ViewEpoch> {
         match self {
-            Self::Store { snapshot, .. } => Ok(ViewEpoch::Store(
-                snapshot.relation_version(relation).map_err(store_error)?,
-            )),
+            Self::Store { snapshot, .. } => {
+                Ok(ViewEpoch::Store(snapshot.relation_version(relation)?))
+            }
             Self::Heap { tick, .. } => Ok(ViewEpoch::Heap(*tick)),
         }
     }
@@ -153,7 +149,7 @@ impl<'a> QuerySource<'a> {
     /// Storage failure.
     pub(crate) fn row_count(&self, relation: RelationId) -> Result<u64> {
         match self {
-            Self::Store { snapshot, .. } => snapshot.row_count(relation).map_err(store_error),
+            Self::Store { snapshot, .. } => Ok(snapshot.row_count(relation)?),
             Self::Heap { rows, .. } => Ok(rows.rows(relation).len() as u64),
         }
     }
@@ -185,17 +181,14 @@ impl<'a> QuerySource<'a> {
         let descriptor = schema.relation(relation);
         if let Some(extension) = descriptor.body().closed_rows() {
             for row in extension {
-                work.checkpoint().map_err(work_error)?;
+                work.checkpoint()?;
                 self.note_visits(1);
                 let values = crate::canonical::decode_sealed(descriptor, &row.fact, work)?;
                 let canonical = crate::canonical::CanonicalRow::encode(
                     descriptor.fields(),
                     values.values(),
                     work,
-                )
-                .map_err(|error| {
-                    Error::from_store(StoreError::Changes(crate::changes::ChangeError::Row(error)))
-                })?;
+                )?;
                 if !sink(canonical.as_bytes())? {
                     break;
                 }
@@ -204,11 +197,11 @@ impl<'a> QuerySource<'a> {
         }
         match self {
             Self::Store { snapshot, .. } => {
-                let iterator = snapshot.row_bytes(relation).map_err(store_error)?;
+                let iterator = snapshot.row_bytes(relation)?;
                 for entry in iterator {
-                    work.checkpoint().map_err(work_error)?;
+                    work.checkpoint()?;
                     self.note_visits(1);
-                    let bytes = entry.map_err(store_error)?;
+                    let bytes = entry?;
                     if !sink(bytes)? {
                         return Ok(());
                     }
@@ -217,7 +210,7 @@ impl<'a> QuerySource<'a> {
             }
             Self::Heap { rows, .. } => {
                 for row in rows.rows(relation) {
-                    work.checkpoint().map_err(work_error)?;
+                    work.checkpoint()?;
                     self.note_visits(1);
                     if !sink(row)? {
                         return Ok(());
@@ -234,11 +227,9 @@ impl<'a> QuerySource<'a> {
     /// Storage failure or stopped work.
     pub(crate) fn contains(&self, relation: RelationId, row: &[u8]) -> Result<bool> {
         match self {
-            Self::Store { snapshot, work, .. } => {
-                snapshot.contains(relation, row, work).map_err(store_error)
-            }
+            Self::Store { snapshot, work, .. } => Ok(snapshot.contains(relation, row, work)?),
             Self::Heap { rows, work, .. } => {
-                work.checkpoint().map_err(work_error)?;
+                work.checkpoint()?;
                 Ok(rows
                     .rows(relation)
                     .binary_search_by(|candidate| candidate.as_ref().cmp(row))
@@ -263,11 +254,8 @@ impl<'a> QuerySource<'a> {
         };
         let values = key_values_from_words(compiled, &compiled.projection, words)?;
         let projected =
-            crate::storage::store::det_index::determinant_bytes(compiled, &values, work)
-                .map_err(store_error)?;
-        projection
-            .count_bounded(&projected, limit, work)
-            .map_err(store_error)
+            crate::storage::store::det_index::determinant_bytes(compiled, &values, work)?;
+        Ok(projection.count_bounded(&projected, limit, work)?)
     }
 
     /// Projection-bound or existence-only walk through the compiled witness.
@@ -334,36 +322,33 @@ impl<'a> QuerySource<'a> {
     ) -> Result<VisitOutcome> {
         let values = key_values_from_words(compiled, key_fields, key_words)?;
         let projected =
-            crate::storage::store::det_index::determinant_bytes(compiled, &values, work)
-                .map_err(store_error)?;
+            crate::storage::store::det_index::determinant_bytes(compiled, &values, work)?;
         let existence_only = matches!(witness, DistinctnessWitness::ExistenceOnly { .. });
         let mut visited = 0usize;
         let mut outcome = VisitOutcome::Exhausted { visited: 0 };
         let mut visit_err: Option<Error> = None;
-        snapshot
-            .visit_projection(compiled.id, &projected, work, &mut |_id, bytes| {
-                if visit_err.is_some() {
-                    return Ok(false);
+        snapshot.visit_projection(compiled.id, &projected, work, &mut |_id, bytes| {
+            if visit_err.is_some() {
+                return Ok(false);
+            }
+            work.checkpoint()?;
+            visited = visited.saturating_add(1);
+            match visit(bytes) {
+                Ok(VisitControl::Sufficient) if existence_only => {
+                    outcome = VisitOutcome::Sufficient { visited };
+                    Ok(false)
                 }
-                work.checkpoint().map_err(StoreError::Work)?;
-                visited = visited.saturating_add(1);
-                match visit(bytes) {
-                    Ok(VisitControl::Sufficient) if existence_only => {
-                        outcome = VisitOutcome::Sufficient { visited };
-                        Ok(false)
-                    }
-                    Ok(VisitControl::Continue | VisitControl::Sufficient) => Ok(true),
-                    Ok(VisitControl::Stop) => {
-                        outcome = VisitOutcome::Stopped { visited };
-                        Ok(false)
-                    }
-                    Err(error) => {
-                        visit_err = Some(error);
-                        Ok(false)
-                    }
+                Ok(VisitControl::Continue | VisitControl::Sufficient) => Ok(true),
+                Ok(VisitControl::Stop) => {
+                    outcome = VisitOutcome::Stopped { visited };
+                    Ok(false)
                 }
-            })
-            .map_err(store_error)?;
+                Err(error) => {
+                    visit_err = Some(error);
+                    Ok(false)
+                }
+            }
+        })?;
         if let Some(error) = visit_err {
             return Err(error);
         }
@@ -387,7 +372,7 @@ impl<'a> QuerySource<'a> {
             witness,
             rows.rows(relation).iter().map(AsRef::as_ref),
             &mut |bytes| {
-                work.checkpoint().map_err(work_error)?;
+                work.checkpoint()?;
                 visit(bytes)
             },
         )?;

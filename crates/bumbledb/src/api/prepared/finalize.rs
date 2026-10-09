@@ -2,7 +2,6 @@ use std::mem::MaybeUninit;
 
 use super::{Answers, Cell, EitherSink, ResolveMemo, ValueType};
 
-use super::source::work_error;
 use crate::error::Result;
 use crate::exec::sink::{ProjectionSink, ResidentRows};
 use crate::image::intern::InternerHandle;
@@ -21,7 +20,7 @@ pub(super) fn finalize(
     out: &mut Answers,
     work: &WorkContext,
 ) -> Result<()> {
-    work.checkpoint().map_err(work_error)?;
+    work.checkpoint()?;
     memo.clear();
     match sink {
         EitherSink::Computed(sink) => {
@@ -61,7 +60,7 @@ pub(super) fn finalize(
                     .ok_or(crate::error::Error::ResultBytesOverflow)?,
             );
             sink.finalize_into(answer_scratch, |answer| {
-                work.checkpoint().map_err(work_error)?;
+                work.checkpoint()?;
                 push_resolved_answer(out, interner, memo, columns, answer)?;
                 Ok(())
             })
@@ -111,13 +110,13 @@ fn fill_resident_rows<'a>(
     out.cells.reserve(additional);
     let mut offset = 0;
     for (col, column) in columns.iter().enumerate() {
-        work.checkpoint().map_err(work_error)?;
+        work.checkpoint()?;
         offset += match column.ty() {
             ValueType::String => {
                 let mut answers = answers.clone();
                 for row in 0..rows {
                     if row % crate::exec::sink::STEP_QUANTUM as usize == 0 {
-                        work.checkpoint().map_err(work_error)?;
+                        work.checkpoint()?;
                     }
                     let answer = answers.next().expect("resident sink length");
                     let (start, len) = memo.resolve(interner, answer[offset], out)?;
@@ -131,7 +130,7 @@ fn fill_resident_rows<'a>(
                 let mut answers = answers.clone();
                 for row in 0..rows {
                     if row % crate::exec::sink::STEP_QUANTUM as usize == 0 {
-                        work.checkpoint().map_err(work_error)?;
+                        work.checkpoint()?;
                     }
                     let answer = answers.next().expect("resident sink length");
                     let cell = out.fixed_bytes_cell(*len, &answer[offset..offset + width]);
@@ -155,7 +154,7 @@ fn fill_resident_rows<'a>(
     // answer rather than silently truncating a zip. Text/blob resolution
     // only grows those separate heaps, never the cells vector. On error
     // or panic the old length remains valid; Cell has no drop resources.
-    work.checkpoint().map_err(work_error)?;
+    work.checkpoint()?;
     unsafe { out.cells.set_len(base + additional) };
     Ok(())
 }
@@ -177,7 +176,7 @@ fn fill_fixed_column<'a>(
         .checked_mul(crate::exec::sink::STEP_QUANTUM as usize)
         .ok_or(crate::error::Error::ResultBytesOverflow)?;
     for batch in cells.chunks_mut(batch_cells) {
-        work.checkpoint().map_err(work_error)?;
+        work.checkpoint()?;
         let filled_width = fill_fixed_chunk(batch, arity, col, ty, offset, &mut answers)?;
         debug_assert_eq!(filled_width, width);
     }

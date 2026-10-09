@@ -101,9 +101,7 @@ const fn corrupt(what: &'static str) -> Error {
 
 fn row_error(error: crate::canonical::RowError) -> Error {
     match error {
-        crate::canonical::RowError::Work(error) => {
-            Error::from_store(crate::storage::store::StoreError::Work(error))
-        }
+        crate::canonical::RowError::Work(error) => Error::from(error),
         _ => corrupt("stored interval violates its field domain"),
     }
 }

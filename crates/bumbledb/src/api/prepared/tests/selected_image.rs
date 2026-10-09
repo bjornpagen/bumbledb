@@ -200,9 +200,6 @@ fn indexed_image_coverage_survives_old_snapshots_refusal_and_generation_rotation
 
 #[test]
 fn cancelled_selected_image_publishes_no_cache_entry() {
-    use crate::storage::store::StoreError;
-    use crate::work::WorkError;
-
     let fix = indexed_store();
     let prepared = fix.prepare(&by_account_query()).unwrap();
     let work = crate::work::WorkContext::new();
@@ -221,11 +218,7 @@ fn cancelled_selected_image_publishes_no_cache_entry() {
             &[vec![0].into()],
         )
         .expect_err("cancelled build refuses before publishing");
-    assert!(matches!(
-        error,
-        crate::Error::Store(error) if matches!(*error,
-            StoreError::Work(WorkError::Cancelled))
-    ));
+    assert!(error.is_cancelled());
     assert_eq!(prepared.program.cache.image_count(), 0);
 }
 

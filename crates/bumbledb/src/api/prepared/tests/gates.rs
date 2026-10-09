@@ -7,7 +7,7 @@ use crate::ir::{
     Atom, AtomSource, FindTerm, HeadTerm, Interior, InteriorId, ParamId, Query, Rule, Term, Value,
     VarId,
 };
-use crate::work::{WorkContext, WorkError};
+use crate::work::WorkContext;
 use bumbledb_theory::schema::{
     FieldDescriptor, FieldId, RelationDescriptor, RelationId, SchemaDescriptor,
 };
@@ -41,13 +41,7 @@ fn allocating_collect_obeys_frame_cancellation_and_retries_cleanly() {
         .frame(&tiny)
         .execute_collect(&mut prepared, &[BindValue::U64(3), BindValue::I64(0)])
         .expect_err("cancelled collection cannot publish rows");
-    assert!(matches!(
-        error,
-        crate::Error::Store(error) if matches!(
-            *error,
-            crate::storage::store::StoreError::Work(WorkError::Cancelled)
-        )
-    ));
+    assert!(error.is_cancelled());
     let rows = snapshot
         .frame(&ample)
         .execute_collect(&mut prepared, &[BindValue::U64(3), BindValue::I64(0)])

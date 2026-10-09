@@ -6,7 +6,7 @@
 //! Paging bounds delivery, not query execution or the size of the result.
 //! A failed/cancelled delivery never advances its cursor.
 
-use super::source::{PinnedSource, work_error};
+use super::source::PinnedSource;
 use super::{Answer, AnswerValue, Answers};
 use crate::error::Result;
 use crate::storage::GenerationId;
@@ -58,7 +58,7 @@ impl CompleteResult {
         identity: ResultIdentity,
         work: &WorkContext,
     ) -> Result<Self> {
-        work.checkpoint().map_err(work_error)?;
+        work.checkpoint()?;
         Ok(Self { identity, answers })
     }
 
@@ -97,12 +97,12 @@ impl CompleteResult {
         work: &WorkContext,
         mut visit: impl FnMut(ResultRow<'_>) -> Result<()>,
     ) -> Result<()> {
-        work.checkpoint().map_err(work_error)?;
+        work.checkpoint()?;
         for row in self.rows() {
-            work.checkpoint().map_err(work_error)?;
+            work.checkpoint()?;
             visit(row)?;
         }
-        work.checkpoint().map_err(work_error)
+        Ok(work.checkpoint()?)
     }
 
     /// Consume the result and move its answer storage, without copying.
@@ -167,7 +167,7 @@ impl<'cursor> DeliveryTicket<'cursor> {
         let visited = self.visit_page(work, |row| {
             for (column, value) in row.values().enumerate() {
                 if column % 64 == 0 {
-                    work.checkpoint().map_err(work_error)?;
+                    work.checkpoint()?;
                 }
                 rows.push_value(&value);
             }
@@ -197,7 +197,7 @@ impl<'cursor> DeliveryTicket<'cursor> {
     ) -> Result<Option<u64>> {
         self.preview = None;
         self.pending = None;
-        work.checkpoint().map_err(work_error)?;
+        work.checkpoint()?;
         if self.cursor.done {
             return Ok(None);
         }
@@ -212,10 +212,10 @@ impl<'cursor> DeliveryTicket<'cursor> {
             .skip(start)
             .take(end - start)
         {
-            work.checkpoint().map_err(work_error)?;
+            work.checkpoint()?;
             visit(ResultRow { answer })?;
         }
-        work.checkpoint().map_err(work_error)?;
+        work.checkpoint()?;
         self.pending = Some(PendingAdvance {
             next_row: end,
             terminal: end == total,

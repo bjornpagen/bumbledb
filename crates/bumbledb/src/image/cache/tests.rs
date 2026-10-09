@@ -11,7 +11,7 @@ use crate::image::testsupport::TestSource;
 use crate::ir::Value;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::store::RelationVersion;
+use crate::store::RelationVersion;
 use bumbledb_theory::schema::{
     FieldDescriptor, RelationDescriptor, RelationId, Row, SchemaDescriptor, ValueType,
 };

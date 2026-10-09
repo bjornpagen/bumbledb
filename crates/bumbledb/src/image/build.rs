@@ -232,8 +232,7 @@ pub(super) fn build_from_scan(
 
     let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
     let fields = relation.fields();
-    work.checkpoint()
-        .map_err(crate::api::prepared::source::work_error)?;
+    work.checkpoint()?;
 
     let spans = column_spans(&field_types);
     let column_count = spans
@@ -395,8 +394,7 @@ impl TransientImage {
         drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
     ) -> crate::error::Result<Arc<RelationImage>> {
         if let Some(work) = work {
-            work.checkpoint()
-                .map_err(crate::api::prepared::source::work_error)?;
+            work.checkpoint()?;
         }
         let reusable = match self {
             Self::Occupied { image, capacity } if row_count <= *capacity => {

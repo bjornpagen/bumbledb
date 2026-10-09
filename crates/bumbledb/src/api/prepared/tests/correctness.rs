@@ -844,21 +844,22 @@ fn selective_execution_is_exact_and_cancellation_does_not_restart() {
     assert_eq!(expected.len(), 8, "amounts 2040..=2047");
 
     let mut prepared = fix.prepare(&query).unwrap();
-    fix.db.read(crate::work::WorkContext::new(), |instance| {
-        let cancelled = crate::work::WorkContext::new();
-        cancelled.cancel();
-        let stopped = super::super::source::QuerySource::store(instance.snapshot(), &cancelled);
-        let active = crate::work::WorkContext::new();
-        let source = super::super::source::QuerySource::store(instance.snapshot(), &active);
-        let mut out = Answers::new();
-        for _ in 0..2 {
-            prepared.execute_source(&source, &[] as &[BindValue], &mut out)?;
-            assert_eq!(render(&out), expected);
-            let result = prepared.execute_source(&stopped, &[] as &[BindValue], &mut out);
-            assert!(matches!(result, Err(Error::Store(error))
-                if matches!(*error, crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled))));
-            assert!(out.is_empty(), "no stale or partial result");
-        }
-        Ok(())
-    }).unwrap();
+    fix.db
+        .read(crate::work::WorkContext::new(), |instance| {
+            let cancelled = crate::work::WorkContext::new();
+            cancelled.cancel();
+            let stopped = super::super::source::QuerySource::store(instance.snapshot(), &cancelled);
+            let active = crate::work::WorkContext::new();
+            let source = super::super::source::QuerySource::store(instance.snapshot(), &active);
+            let mut out = Answers::new();
+            for _ in 0..2 {
+                prepared.execute_source(&source, &[] as &[BindValue], &mut out)?;
+                assert_eq!(render(&out), expected);
+                let result = prepared.execute_source(&stopped, &[] as &[BindValue], &mut out);
+                assert!(result.is_err_and(|error| error.is_cancelled()));
+                assert!(out.is_empty(), "no stale or partial result");
+            }
+            Ok(())
+        })
+        .unwrap();
 }

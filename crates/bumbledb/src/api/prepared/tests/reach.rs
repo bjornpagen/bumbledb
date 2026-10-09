@@ -111,8 +111,7 @@ fn cancelled_reach_publishes_no_prefix_and_allows_reuse() {
             let source = super::super::source::QuerySource::heap(&fix.instance, round as u64, work);
             let result = prepared.execute_source(&source, &[BindValue::U64(0)], &mut out);
             if cancelled {
-                assert!(matches!(result, Err(Error::Store(error))
-                    if matches!(*error, crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled))));
+                assert!(result.is_err_and(|error| error.is_cancelled()));
                 assert!(out.is_empty(), "no stale or partial closure");
             } else {
                 result.unwrap();

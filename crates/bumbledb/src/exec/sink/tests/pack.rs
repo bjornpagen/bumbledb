@@ -1,7 +1,6 @@
 //! Pack and exact float banks against independent oracles: Pack against
 //! [`crate::interval::sweep::sweep`], not the sink's own `emit_pack_group`.
 
-use crate::error::Error;
 use crate::exec::run::{Bindings, Sink as _};
 use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, SinkProgress};
 use crate::interval::sweep::{Continuation, sweep};
@@ -262,9 +261,7 @@ fn cancelled_pack_stops_at_its_poll_quantum_and_finalizes_no_rows() {
             Ok(())
         })
         .unwrap_err();
-    assert!(matches!(failure, Error::Store(error) if matches!(
-        error.as_ref(), crate::storage::store::StoreError::Work(crate::WorkError::Cancelled)
-    )));
+    assert!(failure.is_cancelled());
     assert_eq!(emitted, 0);
 }
 

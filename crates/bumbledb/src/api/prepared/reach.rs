@@ -354,11 +354,7 @@ fn run_reach<Cnt: Counters>(
     let mut watermark = 0;
     loop {
         let len = driver.sink.len();
-        images
-            .source()
-            .work()
-            .checkpoint()
-            .map_err(super::source::work_error)?;
+        images.source().work().checkpoint()?;
         let any_delta = len > watermark;
         if !any_delta {
             let _rows = derived.stash_finished(

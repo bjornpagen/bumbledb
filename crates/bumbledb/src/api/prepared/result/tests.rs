@@ -1,7 +1,6 @@
 //! Ownership, exact values, cancellation and publication of completed results.
 use super::*;
 use crate::error::Error;
-use crate::work::WorkError;
 
 fn work() -> WorkContext {
     WorkContext::new()
@@ -133,8 +132,8 @@ fn cancellation_cannot_seal_a_complete_owner() {
     let answers = sample_answers(3);
     execute.cancel();
     assert!(
-        matches!(CompleteResult::seal(answers, heap_identity(), &execute),
-        Err(Error::Store(error)) if matches!(*error, crate::store::StoreError::Work(WorkError::Cancelled)))
+        CompleteResult::seal(answers, heap_identity(), &execute)
+            .is_err_and(|error| error.is_cancelled())
     );
 }
 
@@ -200,8 +199,7 @@ fn borrowed_page_cancellation_at_first_or_last_row_retries_the_same_page() {
             }
             Ok(())
         });
-        assert!(matches!(failed, Err(Error::Store(error))
-            if matches!(*error, crate::store::StoreError::Work(WorkError::Cancelled))));
+        assert!(failed.is_err_and(|error| error.is_cancelled()));
         assert_eq!(seen, cancel_at);
         assert_eq!(ticket.previewed_rows(), 0);
         assert!(ticket.adopt().is_none());

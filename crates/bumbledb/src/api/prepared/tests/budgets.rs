@@ -238,7 +238,7 @@ fn aggregate_interior_folds_per_group() {
 /// not poison a fresh delivery context or a reused preparation.
 #[test]
 fn completed_results_support_cancellable_borrowed_delivery_without_copying() {
-    use crate::work::{WorkContext, WorkError};
+    use crate::work::WorkContext;
     let fix = metric_store("borrowed-result-delivery", 4096);
     let query = self_join();
     let mut prepared = fix.prepare(&query).unwrap();
@@ -262,8 +262,7 @@ fn completed_results_support_cancellable_borrowed_delivery_without_copying() {
             Ok(())
         })
         .unwrap_err();
-    assert!(matches!(error, Error::Store(error)
-        if matches!(*error, crate::storage::store::StoreError::Work(WorkError::Cancelled))));
+    assert!(error.is_cancelled());
     assert_eq!(visits, 257);
     assert_eq!(complete.len(), 4096);
 

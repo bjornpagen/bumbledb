@@ -257,9 +257,7 @@ fn failed_refill_drops_partial_text_owners_and_remains_reusable() {
     stopped.cancel();
     let result = derived.refill_drained(None, &[ValueType::String], 2, &generation, |_, write| {
         write(&words[1..]);
-        stopped
-            .checkpoint()
-            .map_err(crate::api::prepared::source::work_error)
+        stopped.checkpoint().map_err(crate::error::Error::from)
     });
     assert!(result.is_err());
     if let TransientImage::Occupied { image, .. } = &derived {

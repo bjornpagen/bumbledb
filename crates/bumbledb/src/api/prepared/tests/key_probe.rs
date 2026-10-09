@@ -4,7 +4,7 @@ use crate::exec::dispatch::{KeyProbeKind, key_probe_row};
 use crate::image::canon::RowWords;
 use crate::image::intern::InternerHandle;
 use crate::ir::ParamId;
-use crate::work::{GenerationHandle, GenerationState, WorkError};
+use crate::work::{GenerationHandle, GenerationState};
 use bumbledb_theory::schema::{IntervalElement, StatementDescriptor};
 
 fn text_membership_query() -> Query {
@@ -89,11 +89,8 @@ fn cancelled_text_resolution_is_not_a_membership_or_indexed_key_miss() {
             assert!(probe().expect("warm membership/key hit"));
             let visited = source.visit_count();
             work.cancel();
-            let expected = WorkError::Cancelled;
             let error = probe().expect_err("cancelled probe must not become a nonmatch");
-            assert!(matches!(error, Error::Store(store) if matches!(
-                *store, crate::storage::store::StoreError::Work(ref error) if *error == expected
-            )));
+            assert!(error.is_cancelled());
             assert_eq!(
                 source.visit_count(),
                 visited,
@@ -213,14 +210,11 @@ fn cancelled_missing_scalar_probe_refuses_and_clears_reused_answers() {
     cancelled.cancel();
     for _ in 0..2 {
         let context = cancelled.clone();
-        let expected = WorkError::Cancelled;
         let error = pin
             .frame(&context)
             .execute(&mut prepared, &[BindValue::U64(999)], &mut out)
             .expect_err("a stopped point miss must not publish success");
-        assert!(matches!(error, Error::Store(store) if matches!(
-            *store, crate::storage::store::StoreError::Work(ref error) if *error == expected
-        )));
+        assert!(error.is_cancelled());
         assert_eq!(
             out.len(),
             0,

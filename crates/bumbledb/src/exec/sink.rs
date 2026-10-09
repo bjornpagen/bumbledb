@@ -100,16 +100,10 @@ pub(crate) enum SinkProgress {
 }
 
 pub(in crate::exec::sink) fn classify_progress(error: &crate::error::Error) -> SinkProgress {
-    match error {
-        crate::error::Error::Store(store)
-            if matches!(
-                store.as_ref(),
-                crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled)
-            ) =>
-        {
-            SinkProgress::Stop
-        }
-        _ => SinkProgress::Error,
+    if error.is_cancelled() {
+        SinkProgress::Stop
+    } else {
+        SinkProgress::Error
     }
 }
 
@@ -279,8 +273,8 @@ impl SeenSet {
             let rows = self.unique_rows.as_mut().expect("proved projection");
             debug_assert_eq!(key.len(), self.ram.arity());
             if rows.words.try_reserve(key.len()).is_err() {
-                self.error = Some(crate::error::Error::from_store(
-                    crate::storage::store::StoreError::Allocation,
+                self.error = Some(crate::error::Error::from(
+                    crate::work::WorkError::Allocation,
                 ));
                 return false;
             }
@@ -399,7 +393,7 @@ impl SeenSet {
         match work.checkpoint() {
             Ok(()) => true,
             Err(error) => {
-                self.error = Some(crate::api::prepared::source::work_error(error));
+                self.error = Some(crate::error::Error::from(error));
                 false
             }
         }

@@ -122,13 +122,11 @@ impl Counters for CancelAfterBatches {
 }
 
 fn is_work_refusal(error: &crate::error::Error, expected: WorkError) -> bool {
-    matches!(
-        error,
-        crate::error::Error::Store(store) if matches!(
-            &**store,
-            crate::storage::store::StoreError::Work(work) if *work == expected
-        )
-    )
+    error.kind()
+        == match expected {
+            WorkError::Cancelled => crate::error::ErrorKind::Cancelled,
+            WorkError::Allocation => crate::error::ErrorKind::Allocation,
+        }
 }
 
 #[test]

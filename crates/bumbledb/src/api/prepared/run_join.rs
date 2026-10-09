@@ -266,12 +266,8 @@ fn join<S: Sink, C: Counters>(
                 .colts
                 .get_disjoint_mut([canon, occ_idx])
                 .expect("dedup source is a distinct occurrence");
-            canon_colt
-                .force_root()
-                .map_err(crate::api::prepared::source::work_error)?;
-            let old = colt
-                .clone_bound_from(canon_colt, buffer)
-                .map_err(crate::api::prepared::source::work_error)?;
+            canon_colt.force_root()?;
+            let old = colt.clone_bound_from(canon_colt, buffer)?;
             *memo.spare_mut(occ_idx) = old.recycle();
             memo.set_bound(occ_idx, epoch, &resolved_filters[occ_idx], None);
             checkpoint_join_work(work, &mut pending_steps)?;
@@ -317,9 +313,7 @@ fn join<S: Sink, C: Counters>(
             continue;
         }
         checkpoint_join_work(work, &mut pending_steps)?;
-        let selected = memo.colts[occ_idx]
-            .select(keys)
-            .map_err(crate::api::prepared::source::work_error)?;
+        let selected = memo.colts[occ_idx].select(keys)?;
         let hit = selected.is_some();
         if !hit {
             return Ok(());
@@ -347,8 +341,7 @@ fn flush_join_work(work: &crate::work::WorkContext, pending: &mut u32) -> crate:
     if *pending == 0 {
         return Ok(());
     }
-    work.checkpoint()
-        .map_err(crate::api::prepared::source::work_error)?;
+    work.checkpoint()?;
     *pending = 0;
     Ok(())
 }

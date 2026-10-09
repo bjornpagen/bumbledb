@@ -14,7 +14,7 @@ pub(crate) fn decode_row(
     work: &WorkContext,
     intern: bool,
 ) -> Result<()> {
-    work.checkpoint().map_err(super::source::work_error)?;
+    work.checkpoint()?;
     let mut text = if intern {
         TextWords::HandleIntern(interner)
     } else {

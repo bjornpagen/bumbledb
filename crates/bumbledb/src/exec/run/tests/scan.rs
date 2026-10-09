@@ -500,7 +500,6 @@ fn fused_scan_plan(residual: bool) -> (Schema, ValidatedPlan) {
 
 #[test]
 fn rejecting_fused_scan_stops_within_one_quantum_without_sink_or_fallback() {
-    use crate::work::WorkError;
     let quantum = crate::exec::sink::STEP_QUANTUM as usize;
     let (schema, plan) = fused_scan_plan(true);
     let rows: Vec<_> = (0..2049).map(|i| (i + 1, 0)).collect();
@@ -529,13 +528,7 @@ fn rejecting_fused_scan_stops_within_one_quantum_without_sink_or_fallback() {
             let error = executor
                 .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
                 .expect_err("bounded rejecting scan refuses");
-            let crate::error::Error::Store(error) = error else {
-                panic!("expected typed work refusal");
-            };
-            assert!(matches!(
-                *error,
-                crate::storage::store::StoreError::Work(WorkError::Cancelled)
-            ));
+            assert!(error.is_cancelled(), "expected typed work refusal");
             assert_eq!(
                 counters.residuals,
                 quantum - pending,
