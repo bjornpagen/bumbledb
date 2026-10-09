@@ -22,6 +22,7 @@ use bumbledb::{
 
 use crate::head::Head;
 use crate::ids::{ImageDigest, RequestId};
+use crate::io::hex;
 use crate::receipt::{Delta, Evidence, Receipt};
 use crate::replica::{
     Bundle, BundledMigration, CacheError, Image, Judgment, Migrated, Population, Replica, Update,
@@ -560,12 +561,4 @@ fn remove(path: &Path) -> Result<(), CacheError> {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(local(error)),
         _ => Ok(()),
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
 }
