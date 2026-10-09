@@ -40,7 +40,6 @@
 //! })
 //! .unwrap();
 //! ```
-#![feature(portable_simd)]
 #[cfg(target_pointer_width = "32")]
 compile_error!("bumbledb targets 64-bit platforms only");
 
@@ -107,11 +106,17 @@ pub use error::{
 };
 pub use exec::kernel::numeric::{F64Math, FloatCardinalityOverflow, UnsupportedNumericalPlatform};
 pub use interval::{Discrete, Element, FloatMeasureError, Interval};
-/// The grounding's test-support off switch (`plan/ground.rs`): reachable only
-/// under the `ground-off` feature, which the bench crate's dual-run
-/// differential unit tests (as a dev-dependency) enable.
-#[cfg(feature = "ground-off")]
+/// The grounding off switch, for dependent crates' differential tests.
+#[cfg(feature = "testing")]
 pub use plan::ground::with_grounding_disabled;
+
+/// Kernels at an explicit SIMD level and their scalar twins, for the bench
+/// crate's micro report. Not embedding API.
+#[doc(hidden)]
+pub mod kernels {
+    pub use crate::exec::kernel::bench::*;
+    pub use crate::exec::kernel::reference;
+}
 /// The storage format version (`storage/env.rs`), public so
 /// store-shaped derived identities (the bench corpus cache, stamps) can
 /// key on it: a format bump must regenerate every store-derived

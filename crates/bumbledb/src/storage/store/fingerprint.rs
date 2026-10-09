@@ -32,7 +32,7 @@ pub enum Fingerprinter {
     /// (its membership keys would not match); collision suites create and
     /// use the store within one process. Reachable only from tests and the
     /// bench-only `collision-probe` feature.
-    #[cfg(any(test, feature = "collision-probe"))]
+    #[cfg(any(test, feature = "testing"))]
     Constant([u8; FP_LEN]),
 }
 
@@ -46,7 +46,7 @@ impl Fingerprinter {
                 digest.update(row);
                 truncate(digest.finalize())
             }
-            #[cfg(any(test, feature = "collision-probe"))]
+            #[cfg(any(test, feature = "testing"))]
             Self::Constant(fp) => fp,
         }
     }
@@ -60,7 +60,7 @@ impl Fingerprinter {
                 digest.update(projected);
                 truncate(digest.finalize())
             }
-            #[cfg(any(test, feature = "collision-probe"))]
+            #[cfg(any(test, feature = "testing"))]
             Self::Constant(fp) => fp,
         }
     }

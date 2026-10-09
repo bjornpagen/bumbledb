@@ -421,7 +421,7 @@ fn complete_production_and_independent_reference_agree_on_randomized_mutations()
 /// incremental verdicts byte-equal with the oracle. The forcing
 /// constructor exists only under the `collision-probe` feature; run with
 /// `--features collision-probe`.
-#[cfg(feature = "collision-probe")]
+#[cfg(feature = "testing")]
 #[test]
 fn complete_production_and_independent_reference_agree_under_forced_collisions() {
     use bumbledb::store::FP_LEN;

@@ -270,7 +270,7 @@ impl Store {
     /// default hash role is never weakened by this seam.
     /// # Errors
     /// As [`Store::open`].
-    #[cfg(any(test, feature = "collision-probe"))]
+    #[cfg(any(test, feature = "testing"))]
     pub fn open_with_fingerprinter(
         path: &Path,
         schema: &Schema,
@@ -289,7 +289,7 @@ impl Store {
     /// As [`Store::create`].
     /// # Panics
     /// If the production constructor no longer returns an exclusively owned store.
-    #[cfg(any(test, feature = "collision-probe"))]
+    #[cfg(any(test, feature = "testing"))]
     pub fn create_forced_fingerprint(
         path: &Path,
         schema: &Schema,

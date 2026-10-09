@@ -52,6 +52,18 @@ C17, G2 (engine), L (code).
   ResizeBlockedByReaders}`, the gate's parked-reader cache. `Db::disk_size(&self) -> Result<u64>`
   (no work argument). Verified on this Mac: a 1 TiB map leaves a 10k-row `data.mdb` at 1.26 MB.
 
+- **Features.** `collision-probe` is gone; every former `collision-probe`/`ground-off` site is
+  `feature = "testing"`. `bumbledb::with_grounding_disabled` re-exports under `testing`.
+  `alloc-counter` and `ground-off` remain declared but empty only because HEAD's
+  `crates/bumbledb-bench/Cargo.toml` still names them; bench, please drop both (use `testing`), and
+  I delete them from `crates/bumbledb/Cargo.toml` right after.
+- `#![feature(portable_simd)]` is gone from `lib.rs`.
+- `bumbledb::kernels` (`#[doc(hidden)]`) re-exports `exec::kernel::bench::*` and
+  `exec::kernel::reference`, as numeric requested.
+- **ValidationError step 2 done:** `crate::error::ValidationError` is now
+  `pub use crate::ir::validate::error::ValidationError;` (definition and `Display` deleted from my
+  files).
+
 ### Planned (signatures may still move; final shapes are announced under "Landed")
 
 - **`alloc-counter` feature is deleted (G2).** `bumbledb::alloc_counter` is always compiled

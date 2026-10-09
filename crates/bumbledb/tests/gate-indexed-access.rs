@@ -361,7 +361,7 @@ fn key_probe_query_allocations_are_flat_and_answers_match_the_scan_oracle() {
 /// decoded confirmation still separates every fact (Q-COLLISION, HASH-02).
 /// The forcing constructor exists only under the `collision-probe` feature;
 /// run with `--features collision-probe`.
-#[cfg(feature = "collision-probe")]
+#[cfg(feature = "testing")]
 mod forced_collisions {
     use bumbledb::schema::judge::JudgeBudget;
     use bumbledb::schema::{
@@ -369,8 +369,8 @@ mod forced_collisions {
         StatementDescriptor, StatementId, ValidateDescriptor as _, ValueType,
     };
     use bumbledb::store::{
-        CandidateJudge, CandidateState, FP_LEN, HostChanges, Judgment, MapPolicy, Prepared,
-        SchemaJudge, Store, StoreResult, UnindexedRows,
+        CandidateJudge, CandidateState, FP_LEN, HostChanges, Judgment, Prepared, SchemaJudge,
+        Store, StoreResult, UnindexedRows,
     };
     use bumbledb::{ChangeSet, Value, WorkContext};
 
@@ -464,9 +464,13 @@ mod forced_collisions {
         let path = dir.path().join("store");
         std::fs::create_dir_all(dir.path()).expect("parent dir");
         let schema = schema();
-        let store =
-            Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0xEE; FP_LEN])
-                .expect("forced-collision store");
+        let store = Store::create_forced_fingerprint(
+            &path,
+            &schema,
+            bumbledb::store::DEFAULT_MAP_CEILING,
+            [0xEE; FP_LEN],
+        )
+        .expect("forced-collision store");
 
         // Distinct emails admit under total collisions: the fingerprint
         // never merges facts.

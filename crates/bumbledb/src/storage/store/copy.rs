@@ -45,7 +45,7 @@ impl Store {
         }
         // Production has one format-fixed fingerprint policy. Forced-collision
         // stores are test-only and need logical reindexing when policies differ.
-        #[cfg(any(test, feature = "collision-probe"))]
+        #[cfg(any(test, feature = "testing"))]
         if !same_fingerprinter(source.store_inner().fingerprinter, self.inner.fingerprinter) {
             return self.adopt_snapshot(source, fresh, &super::UnindexedRows, work);
         }
@@ -103,7 +103,7 @@ impl Store {
     }
 }
 
-#[cfg(any(test, feature = "collision-probe"))]
+#[cfg(any(test, feature = "testing"))]
 fn same_fingerprinter(left: super::Fingerprinter, right: super::Fingerprinter) -> bool {
     match (left, right) {
         (super::Fingerprinter::Blake3, super::Fingerprinter::Blake3) => true,

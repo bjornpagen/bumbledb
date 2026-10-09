@@ -89,7 +89,7 @@ impl<S: Theory> Db<S> {
     /// test support only; never a production constructor.
     /// # Errors
     /// As [`Db::open`].
-    #[cfg(any(test, feature = "ground-off"))]
+    #[cfg(any(test, feature = "testing"))]
     pub fn create_store_without_admission(
         path: &Path,
         schema: S,
