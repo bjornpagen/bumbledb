@@ -24,6 +24,7 @@ fn text_membership_query() -> Query {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn cancelled_text_resolution_is_not_a_membership_or_indexed_key_miss() {
     for indexed in [false, true] {
         let mut schema = descriptor();
@@ -172,6 +173,7 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn cancelled_missing_scalar_probe_refuses_and_clears_reused_answers() {
     let fix = posting_store("prepared-cancelled-point-miss", &[(1, 7, "memo", 41)]);
     let query = Query::single(Rule {
@@ -234,6 +236,7 @@ fn cancelled_missing_scalar_probe_refuses_and_clears_reused_answers() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_key_probe_prepare_and_execute_build_no_image() {
     let fix = posting_store("prepared-keyprobe-noimage", &[(1, 7, "memo-a", 41)]);
     let query = Query::single(Rule {
@@ -300,6 +303,7 @@ fn key_probe_queries_flow_through_the_same_surface() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn text_free_probe_uses_shared_execution_without_acquiring_a_resolver() {
     let mut descriptor = stay_descriptor();
     descriptor.relations[0].fields.push(FieldDescriptor {
@@ -600,6 +604,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_exact() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn full_fact_membership_agrees_between_store_and_heap() {
     // The store path answers membership through the fingerprint bucket plus
     // exact bytes; the heap path binary-searches canonical bytes.
@@ -629,6 +634,7 @@ fn full_fact_membership_agrees_between_store_and_heap() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_unstored_text_param_on_the_fast_path_is_empty_not_an_error() {
     let descriptor = SchemaDescriptor {
         relations: vec![RelationDescriptor {

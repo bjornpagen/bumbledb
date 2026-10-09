@@ -46,6 +46,7 @@ fn collect(generation: &GenerationHandle) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn images_pin_distinct_text_not_every_row_or_the_other_images_history() {
     let schema = schema();
     let cache = ImageCache::new(&schema);
@@ -136,6 +137,7 @@ fn derived_rows_own_their_text_after_the_source_and_old_readers_drop() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn unique_large_to_small_refill_releases_obsolete_text_and_reuses_warm_storage() {
     let schema = schema();
     let cache = ImageCache::new(&schema);

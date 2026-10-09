@@ -149,6 +149,7 @@ fn the_empty_query_builds_no_image_and_binds_no_view() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
     let rows: Vec<(u64, u64, (i64, i64), i64)> = (0..40u64)
         .map(|i| {

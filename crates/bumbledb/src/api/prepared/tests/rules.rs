@@ -363,6 +363,7 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn introspection_reports_per_rule_stats_and_the_union_accounting() {
     let fix = posting_store("prepared-rules-introspect", &overlap_postings());
 

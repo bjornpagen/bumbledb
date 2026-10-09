@@ -363,6 +363,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn resident_text_has_no_fixed_cache_allowance() {
         let generation = generation();
         let work = WorkContext::new();
@@ -384,6 +385,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn automatic_reclamation_is_incremental_and_warm_hits_do_no_maintenance() {
         let generation = generation();
         let work = WorkContext::new();

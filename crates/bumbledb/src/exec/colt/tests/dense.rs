@@ -37,6 +37,7 @@ fn iteration_refuses_wrapping_caller_buffer_extents() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn skewed_maps_size_by_the_formula_and_iterate_densely() {
     let schema = schema();
 
@@ -70,6 +71,7 @@ fn skewed_maps_size_by_the_formula_and_iterate_densely() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn near_distinct_maps_grow_to_the_pinned_capacity() {
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..10_000).map(|i| (i, i * 2)).collect();

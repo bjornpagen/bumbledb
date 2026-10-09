@@ -74,6 +74,7 @@ fn selection_work_is_o_selected() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn selection_params_rotate_without_view_rebuilds() {
     // Epoch memoization is a store behavior: heap ticks rebuild per
     // execution by design, so this suite runs over one committed store.

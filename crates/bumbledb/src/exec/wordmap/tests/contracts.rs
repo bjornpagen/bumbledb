@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn false_tag_rate_stays_at_the_design_point_on_adversarial_keys() {
     for (name, rate) in adversarial_false_tag_rates(super::hash_words) {
         println!("false-compare rate [{name}]: {rate:.5}");
@@ -12,6 +13,7 @@ fn false_tag_rate_stays_at_the_design_point_on_adversarial_keys() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 #[should_panic(expected = "above 2/128")]
 fn a_single_multiply_hash_fails_the_false_tag_gate() {
     fn foldmul(words: &[u64]) -> u64 {
@@ -170,6 +172,7 @@ fn tail_padded_home_spreads(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, usize
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn probe_steps_stay_near_one_at_max_load() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 32_768);
     let mut rng = 7u64;

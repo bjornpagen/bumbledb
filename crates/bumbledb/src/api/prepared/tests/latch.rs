@@ -28,6 +28,7 @@ fn amounts(out: &Answers) -> Vec<i64> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn literal_bytes_survive_trim_and_cache_clear_across_rebinds() {
     let fix = posting_store(
         "prepared-literal-generation",
@@ -91,6 +92,7 @@ fn a_str_literal_latches_on_first_execution() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_unmatched_literal_latches_finally_and_matches_later_rows() {
     // The interner never misses: an absent text mints a token on the first
     // resolution (empty result), and the SAME token identifies the text

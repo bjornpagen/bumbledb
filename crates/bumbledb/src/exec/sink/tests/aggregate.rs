@@ -332,6 +332,7 @@ fn union_reaim_invalidates_fold_sources_even_with_the_same_leaf_layout() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn constant_group_batches_fold_once_per_run() {
     let schema = schema();
 

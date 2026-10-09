@@ -123,6 +123,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn scan_gather_grows_geometrically_within_one_window() {
         use crate::exec::colt::SuffixRun;
         use crate::exec::run::{LeafScan, ScanOffer};

@@ -121,6 +121,7 @@ fn is_work_refusal(error: &crate::error::Error, expected: WorkError) -> bool {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn cancelled_leaf_and_pipeline_retain_scratch_and_resume_with_fresh_work() {
     for relations in 1..=3u16 {
         let schema = schema(usize::from(relations));
@@ -242,6 +243,7 @@ fn physical_terminal_force_observes_cancellation_and_releases_its_pools() {
 /// quantum poll on exploration must stop the join with the typed
 /// cancellation (no per-emitted-row poll exists to catch it).
 #[test]
+#[cfg_attr(miri, ignore)]
 fn cancellation_fires_inside_a_selective_join_that_emits_nothing() {
     let schema = schema(2);
     // Probes always hit (shared x0), the residual x1 < x2 never holds:
@@ -289,6 +291,7 @@ fn cancellation_fires_inside_a_selective_join_that_emits_nothing() {
 
 /// Ordinary execution keeps reusable pools without changing answers.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn ordinary_allocation_preserves_large_join_answers_and_pool_lifetimes() {
     let schema = schema(2);
     let a: Vec<(u64, u64)> = (0..4096).map(|i| (i, 0)).collect();
@@ -341,6 +344,7 @@ fn ordinary_allocation_preserves_large_join_answers_and_pool_lifetimes() {
 
 /// Bind the current context before forcing; prior cancellation cannot poison it.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn bind_clears_prior_refusal_before_force() {
     let schema = schema(2);
     let a: Vec<(u64, u64)> = (0..4096).map(|i| (i, 0)).collect();
@@ -372,6 +376,7 @@ fn bind_clears_prior_refusal_before_force() {
 
 /// First-map refusal is Err, never a fabricated Ok(None) miss or empty success.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn force_refusal_is_err_not_empty_success() {
     let schema = schema(2);
     let a: Vec<(u64, u64)> = (0..4096).map(|i| (i, 0)).collect();

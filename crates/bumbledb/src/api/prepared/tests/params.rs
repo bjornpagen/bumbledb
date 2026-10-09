@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn changing_text_parameters_do_not_retain_their_entire_history() {
     let fix = posting_store("text-parameter-reclamation", &[(1, 7, "live", 10)]);
     let mut prepared = fix.prepare(&by_memo_query()).unwrap();
@@ -68,6 +69,7 @@ fn changing_text_parameters_do_not_retain_their_entire_history() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn scalar_parameter_memo_shares_the_canonical_string_and_release_drops_its_owner() {
     let fix = posting_store("shared-parameter-text-owner", &[(1, 7, "live", 10)]);
     let mut prepared = fix.prepare(&by_memo_query()).unwrap();
@@ -169,6 +171,7 @@ fn uuid_param_fixture() -> (StoreFix, Query, [crate::Uuid; 3]) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn uuid_param_slot_reuses_words_across_hits_misses_and_type_errors() {
     let (fix, query, ids) = uuid_param_fixture();
     let mut prepared = fix.prepare(&query).unwrap();
@@ -316,6 +319,7 @@ fn bind_time_checks_reject_bad_params() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn string_params_resolve_per_execution() {
     let fix = posting_store("prepared-string-params", &[(1, 7, "rent", -1200)]);
 
@@ -346,6 +350,7 @@ fn string_params_resolve_per_execution() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn resident_string_param_rebinds_after_shared_cache_generation_rotates() {
     let fix = posting_store(
         "prepared-param-generation",
@@ -400,6 +405,7 @@ impl<'a, P: BindArgs<'a>> BindArgs<'a> for RotateAfterBind<P> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn scalar_set_and_point_params_keep_one_owner_across_bind_time_rotation() {
     let fix = posting_store(
         "prepared-bind-generation",
@@ -446,6 +452,7 @@ fn scalar_set_and_point_params_keep_one_owner_across_bind_time_rotation() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn param_word_memo_preserves_tokens_across_rebinds_and_new_rows() {
     let fix = posting_store(
         "prepared-param-word-memo",

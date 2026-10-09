@@ -233,6 +233,7 @@ fn residuals_filter_across_atoms() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn randomized_differential_against_the_nested_loop_oracle() {
     let mut state = 0x1234_5678_9ABC_DEF0_u64;
     let mut next = move || {

@@ -414,6 +414,7 @@ fn backtracking_restores_sources_across_sequential_executions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn results_are_identical_across_batch_sizes() {
     let schema = schema(3);
     let r: Vec<(u64, u64)> = (0..150).map(|i| (i % 7, i % 11)).collect();

@@ -16,6 +16,7 @@ fn rotating_rows() -> Vec<(u64, u64, &'static str, i64)> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn same_generation_executions_memo_hit_and_new_generations_rebuild() {
     let fix = posting_store("view-memo-generations", &rotating_rows());
     let mut prepared = fix.prepare(&by_memo_query()).expect("prepare");
@@ -68,6 +69,7 @@ fn heap_executions_use_fresh_view_epochs_without_resident_cache_entries() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_heap_prepared_plan_refuses_other_sources() {
     let rows: &[(u64, u64, &str, i64)] = &[(1, 7, "a", 10)];
     let heap = postings(rows);
@@ -78,6 +80,7 @@ fn a_heap_prepared_plan_refuses_other_sources() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn trim_drops_parked_views_and_preserves_answers() {
     let fix = posting_store("view-memo-trim", &rotating_rows());
     let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
@@ -89,6 +92,7 @@ fn trim_drops_parked_views_and_preserves_answers() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn query_release_deallocates_active_join_pools_without_clearing_shared_cache() {
     let rows: Vec<_> = (0..8192).map(|id| (id, id % 4, "memo", 1)).collect();
     let fix = posting_store("view-memo-release-pools", &rows);

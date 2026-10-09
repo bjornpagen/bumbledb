@@ -144,6 +144,7 @@ fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn introspection_reports_the_fold_with_its_filters_and_handles() {
     let fix = readings(READINGS);
     let store = StoreFix::store("folded-introspect", closed_descriptor());

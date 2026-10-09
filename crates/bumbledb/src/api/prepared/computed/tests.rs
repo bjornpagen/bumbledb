@@ -65,6 +65,7 @@ fn rows(sink: &mut ComputedSink) -> Vec<Vec<u64>> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn products_survive_projection_deduplication_and_reuse() {
     for project_one in [false, true] {
         let mut sink = fixture(10, project_one);

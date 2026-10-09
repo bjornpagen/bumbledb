@@ -19,6 +19,7 @@ fn churn_text(generation: &GenerationHandle, prefix: &str) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn recursive_accumulator_owns_text_after_frontier_refill() {
     {
         let work = work();

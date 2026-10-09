@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn pinned_plan_reads_fresh_data_at_newer_generations() {
     let fix = posting_store("prepared-snapshot-generations", &[(1, 7, "old", 1)]);
     let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
@@ -24,6 +25,7 @@ fn pinned_plan_reads_fresh_data_at_newer_generations() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn query_release_and_database_cache_clear_preserve_answers() {
     let fix = posting_store(
         "prepared-snapshot-trim",
@@ -54,6 +56,7 @@ fn query_release_and_database_cache_clear_preserve_answers() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn database_clear_invalidates_warm_text_views_before_finalization() {
     let fix = posting_store(
         "prepared-sibling-text-generation",
@@ -74,6 +77,7 @@ fn database_clear_invalidates_warm_text_views_before_finalization() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn prepare_leaves_the_image_cache_empty_until_execution() {
     let fix = posting_store("prepared-snapshot-noimage", &[(1, 7, "a", 10)]);
     let mut prepared = fix.prepare(&by_account_query()).expect("prepare");

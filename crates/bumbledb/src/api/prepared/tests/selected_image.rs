@@ -47,6 +47,7 @@ fn indexed_store() -> StoreFix {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn indexed_image_rotation_is_bucket_shaped_and_never_shared_as_full() {
     let fix = indexed_store();
     let mut prepared = fix.prepare(&by_account_query()).unwrap();
@@ -104,6 +105,7 @@ fn indexed_image_rotation_is_bucket_shaped_and_never_shared_as_full() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn selection_diversity_promotes_once_instead_of_thrashing_the_bounded_memo() {
     let fix = indexed_store();
     let mut prepared = fix.prepare(&by_account_query()).unwrap();
@@ -149,6 +151,7 @@ fn selection_diversity_promotes_once_instead_of_thrashing_the_bounded_memo() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn indexed_image_coverage_survives_old_snapshots_refusal_and_generation_rotation() {
     let fix = indexed_store();
     let mut prepared = fix.prepare(&by_account_query()).unwrap();
@@ -199,6 +202,7 @@ fn indexed_image_coverage_survives_old_snapshots_refusal_and_generation_rotation
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn cancelled_selected_image_publishes_no_cache_entry() {
     let fix = indexed_store();
     let prepared = fix.prepare(&by_account_query()).unwrap();
@@ -223,6 +227,7 @@ fn cancelled_selected_image_publishes_no_cache_entry() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn self_join_does_not_clone_a_differently_selected_partial_image() {
     let fix = indexed_store();
     let query = Query::single(Rule {
@@ -268,6 +273,7 @@ fn self_join_does_not_clone_a_differently_selected_partial_image() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn index_cardinality_is_exact_at_the_cutoff_and_observes_cancellation() {
     let fix = indexed_store();
     let pin = fix.db.owned_read().unwrap();
@@ -310,6 +316,7 @@ fn index_cardinality_is_exact_at_the_cutoff_and_observes_cancellation() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn dense_selection_uses_one_sequential_scan_without_prefetching_bucket_bodies() {
     let fix = indexed_store();
     fix.insert_dyn(

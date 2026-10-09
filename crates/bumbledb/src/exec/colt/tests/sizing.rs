@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn construction_is_lazy_until_the_first_get() {
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..10_000).map(|i| (i % 100, i)).collect();

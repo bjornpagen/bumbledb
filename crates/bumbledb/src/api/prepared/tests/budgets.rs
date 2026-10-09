@@ -90,6 +90,7 @@ fn bucket_amounts(answers: &Answers) -> Vec<(u64, i64)> {
 
 /// A self-join preserves answers and can be reused after release.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn self_joins_preserve_answers_after_memory_release() {
     let fix = metric_store("ordinary-self-join", 640);
     let query = self_join();
@@ -237,6 +238,7 @@ fn aggregate_interior_folds_per_group() {
 /// stops the visitor immediately, does not mutate the sealed owner, and does
 /// not poison a fresh delivery context or a reused preparation.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn completed_results_support_cancellable_borrowed_delivery_without_copying() {
     use crate::work::WorkContext;
     let fix = metric_store("borrowed-result-delivery", 4096);

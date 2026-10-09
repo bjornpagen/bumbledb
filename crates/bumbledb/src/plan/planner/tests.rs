@@ -538,6 +538,7 @@ fn deterministic_across_shuffled_stats_input() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_dp_accepts_large_inputs_under_the_cap() {
     let schema = schema(1, 2);
     let occurrences: Vec<Occurrence> = (0..16)

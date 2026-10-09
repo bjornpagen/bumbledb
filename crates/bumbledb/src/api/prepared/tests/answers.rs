@@ -224,6 +224,7 @@ fn answer_reuse_retains_capacity_and_answers_stay_identical() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn completed_results_own_shared_text_across_prepared_reuse() {
     use super::super::result::{CompleteResult, ResultIdentity};
     use super::super::source::{PinnedSource, QuerySource};

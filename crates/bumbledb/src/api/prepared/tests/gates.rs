@@ -14,6 +14,7 @@ use bumbledb_theory::schema::{
 
 /// Cancellation of an explicit execution context stops the production path.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn cancelled_execution_context_refuses_execute() {
     let rows = &[(1, 3, "a", 10), (2, 3, "b", 25), (3, 7, "c", 40)];
     let store = posting_store("d07-tiny-units", rows);
@@ -30,6 +31,7 @@ fn cancelled_execution_context_refuses_execute() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn allocating_collect_obeys_frame_cancellation_and_retries_cleanly() {
     let store = posting_store("collect-result-cap", &[(1, 3, "a", 10), (2, 3, "b", 25)]);
     let ample = WorkContext::new();
@@ -51,6 +53,7 @@ fn allocating_collect_obeys_frame_cancellation_and_retries_cleanly() {
 
 /// Reusable join pools are query-owned, not owned by the output answers.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn completed_execution_keeps_query_pools_until_explicit_release() {
     use bumbledb_theory::schema::ValueType;
     const METRIC: RelationId = RelationId(0);
@@ -156,6 +159,7 @@ fn completed_execution_keeps_query_pools_until_explicit_release() {
 
 /// Aggregate interior → join + bound negation over resident stages.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn derived_pipeline_joins_and_negates_resident_stages() {
     let mut owned: Vec<(u64, u64, String, i64)> = (1..=32u64)
         .map(|id| (id, id, "ok".to_owned(), i64::try_from(id).expect("fits")))
@@ -271,6 +275,7 @@ fn text_token_identity_is_generation_scoped_and_owners_survive_reclamation() {
 /// A key-bound query over many unrelated rows visits through the
 /// compiled witness, not a full scan.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn key_bound_query_visits_are_bounded() {
     let rows: Vec<(u64, u64, String, i64)> = (0..48)
         .map(|id| {
@@ -418,6 +423,7 @@ fn pack_order_is_logical_not_insertion() {
 
 /// Page size controls delivery rows, never execution cardinality or bytes.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn into_cursor_page_size_and_ticket_commit_control_advancement() {
     let store = posting_store(
         "page-size",

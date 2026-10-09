@@ -641,6 +641,7 @@ fn mask_suite(state: &mut u64) -> Vec<AllenMask> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn allen_masks_agree_with_the_naive_model_on_a_randomized_corpus() {
     let schema = tagged_interval_schema(2);
     let mut state = 0x04C0_FFEE_u64;
@@ -860,6 +861,7 @@ fn run_tallied(
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn keyed_overlap_self_join_agrees_with_the_naive_model() {
     use bumbledb_theory::allen::Basic;
     let schema = keyed_span_schema(1);
@@ -1153,6 +1155,7 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
 /// configuration-kernel pass (gather → codes → broadcast mask → compaction) —
 /// same answers as the naive model, mask by mask.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
     let schema = tagged_interval_schema(3);
     let mut state = 0x0BEE_5EED_u64;

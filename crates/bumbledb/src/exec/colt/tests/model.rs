@@ -111,6 +111,7 @@ fn drain_guarded_batches(
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn fixed_and_wide_map_iteration_preserves_keys_children_and_batch_boundaries() {
     for width in [0, 1, 2, 3, 4, 5, 8] {
         let image = wide_iteration_image(width);

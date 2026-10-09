@@ -53,6 +53,7 @@ fn id_amount_answers(buffer: &Answers) -> Vec<(u64, i64)> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn in_family_equals_the_union_of_per_element_executions() {
     let rows: Vec<(u64, u64, String, i64)> = (0..600u64)
         .map(|i| {

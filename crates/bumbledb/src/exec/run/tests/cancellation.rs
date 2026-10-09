@@ -36,6 +36,7 @@ fn pipelined_d2_cancels_one_origin_and_spares_the_rest() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn randomized_subset_projections_match_the_oracle_under_d2() {
     let mut state = 0xBEEF_CAFE_1234_5678u64;
     let mut next = move || {

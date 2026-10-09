@@ -88,6 +88,7 @@ fn cached_cursor_routes_read_late_occurrences_from_each_new_selection() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn pipelined_executor_matches_oracle() {
     let schema = schema(3);
 
@@ -327,6 +328,7 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn deep_nodes_accumulate_full_batches_across_pump_returns() {
     #[derive(Default)]
     struct MaxPass {

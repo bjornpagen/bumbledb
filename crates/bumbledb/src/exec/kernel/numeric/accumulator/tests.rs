@@ -167,6 +167,7 @@ fn exact_mean_does_not_round_sum_first_or_lose_subnormal_ties() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn deterministic_random_merge_trees_match_unpartitioned_exact_states() {
     fn next(state: &mut u64) -> u64 {
         *state ^= *state << 13;
@@ -241,6 +242,7 @@ mod oracle {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn pushes_merges_repeats_and_key_batches_match_the_limb_accumulator() {
         let mut rng = Rng(0x05ee_d0ff_10a7);
         for round in 0..crate::exec::sweep(400) {
@@ -303,6 +305,7 @@ mod oracle {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn long_same_sign_runs_cross_many_carry_propagations() {
         for value in [
             F64::from_bits(0x7fef_ffff_ffff_ffff),

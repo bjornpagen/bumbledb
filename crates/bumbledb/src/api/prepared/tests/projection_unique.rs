@@ -81,6 +81,7 @@ fn instrument_filter_rule() -> Rule {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn hidden_instrument_key_string_filter_matches_forced_hash_in_order() {
     // Registered benchmark `string`: output Posting(id, amount), joining
     // through a hidden instrument ID to a parameterized symbol filter.
@@ -157,6 +158,7 @@ fn hidden_instrument_key_string_filter_matches_forced_hash_in_order() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn uuid_keyed_join_with_negative_guard_preserves_order_across_sink_tiers() {
     let schema = SchemaDescriptor {
         relations: ["Left", "Right", "Blocked"]
@@ -228,6 +230,7 @@ fn uuid_keyed_join_with_negative_guard_preserves_order_across_sink_tiers() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn computed_heads_and_derived_occurrences_do_not_install_projection_witnesses() {
     let fix = posting_store(
         "unique-projection-exclusions",
@@ -275,6 +278,7 @@ fn computed_heads_and_derived_occurrences_do_not_install_projection_witnesses() 
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn keyed_interval_membership_keeps_hashing_for_hidden_points_through_real_normalization() {
     let schema = SchemaDescriptor {
         relations: vec![
@@ -360,6 +364,7 @@ fn keyed_interval_membership_keeps_hashing_for_hidden_points_through_real_normal
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn unique_projection_refusals_publish_no_partial_rows_and_allow_reuse() {
     let rows: Vec<_> = (0..513).map(|id| (id, 0, "", 0)).collect();
     let fix = posting_store("unique-projection-refusals", &rows);

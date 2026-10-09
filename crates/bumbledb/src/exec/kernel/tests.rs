@@ -26,6 +26,7 @@ fn same_survivors(kernel: impl Fn(&mut Vec<u32>), twin: impl Fn(&mut Vec<u32>)) 
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn u64_filters_match_their_twins_at_every_level() {
     let mut rng = Lcg(42);
     for level in every_level() {
@@ -72,6 +73,7 @@ fn u8_filter_matches_its_twin_at_every_level() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn interval_filters_match_their_twins_at_every_level() {
     let mut rng = Lcg(1717);
     for level in every_level() {
@@ -139,6 +141,7 @@ fn fold_words(rng: &mut Lcg, len: usize) -> Vec<u64> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn folds_match_their_twins_at_every_level() {
     let mut rng = Lcg(99);
     for level in every_level() {
@@ -346,6 +349,7 @@ fn allen_keep_bytes_match_their_twin_at_every_level() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn allen_column_filters_match_the_classifier_at_every_level() {
     let mut rng = Lcg(0xC01);
     let masks = masks_under_test(&mut rng);
@@ -406,6 +410,7 @@ fn allen_column_filter_refuses_unequal_columns() {
 /// Every ordered pair of intervals over eight points near both ends of the
 /// word range: all 13 relations, each against all 8192 masks, at every level.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn exhaustive_masks_times_configuration_classes_at_every_level() {
     const MAX: u64 = u64::MAX;
     let points = [0u64, 1, 2, 3, 4, MAX - 2, MAX - 1, MAX];
@@ -480,6 +485,7 @@ fn allen_pooled_outputs_equal_fresh_outputs() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn compaction_matches_its_twin_at_every_level() {
     let mut rng = Lcg(0xC0);
     for level in every_level() {

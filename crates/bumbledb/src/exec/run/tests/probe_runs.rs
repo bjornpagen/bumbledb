@@ -144,6 +144,7 @@ fn sibling_runs<const K: usize>(width: usize) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn store_free_sibling_runs_match_scalar_probes_and_reuse_pools() {
     for width in [0, 1, 2, 3, 4, 5, 8] {
         sibling_runs::<0>(width);

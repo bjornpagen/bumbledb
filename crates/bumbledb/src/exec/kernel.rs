@@ -53,7 +53,15 @@ fn detect() -> Level {
     Level::fallback()
 }
 
+/// The detected level and every lower level it implies, lowest first. Miri
+/// interprets no intrinsics, so it has none.
+#[cfg(miri)]
+fn supported_levels() -> Vec<Level> {
+    Vec::new()
+}
+
 /// The detected level and every lower level it implies, lowest first.
+#[cfg(not(miri))]
 fn supported_levels() -> Vec<Level> {
     let best = Level::new();
     let mut levels = Vec::new();

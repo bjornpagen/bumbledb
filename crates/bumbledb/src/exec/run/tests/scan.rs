@@ -369,6 +369,7 @@ fn scan_and_batch_paths_agree_across_fixtures() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn kernel_scan_residuals_match_every_operator_side_and_boundary() {
     let ops = [
         WordCmp::Eq,

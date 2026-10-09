@@ -86,6 +86,7 @@ fn lookup_query(selected_field: FieldId, gate_first: bool) -> Query {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn selections_preserve_typed_keys_on_the_selected_field() {
     let cases = [
         (
@@ -218,6 +219,7 @@ fn keyed_range_query(project_id: bool) -> Query {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn store_keyed_range_installs_append_and_matches_forced_hash_control() {
     // Same shape as the benchmark: output(id, amount), range predicate on
     // an unprojected scalar. The fixture calls that scalar account, not at.
@@ -256,6 +258,7 @@ fn store_keyed_range_installs_append_and_matches_forced_hash_control() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn hidden_keys_heap_and_overlapping_union_keep_output_hashing() {
     let rows: Vec<_> = (0..33u64)
         .map(|id| (id, id % 11, "", i64::try_from(id % 7).unwrap()))
@@ -550,6 +553,7 @@ fn results_decode_text_tokens_to_original_bytes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn store_and_heap_sources_agree_on_the_same_rows() {
     // The same query over the same rows through both sources: the
     // committed store (images from canonical rows via the interner) and
@@ -580,6 +584,7 @@ fn store_and_heap_sources_agree_on_the_same_rows() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_prepared_query_refuses_a_foreign_source() {
     // Identity is pinned at prepare: a heap-prepared plan cannot run
     // against a store lease, nor a store plan against another store.
@@ -700,6 +705,7 @@ fn heap_prepared_witnesses_require_the_same_schema_laws() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn rebinding_params_reselects_the_account_and_range() {
     let rows: &[(u64, u64, &str, i64)] = &[
         (1, 3, "a", 10),
@@ -721,6 +727,7 @@ fn rebinding_params_reselects_the_account_and_range() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn execute_complete_seals_only_full_results_and_pages_them() {
     // CompleteResult seals after full evaluation; the consuming
     // cursor delivers every row exactly once with a terminal frame.
@@ -765,6 +772,7 @@ fn execute_complete_seals_only_full_results_and_pages_them() {
 /// Selective execution is exact; cancellation is an error, never a reason to
 /// restart or fabricate an empty answer.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn selective_execution_is_exact_and_cancellation_does_not_restart() {
     use bumbledb_theory::schema::{
         FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType,

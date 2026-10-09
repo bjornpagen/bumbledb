@@ -196,6 +196,7 @@ fn panicking_constructor_never_publishes_a_fresh_or_stale_slot() {
 /// clearing stay O(len) — pinned structurally by insertion-order iteration over
 /// a high-water map.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn iteration_is_dense_and_insertion_ordered_after_high_water() {
     let mut map: WordMap<u64> = WordMap::new(1);
 
@@ -288,6 +289,7 @@ fn zero_arity_keys_share_one_group() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn differential_against_the_reference_model() {
     let ops_per_round: u64 = if cfg!(miri) { 256 } else { 2_000 };
     let mut rng = 0x2468_ACE0_1357_9BDFu64;
@@ -377,6 +379,7 @@ fn the_ctrl_mirror_tracks_the_head() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn generational_clear_never_ghosts_and_reclaims_warm_slots() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 512);
     for round in 0..600u64 {
@@ -433,6 +436,7 @@ fn clear_retains_ctrl_until_saturation_forces_the_physical_reset() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_covering_hint_never_grows() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 100_000);
     let capacity = map.values.len();
