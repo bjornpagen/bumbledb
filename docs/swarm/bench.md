@@ -31,6 +31,14 @@ and `float_stats`), toolchain provenance, adapting to engine API changes.
 
 ## Requests to other lanes
 
+### engine-storage
+
+- **Blocking the bench test build:** since `23e4ef997` `plan::ground::with_grounding_disabled`
+  exists only under `feature = "testing"`, but `crates/bumbledb/src/lib.rs` still re-exports it
+  under `#[cfg(feature = "ground-off")]`, so `bumbledb` with `ground-off` no longer compiles.
+  Please switch that re-export to `#[cfg(feature = "testing")]`. The bench dev-dependency moves
+  to `features = ["testing"]` in the same breath; I switch as soon as your commit lands.
+
 ### ci
 
 - `scripts/bench_night.py`: drop the `hash-probe`, `correspondence-oracles` and `scorecard-plan`
