@@ -18,7 +18,7 @@ Owns: `crates/bumbledb-log/**`, `docs/swarm/log-core.md`.
 cache directory with the app's `Bundle`, wrap it in a `Machine`, and drive `step`.
 
 Gate: `cargo clippy -p bumbledb-log --all-targets -- -D warnings` and `cargo nextest run -p
-bumbledb-log` (38 tests: hostile-bytes codec sweeps, scripted protocol paths, seeded fault-injection
+bumbledb-log` (40 tests: hostile-bytes codec sweeps, scripted protocol paths, seeded fault-injection
 simulations over a reference replica, the real LMDB cache against that reference, migrations).
 
 ## Public API (`bumbledb_log::*`, Rust)
@@ -33,7 +33,7 @@ pub struct DatabaseId(pub [u8; 16]);   // minted by Genesis (the caller supplies
 pub struct RequestId(pub [u8; 16]);    // idempotency key: decided at most once
 pub struct Nonce(pub [u8; 16]);        // per written entry (derived from Config::seed)
 pub struct CommandDigest(pub [u8; 32]);
-pub struct ImageDigest(pub [u8; 32]);  // blake3 of an image file
+pub struct ImageDigest(pub [u8; 32]);  // names an image's state (Cache: rows' content digest + head + host records)
 pub struct MigrationHash(pub [u8; 32]);
 pub struct Seq(NonZeroU64);            // log/{seq}; Seq::GENESIS == 1; Seq::new(u64) -> Option, .get()
 pub struct Revision(pub u64);          // committed state changes; preconditions name one
@@ -71,6 +71,7 @@ impl<R: Replica> Machine<R> {
     pub fn new(replica: R, config: Config) -> Self;
     pub fn step(&mut self, input: Input) -> Step;
     pub fn replica(&self) -> &R;            // reads (queries) go through the replica between steps
+    pub fn into_replica(self) -> R;         // reuse the cache in a later machine
 }
 pub struct Config {
     pub seed: [u8; 16],                      // random per process
@@ -163,7 +164,8 @@ impl Replica for Cache { .. }
 
 Layout under `root`: `CURRENT` (`"<generation> <schema hex>"`), the live `<generation>.bdb/`
 LMDB directory, and scratch `incoming.bdb`, `outgoing.bdb/`, `migration.bdb/`, `stage.bdb/`.
-Receipts are host records `r‖request id`; the head is the attachment. Create, image install and
+Receipts are host records `r‖request id`; the head (with the migration ledger) is the host head.
+Environments are `Durability::Cache` (never synced); the database id is the log's Genesis id. Create, image install and
 migration build a new generation and swap `CURRENT`. When a machine is replaced, abandon the old
 machine's outstanding requests (a stale download could land in `incoming.bdb`).
 
@@ -219,5 +221,4 @@ heads with equal rows.
 
 ### to bridge
 
-- Drive `Machine<Cache>` from napi: one machine per open database; `step` per input; hand
-  `Step.io` to TS and feed back `IoResponse`s. Reads use `machine.replica()` (the cache's `Db`).
+- Landed on your side (`hosted.rs`); nothing outstanding.
