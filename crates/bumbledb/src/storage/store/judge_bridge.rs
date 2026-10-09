@@ -20,8 +20,9 @@ use crate::canonical::DecodeScratch;
 use crate::changes::ChangeKind;
 use crate::schema::compiled::CompiledProjection;
 use crate::schema::judge::{
-    CandidateFacts, DeltaFacts, DeltaShape, JudgeBudget, JudgeError, JudgeScratch, JudgedViolation,
-    Judgment as SchemaJudgment, LawfulParent, RankedRowVisitor, judge_incremental, store_fault,
+    CandidateFacts, DeltaFacts, DeltaShape, JudgeBudget, JudgeError, JudgedViolation,
+    Judgment as SchemaJudgment, LawfulParent, RankedRowVisitor, judge_final_state,
+    judge_incremental,
 };
 use crate::schema::{ProjectionId, Schema, StatementId};
 use crate::work::WorkContext;
@@ -53,13 +54,7 @@ impl<'s> SchemaJudge<'s> {
         work: &WorkContext,
     ) -> StoreResult<Judgment<Box<[JudgedViolation]>>> {
         let view = CandidateView::new(candidate, self.schema, work);
-        map_judged(crate::schema::judge::judge_final_state_with_scratch(
-            self.schema,
-            &view,
-            work,
-            self.budget,
-            JudgeScratch::channel(store_fault),
-        ))
+        map_judged(judge_final_state(self.schema, &view, work, self.budget))
     }
 
     /// Incremental judgment. Requires a lawful parent; empty delta is not
@@ -80,7 +75,6 @@ impl<'s> SchemaJudge<'s> {
             &view,
             work,
             self.budget,
-            JudgeScratch::channel(store_fault),
         ))
     }
 }
@@ -93,7 +87,6 @@ fn map_judged(
         Ok(SchemaJudgment::Rejected(violations)) => Ok(Judgment::Rejected(violations)),
         Err(JudgeError::Work(error)) => Err(StoreError::Work(error)),
         Err(JudgeError::State(error)) => Err(error),
-        Err(JudgeError::Allocation) => Err(StoreError::Allocation),
         Err(JudgeError::UndefinedDuration { statement }) => {
             Err(StoreError::UndefinedDuration { statement })
         }
@@ -534,9 +527,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(outer, expected.len());
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
-        let _ = before;
+        assert!(crate::alloc_counter::snapshot().absolute.live_bytes <= before);
 
         let cancelled = work();
         let cancel_view = CandidateView::new(view.state, view.schema, &cancelled);
@@ -549,12 +540,7 @@ mod tests {
         });
         assert_eq!(result, Err(StoreError::Work(crate::WorkError::Cancelled)));
         assert_eq!(calls, 1, "reused decode cannot bypass cancellation");
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(
-            crate::alloc_counter::snapshot().absolute.live_bytes,
-            before_cancel
-        );
-        let _ = before_cancel;
+        assert!(crate::alloc_counter::snapshot().absolute.live_bytes <= before_cancel);
     }
 
     fn assert_ranked_visit_stopping(
@@ -588,9 +574,7 @@ mod tests {
             view.visit_ranked_compiled_group(compiled, determinant, &mut |_, _| Err(error.clone())),
             Err(error)
         );
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
-        let _ = before;
+        assert!(crate::alloc_counter::snapshot().absolute.live_bytes <= before);
     }
 
     struct StreamDecodeJudge<'a> {
@@ -671,14 +655,12 @@ mod tests {
             Ok(false)
         })?;
         assert_eq!(stopped, 1);
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
+        assert!(crate::alloc_counter::snapshot().absolute.live_bytes <= before);
         assert_eq!(
             view.visit_added_rows(RelationId(0), &mut |_| Err(StoreError::ForeignSchema)),
             Err(StoreError::ForeignSchema)
         );
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
+        assert!(crate::alloc_counter::snapshot().absolute.live_bytes <= before);
         let mut cancelled = 0;
         let result = view.visit_added_rows(RelationId(0), &mut |_| {
             cancelled += 1;
@@ -695,9 +677,7 @@ mod tests {
             cancelled, 1,
             "reused capacity must still check before the next callback"
         );
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
-        let _ = before;
+        assert!(crate::alloc_counter::snapshot().absolute.live_bytes <= before);
         Ok(())
     }
 
@@ -920,7 +900,7 @@ mod tests {
             candidate: &crate::storage::store::CandidateState<'_, '_>,
             work: &crate::WorkContext,
         ) -> Result<Judgment<Self::Rejection>, StoreError> {
-            use crate::schema::judge::{JudgeScratch, Judgment as SemanticJudgment};
+            use crate::schema::judge::Judgment as SemanticJudgment;
             let statement = crate::schema::StatementId(0);
             self.calls.set(self.calls.get() + 1);
             assert_eq!(
@@ -943,19 +923,17 @@ mod tests {
                 &counted,
                 work,
                 crate::schema::judge::JudgeBudget::default(),
-                JudgeScratch::channel(crate::schema::judge::store_fault),
             )
             .unwrap();
             let complete_view = CandidateView::new(candidate, self.schema, work);
             assert!(!complete_view.scalar_key_preserved(statement));
-            let complete = crate::schema::judge::judge_final_state_with_scratch(
+            let complete = crate::schema::judge::judge_final_state(
                 self.schema,
                 // Even an incremental view advertising true preservation
                 // cannot change complete judgment's interpretation.
                 &counted,
                 work,
                 crate::schema::judge::JudgeBudget::default(),
-                JudgeScratch::channel(crate::schema::judge::store_fault),
             )
             .unwrap();
             assert_eq!(

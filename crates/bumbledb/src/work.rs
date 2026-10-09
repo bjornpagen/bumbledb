@@ -59,11 +59,6 @@ impl WorkContext {
 
 pub mod cache;
 
-pub use crate::exec::scratch::{
-    ScratchAppend, ScratchClaimKey, ScratchExactKey, ScratchLookup, ScratchMapId, ScratchProbe,
-    ScratchRelation, ScratchVisit, ScratchVisitor, ScratchWideClaimKey, ScratchWordKey,
-    ScratchWriteBatch,
-};
 pub use cache::{
     GenerationHandle, GenerationProtocol, GenerationState, ResolverView, WeakGenerationHandle,
 };

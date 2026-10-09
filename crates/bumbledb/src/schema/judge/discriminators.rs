@@ -1,9 +1,10 @@
-//! D04 / D05 / D26 discriminators. Authored now; verification `NotRun`.
+//! Judgment discriminators: citation order, receipt stability, and complete
+//! versus incremental premises.
 
 use super::delta_tests::DeltaState;
 use super::{
-    CandidateFacts, JudgeBudget, JudgeScratch, Judgment, LawfulParent, MapState, judge_complete,
-    judge_final_state, judge_final_state_with_scratch, judge_incremental, store_fault,
+    JudgeBudget, Judgment, LawfulParent, MapState, judge_complete, judge_final_state,
+    judge_incremental,
 };
 use crate::Value;
 use crate::schema::evidence::encode_judged;
@@ -14,7 +15,6 @@ use crate::schema::{
     Bound, FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor, StatementId,
     ValidateDescriptor as _, ValueType, Weight,
 };
-use crate::storage::store::StoreError;
 use crate::work::WorkContext;
 
 fn work() -> WorkContext {
@@ -69,7 +69,6 @@ fn d04_compiled_indexes_earn_locality() {
         &state,
         &work(),
         budget,
-        JudgeScratch::disabled(),
     )
     .expect("incremental");
     let independent = judge_final_state(&schema, &state, &work(), budget).expect("independent");
@@ -94,7 +93,6 @@ fn d04_compiled_indexes_earn_locality() {
         &local,
         &work(),
         budget,
-        JudgeScratch::disabled(),
     )
     .expect("indexed key path");
     assert_eq!(
@@ -112,7 +110,6 @@ fn d04_compiled_indexes_earn_locality() {
         &scaled,
         &work(),
         budget,
-        JudgeScratch::disabled(),
     )
     .expect("scaled");
     assert_eq!(
@@ -166,7 +163,6 @@ fn d04_capacity_floor_and_target_replacement_match_complete() {
         &floor,
         &work(),
         budget,
-        JudgeScratch::disabled(),
     )
     .expect("incremental");
     assert_eq!(complete, incremental);
@@ -214,7 +210,6 @@ fn d04_capacity_floor_and_target_replacement_match_complete() {
         &replaced,
         &work(),
         budget,
-        JudgeScratch::disabled(),
     )
     .expect("incremental");
     assert_eq!(
@@ -233,7 +228,6 @@ fn d04_capacity_floor_and_target_replacement_match_complete() {
         &local,
         &work(),
         budget,
-        JudgeScratch::disabled(),
     )
     .expect("compiled capacity path");
     assert_eq!(
@@ -295,7 +289,6 @@ fn d04_incremental_containment_consumes_compiled_groups() {
         &state,
         &work(),
         budget,
-        JudgeScratch::disabled(),
     )
     .expect("incremental");
     assert_eq!(complete, incremental);
@@ -311,7 +304,6 @@ fn d04_incremental_containment_consumes_compiled_groups() {
         &local,
         &work(),
         budget,
-        JudgeScratch::disabled(),
     )
     .expect("compiled containment path");
     assert_eq!(
@@ -334,7 +326,6 @@ fn d04_incremental_containment_consumes_compiled_groups() {
         &scaled,
         &work(),
         budget,
-        JudgeScratch::disabled(),
     )
     .expect("scaled containment");
     assert_eq!(
@@ -352,15 +343,9 @@ fn agree_reject(
     let state = DeltaState::new(parent, &[], removed);
     let budget = JudgeBudget::default();
     let complete = judge_complete(schema, &state, &work(), budget).expect("complete");
-    let incremental = judge_incremental(
-        LawfulParent::established(),
-        schema,
-        &state,
-        &work(),
-        budget,
-        JudgeScratch::disabled(),
-    )
-    .expect("incremental");
+    let incremental =
+        judge_incremental(LawfulParent::established(), schema, &state, &work(), budget)
+            .expect("incremental");
     assert_eq!(
         complete, incremental,
         "complete and incremental must share logical group coordinates"
@@ -512,30 +497,6 @@ fn d04_permuted_closed_source_target_deletion_agrees() {
 /// logical fact bytes before the budget, not by row id.
 #[test]
 fn d05_rejection_evidence_is_portable() {
-    struct StoreChannel(MapState);
-    impl CandidateFacts for StoreChannel {
-        type Error = StoreError;
-        fn visit_rows(
-            &self,
-            relation: RelationId,
-            visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
-        ) -> Result<(), Self::Error> {
-            let mut error = None;
-            self.0
-                .visit_rows(relation, &mut |row| match visit(row) {
-                    Ok(keep) => Ok(keep),
-                    Err(failure) => {
-                        error = Some(failure);
-                        Ok(false)
-                    }
-                })
-                .unwrap_or_else(|impossible| match impossible {});
-            match error {
-                Some(failure) => Err(failure),
-                None => Ok(()),
-            }
-        }
-    }
     let schema = keyed_users();
     let mut forward = MapState::new();
     let mut reverse = MapState::new();
@@ -602,20 +563,6 @@ fn d05_rejection_evidence_is_portable() {
     let live = encode_judged(&schema, &left, 1 << 16, &ctx).expect("encode live");
     let imported = encode_judged(&schema, &reminted, 1 << 16, &ctx).expect("encode remint");
     assert_eq!(live, imported, "receipt bytes survive remint");
-
-    let resident = judge_final_state(&schema, &forward, &work(), budget).expect("resident");
-    let spilled = judge_final_state_with_scratch(
-        &schema,
-        &StoreChannel(forward),
-        &work(),
-        budget,
-        JudgeScratch::channel(store_fault),
-    )
-    .expect("scratch");
-    assert_eq!(
-        resident, spilled,
-        "forced scratch cannot change the receipt"
-    );
 }
 
 /// D26 — complete judgment cannot borrow a lawful-parent premise. A
@@ -648,7 +595,6 @@ fn d26_complete_judgment_cannot_borrow_a_lawful_parent() {
         &empty_delta,
         &work(),
         JudgeBudget::default(),
-        JudgeScratch::disabled(),
     )
     .expect("incremental empty");
     assert_eq!(

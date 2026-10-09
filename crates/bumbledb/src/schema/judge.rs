@@ -35,8 +35,6 @@ use crate::{Value, WorkContext, WorkError};
 mod citation;
 mod grouped;
 
-pub use grouped::{JudgeScratch, ScratchFault, store_fault};
-
 use citation::CitationTopK;
 use grouped::{FLAG_OVERFLOW, FLAG_RAY, GroupedMap, ScalarKeyScratch, encode_value};
 
@@ -303,21 +301,14 @@ pub enum Judgment {
     Rejected(Box<[JudgedViolation]>),
 }
 
-/// Judgment failure: not a semantic verdict. `Work` is the operation
-/// cancellation context; `State` is the candidate view's own failure channel (a
-/// spilled grouped-state fault also travels through it, via the state's
-/// [`JudgeScratch`] conversion); `UndefinedDuration` is the explicit
-/// refusal of a ray in a duration-measured position; `MeasureOverflow`
-/// reports a group total past the widened accumulator instead of wrapping
-/// a witness; `Compile` is interned-projection exhaustion. `Allocation`
-/// reports host allocation failure when no state scratch channel exists;
-/// a configured channel receives [`ScratchFault::Allocation`] instead.
+/// Judgment failure, never a semantic verdict. `State` is the candidate
+/// view's own failure; `UndefinedDuration` refuses a ray in a
+/// duration-measured position; `MeasureOverflow` reports a group total past
+/// the widened accumulator instead of wrapping a witness.
 #[derive(Debug, PartialEq, Eq)]
 pub enum JudgeError<E> {
     Work(WorkError),
     State(E),
-    /// Host allocation capacity was unavailable.
-    Allocation,
     UndefinedDuration {
         statement: StatementId,
     },
@@ -406,53 +397,29 @@ pub fn judge_incremental<S: DeltaFacts>(
     state: &S,
     work: &WorkContext,
     budget: JudgeBudget,
-    scratch: JudgeScratch<S::Error>,
 ) -> Result<Judgment, JudgeError<S::Error>> {
-    judge_final_state_delta_local(schema, state, work, budget, scratch)
+    judge_final_state_delta_local(schema, state, work, budget)
 }
 
 /// Judges the complete proposed final state against every sealed
-/// statement. See the module doc for the exact semantics; the verdict for
-/// a completed run always names EVERY violated statement.
-///
-/// States whose error type is the store's own (`storage::store::StoreError`
-/// — the production candidate view and the offline sweeper) must pass
-/// [`JudgeScratch::channel`] via [`judge_final_state_with_scratch`]; the
-/// parameterless entry reports allocation failure through [`JudgeError::Allocation`].
+/// statement; a completed run names every violated statement.
 ///
 /// # Errors
-/// [`JudgeError`] on cancellation, a failing candidate view or its
-/// spilled grouped state, a ray in a duration-measured position, or an
-/// unwitnessable measure. No partial rejection is returned on any error
-/// path.
+/// [`JudgeError`] on cancellation, a failing candidate view, a ray in a
+/// duration-measured position, or an unwitnessable measure. No partial
+/// rejection is returned on any error path.
 pub fn judge_final_state<S: CandidateFacts>(
     schema: &Schema,
     state: &S,
     work: &WorkContext,
     budget: JudgeBudget,
 ) -> Result<Judgment, JudgeError<S::Error>> {
-    judge_final_state_with_scratch(schema, state, work, budget, JudgeScratch::disabled())
-}
-
-/// [`judge_final_state`] with a grouped-map error adapter for the state's
-/// own error channel (e.g. the log's transition admission). This does not select
-/// a representation or install a memory policy.
-///
-/// # Errors
-/// As [`judge_final_state`].
-pub fn judge_final_state_with_scratch<S: CandidateFacts>(
-    schema: &Schema,
-    state: &S,
-    work: &WorkContext,
-    budget: JudgeBudget,
-    scratch: JudgeScratch<S::Error>,
-) -> Result<Judgment, JudgeError<S::Error>> {
     let mut judge = Judge {
         schema,
         work,
         budget,
-        channel: scratch.channel,
         violations: Vec::new(),
+        error: std::marker::PhantomData,
     };
     for view in schema.statements() {
         work.checkpoint()?;
@@ -494,15 +461,14 @@ pub fn judge_final_state_delta_local<S: DeltaFacts>(
     state: &S,
     work: &WorkContext,
     budget: JudgeBudget,
-    scratch: JudgeScratch<S::Error>,
 ) -> Result<Judgment, JudgeError<S::Error>> {
     let theory = schema.compiled_theory().map_err(JudgeError::Compile)?;
     let mut judge = Judge {
         schema,
         work,
         budget,
-        channel: scratch.channel,
         violations: Vec::new(),
+        error: std::marker::PhantomData,
     };
     let mut delta = Vec::new();
     for (idx, _relation) in schema.relations().iter().enumerate() {
@@ -542,15 +508,11 @@ struct Judge<'s, 'w, E> {
     schema: &'s Schema,
     work: &'w WorkContext,
     budget: JudgeBudget,
-    channel: Option<fn(ScratchFault) -> E>,
     violations: Vec<JudgedViolation>,
+    error: std::marker::PhantomData<fn() -> E>,
 }
 
 impl<E> Judge<'_, '_, E> {
-    fn grouped(&self) -> GroupedMap<E> {
-        GroupedMap::new(self.work, self.channel)
-    }
-
     fn pending(&self, statement: StatementId, kind: StatementKind) -> PendingViolation {
         PendingViolation::new(statement, kind, self.budget.examples_per_statement)
     }
@@ -720,7 +682,7 @@ impl<E> Judge<'_, '_, E> {
         let Some(tail) = interval_field else {
             return self.key_scalar_delta_local(state, statement, &scalar_fields);
         };
-        let mut seen = self.grouped();
+        let mut seen = GroupedMap::default();
         let mut groups: Vec<Vec<Value>> = Vec::new();
         let mut det = Vec::new();
         let mut walk_error = None;
@@ -734,17 +696,10 @@ impl<E> Judge<'_, '_, E> {
                 for &idx in &scalar_fields {
                     encode_value(&row[idx], &mut det);
                 }
-                match seen.insert_if_absent(&det) {
-                    Ok(true) => {
-                        groups.push(scalar_fields.iter().map(|&idx| row[idx].clone()).collect());
-                        Ok(true)
-                    }
-                    Ok(false) => Ok(true),
-                    Err(error) => {
-                        walk_error = Some(error);
-                        Ok(false)
-                    }
+                if seen.insert_if_absent(&det) {
+                    groups.push(scalar_fields.iter().map(|&idx| row[idx].clone()).collect());
                 }
+                Ok(true)
             })
             .map_err(JudgeError::State)?;
         if let Some(error) = walk_error {
@@ -777,8 +732,8 @@ impl<E> Judge<'_, '_, E> {
         if state.scalar_key_preserved(statement.id) {
             return Ok(true);
         }
-        let mut determinant = ScalarKeyScratch::new(self.work, scalar_fields.len(), self.channel)?;
-        let mut offending = self.grouped();
+        let mut determinant = ScalarKeyScratch::new(scalar_fields.len());
+        let mut offending = GroupedMap::default();
         let mut pending = self.pending(statement.id, StatementKind::Functionality);
         let mut indexed = true;
         let mut walk_error = None;
@@ -792,7 +747,7 @@ impl<E> Judge<'_, '_, E> {
                     // Check known BAD groups before probing: many additions to
                     // one violation must not repeat its entire citation scan.
                     let have_bad_groups = offending.len() != 0;
-                    if have_bad_groups && offending.contains(determinant.encode()?)? {
+                    if have_bad_groups && offending.contains(determinant.encode()) {
                         return Ok(true);
                     }
                     let Some(violated) =
@@ -804,9 +759,9 @@ impl<E> Judge<'_, '_, E> {
                         return Ok(true);
                     }
                     if !have_bad_groups {
-                        determinant.encode()?;
+                        determinant.encode();
                     }
-                    offending.insert_if_absent(determinant.key())?;
+                    offending.insert_if_absent(determinant.key());
                     pending.violated = true;
                     self.offer_key_group(
                         state,
@@ -875,7 +830,7 @@ impl<E> Judge<'_, '_, E> {
         tail: usize,
         pending: &mut PendingViolation,
     ) -> Result<bool, JudgeError<E>> {
-        let mut spans = self.grouped();
+        let mut spans = GroupedMap::default();
         let mut seq = 0u64;
         let mut walk_error = None;
         match state.visit_key_competitors(statement.id, determinant, &mut |values| {
@@ -887,10 +842,7 @@ impl<E> Judge<'_, '_, E> {
                 walk_error = Some(JudgeError::Work(error));
                 return Ok(false);
             }
-            if let Err(error) = spans.put(&key, &[]) {
-                walk_error = Some(error);
-                return Ok(false);
-            }
+            spans.put(&key, &[]);
             Ok(true)
         }) {
             Ok(Some(())) => {}
@@ -900,7 +852,7 @@ impl<E> Judge<'_, '_, E> {
         if let Some(error) = walk_error {
             return Err(error);
         }
-        let mut offending = self.grouped();
+        let mut offending = GroupedMap::default();
         let mut violated = false;
         let mut previous: Option<u64> = None;
         let mut prev_seq = 0u64;
@@ -911,8 +863,8 @@ impl<E> Judge<'_, '_, E> {
                 && start < prev_end
             {
                 violated = true;
-                offending.put(&prev_seq.to_be_bytes(), &[])?;
-                offending.put(&at.to_be_bytes(), &[])?;
+                offending.put(&prev_seq.to_be_bytes(), &[]);
+                offending.put(&at.to_be_bytes(), &[]);
             }
             previous = Some(end);
             prev_seq = at;
@@ -928,7 +880,7 @@ impl<E> Judge<'_, '_, E> {
             relation,
             determinant,
             pending,
-            Some(&mut offending),
+            Some(&offending),
         )
     }
 
@@ -939,23 +891,16 @@ impl<E> Judge<'_, '_, E> {
         relation: RelationId,
         determinant: &[Value],
         pending: &mut PendingViolation,
-        mut only: Option<&mut GroupedMap<E>>,
+        only: Option<&GroupedMap>,
     ) -> Result<bool, JudgeError<E>> {
         let mut seq = 0u64;
         let mut walk_error = None;
         match state.visit_key_competitors(statement, determinant, &mut |values| {
             let at = seq;
             seq += 1;
-            let take = match &mut only {
-                None => true,
-                Some(flagged) => match flagged.contains(&at.to_be_bytes()) {
-                    Ok(hit) => hit,
-                    Err(error) => {
-                        walk_error = Some(error);
-                        return Ok(false);
-                    }
-                },
-            };
+            let take = only
+                .as_ref()
+                .is_none_or(|flagged| flagged.contains(&at.to_be_bytes()));
             if take && let Err(error) = self.offer(pending, relation, values) {
                 walk_error = Some(error);
                 return Ok(false);
@@ -1012,16 +957,16 @@ impl<E> Judge<'_, '_, E> {
         scalar_fields: &[usize],
         pending: &mut PendingViolation,
     ) -> Result<(), JudgeError<E>> {
-        let mut seen = self.grouped();
-        let mut offending = self.grouped();
+        let mut seen = GroupedMap::default();
+        let mut offending = GroupedMap::default();
         let mut det = Vec::new();
         self.for_each_row(state, relation, |_judge, _seq, row| {
             det.clear();
             for &idx in scalar_fields {
                 encode_value(&row[idx], &mut det);
             }
-            if !seen.insert_if_absent(&det)? {
-                offending.put(&det, &[])?;
+            if !seen.insert_if_absent(&det) {
+                offending.put(&det, &[]);
             }
             Ok(true)
         })?;
@@ -1034,7 +979,7 @@ impl<E> Judge<'_, '_, E> {
             for &idx in scalar_fields {
                 encode_value(&row[idx], &mut det);
             }
-            if offending.contains(&det)? {
+            if offending.contains(&det) {
                 judge.offer(pending, relation, row)?;
             }
             Ok(true)
@@ -1053,24 +998,24 @@ impl<E> Judge<'_, '_, E> {
         tail: usize,
         pending: &mut PendingViolation,
     ) -> Result<(), JudgeError<E>> {
-        let mut tokens = self.grouped();
-        let mut spans = self.grouped();
+        let mut tokens = GroupedMap::default();
+        let mut spans = GroupedMap::default();
         let mut det = Vec::new();
         self.for_each_row(state, relation, |_judge, seq, row| {
             det.clear();
             for &idx in scalar_fields {
                 encode_value(&row[idx], &mut det);
             }
-            let token = tokens.token_of(&det)?;
+            let token = tokens.token_of(&det);
             let (start, end) = interval_order_words(&row[tail])
                 .expect("a projected interval position holds an interval value");
             let key = span_key(token, start, end, seq);
-            spans.put(&key, &[])?;
+            spans.put(&key, &[]);
             Ok(true)
         })?;
         // Sweep in exact (token, start, end, seq) order: sorted by start
         // within a group, any overlap is witnessed by an adjacent pair.
-        let mut offending = self.grouped();
+        let mut offending = GroupedMap::default();
         let mut violated = false;
         let mut previous: Option<(u64, u64, u64)> = None; // token, end, seq
         spans.for_each(|key, _| {
@@ -1081,8 +1026,8 @@ impl<E> Judge<'_, '_, E> {
                 && start < prev_end
             {
                 violated = true;
-                offending.put(&prev_seq.to_be_bytes(), &[])?;
-                offending.put(&seq.to_be_bytes(), &[])?;
+                offending.put(&prev_seq.to_be_bytes(), &[]);
+                offending.put(&seq.to_be_bytes(), &[]);
             }
             previous = Some((token, end, seq));
             Ok(true)
@@ -1092,7 +1037,7 @@ impl<E> Judge<'_, '_, E> {
         }
         pending.violated = true;
         self.for_each_row(state, relation, |judge, seq, row| {
-            if offending.contains(&seq.to_be_bytes())? {
+            if offending.contains(&seq.to_be_bytes()) {
                 judge.offer(pending, relation, row)?;
             }
             Ok(true)
@@ -1201,13 +1146,13 @@ impl<E> Judge<'_, '_, E> {
         statement: &ContainmentStatement,
         pending: &mut PendingViolation,
     ) -> Result<(), JudgeError<E>> {
-        let mut witnesses = self.grouped();
+        let mut witnesses = GroupedMap::default();
         let mut key = Vec::new();
         self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
             if satisfies(&statement.target, row) {
                 key.clear();
                 encode_projection(&statement.target, row, None, &mut key);
-                witnesses.put(&key, &[])?;
+                witnesses.put(&key, &[]);
             }
             Ok(true)
         })?;
@@ -1217,7 +1162,7 @@ impl<E> Judge<'_, '_, E> {
             }
             key.clear();
             encode_projection(&statement.source, row, None, &mut key);
-            if !witnesses.contains(&key)? {
+            if !witnesses.contains(&key) {
                 pending.violated = true;
                 judge.offer(pending, statement.source.relation, row)?;
             }
@@ -1237,8 +1182,8 @@ impl<E> Judge<'_, '_, E> {
         position: usize,
         pending: &mut PendingViolation,
     ) -> Result<(), JudgeError<E>> {
-        let mut tokens = self.grouped();
-        let mut spans = self.grouped();
+        let mut tokens = GroupedMap::default();
+        let mut spans = GroupedMap::default();
         let mut prefix = Vec::new();
         self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
             if !satisfies(&statement.target, row) {
@@ -1246,17 +1191,17 @@ impl<E> Judge<'_, '_, E> {
             }
             prefix.clear();
             encode_projection(&statement.target, row, Some(position), &mut prefix);
-            let token = tokens.token_of(&prefix)?;
+            let token = tokens.token_of(&prefix);
             let span_value = &row[usize::from(statement.target.projection[position].0)];
             let (start, end) = interval_order_words(span_value)
                 .expect("positional typing pairs interval positions");
             // Coverage is a set: identical spans collapse.
-            spans.put(&span_key(token, start, end, 0), &[])?;
+            spans.put(&span_key(token, start, end, 0), &[]);
             Ok(true)
         })?;
         // Merge into maximal runs per token: `start ≤ current end` connects
         // (adjacency merges — the frontier walk's exact reachability).
-        let mut runs = self.grouped();
+        let mut runs = GroupedMap::default();
         let mut current: Option<(u64, u64, u64)> = None; // token, run start, run end
         spans.for_each(|key, _| {
             self.work.checkpoint()?;
@@ -1267,7 +1212,7 @@ impl<E> Judge<'_, '_, E> {
                 }
                 _ => {
                     if let Some((run_token, run_start, run_end)) = current {
-                        runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes())?;
+                        runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes());
                     }
                     current = Some((token, start, end));
                 }
@@ -1275,10 +1220,8 @@ impl<E> Judge<'_, '_, E> {
             Ok(true)
         })?;
         if let Some((run_token, run_start, run_end)) = current {
-            runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes())?;
+            runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes());
         }
-        let mut found_key = Vec::new();
-        let mut found_value = Vec::new();
         self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
             if !satisfies(&statement.source, row) {
                 return Ok(true);
@@ -1286,22 +1229,9 @@ impl<E> Judge<'_, '_, E> {
             prefix.clear();
             encode_projection(&statement.source, row, Some(position), &mut prefix);
             let span_value = &row[usize::from(statement.source.projection[position].0)];
-            let (span_start, span_end) = interval_order_words(span_value)
-                .expect("positional typing pairs interval positions");
-            let witnessed = match tokens.lookup_token(&prefix)? {
-                None => false,
-                Some(token) => {
-                    runs.last_at_or_before(
-                        &run_key(token, span_start),
-                        &mut found_key,
-                        &mut found_value,
-                    )? && found_key.len() == 16
-                        && found_key[..8] == token.to_be_bytes()
-                        && found_value.len() == 8
-                        && u64::from_be_bytes(found_value.as_slice().try_into().expect("checked"))
-                            >= span_end
-                }
-            };
+            let witnessed = tokens
+                .lookup_token(&prefix)
+                .is_some_and(|token| run_covers(token, span_value, &runs));
             if !witnessed {
                 pending.violated = true;
                 judge.offer(pending, statement.source.relation, row)?;
@@ -1316,7 +1246,7 @@ impl<E> Judge<'_, '_, E> {
         statement: &CapacityStatement,
     ) -> Result<(), JudgeError<E>> {
         let mut pending = self.pending(statement.id, StatementKind::Capacity);
-        let mut totals = self.grouped();
+        let mut totals = GroupedMap::default();
         let mut group = Vec::new();
         let mut source_rows: u64 = 0;
         // Pass 1 — the exact nonnegative measure over DISTINCT matching
@@ -1339,7 +1269,7 @@ impl<E> Judge<'_, '_, E> {
             }
             group.clear();
             encode_projection(&statement.source, row, None, &mut group);
-            let (mut total, mut flag) = totals.group_total(&group)?;
+            let (mut total, mut flag) = totals.group_total(&group);
             if flag != 0 {
                 return Ok(true);
             }
@@ -1360,20 +1290,20 @@ impl<E> Judge<'_, '_, E> {
                     None => flag = FLAG_OVERFLOW,
                 },
             }
-            totals.put_group_total(&group, total, flag)?;
+            totals.put_group_total(&group, total, flag);
             Ok(true)
         })?;
         // Pass 2 — every satisfying target row opens its group's window.
         // Violating group keys go into ordered scratch; citations are
         // selected by canonical bytes after both sides are offered.
-        let mut violating = self.grouped();
+        let mut violating = GroupedMap::default();
         self.for_each_row(state, statement.target.relation, |judge, rank, row| {
             if !satisfies(&statement.target, row) {
                 return Ok(true);
             }
             group.clear();
             encode_projection(&statement.target, row, None, &mut group);
-            let (total, flag) = totals.group_total(&group)?;
+            let (total, flag) = totals.group_total(&group);
             if flag == FLAG_RAY {
                 return Err(JudgeError::UndefinedDuration {
                     statement: statement.id,
@@ -1404,7 +1334,7 @@ impl<E> Judge<'_, '_, E> {
                 // last violating group's exact total in this deterministic
                 // logical target order (P00-confirmed witness rule).
                 pending.record_measure_at(rank, total);
-                violating.put(&group, &[u8::from(above)])?;
+                violating.put(&group, &[u8::from(above)]);
                 judge.offer(&mut pending, statement.target.relation, row)?;
             }
             Ok(true)
@@ -1416,7 +1346,7 @@ impl<E> Judge<'_, '_, E> {
                 }
                 group.clear();
                 encode_projection(&statement.source, row, None, &mut group);
-                if violating.contains(&group)? {
+                if violating.contains(&group) {
                     judge.offer(&mut pending, statement.source.relation, row)?;
                 }
                 Ok(true)
@@ -1461,8 +1391,8 @@ impl<E> Judge<'_, '_, E> {
         };
         let source_compiled = theory.source_projection(statement.id);
         let target_compiled = theory.target_projection(statement.id);
-        let mut affected = self.grouped();
-        self.mark_delta_groups(
+        let mut affected = GroupedMap::default();
+        mark_delta_groups(
             state,
             statement.source.relation,
             &statement.source,
@@ -1471,7 +1401,7 @@ impl<E> Judge<'_, '_, E> {
             false,
             &mut affected,
         )?;
-        self.mark_delta_groups(
+        mark_delta_groups(
             state,
             statement.target.relation,
             &statement.target,
@@ -1555,7 +1485,7 @@ impl<E> Judge<'_, '_, E> {
         target_compiled: Option<&CompiledProjection>,
         source_binding: &ProjectionBinding,
         target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap<E>,
+        affected: &mut GroupedMap,
         pending: &mut PendingViolation,
     ) -> Result<bool, JudgeError<E>> {
         let fields = self.schema.relation(statement.source.relation).fields();
@@ -1656,7 +1586,7 @@ impl<E> Judge<'_, '_, E> {
         target_compiled: Option<&CompiledProjection>,
         source_binding: &ProjectionBinding,
         target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap<E>,
+        affected: &mut GroupedMap,
         pending: &mut PendingViolation,
     ) -> Result<bool, JudgeError<E>> {
         let fields = self.schema.relation(statement.source.relation).fields();
@@ -1680,7 +1610,7 @@ impl<E> Judge<'_, '_, E> {
                         return Ok(false);
                     }
                 }
-                let Some(mut runs) = self.target_coverage(
+                let Some(runs) = self.target_coverage(
                     state,
                     statement,
                     position,
@@ -1692,8 +1622,6 @@ impl<E> Judge<'_, '_, E> {
                     available = false;
                     return Ok(false);
                 };
-                let mut found_key = Vec::new();
-                let mut found_value = Vec::new();
                 if let Some(compiled) = source_compiled {
                     if self
                         .visit_indexed_group(state, compiled, source_binding, det, |judge, row| {
@@ -1703,10 +1631,8 @@ impl<E> Judge<'_, '_, E> {
                             if !run_covers(
                                 0,
                                 &row[usize::from(statement.source.projection[position].0)],
-                                &mut runs,
-                                &mut found_key,
-                                &mut found_value,
-                            )? {
+                                &runs,
+                            ) {
                                 pending.violated = true;
                                 judge.offer(pending, statement.source.relation, row)?;
                             }
@@ -1727,10 +1653,8 @@ impl<E> Judge<'_, '_, E> {
                         if !run_covers(
                             0,
                             &row[usize::from(statement.source.projection[position].0)],
-                            &mut runs,
-                            &mut found_key,
-                            &mut found_value,
-                        )? {
+                            &runs,
+                        ) {
                             pending.violated = true;
                             judge.offer(pending, statement.source.relation, row)?;
                         }
@@ -1753,14 +1677,14 @@ impl<E> Judge<'_, '_, E> {
         compiled: Option<&CompiledProjection>,
         binding: &ProjectionBinding,
         determinant: &[Value],
-    ) -> Result<Option<GroupedMap<E>>, JudgeError<E>> {
-        let mut spans = self.grouped();
+    ) -> Result<Option<GroupedMap>, JudgeError<E>> {
+        let mut spans = GroupedMap::default();
         let mut add_span = |row: &[Value]| {
             if satisfies(&statement.target, row) {
                 let span = &row[usize::from(statement.target.projection[position].0)];
                 let (start, end) =
                     interval_order_words(span).expect("positional typing pairs interval positions");
-                spans.put(&span_key(0, start, end, 0), &[])?;
+                spans.put(&span_key(0, start, end, 0), &[]);
             }
             Ok(true)
         };
@@ -1783,7 +1707,7 @@ impl<E> Judge<'_, '_, E> {
                 Ok(true)
             })?;
         }
-        let mut runs = self.grouped();
+        let mut runs = GroupedMap::default();
         merge_coverage_runs(&mut spans, &mut runs, self.work)?;
         Ok(Some(runs))
     }
@@ -1794,17 +1718,17 @@ impl<E> Judge<'_, '_, E> {
         statement: &ContainmentStatement,
         source_binding: &ProjectionBinding,
         target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap<E>,
+        affected: &mut GroupedMap,
         pending: &mut PendingViolation,
     ) -> Result<(), JudgeError<E>> {
-        let mut witnesses = self.grouped();
+        let mut witnesses = GroupedMap::default();
         let mut key = Vec::new();
         self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
             if satisfies(&statement.target, row) {
                 key.clear();
                 encode_values(&CompiledTheory::group_key(target_binding, row), &mut key);
-                if affected.contains(&key)? {
-                    witnesses.put(&key, &[])?;
+                if affected.contains(&key) {
+                    witnesses.put(&key, &[]);
                 }
             }
             Ok(true)
@@ -1815,7 +1739,7 @@ impl<E> Judge<'_, '_, E> {
             }
             key.clear();
             encode_values(&CompiledTheory::group_key(source_binding, row), &mut key);
-            if affected.contains(&key)? && !witnesses.contains(&key)? {
+            if affected.contains(&key) && !witnesses.contains(&key) {
                 pending.violated = true;
                 judge.offer(pending, statement.source.relation, row)?;
             }
@@ -1830,11 +1754,11 @@ impl<E> Judge<'_, '_, E> {
         position: usize,
         source_binding: &ProjectionBinding,
         target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap<E>,
+        affected: &mut GroupedMap,
         pending: &mut PendingViolation,
     ) -> Result<(), JudgeError<E>> {
-        let mut tokens = self.grouped();
-        let mut spans = self.grouped();
+        let mut tokens = GroupedMap::default();
+        let mut spans = GroupedMap::default();
         let mut prefix = Vec::new();
         self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
             if !satisfies(&statement.target, row) {
@@ -1842,40 +1766,31 @@ impl<E> Judge<'_, '_, E> {
             }
             prefix.clear();
             encode_values(&CompiledTheory::group_key(target_binding, row), &mut prefix);
-            if !affected.contains(&prefix)? {
+            if !affected.contains(&prefix) {
                 return Ok(true);
             }
-            let token = tokens.token_of(&prefix)?;
+            let token = tokens.token_of(&prefix);
             let span_value = &row[usize::from(statement.target.projection[position].0)];
             let (start, end) = interval_order_words(span_value)
                 .expect("positional typing pairs interval positions");
-            spans.put(&span_key(token, start, end, 0), &[])?;
+            spans.put(&span_key(token, start, end, 0), &[]);
             Ok(true)
         })?;
-        let mut runs = self.grouped();
+        let mut runs = GroupedMap::default();
         merge_coverage_runs(&mut spans, &mut runs, self.work)?;
-        let mut found_key = Vec::new();
-        let mut found_value = Vec::new();
         self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
             if !satisfies(&statement.source, row) {
                 return Ok(true);
             }
             prefix.clear();
             encode_values(&CompiledTheory::group_key(source_binding, row), &mut prefix);
-            if !affected.contains(&prefix)? {
+            if !affected.contains(&prefix) {
                 return Ok(true);
             }
             let span_value = &row[usize::from(statement.source.projection[position].0)];
-            let witnessed = match tokens.lookup_token(&prefix)? {
-                None => false,
-                Some(token) => run_covers(
-                    token,
-                    span_value,
-                    &mut runs,
-                    &mut found_key,
-                    &mut found_value,
-                )?,
-            };
+            let witnessed = tokens
+                .lookup_token(&prefix)
+                .is_some_and(|token| run_covers(token, span_value, &runs));
             if !witnessed {
                 pending.violated = true;
                 judge.offer(pending, statement.source.relation, row)?;
@@ -1902,8 +1817,8 @@ impl<E> Judge<'_, '_, E> {
         };
         let source_compiled = theory.source_projection(statement.id);
         let target_compiled = theory.target_projection(statement.id);
-        let mut affected = self.grouped();
-        self.mark_delta_groups(
+        let mut affected = GroupedMap::default();
+        mark_delta_groups(
             state,
             statement.source.relation,
             &statement.source,
@@ -1912,7 +1827,7 @@ impl<E> Judge<'_, '_, E> {
             true,
             &mut affected,
         )?;
-        self.mark_delta_groups(
+        mark_delta_groups(
             state,
             statement.target.relation,
             &statement.target,
@@ -1961,13 +1876,13 @@ impl<E> Judge<'_, '_, E> {
         target_compiled: Option<&CompiledProjection>,
         source_binding: &ProjectionBinding,
         target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap<E>,
+        affected: &mut GroupedMap,
         pending: &mut PendingViolation,
     ) -> Result<bool, JudgeError<E>> {
         let fields = self.schema.relation(statement.source.relation).fields();
         let mut first = true;
         let mut available = true;
-        let mut totals = self.grouped();
+        let mut totals = GroupedMap::default();
         affected.for_each_determinant(
             fields,
             &source_binding.logical_scalars,
@@ -1995,7 +1910,7 @@ impl<E> Judge<'_, '_, E> {
                             det,
                             |_judge, row| {
                                 if satisfies(&statement.source, row) {
-                                    accumulate_capacity(&mut totals, statement, row, group)?;
+                                    accumulate_capacity(&mut totals, statement, row, group);
                                 }
                                 Ok(true)
                             },
@@ -2010,7 +1925,7 @@ impl<E> Judge<'_, '_, E> {
                         if satisfies(&statement.source, row)
                             && CompiledTheory::group_key(source_binding, row).as_slice() == det
                         {
-                            accumulate_capacity(&mut totals, statement, row, group)?;
+                            accumulate_capacity(&mut totals, statement, row, group);
                         }
                         Ok(true)
                     })?;
@@ -2021,7 +1936,7 @@ impl<E> Judge<'_, '_, E> {
         if !available {
             return Ok(false);
         }
-        let mut violating = self.grouped();
+        let mut violating = GroupedMap::default();
         affected.for_each_determinant(
             fields,
             &source_binding.logical_scalars,
@@ -2126,10 +2041,10 @@ impl<E> Judge<'_, '_, E> {
         statement: &CapacityStatement,
         source_binding: &ProjectionBinding,
         target_binding: &ProjectionBinding,
-        affected: &mut GroupedMap<E>,
+        affected: &mut GroupedMap,
         pending: &mut PendingViolation,
     ) -> Result<(), JudgeError<E>> {
-        let mut totals = self.grouped();
+        let mut totals = GroupedMap::default();
         let mut group = Vec::new();
         self.for_each_row(state, statement.source.relation, |_judge, _seq, row| {
             if !satisfies(&statement.source, row) {
@@ -2137,20 +2052,20 @@ impl<E> Judge<'_, '_, E> {
             }
             group.clear();
             encode_values(&CompiledTheory::group_key(source_binding, row), &mut group);
-            if !affected.contains(&group)? {
+            if !affected.contains(&group) {
                 return Ok(true);
             }
-            accumulate_capacity(&mut totals, statement, row, &group)?;
+            accumulate_capacity(&mut totals, statement, row, &group);
             Ok(true)
         })?;
-        let mut violating = self.grouped();
+        let mut violating = GroupedMap::default();
         self.for_each_row(state, statement.target.relation, |judge, rank, row| {
             if !satisfies(&statement.target, row) {
                 return Ok(true);
             }
             group.clear();
             encode_values(&CompiledTheory::group_key(target_binding, row), &mut group);
-            if !affected.contains(&group)? {
+            if !affected.contains(&group) {
                 return Ok(true);
             }
             judge.note_capacity_target(
@@ -2170,7 +2085,7 @@ impl<E> Judge<'_, '_, E> {
                 }
                 group.clear();
                 encode_values(&CompiledTheory::group_key(source_binding, row), &mut group);
-                if violating.contains(&group)? {
+                if violating.contains(&group) {
                     judge.offer(pending, statement.source.relation, row)?;
                 }
                 Ok(true)
@@ -2184,11 +2099,11 @@ impl<E> Judge<'_, '_, E> {
         statement: &CapacityStatement,
         (rank, row): (u64, &[Value]),
         group: &[u8],
-        totals: &mut GroupedMap<E>,
-        violating: &mut GroupedMap<E>,
+        totals: &mut GroupedMap,
+        violating: &mut GroupedMap,
         pending: &mut PendingViolation,
     ) -> Result<(), JudgeError<E>> {
-        let (total, flag) = totals.group_total(group)?;
+        let (total, flag) = totals.group_total(group);
         if flag == FLAG_RAY {
             return Err(JudgeError::UndefinedDuration {
                 statement: statement.id,
@@ -2216,7 +2131,7 @@ impl<E> Judge<'_, '_, E> {
         if below || above {
             pending.violated = true;
             pending.record_measure_at(rank, total);
-            violating.put(group, &[])?;
+            violating.put(group, &[]);
             self.offer(pending, statement.target.relation, row)?;
         }
         Ok(())
@@ -2282,48 +2197,6 @@ impl<E> Judge<'_, '_, E> {
             }
             Ok(true)
         })
-    }
-
-    fn mark_delta_groups<S: DeltaFacts<Error = E>>(
-        &self,
-        state: &S,
-        relation: RelationId,
-        side: &Side,
-        binding: &ProjectionBinding,
-        adds: bool,
-        removes: bool,
-        affected: &mut GroupedMap<E>,
-    ) -> Result<(), JudgeError<E>> {
-        let mut key = ScalarKeyScratch::new(self.work, 0, self.channel)?;
-        let mut walk_error = None;
-        let mut mark = |row: &[Value]| -> Result<bool, S::Error> {
-            if walk_error.is_some() {
-                return Ok(false);
-            }
-            if satisfies(side, row) {
-                // Exact keys are the only retained group representation.
-                // The same borrowed encoding buffer is reused for the next row.
-                let marked = key
-                    .encode_projection(row, &binding.logical_scalars)
-                    .and_then(|key| affected.insert_if_absent(key));
-                if let Err(error) = marked {
-                    walk_error = Some(error);
-                    return Ok(false);
-                }
-            }
-            Ok(true)
-        };
-        if adds {
-            state
-                .visit_added_rows(relation, &mut mark)
-                .map_err(JudgeError::State)?;
-        }
-        if removes {
-            state
-                .visit_removed_rows(relation, &mut mark)
-                .map_err(JudgeError::State)?;
-        }
-        walk_error.map_or(Ok(()), Err)
     }
 
     fn finish(&mut self, pending: PendingViolation) {
@@ -2403,9 +2276,40 @@ fn encode_values(values: &[Value], out: &mut Vec<u8>) {
     }
 }
 
+/// Mark every determinant group the delta's added or removed rows of one
+/// side can affect.
+fn mark_delta_groups<S: DeltaFacts>(
+    state: &S,
+    relation: RelationId,
+    side: &Side,
+    binding: &ProjectionBinding,
+    adds: bool,
+    removes: bool,
+    affected: &mut GroupedMap,
+) -> Result<(), JudgeError<S::Error>> {
+    let mut key = ScalarKeyScratch::new(0);
+    let mut mark = |row: &[Value]| -> Result<bool, S::Error> {
+        if satisfies(side, row) {
+            affected.insert_if_absent(key.encode_projection(row, &binding.logical_scalars));
+        }
+        Ok(true)
+    };
+    if adds {
+        state
+            .visit_added_rows(relation, &mut mark)
+            .map_err(JudgeError::State)?;
+    }
+    if removes {
+        state
+            .visit_removed_rows(relation, &mut mark)
+            .map_err(JudgeError::State)?;
+    }
+    Ok(())
+}
+
 fn merge_coverage_runs<E>(
-    spans: &mut GroupedMap<E>,
-    runs: &mut GroupedMap<E>,
+    spans: &mut GroupedMap,
+    runs: &mut GroupedMap,
     work: &WorkContext,
 ) -> Result<(), JudgeError<E>> {
     let mut current: Option<(u64, u64, u64)> = None;
@@ -2418,7 +2322,7 @@ fn merge_coverage_runs<E>(
             }
             _ => {
                 if let Some((run_token, run_start, run_end)) = current {
-                    runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes())?;
+                    runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes());
                 }
                 current = Some((token, start, end));
             }
@@ -2426,38 +2330,32 @@ fn merge_coverage_runs<E>(
         Ok(true)
     })?;
     if let Some((run_token, run_start, run_end)) = current {
-        runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes())?;
+        runs.put(&run_key(run_token, run_start), &run_end.to_be_bytes());
     }
     Ok(())
 }
 
-fn run_covers<E>(
-    token: u64,
-    span: &Value,
-    runs: &mut GroupedMap<E>,
-    found_key: &mut Vec<u8>,
-    found_value: &mut Vec<u8>,
-) -> Result<bool, JudgeError<E>> {
+/// The maximal coverage run of `token` starting at or before the span's
+/// start reaches the span's end.
+fn run_covers(token: u64, span: &Value, runs: &GroupedMap) -> bool {
     let (span_start, span_end) =
         interval_order_words(span).expect("positional typing pairs interval positions");
-    Ok(
-        runs.last_at_or_before(&run_key(token, span_start), found_key, found_value)?
-            && found_key.len() == 16
-            && found_key[..8] == token.to_be_bytes()
-            && found_value.len() == 8
-            && u64::from_be_bytes(found_value.as_slice().try_into().expect("checked")) >= span_end,
-    )
+    runs.last_at_or_before(&run_key(token, span_start))
+        .is_some_and(|(key, end)| {
+            key[..8] == token.to_be_bytes()
+                && u64::from_be_bytes(end.try_into().expect("8-byte run end")) >= span_end
+        })
 }
 
-fn accumulate_capacity<E>(
-    totals: &mut GroupedMap<E>,
+fn accumulate_capacity(
+    totals: &mut GroupedMap,
     statement: &CapacityStatement,
     row: &[Value],
     group: &[u8],
-) -> Result<(), JudgeError<E>> {
-    let (mut total, mut flag) = totals.group_total(group)?;
+) {
+    let (mut total, mut flag) = totals.group_total(group);
     if flag != 0 {
-        return Ok(());
+        return;
     }
     let weight = match statement.weight {
         SealedWeight::Unit => Some(1u128),
@@ -2476,7 +2374,7 @@ fn accumulate_capacity<E>(
             None => flag = FLAG_OVERFLOW,
         },
     }
-    totals.put_group_total(group, total, flag)
+    totals.put_group_total(group, total, flag);
 }
 
 fn span_key(token: u64, start: u64, end: u64, seq: u64) -> [u8; 32] {
@@ -2544,7 +2442,7 @@ mod tests;
 mod delta_tests;
 
 #[cfg(test)]
-mod f3c_bounded;
+mod grouped_tests;
 
 #[cfg(test)]
 mod discriminators;

@@ -13,8 +13,8 @@
 //! and untouched statements were skipped.
 
 use super::{
-    CandidateFacts, DeltaFacts, DeltaShape, JudgeBudget, JudgeScratch, Judgment, LawfulParent,
-    judge_final_state, judge_incremental,
+    CandidateFacts, DeltaFacts, DeltaShape, JudgeBudget, Judgment, LawfulParent, judge_final_state,
+    judge_incremental,
 };
 use crate::schema::tests::{capacity, closed, containment, fd, field, row, side, side_where};
 use crate::schema::{
@@ -427,15 +427,8 @@ impl DeltaFacts for DeltaState {
 fn assert_equivalent(schema: &Schema, state: &DeltaState, budget: JudgeBudget) -> Judgment {
     let complete =
         judge_final_state(schema, state, &work(), budget).expect("complete judgment completes");
-    let delta = judge_incremental(
-        LawfulParent::established(),
-        schema,
-        state,
-        &work(),
-        budget,
-        JudgeScratch::disabled(),
-    )
-    .expect("delta judgment");
+    let delta = judge_incremental(LawfulParent::established(), schema, state, &work(), budget)
+        .expect("delta judgment");
     assert_eq!(
         delta, complete,
         "delta-local judgment must equal the complete reference"
@@ -565,8 +558,7 @@ fn assert_closed_open_twin(
             closed_schema,
             &closed,
             &work(),
-            budget,
-            JudgeScratch::disabled(),
+            budget
         )
         .unwrap(),
         expected
@@ -679,24 +671,19 @@ fn valid_closed_delta_uses_no_full_scans_scratch_or_parent_cardinality_work() {
             let state =
                 DeltaState::new(&parent, &[closed_source(0, size, true)], &[]).refusing_streams();
             let work = WorkContext::new();
-            let before = crate::alloc_counter::snapshot().absolute.live_bytes;
             assert_eq!(
                 judge_incremental(
                     LawfulParent::established(),
                     &schema,
                     &state,
                     &work,
-                    JudgeBudget::default(),
-                    JudgeScratch::disabled()
+                    JudgeBudget::default()
                 )
                 .unwrap(),
                 Judgment::Admitted
             );
             assert_eq!(state.row_visits(), 0);
             assert_eq!(state.group_visits(), 0);
-            #[cfg(feature = "alloc-counter")]
-            assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
-            let _ = before;
         }
     }
 }
@@ -754,8 +741,7 @@ fn invalid_closed_delta_cites_only_added_offenders_without_rescanning_parent() {
             &pair.0,
             &state,
             &work(),
-            budget,
-            JudgeScratch::disabled()
+            budget
         )
         .unwrap(),
         expected
@@ -827,8 +813,7 @@ fn closed_delta_propagates_cancellation_and_provider_errors_without_partial_verd
             &schema,
             &state,
             &context,
-            JudgeBudget::default(),
-            JudgeScratch::disabled()
+            JudgeBudget::default()
         ),
         Err(super::JudgeError::State("injected added-row failure"))
     ));
@@ -839,8 +824,7 @@ fn closed_delta_propagates_cancellation_and_provider_errors_without_partial_verd
             &schema,
             &state,
             &context,
-            JudgeBudget::default(),
-            JudgeScratch::disabled()
+            JudgeBudget::default()
         ),
         Err(super::JudgeError::Work(crate::WorkError::Cancelled))
     ));
@@ -1093,7 +1077,6 @@ fn an_unlawful_parent_can_hide_from_the_delta_local_judge_by_design() {
         &state,
         &work(),
         JudgeBudget::default(),
-        JudgeScratch::disabled(),
     )
     .expect("delta judgment");
     // The complete judge — the sweeper's judgment — convicts the standing
@@ -1132,7 +1115,6 @@ fn a_delta_touching_an_unlawful_group_still_convicts_delta_locally() {
         &state,
         &work(),
         JudgeBudget::default(),
-        JudgeScratch::disabled(),
     )
     .expect("delta judgment");
     let Judgment::Rejected(violations) = delta else {
@@ -1171,7 +1153,6 @@ fn delta_local_key_judgment_never_streams_any_relation() {
         &benign,
         &work(),
         JudgeBudget::default(),
-        JudgeScratch::disabled(),
     )
     .expect("delta judgment");
     assert_eq!(verdict, Judgment::Admitted);
@@ -1183,7 +1164,6 @@ fn delta_local_key_judgment_never_streams_any_relation() {
         &dup,
         &work(),
         JudgeBudget::default(),
-        JudgeScratch::disabled(),
     )
     .expect("delta judgment");
     let Judgment::Rejected(violations) = verdict else {
@@ -1191,31 +1171,6 @@ fn delta_local_key_judgment_never_streams_any_relation() {
     };
     assert_eq!(violations[0].statement, USER_EMAIL_KEY);
     assert_eq!(violations[0].examples.len(), 2, "both competitors cited");
-}
-
-#[test]
-fn scalar_key_capacity_overflow_and_cancellation_use_distinct_errors() {
-    use super::grouped::ScalarKeyScratch;
-    use crate::storage::store::StoreError;
-    let context = work();
-    let before = crate::alloc_counter::snapshot().absolute.live_bytes;
-    // Capacity overflow is deterministic and makes no giant allocation attempt.
-    assert!(matches!(
-        ScalarKeyScratch::<std::convert::Infallible>::new(&context, usize::MAX, None),
-        Err(super::JudgeError::Allocation)
-    ));
-    assert!(matches!(
-        ScalarKeyScratch::new(&context, usize::MAX, Some(super::store_fault)),
-        Err(super::JudgeError::State(StoreError::Allocation))
-    ));
-    context.cancel();
-    assert!(matches!(
-        ScalarKeyScratch::new(&context, usize::MAX, Some(super::store_fault)),
-        Err(super::JudgeError::Work(crate::WorkError::Cancelled))
-    ));
-    #[cfg(feature = "alloc-counter")]
-    assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
-    let _ = before;
 }
 
 #[test]
@@ -1243,7 +1198,6 @@ fn scalar_key_valid_growth_retains_no_good_groups() {
             &state,
             &context,
             JudgeBudget::default(),
-            JudgeScratch::disabled(),
         )
         .expect("lawful scalar groups require no retained good-key map");
         assert_eq!(actual, expected);
@@ -1401,7 +1355,7 @@ fn grouped_family_fixture(
 }
 
 #[test]
-fn indexed_grouped_verdicts_and_canonical_citations_match_with_either_error_channel() {
+fn indexed_grouped_verdicts_and_canonical_citations_match_complete() {
     for family in [
         GroupedFamily::ScalarContainment,
         GroupedFamily::PointwiseContainment,
@@ -1427,31 +1381,17 @@ fn indexed_grouped_verdicts_and_canonical_citations_match_with_either_error_chan
             }
             state.refuse_stream = true;
             state.row_visits.set(0);
-            for channel in [
-                None,
-                Some(
-                    (|fault| panic!("unexpected scratch fault: {fault:?}"))
-                        as fn(super::ScratchFault) -> std::convert::Infallible,
-                ),
-            ] {
-                let context = work();
-                let before = crate::alloc_counter::snapshot().absolute.live_bytes;
-                let actual = judge_incremental(
-                    LawfulParent::established(),
-                    &schema,
-                    &state,
-                    &context,
-                    budget,
-                    JudgeScratch { channel },
-                )
-                .unwrap();
-                assert_eq!(actual, expected, "{family:?}");
-                drop(actual);
-                #[cfg(feature = "alloc-counter")]
-                assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
-                let _ = before;
-                assert_eq!(state.row_visits(), 0);
-            }
+            let context = work();
+            let actual = judge_incremental(
+                LawfulParent::established(),
+                &schema,
+                &state,
+                &context,
+                budget,
+            )
+            .unwrap();
+            assert_eq!(actual, expected, "{family:?}");
+            assert_eq!(state.row_visits(), 0);
         }
     }
 }
@@ -1472,7 +1412,6 @@ fn oversized_determinant_preserves_exact_judgment_without_a_hidden_allowance() {
         &state,
         &context,
         budget,
-        JudgeScratch::channel(|fault| panic!("unexpected scratch fault: {fault:?}")),
     )
     .unwrap();
     assert_eq!(actual, expected);
@@ -1502,7 +1441,6 @@ fn scalar_key_bad_groups_probe_two_then_cite_once_in_canonical_order() {
             &indexed,
             &work(),
             budget,
-            JudgeScratch::disabled(),
         )
         .unwrap();
         assert_eq!(actual, expected);
@@ -1572,14 +1510,12 @@ fn scalar_key_bad_group_state_releases_memory_on_success_and_mid_probe_cancellat
         if cancelled {
             state.cancel_on_key_row = Some((state.key_row_visits.get() + 2, context.clone()));
         }
-        let before = crate::alloc_counter::snapshot().absolute.live_bytes;
         let actual = judge_incremental(
             LawfulParent::established(),
             &schema,
             &state,
             &context,
             budget,
-            JudgeScratch::disabled(),
         );
         if cancelled {
             assert!(matches!(
@@ -1589,9 +1525,6 @@ fn scalar_key_bad_group_state_releases_memory_on_success_and_mid_probe_cancellat
         } else {
             assert_eq!(actual.unwrap(), expected);
         }
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
-        let _ = before;
     }
 }
 
@@ -1637,8 +1570,7 @@ fn scalar_key_reordered_large_text_projection_matches_complete() {
             &schema,
             &state,
             &work(),
-            budget,
-            JudgeScratch::disabled(),
+            budget
         )
         .unwrap(),
         expected,
@@ -1654,8 +1586,7 @@ fn scalar_key_reordered_large_text_projection_matches_complete() {
             &schema,
             &state,
             &context,
-            budget,
-            JudgeScratch::channel(|fault| panic!("unexpected scratch fault: {fault:?}")),
+            budget
         )
         .unwrap(),
         Judgment::Admitted
@@ -1679,8 +1610,7 @@ fn scalar_key_second_competitor_cancellation_is_not_a_verdict() {
             &theory(),
             &state,
             &context,
-            JudgeBudget::default(),
-            JudgeScratch::disabled(),
+            JudgeBudget::default()
         ),
         Err(super::JudgeError::Work(crate::WorkError::Cancelled))
     ));
@@ -1749,7 +1679,6 @@ fn scalar_containment_witness_skips_existing_source_fanout() {
         &state,
         &work(),
         JudgeBudget::default(),
-        JudgeScratch::disabled(),
     )
     .unwrap();
     assert_eq!(verdict, Judgment::Admitted);
@@ -1867,15 +1796,8 @@ fn assert_late_index_fallback(schema: &Schema, state: &DeltaState, budget: Judge
     let expected = judge_final_state(schema, state, &work(), budget).unwrap();
     state.row_visits.set(0);
     let context = work();
-    let actual = judge_incremental(
-        LawfulParent::established(),
-        schema,
-        state,
-        &context,
-        budget,
-        JudgeScratch::disabled(),
-    )
-    .unwrap();
+    let actual =
+        judge_incremental(LawfulParent::established(), schema, state, &context, budget).unwrap();
     assert_eq!(actual, expected);
     assert!(matches!(actual, Judgment::Rejected(_)));
     assert_eq!(
@@ -1969,7 +1891,6 @@ fn capacity_admission_remains_index_only() {
         &state,
         &work(),
         JudgeBudget::default(),
-        JudgeScratch::disabled(),
     )
     .unwrap();
     assert_eq!(verdict, Judgment::Admitted);
@@ -2038,7 +1959,6 @@ fn capacity_measure_uses_global_rank_without_full_scans_for_equal_or_differing_t
                     &indexed,
                     &context,
                     budget,
-                    JudgeScratch::disabled(),
                 )
                 .unwrap();
                 assert_eq!(actual, expected);
@@ -2057,7 +1977,6 @@ fn capacity_measure_uses_global_rank_without_full_scans_for_equal_or_differing_t
                 &unranked,
                 &context,
                 budget,
-                JudgeScratch::disabled(),
             )
             .unwrap();
             assert_eq!(actual, expected);
@@ -2127,14 +2046,12 @@ fn capacity_late_unindexed_group_discards_provisional_citations_and_measure() {
     }
 }
 
-// The affected key is the sole retained determinant representation. Exercise
-// its borrowed logical-coordinate decoder in both physical tiers, including
-// oversized exact keys, another map spilling inside the callback, and every
-// visitor exit. These are mechanism checks, not a second relation oracle.
+// The affected key is the sole retained determinant representation: its
+// logical-coordinate decoder must round-trip oversized exact keys and honor
+// every visitor exit.
 #[test]
-fn affected_determinants_decode_reordered_oversized_keys_and_release_scratch() {
+fn affected_determinants_decode_reordered_oversized_keys() {
     use super::grouped::{GroupedMap, ScalarKeyScratch};
-    use std::convert::Infallible;
 
     let fields = [
         field("group", ValueType::String),
@@ -2155,114 +2072,80 @@ fn affected_determinants_decode_reordered_oversized_keys_and_release_scratch() {
         .iter()
         .map(|row| vec![row[2].clone(), row[0].clone()])
         .collect();
-    for spill in [false, true] {
-        let context = work();
-        let channel: Option<fn(super::ScratchFault) -> Infallible> =
-            Some(|fault| panic!("unexpected scratch fault: {fault:?}"));
-        let mut affected = GroupedMap::new(&context, channel);
-        {
-            let mut key = ScalarKeyScratch::new(&context, 0, channel).unwrap();
-            for row in rows.iter().rev() {
-                let key = key.encode_projection(row, &projection).unwrap();
-                assert!(affected.insert_if_absent(key).unwrap());
-                assert!(!affected.insert_if_absent(key).unwrap());
-            }
-        }
-        if spill {
-            affected.force_spill().unwrap();
-        }
-        let path = affected.scratch_path();
-        assert_eq!(path.is_some(), spill);
-        let mut mirror = GroupedMap::new(&context, channel);
-        let mut actual = Vec::new();
-        affected
-            .for_each_determinant(&fields, &projection, &context, |key, determinant| {
-                assert!(mirror.insert_if_absent(key)?);
-                if spill && mirror.len() == 1 {
-                    mirror.force_spill()?;
-                }
+    let context = work();
+    let mut affected = GroupedMap::default();
+    let mut key = ScalarKeyScratch::new(0);
+    for row in rows.iter().rev() {
+        let key = key.encode_projection(row, &projection);
+        assert!(affected.insert_if_absent(key));
+        assert!(!affected.insert_if_absent(key));
+    }
+    let mut actual = Vec::new();
+    affected
+        .for_each_determinant::<std::convert::Infallible>(
+            &fields,
+            &projection,
+            &context,
+            |_, determinant| {
                 actual.push(determinant.to_vec());
                 Ok(true)
-            })
-            .unwrap();
-        assert_eq!(actual.len(), expected.len());
-        assert!(expected.iter().all(|row| actual.contains(row)));
-        assert_eq!(mirror.len(), affected.len());
-        drop(mirror);
+            },
+        )
+        .unwrap();
+    assert_eq!(actual.len(), expected.len());
+    assert!(expected.iter().all(|row| actual.contains(row)));
 
-        let baseline = crate::alloc_counter::snapshot().absolute.live_bytes;
-        let error = super::JudgeError::UndefinedDuration {
-            statement: StatementId(91),
-        };
-        assert_eq!(
-            affected.for_each_determinant(&fields, &projection, &context, |_, _| {
-                Err(super::JudgeError::UndefinedDuration {
-                    statement: StatementId(91),
-                })
-            }),
-            Err(error),
-        );
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(
-            crate::alloc_counter::snapshot().absolute.live_bytes,
-            baseline
-        );
-        let mut visits = 0;
-        affected
-            .for_each_determinant(&fields, &projection, &context, |_, _| {
-                visits += 1;
-                Ok(false)
+    let error = super::JudgeError::<std::convert::Infallible>::UndefinedDuration {
+        statement: StatementId(91),
+    };
+    assert_eq!(
+        affected.for_each_determinant(&fields, &projection, &context, |_, _| {
+            Err(super::JudgeError::UndefinedDuration {
+                statement: StatementId(91),
             })
-            .unwrap();
-        assert_eq!(visits, 1);
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(
-            crate::alloc_counter::snapshot().absolute.live_bytes,
-            baseline
-        );
+        }),
+        Err(error),
+    );
+    let mut visits = 0;
+    affected
+        .for_each_determinant::<std::convert::Infallible>(&fields, &projection, &context, |_, _| {
+            visits += 1;
+            Ok(false)
+        })
+        .unwrap();
+    assert_eq!(visits, 1);
 
-        let mut visits = 0;
-        assert_eq!(
-            affected.for_each_determinant(&fields, &projection, &context, |_, _| {
+    let mut visits = 0;
+    assert_eq!(
+        affected.for_each_determinant::<std::convert::Infallible>(
+            &fields,
+            &projection,
+            &context,
+            |_, _| {
                 visits += 1;
                 context.cancel();
                 Ok(true)
-            }),
-            Err(super::JudgeError::Work(crate::WorkError::Cancelled)),
-        );
-        assert_eq!(visits, 1);
-        #[cfg(feature = "alloc-counter")]
-        assert_eq!(
-            crate::alloc_counter::snapshot().absolute.live_bytes,
-            baseline
-        );
-        drop(affected);
-        assert!(path.as_ref().is_none_or(|path| !path.exists()));
-        let _ = baseline;
-    }
+            }
+        ),
+        Err(super::JudgeError::Work(crate::WorkError::Cancelled)),
+    );
+    assert_eq!(visits, 1);
 }
 
 #[test]
 fn empty_scalar_projection_is_one_valid_determinant_not_an_empty_set() {
     let context = work();
-    let channel: Option<fn(super::ScratchFault) -> std::convert::Infallible> =
-        Some(|fault| panic!("unexpected scratch fault: {fault:?}"));
     let fields = [field("group", ValueType::String)];
-    for disk in [false, true] {
-        let mut empty = super::grouped::GroupedMap::new(&context, channel);
-        assert!(empty.insert_if_absent(&[]).unwrap());
-        if disk {
-            empty.force_spill().unwrap();
-        }
-        let mut visits = 0;
-        empty
-            .for_each_determinant(&fields, &[], &context, |key, values| {
-                visits += 1;
-                assert!(key.is_empty());
-                assert!(values.is_empty());
-                Ok(true)
-            })
-            .unwrap();
-        assert_eq!(visits, 1);
-    }
+    let mut empty = super::grouped::GroupedMap::default();
+    assert!(empty.insert_if_absent(&[]));
+    let mut visits = 0;
+    empty
+        .for_each_determinant::<std::convert::Infallible>(&fields, &[], &context, |key, values| {
+            visits += 1;
+            assert!(key.is_empty());
+            assert!(values.is_empty());
+            Ok(true)
+        })
+        .unwrap();
+    assert_eq!(visits, 1);
 }

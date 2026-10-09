@@ -37,8 +37,8 @@ use super::snapshot::OwnedSnapshot;
 use crate::canonical::RowError;
 use crate::schema::Schema;
 use crate::schema::judge::{
-    CandidateFacts, JudgeBudget, JudgeError, JudgeScratch, JudgedViolation, Judgment,
-    RankedRowVisitor, judge_final_state_with_scratch, store_fault,
+    CandidateFacts, JudgeBudget, JudgeError, JudgedViolation, Judgment, RankedRowVisitor,
+    judge_final_state,
 };
 use crate::work::WorkContext;
 
@@ -145,7 +145,7 @@ pub(crate) fn sweep(
         std::collections::BTreeMap::new();
     let mut max_row_id = 0u64;
     let mut judgment_safe = true;
-    let mut ordinals = crate::exec::scratch::ScratchRelation::new(work);
+    let mut ordinals = std::collections::BTreeSet::new();
     let inner = snapshot.store_inner();
     let txn = snapshot.read_txn();
 
@@ -169,10 +169,7 @@ pub(crate) fn sweep(
             };
             let row = locator.id;
             max_row_id = max_row_id.max(row.0);
-            if !ordinals
-                .insert_if_absent(&row.0.to_be_bytes(), &[])
-                .map_err(scratch_error)?
-            {
+            if !ordinals.insert(row) {
                 judgment_safe = false;
                 findings.push(corrupt(VerifyCorruption::DuplicateRowId { relation, row }));
             }
@@ -264,8 +261,6 @@ pub(crate) fn sweep(
         }
     }
 
-    // Ordinal uniqueness is complete. Release its resident/spill ownership
-    // before index verification and full judgment consume the same budget.
     drop(ordinals);
 
     // Pass 2: membership entries resolve back, fingerprint-verified.
@@ -574,13 +569,7 @@ pub(crate) fn sweep(
         schema,
         work,
     };
-    match judge_final_state_with_scratch(
-        schema,
-        &facts,
-        work,
-        JudgeBudget::default(),
-        JudgeScratch::channel(store_fault),
-    ) {
+    match judge_final_state(schema, &facts, work, JudgeBudget::default()) {
         Ok(Judgment::Admitted) => {}
         Ok(Judgment::Rejected(violations)) => {
             findings.extend(
@@ -592,7 +581,6 @@ pub(crate) fn sweep(
         }
         Err(JudgeError::Work(error)) => return Err(StoreError::Work(error)),
         Err(JudgeError::State(error)) => return Err(error),
-        Err(JudgeError::Allocation) => return Err(StoreError::Allocation),
         Err(JudgeError::Compile(error)) => return Err(StoreError::Compile(error)),
         Err(JudgeError::UndefinedDuration { statement }) => {
             return Err(StoreError::JudgeRefused {
@@ -613,15 +601,6 @@ pub(crate) fn sweep(
 
 const fn corrupt(finding: VerifyCorruption) -> VerifyFinding {
     VerifyFinding::Corruption(finding)
-}
-
-fn scratch_error(error: crate::error::Error) -> StoreError {
-    match error {
-        crate::error::Error::Store(error) => *error,
-        crate::error::Error::Io(error) => StoreError::Io(error),
-        crate::error::Error::Lmdb(error) => StoreError::Lmdb(error),
-        _ => StoreError::Lmdb(crate::error::LmdbFailure::Decoding),
-    }
 }
 
 /// The committed snapshot presented as candidate facts for the global

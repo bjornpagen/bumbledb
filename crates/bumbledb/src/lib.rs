@@ -120,9 +120,7 @@ pub use storage::GenerationId;
 pub use storage::store::CloseReport;
 pub use storage::store::format::LAYOUT as STORAGE_FORMAT_VERSION;
 pub use work::{
-    GenerationHandle, GenerationState, ResolverView, ScratchAppend, ScratchClaimKey,
-    ScratchExactKey, ScratchLookup, ScratchMapId, ScratchProbe, ScratchRelation, ScratchWordKey,
-    ScratchWriteBatch, WeakGenerationHandle, WorkContext, WorkError,
+    GenerationHandle, GenerationState, ResolverView, WeakGenerationHandle, WorkContext, WorkError,
 };
 
 /// Successor physical store: LMDB owner, owned snapshots, private
