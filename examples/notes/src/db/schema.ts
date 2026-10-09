@@ -1,34 +1,22 @@
-/** Current application declarations; Log snapshots these values directly. */
-import { bool, contained, uuid, key, on, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
+import { bool, contained, key, on, relation, schema, str, u64, uuid } from "@bjornpagen/bumbledb"
 
-/** A user's note. */
 export const Note = relation("Note", { id: uuid, text: str, pinned: bool })
 export const NoteById = key(Note, ["id"])
 
-/** Application labels, populated by explicit initialization. */
+/** Labels; migration 0001 seeds the defaults. */
 export const Tag = relation("Tag", { id: uuid, name: str })
 
 /**
- * The application outbox (OPS-003): a pending external effect recorded
- * ATOMICALLY with the domain change that requires it. The dispatcher
- * (`scripts/dispatch-outbox.ts`) performs the effect and deletes the row
- * in a separate idempotent command. Deliberately NOT contained in Note:
- * a pending dispatch may outlive its note.
+ * Pending external effects, committed in the same command as the change that needs them; the
+ * dispatcher performs each and retires its row. Not contained in Note: a dispatch may outlive it.
  */
 export const Outbox = relation("Outbox", { id: uuid, note: uuid, kind: str })
 
 /**
- * A blob reference. The immutable blob is uploaded FIRST (content-addressed
- * S3 key, app-owned bucket); the fact referencing it commits second, so a
- * crash between the two leaves an orphan upload, never a dangling
- * reference (OPS-003 "immutable blob first, reference commit second").
+ * A blob reference. The content-addressed blob is uploaded first and the reference committed
+ * second, so a crash between them leaves an orphan upload, never a dangling reference.
  */
-export const Attachment = relation("Attachment", {
-	id: uuid,
-	note: uuid,
-	key: str,
-	bytes: u64
-})
+export const Attachment = relation("Attachment", { id: uuid, note: uuid, key: str, bytes: u64 })
 
 export const App = schema("App", { Note, Tag, Outbox, Attachment }, [
 	NoteById,

@@ -1,18 +1,14 @@
-/**
- * Reusable typed query templates — inert schema-level values shared by
- * every tenant's snapshots. No tenant rows, no live handles, no I/O at
- * import.
- */
+/** Typed query templates shared by every tenant's reads. */
 import { query, v } from "@bjornpagen/bumbledb"
 import { App, Attachment, Note, Outbox } from "./schema.ts"
 
-/** Every note fact, full row shape (encodable via the Note relation). */
+/** Every note. */
 export const allNotes = query(App).rule((r) => {
 	const { id, text, pinned } = v(Note)
 	return r.match(Note, { id, text, pinned }).find({ id, text, pinned })
 })
 
-/** One note by id, full row shape; parameters infer `{ id: Uuid }`. */
+/** One note by id. */
 export const noteById = query(App).rule((r) => {
 	const { id, text, pinned } = v(Note)
 	return r
@@ -21,7 +17,7 @@ export const noteById = query(App).rule((r) => {
 		.find({ id, text, pinned })
 })
 
-/** Pending outbox work, full row shape for the dispatcher. */
+/** Pending outbox rows. */
 export const pendingOutbox = query(App).rule((r) => {
 	const { id, note, kind } = v(Outbox)
 	return r.match(Outbox, { id, note, kind }).find({ id, note, kind })

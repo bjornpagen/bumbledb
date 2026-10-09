@@ -1,14 +1,11 @@
 /**
- * One note: GET reads through the shared QueryReader capability; PATCH is
- * the witnessed pin toggle (exact-state precondition — an intervening net
- * change is a durable precondition-failed receipt, never a silent
- * overwrite). A retry of the SAME revision decision reuses the SAME
- * request key; a NEW decision after a conflict mints a new one.
+ * One note. GET reads the latest state; PATCH sets the pin at the revision it read, so an
+ * intervening change is a failed precondition, never a silent overwrite. A retry reuses its
+ * request key; a new decision after a conflict uses a new one.
  */
 import { encodeBoundaryRows, Uuid } from "@bjornpagen/bumbledb"
 import { Effect, Option, Result } from "effect"
 import { requirePrincipal } from "../../../../src/auth.ts"
-import { bindingFor } from "../../../../src/db/bindings.ts"
 import { setPinned } from "../../../../src/db/commands.ts"
 import { getNote } from "../../../../src/db/reads.ts"
 import { Note } from "../../../../src/db/schema.ts"
@@ -21,12 +18,9 @@ export const dynamic = "force-dynamic"
 const readNote = Effect.fn("routes.readNote")(
 	function* (request: Request, rawId: string) {
 		const principal = yield* requirePrincipal(request)
-		const binding = yield* bindingFor(principal.tenantId)
 		const id = yield* Effect.fromResult(Uuid.parse(rawId))
-		const databases = yield* Databases
-		const db = yield* databases.acquire(binding)
-		const snapshot = yield* db.snapshot({ consistency: { kind: "latest" } })
-		const found = yield* getNote(snapshot, id)
+		const db = yield* (yield* Databases).get(principal.tenantId)
+		const found = yield* getNote(yield* db.read("latest"), id)
 		if (Option.isNone(found)) {
 			return Response.json({ error: "NotFound" }, { status: 404 })
 		}
@@ -39,13 +33,11 @@ const readNote = Effect.fn("routes.readNote")(
 const patchNote = Effect.fn("routes.patchNote")(
 	function* (request: Request, rawId: string, body: { readonly requestKey: string; readonly pinned: boolean }) {
 		const principal = yield* requirePrincipal(request)
-		const binding = yield* bindingFor(principal.tenantId)
 		const id = yield* Effect.fromResult(Uuid.parse(rawId))
 		const requestKey = yield* Effect.fromResult(Uuid.parse(body.requestKey))
-		const databases = yield* Databases
-		const db = yield* databases.acquire(binding)
-		const result = yield* setPinned(db, principal.tenantId, requestKey, id, body.pinned)
-		if (result.kind === "missing") {
+		const db = yield* (yield* Databases).get(principal.tenantId)
+		const result = yield* setPinned(db, requestKey, id, body.pinned)
+		if (result._tag === "Missing") {
 			return Response.json({ error: "NotFound" }, { status: 404 })
 		}
 		return submitResponse(result.outcome)

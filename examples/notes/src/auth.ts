@@ -1,16 +1,8 @@
 /**
- * Application-owned authentication — a HOST responsibility the database
- * never provides (chapter 33: auth/binding functions are application-owned
- * Effects, not SDK authentication). This example uses a compact
- * HMAC-signed bearer token so the boundary is real, small and auditable:
- *
- *   token := <tenantId>.<expiresAtUnixSeconds>.<hex hmac-sha256>
- *   hmac  := HMAC(SESSION_SECRET, `${tenantId}.${expiresAt}`)
- *
- * `scripts/mint-session.ts` mints tokens for local development and the
- * deployed request tests. Anonymous, malformed, expired or forged tokens
- * refuse BEFORE any database open (APP-02). The Alchemy Function URL is
- * public — every route authenticates even when a CDN sits in front.
+ * App-owned authentication: an HMAC-signed bearer token
+ *   token := <tenant>.<expiresAtUnixSeconds>.<hex hmac-sha256(SESSION_SECRET, `${tenant}.${expiresAt}`)>
+ * Anonymous, malformed, expired and forged tokens are refused before any database opens. The
+ * function URL is public, so every route authenticates.
  */
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { Effect, Schema } from "effect"

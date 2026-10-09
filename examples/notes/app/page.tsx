@@ -1,8 +1,4 @@
-/**
- * The example is an API surface; this page only documents it. No database
- * import exists in any client/page module — native work is server-route
- * only (APP-01).
- */
+/** The example is an API; this page documents it and imports nothing from the database. */
 export default function Home() {
 	return (
 		<main>

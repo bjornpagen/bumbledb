@@ -1,55 +1,32 @@
 /**
- * Resolve a retained command ref after a lost ack. The ref is the app's
- * request record — never a reminted identity. Unknown stays resolvable
- * under the original command; absence after rotation is not proved loss.
- *
- *   node --experimental-strip-types scripts/resolve-command.ts <tenantId> <requestKeyHex>
+ * Looks up a request's receipt after an interrupted or ambiguous submit:
+ *   node scripts/resolve-command.ts <tenant> <request key uuid>
  */
-import { Uuid, NativeRuntime } from "@bjornpagen/bumbledb"
-import { parseCommandRef } from "@bjornpagen/bumbledb-log"
-import { Effect, Result } from "effect"
-import { bindingFor } from "../src/db/bindings.ts"
-import { resolveCommand } from "../src/db/commands.ts"
-import { App } from "../src/db/schema.ts"
+import { Bumble, Database, Uuid } from "@bjornpagen/bumbledb"
+import { Effect, Option, Result } from "effect"
+import { migrations } from "../migrations/index.ts"
+import { requestIdOf } from "../src/db/commands.ts"
 import { runtimePolicy } from "../src/db/runtime-policy.ts"
-import { storedRef } from "../src/requests.ts"
-import { LocalHistory, HostedHistory } from "@bjornpagen/bumbledb-log"
+import { App } from "../src/db/schema.ts"
+import { cacheFor, storeFor } from "../src/db/stores.ts"
 
-const [tenantId, requestKeyHex] = process.argv.slice(2)
-if (tenantId === undefined || requestKeyHex === undefined) {
-	console.error("usage: resolve-command.ts <tenantId> <requestKeyHex>")
+const [tenant, key] = process.argv.slice(2)
+const parsed = key === undefined ? undefined : Uuid.parse(key)
+if (tenant === undefined || parsed === undefined || Result.isFailure(parsed)) {
+	console.error("usage: resolve-command.ts <tenant> <request key uuid>")
 	process.exit(2)
 }
 
-const requestKey = Uuid.parse(requestKeyHex)
-if (Result.isFailure(requestKey)) {
-	console.error("request key must be canonical UUID text")
-	process.exit(2)
-}
-
-const rendered = storedRef(tenantId, requestKey.success)
-if (rendered === undefined) {
-	console.error("no retained command ref for that request — dispatch never recorded a coordinate")
-	process.exit(1)
-}
-
-const parsed = parseCommandRef(rendered)
-if (Result.isFailure(parsed)) {
-	console.error("stored command ref refused to parse")
-	process.exit(1)
-}
-
-const outcome = await Effect.runPromise(
-	Effect.scoped(
-		Effect.gen(function* () {
-			const binding = yield* bindingFor(tenantId)
-			const history =
-				binding.kind === "local"
-					? yield* LocalHistory.open(binding, App)
-					: yield* HostedHistory.open(binding, App)
-			return yield* resolveCommand(history, parsed.success)
-		})
-	).pipe(Effect.provide(NativeRuntime.layer(runtimePolicy.native)))
+const program = Effect.scoped(
+	Effect.flatMap(
+		Database.make({ schema: App, migrations, store: storeFor(tenant), cache: cacheFor(tenant), onOpen: "verify" }),
+		(db) => db.resolve(requestIdOf(parsed.success))
+	)
 )
-
-console.log(`resolve: ${outcome.kind}`)
+const receipt = await Effect.runPromise(program.pipe(Effect.provide(Bumble.layer(runtimePolicy.native))))
+console.log(
+	Option.match(receipt, {
+		onNone: () => "not decided",
+		onSome: (decided) => `decided at ${decided.seq}: ${decided.outcome._tag}`
+	})
+)

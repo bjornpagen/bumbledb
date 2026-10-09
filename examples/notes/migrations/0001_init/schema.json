@@ -1,0 +1,146 @@
+{
+	"relations": [
+		{
+			"name": "Note",
+			"fields": [
+				{
+					"name": "id",
+					"valueType": {
+						"kind": "Uuid"
+					},
+					"newtype": "Note.id"
+				},
+				{
+					"name": "text",
+					"valueType": {
+						"kind": "String"
+					}
+				},
+				{
+					"name": "pinned",
+					"valueType": {
+						"kind": "Bool"
+					}
+				}
+			]
+		},
+		{
+			"name": "Tag",
+			"fields": [
+				{
+					"name": "id",
+					"valueType": {
+						"kind": "Uuid"
+					}
+				},
+				{
+					"name": "name",
+					"valueType": {
+						"kind": "String"
+					}
+				}
+			]
+		},
+		{
+			"name": "Outbox",
+			"fields": [
+				{
+					"name": "id",
+					"valueType": {
+						"kind": "Uuid"
+					}
+				},
+				{
+					"name": "note",
+					"valueType": {
+						"kind": "Uuid"
+					}
+				},
+				{
+					"name": "kind",
+					"valueType": {
+						"kind": "String"
+					}
+				}
+			]
+		},
+		{
+			"name": "Attachment",
+			"fields": [
+				{
+					"name": "id",
+					"valueType": {
+						"kind": "Uuid"
+					}
+				},
+				{
+					"name": "note",
+					"valueType": {
+						"kind": "Uuid"
+					},
+					"newtype": "Note.id"
+				},
+				{
+					"name": "key",
+					"valueType": {
+						"kind": "String"
+					}
+				},
+				{
+					"name": "bytes",
+					"valueType": {
+						"kind": "U64"
+					}
+				}
+			]
+		}
+	],
+	"statements": [
+		{
+			"kind": "Fd",
+			"relation": "Note",
+			"projection": [
+				"id"
+			]
+		},
+		{
+			"kind": "Fd",
+			"relation": "Tag",
+			"projection": [
+				"id"
+			]
+		},
+		{
+			"kind": "Fd",
+			"relation": "Outbox",
+			"projection": [
+				"id"
+			]
+		},
+		{
+			"kind": "Fd",
+			"relation": "Attachment",
+			"projection": [
+				"id"
+			]
+		},
+		{
+			"kind": "Containment",
+			"source": {
+				"relation": "Attachment",
+				"projection": [
+					"note"
+				],
+				"selection": []
+			},
+			"target": {
+				"relation": "Note",
+				"projection": [
+					"id"
+				],
+				"selection": []
+			},
+			"bidirectional": false
+		}
+	]
+}

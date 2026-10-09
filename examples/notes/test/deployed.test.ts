@@ -1,15 +1,6 @@
 /**
- * Deployed request tests (APP-04/05/06 request half): drive the ACTUAL
- * deployed HTTP surface — a real Alchemy/Vercel deployment of this app —
- * with authenticated requests, idempotent retries and conflict shapes.
- *
- * Required environment (an explicitly authorized disposable scope):
- *   DEPLOYED_URL    — the deployed base URL
- *   DEPLOYED_TOKEN  — a valid session token for a PROVISIONED test tenant
- *
- * Missing configuration fails this suite. These request tests do not
- * exercise migration rollout, lost activation, or abort-versus-activate
- * recovery through scripts/migrate.ts.
+ * Requests against a real deployment. Requires DEPLOYED_URL and DEPLOYED_TOKEN (a session token for
+ * a tenant that `pnpm migrate` created); a missing variable fails the suite.
  */
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
@@ -21,7 +12,7 @@ const token = process.env.DEPLOYED_TOKEN
 function requireEnv(): { base: string; token: string } {
 	assert.ok(
 		base !== undefined && token !== undefined,
-		"DEPLOYED_URL and DEPLOYED_TOKEN are required: the deployed lane is NotRun without a real deployment"
+		"DEPLOYED_URL and DEPLOYED_TOKEN are required"
 	)
 	return { base, token }
 }
@@ -30,10 +21,6 @@ async function jsonObject(response: Response): Promise<Record<string, unknown>> 
 	const body: unknown = await response.json()
 	assert.ok(typeof body === "object" && body !== null && !Array.isArray(body))
 	return body as Record<string, unknown>
-}
-
-function hex(): string {
-	return randomUUID()
 }
 
 async function call(method: string, path: string, body?: unknown, auth?: string | null): Promise<Response> {
@@ -54,13 +41,13 @@ test("anonymous requests refuse at the deployed public boundary", async () => {
 })
 
 test("deployed create/read round-trip with idempotent retry", async () => {
-	const noteId = hex()
+	const noteId = randomUUID()
 	const first = await call("POST", "/api/notes", { id: noteId, text: "deployed" })
 	assert.equal(first.status, 200)
 	const retry = await call("POST", "/api/notes", { id: noteId, text: "deployed" })
 	assert.equal(retry.status, 200)
 	const retryBody = await jsonObject(retry)
-	assert.ok(retryBody.outcome === "committed" || retryBody.outcome === "no-change")
+	assert.equal(retryBody.outcome, "Committed")
 	const read = await call("GET", `/api/notes/${noteId}`)
 	assert.equal(read.status, 200)
 	const row = await jsonObject(read)
@@ -68,33 +55,17 @@ test("deployed create/read round-trip with idempotent retry", async () => {
 	assert.equal(row.text, "deployed")
 })
 
-test("deployed witnessed conflict is a durable 409, never a silent overwrite", async () => {
-	const noteId = hex()
-	const created = await call("POST", "/api/notes", { id: noteId, text: "conflict" })
-	assert.equal(created.status, 200)
-	// First revision wins.
-	const first = await call("PATCH", `/api/notes/${noteId}`, { requestKey: hex(), pinned: true })
-	assert.equal(first.status, 200)
-	// A command reusing an OLD witness must surface precondition-failed. We
-	// force it by patching twice with distinct request keys built against
-	// the same observed state through rapid succession; the deployed engine
-	// decides — both 200 (serialized reads) and 409 (stale witness) are
-	// legal shapes, and a 409 carries the durable receipt.
-	const second = await call("PATCH", `/api/notes/${noteId}`, { requestKey: hex(), pinned: false })
-	assert.ok(second.status === 200 || second.status === 409)
-	if (second.status === 409) {
-		const body = await jsonObject(second)
-		assert.equal(body.outcome, "precondition-failed")
-	}
+test("deployed pins apply in order", async () => {
+	const noteId = randomUUID()
+	assert.equal((await call("POST", "/api/notes", { id: noteId, text: "pins" })).status, 200)
+	assert.equal((await call("PATCH", `/api/notes/${noteId}`, { requestKey: randomUUID(), pinned: true })).status, 200)
+	assert.equal((await call("PATCH", `/api/notes/${noteId}`, { requestKey: randomUUID(), pinned: false })).status, 200)
+	assert.equal((await jsonObject(await call("GET", `/api/notes/${noteId}`))).pinned, false)
 })
 
-test("a changed application id under a reused idempotency key refuses", async () => {
-	const noteId = hex()
-	const first = await call("POST", "/api/notes", { id: noteId, text: "original" })
-	assert.equal(first.status, 200)
-	// Same client note id (the request key) with DIFFERENT text is a
-	// different concrete command under the same command id: the digest
-	// conflict refuses instead of silently replacing business meaning.
+test("a reused request id with a different command is refused", async () => {
+	const noteId = randomUUID()
+	assert.equal((await call("POST", "/api/notes", { id: noteId, text: "original" })).status, 200)
 	const conflicting = await call("POST", "/api/notes", { id: noteId, text: "tampered" })
-	assert.ok(conflicting.status >= 400, `digest conflict must refuse, got ${conflicting.status}`)
+	assert.equal(conflicting.status, 409)
 })

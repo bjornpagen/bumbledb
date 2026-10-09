@@ -1,7 +1,5 @@
 node_modules/
 .next/
-.bumbledb/
+.bdb/
 next-env.d.ts
 *.tsbuildinfo
-# The isolated package runner resolves its own staged-tarball lockfile.
-pnpm-lock.yaml

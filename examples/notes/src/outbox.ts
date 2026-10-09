@@ -1,15 +1,10 @@
 /**
- * The idempotent outbox dispatcher (OPS-003): pending external effects
- * are FACTS committed atomically with their domain change; this module
- * reads them from a published snapshot, performs the effect, and retires
- * the row in a separate command. Safety comes from the effect target's
- * idempotency key (the outbox row id) plus the retire command's
- * deterministic identity — a crash between "performed" and "retired"
- * replays the delivery with the SAME key, and the receiver deduplicates.
- * The database never promises exactly-once external networking.
+ * The outbox dispatcher: pending effects are rows committed with the change that needs them. A pass
+ * reads them, delivers each with the row id as the receiver's idempotency key, and retires it in a
+ * separate command whose request id derives from the row id. A crash between delivery and retirement
+ * redelivers with the same key; the receiver deduplicates.
  */
-import type { Uuid } from "@bjornpagen/bumbledb"
-import type { History, HistoryBorrow } from "@bjornpagen/bumbledb-log"
+import type { Database, Uuid } from "@bjornpagen/bumbledb"
 import { Effect, Schema } from "effect"
 import { retireOutbox } from "./db/commands.ts"
 import { listPendingOutbox } from "./db/reads.ts"
@@ -27,53 +22,31 @@ interface OutboxRow {
 	readonly kind: string
 }
 
-/** Deliver one effect with the row id as the receiver's idempotency key. */
 const deliver = Effect.fn("outbox.deliver")(function* (row: OutboxRow) {
 	const target = process.env.OUTBOX_WEBHOOK_URL
-	if (target === undefined) {
-		return yield* new WebhookUnconfigured({})
-	}
-	const response = yield* Effect.callback<Response, WebhookFailed>((resume, signal) => {
-		fetch(target, {
-			method: "POST",
-			signal,
-			headers: { "content-type": "application/json", "idempotency-key": row.id },
-			body: JSON.stringify({ kind: row.kind, note: row.note })
-		})
-			.then((value) => resume(Effect.succeed(value)))
-			.catch(() => resume(Effect.fail(new WebhookFailed({ status: 0 }))))
+	if (target === undefined) return yield* new WebhookUnconfigured({})
+	const response = yield* Effect.tryPromise({
+		try: (signal) =>
+			fetch(target, {
+				method: "POST",
+				signal,
+				headers: { "content-type": "application/json", "idempotency-key": row.id },
+				body: JSON.stringify({ kind: row.kind, note: row.note })
+			}),
+		catch: () => new WebhookFailed({ status: 0 })
 	})
-	if (!response.ok) {
-		return yield* new WebhookFailed({ status: response.status })
-	}
+	if (!response.ok) return yield* new WebhookFailed({ status: response.status })
 })
 
-/**
- * One bounded dispatcher pass over a tenant: read pending rows from a
- * published snapshot, deliver each, retire delivered rows. Failures stop
- * the pass with the row retained — the next pass retries with the same
- * idempotency key. Returns the number retired.
- */
-export const dispatchOutbox = Effect.fn("outbox.dispatch")(
-	function* (history: History<typeof App> | HistoryBorrow<typeof App>, tenantId: string) {
-		const rows = yield* Effect.scoped(
-			Effect.gen(function* () {
-				const snapshot = yield* history.snapshot({ consistency: { kind: "latest" } })
-				return yield* listPendingOutbox(snapshot)
-			})
-		)
-		let retired = 0
-		for (const row of rows) {
-			yield* deliver(row)
-			const outcome = yield* retireOutbox(history, tenantId, row)
-			if (outcome.kind === "decided") {
-				retired += 1
-				continue
-			}
-			// not-submitted / outcome-unknown: stop; the retained ref and the
-			// still-present row drive the next pass.
-			return { retired, stopped: outcome.kind } as const
-		}
-		return { retired, stopped: null } as const
+/** One pass: delivers and retires every pending row, stopping at the first that does not retire. */
+export const dispatchOutbox = Effect.fn("outbox.dispatch")(function* (db: Database<typeof App>) {
+	const rows = yield* Effect.scoped(Effect.flatMap(db.read("latest"), listPendingOutbox))
+	let retired = 0
+	for (const row of rows) {
+		yield* deliver(row)
+		const outcome = yield* retireOutbox(db, row)
+		if (outcome._tag !== "Decided") return { retired, stopped: outcome.refusal._tag } as const
+		retired += 1
 	}
-)
+	return { retired, stopped: null } as const
+})

@@ -1,14 +1,8 @@
 /**
- * Development/test helpers for app-owned identity:
- *
- *   # a signed session token (1 hour) for local/deployed request tests:
- *   SESSION_SECRET=... node --experimental-strip-types scripts/mint-session.ts token <tenantId>
- *
- *   # one fresh Uuid (note ids, request keys, operation/database ids):
- *   node --experimental-strip-types scripts/mint-session.ts id
- *
- * Ids are minted ONCE for an original intent and persisted by the caller;
- * a retry reuses the recorded value, never a fresh one.
+ * Development helpers:
+ *   SESSION_SECRET=... node scripts/mint-session.ts token <tenant>   a one-hour session token
+ *   node scripts/mint-session.ts id                                  a fresh UUID (note id, request key)
+ * Mint an id once per intent and reuse it on retries.
  */
 import { randomUUID } from "node:crypto"
 import { signSession } from "../src/auth.ts"

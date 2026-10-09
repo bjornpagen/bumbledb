@@ -1,66 +1,102 @@
 # Notes: a server-side Next.js example
 
-Notes demonstrates a database per tenant, authenticated bindings, one
-process-lifetime Effect runtime, durable named commands, retained receipts,
-and explicit schema initialization. It targets Node, not Edge or the browser.
-
-Local history is the qualified end-to-end setup. Hosted S3 bindings and
-Alchemy deployment code use the same explicit creation and ordinary seed
-commands. Remote deployment is qualified separately.
+Notes is a multi-tenant notes app over bumbledb. Each tenant has its own
+database, opened on demand from one `Database.pool` and closed when idle.
+Migrations live in the repository beside the schema, and each write is a
+command with a request id, so a retried request is decided once. External
+effects go through an outbox. The app runs on Node, not on Edge or in the
+browser.
 
 ## Local setup
 
-This example pins the core and log SDKs to `1.3.1` and Effect to
-`4.0.0-rc.112`. The repository's packed-consumer check also tests locally
-staged SDK packages in isolation.
-
-From this directory:
+The example installs `@bjornpagen/bumbledb` and its platform packages from
+`../../ts` as copies, the way an app installs the published packages. Build
+the package and the host's addon first, then run these commands from this
+directory:
 
 ```sh
+(cd ../../ts && pnpm install && node scripts/build.ts release)
 pnpm install
-pnpm run snapshot
-pnpm run init-tenant local student-a <operation-uuid> <database-uuid> <incarnation-uuid>
+SESSION_SECRET=<32+ characters> pnpm dev
 ```
 
-Supply three canonical UUIDs generated once by the application or deployment
-tool. Retain them across retries. The initializer verifies the current schema
-and writes its seeds through ordinary commands. The snapshot command writes
-`schema.json`; retain it to generate historical bindings
-when an application migration is needed.
+Run `pnpm install` again after rebuilding `../../ts`.
 
-Start the development server with `SESSION_SECRET` set to a secret of at
-least 32 characters. Authentication uses the signed bearer-token format in
-`src/auth.ts`; wire a trusted authentication service to that boundary.
-Tenant bindings come from the verified registry, never arbitrary request
-paths. `src/db/runtime-policy.ts` sets process-wide scheduling overrides
-and the open-tenant limit. Database allocation is unrestricted; request
-aborts cancel the Effect scope through the framework boundary.
+In development each tenant's log is a directory under `BUMBLEDB_DATA_DIR`
+(default `.bdb/`). A tenant's database is created and migrated the first
+time a request names it. In production (`NODE_ENV=production`) databases open
+with `onOpen: "verify"`, which refuses a tenant whose migrations have not run.
+`pnpm migrate <tenant>...` creates or migrates tenants before they receive
+traffic. Migration `0001_init` seeds the `inbox` and `archive` tags once, when
+a tenant's database is created.
+
+Authentication uses the signed bearer token in `src/auth.ts`, and
+`scripts/mint-session.ts` mints a token for local use. Connect a trusted
+identity service at that boundary. The tenant always comes from the verified
+session and never from the request path.
+
+## Changing the schema
+
+Edit `src/db/schema.ts` and run:
+
+```sh
+pnpm migrations:generate <name>
+```
+
+This writes `migrations/NNNN_<name>/` (`schema.json`, generated `schema.ts`,
+and `migration.ts`) and updates `migrations/index.ts`. When a relation is
+renamed or reshaped, add a `populate` step to the new `migration.ts`.
+`pnpm migrations:check` fails if the schema and the migrations directory
+disagree, or if a migration was edited after it was generated.
 
 ## Code map
 
 | Path | Responsibility |
 |---|---|
-| `src/db/schema.ts`, `initialize.ts` | Current schema, explicit creation and seed commands. |
-| `src/db/queries.ts`, `reads.ts` | Reusable queries and the core `QueryReader`. |
-| `src/db/commands.ts` | Sealing commands and resolving retained references. |
-| `src/db/server.ts`, `bindings.ts` | Shared runtime and authenticated tenant registry. |
-| `scripts/init-tenant.ts` | Explicit initialization and binding adoption. |
-| `scripts/backup-restore.ts`, `resolve-command.ts` | Backup, restore, and outcome resolution. |
-| `app/api/notes/` | Node route handlers. |
+| `src/db/schema.ts` | The current schema. |
+| `migrations/` | Bundled migrations. `0001_init` seeds the tags. |
+| `src/db/stores.ts` | Each tenant's object store (filesystem, or S3 under `tenants/<tenant>/`) and its local cache. |
+| `src/db/server.ts` | The process runtime and the tenant pool. |
+| `src/db/queries.ts`, `reads.ts` | Queries and reads at a revision. |
+| `src/db/commands.ts` | Commands and their request ids. |
+| `src/http.ts` | How errors and submit outcomes map to HTTP responses. |
+| `src/outbox.ts`, `scripts/dispatch-outbox.ts` | Outbox dispatch and retirement. |
+| `scripts/migrate-tenant.ts` | Creating or migrating tenants before traffic. |
+| `scripts/resolve-command.ts` | Resolving a request id whose response was lost. |
+| `app/api/notes/` | Route handlers. |
 | `alchemy.run.ts`, `next.config.ts` | Deployment and native-package bundling. |
+
+## Responses
+
+A decided command is returned as a receipt (`request`, `seq`, `revision`,
+`outcome`). `Committed` and `NoChange` return 200, `PreconditionFailed`
+returns 409 and `InvariantRejected` returns 422. If the database cannot say
+whether a command was decided, the response is 202, and the client either
+retries the identical request or resolves its request id. A request id that
+is reused for a different command returns 409 `RequestReused`. A tenant
+without a database returns 404 `TenantNotProvisioned`.
+
+## Deployment
+
+`alchemy.run.ts` provisions the Next.js server function, the checkpoint
+bucket, the blob bucket and the server's IAM policy. The log bucket
+(`BUMBLEDB_LOG_BUCKET`) is an S3 Express directory bucket, which must be
+created outside Alchemy. Checkpoints go in `BUMBLEDB_CKPT_BUCKET`. Run
+`pnpm migrate <tenant>...` with the same bucket environment before a tenant
+receives traffic.
+
+The build ships the platform package named by `BUMBLEDB_TARGET` (default
+`linux-arm64`), so `../../ts/npm/linux-arm64/bdb.node` must hold that
+platform's addon (the CI artifact `bdb.linux-arm64.node`) and the install
+must include that platform. The function runs on `nodejs24.x`, the newest
+runtime Alchemy offers, while bumbledb requires Node 26.
 
 ## Verification
 
-`scripts/packed-import.sh --host-only` from the repository root creates a
-temporary installed-package copy and runs
-the complete TypeScript check, `test/routes.test.ts`, `test/specimens.test.ts`,
-and the Next.js production build. These cover local retries, tenant isolation,
-witnessed updates, schema initialization, runtime error responses, and public API use.
-Dependency declarations remain checked. The pinned Alchemy patch corrects an
-optional-attribute declaration to admit its existing deleting-state variant;
-it changes no runtime code.
-
-`test/deployed.test.ts` requires `DEPLOYED_URL` and `DEPLOYED_TOKEN`.
-Missing credentials are not successful deployment evidence. A green local
-route test does not validate Alchemy provisioning, IAM, remote S3, or an
-actual deployed server.
+`pnpm typecheck` and `pnpm test` cover tenant creation on first use,
+idempotent retries, tenant isolation, pins checked against a read revision,
+the seeded tags, and how errors map to responses. `pnpm build` runs the
+Next.js production build. `pnpm test:deployed` needs `DEPLOYED_URL` and
+`DEPLOYED_TOKEN`, and without them it fails rather than skipping. Passing
+local tests do not show that provisioning, IAM, remote S3 or a deployed
+server work.

@@ -1,12 +1,7 @@
 /**
- * Native packaging (chapter 33): serverExternalPackages keeps the
- * database packages out of the bundler; outputFileTracingIncludes ships
- * the SELECTED target's platform package with the server unit. The target
- * is an explicit build decision (BUMBLEDB_TARGET), never an import-time
- * guess — an AWS arm64 build traces linux-arm64, a Vercel x64 deployment
- * traces linux-x64. Externalization alone does not prove the .node file
- * shipped: inspect the emitted server unit and execute it on the target
- * (APP-04).
+ * The database package stays out of the bundler, and the selected target's platform package (the
+ * native addon) ships with the server function. The target is an explicit build input
+ * (BUMBLEDB_TARGET), never guessed at import time.
  */
 import type { NextConfig } from "next"
 
@@ -16,7 +11,7 @@ if (target !== "linux-arm64" && target !== "linux-x64" && target !== "darwin-arm
 }
 
 export default {
-	serverExternalPackages: ["@bjornpagen/bumbledb", "@bjornpagen/bumbledb-log"],
+	serverExternalPackages: ["@bjornpagen/bumbledb"],
 	outputFileTracingIncludes: {
 		"/*": [`./node_modules/@bjornpagen/bumbledb-${target}/**/*`]
 	}

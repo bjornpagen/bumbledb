@@ -1,14 +1,10 @@
 /**
- * Notes collection routes — server-only Node runtime, dynamic (never
- * cached across identities), authenticated before any open. The request
- * abort signal enters ONLY at the ManagedRuntime run boundary as fiber
- * interruption. All database work is Effect; the Promise below is the
- * framework boundary, not a database API.
+ * Notes collection routes: Node runtime, dynamic, authenticated before any open. The request
+ * signal enters only at the runtime boundary, as fiber interruption.
  */
 import { encodeBoundaryRows, Uuid } from "@bjornpagen/bumbledb"
 import { Effect, Result } from "effect"
 import { requirePrincipal } from "../../../src/auth.ts"
-import { bindingFor } from "../../../src/db/bindings.ts"
 import { createNote } from "../../../src/db/commands.ts"
 import { listNotes as collectNotes } from "../../../src/db/reads.ts"
 import { Note } from "../../../src/db/schema.ts"
@@ -21,11 +17,8 @@ export const dynamic = "force-dynamic"
 const listNotes = Effect.fn("routes.listNotes")(
 	function* (request: Request) {
 		const principal = yield* requirePrincipal(request)
-		const binding = yield* bindingFor(principal.tenantId)
-		const databases = yield* Databases
-		const db = yield* databases.acquire(binding)
-		const snapshot = yield* db.snapshot({ consistency: { kind: "cached" } })
-		const rows = yield* collectNotes(snapshot)
+		const db = yield* (yield* Databases).get(principal.tenantId)
+		const rows = yield* collectNotes(yield* db.read("cached"))
 		const body = yield* Effect.fromResult(encodeBoundaryRows(Note, rows))
 		return Response.json(body, { headers: { "Cache-Control": "private, no-store" } })
 	},
@@ -33,21 +26,15 @@ const listNotes = Effect.fn("routes.listNotes")(
 )
 
 /**
- * Create requires a client-supplied note id (canonical UUID): the id is
- * generated ONCE by the caller for the original intent and reused on
- * retries — the same id builds the identical command and the receipt
- * lookup deduplicates. Cross-origin writes are refused by the app's own
- * origin check (CSRF posture; the session is a bearer token, but the
- * check keeps browser-form misuse out).
+ * Create takes a client-supplied note id, generated once per intent and reused on retries: the
+ * same id submits the identical command, decided once. Cross-origin writes are refused.
  */
 const postNote = Effect.fn("routes.postNote")(
 	function* (request: Request, body: { readonly id: string; readonly text: string }) {
 		const principal = yield* requirePrincipal(request)
-		const binding = yield* bindingFor(principal.tenantId)
 		const noteId = yield* Effect.fromResult(Uuid.parse(body.id))
-		const databases = yield* Databases
-		const db = yield* databases.acquire(binding)
-		const outcome = yield* createNote(db, principal.tenantId, noteId, body.text)
+		const db = yield* (yield* Databases).get(principal.tenantId)
+		const outcome = yield* createNote(db, noteId, body.text)
 		return submitResponse(outcome)
 	},
 	Effect.scoped

@@ -1,8 +1,4 @@
-/**
- * Shared QueryReader helpers — the same collect/pages programs run on a
- * core snapshot and on a published log snapshot. No adapter, no scan of
- * a whole relation when a key or template exists.
- */
+/** Read helpers over any `QueryReader`: a database read or an engine snapshot. */
 import type { Uuid, QueryReader } from "@bjornpagen/bumbledb"
 import { Effect, Option, Stream } from "effect"
 import { allNotes, attachmentsFor, noteById, pendingOutbox } from "./queries.ts"

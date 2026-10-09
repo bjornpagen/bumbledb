@@ -1,13 +1,7 @@
 /**
- * Blob-first attachment storage (OPS-003): the immutable blob goes to the
- * app's OWN S3 bucket under a content-addressed key FIRST; the database
- * fact referencing it commits second. A crash between the two leaves an
- * orphan upload (cheap, sweepable by app policy), never a durable
- * reference to missing bytes. This bucket/prefix is application data,
- * explicitly separate from the bumbledb log bucket and from website
- * asset/ISR buckets — the database SDK has no JS S3 client; this one is
- * ordinary app code using the deployed role's provider-chain credentials
- * (refreshed by the SDK, never static keys).
+ * Attachment blobs: immutable, content-addressed objects in the app's own bucket, separate from the
+ * database's buckets. The blob is uploaded before the row that references it is committed, so a
+ * crash leaves an orphan upload, never a reference to missing bytes.
  */
 import { createHash } from "node:crypto"
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"

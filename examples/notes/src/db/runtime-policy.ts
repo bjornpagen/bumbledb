@@ -1,9 +1,10 @@
-import type { NativeRuntimeOptions } from "@bjornpagen/bumbledb"
+import type { BumbleOptions } from "@bjornpagen/bumbledb"
+import type { Duration } from "effect"
 
-/** Process-wide scheduling overrides; omitted settings use native defaults. */
+/** Process-wide runtime sizing and how long an idle tenant's database stays open. */
 export const runtimePolicy: {
-	readonly native: NativeRuntimeOptions
-	readonly cache: { readonly maxOpen: number }
+	readonly native: BumbleOptions
+	readonly idleTenant: Duration.Input
 } = {
 	native: {
 		workers: 2,
@@ -12,5 +13,5 @@ export const runtimePolicy: {
 		ownerCapacity: 32,
 		nativeHandleCapacity: 256
 	},
-	cache: { maxOpen: 16 }
+	idleTenant: "5 minutes"
 }
