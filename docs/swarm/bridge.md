@@ -11,7 +11,7 @@ Owns: `crates/bumbledb-node/**`, `ts/src/native/binding.d.ts`, `docs/swarm/bridg
 | F8: serde JSON cold inputs (`SchemaSpecIn`, `QueryIn`, `RuntimeOptionsIn`) with `{path, message}` refusals | done |
 | D17: sync `compileSchema` / `validateQuery` / `schemaBindings` returning branded handles | done |
 | F7: every export typed in the generated, committed `binding.d.ts` (`crates/bumbledb-node/dts.sh`, gate: `dts.sh --check` + standalone `tsc`) | done |
-| A: error arms against engine-storage's one `Error` / `Error::kind()` | waits on engine-storage C8 |
+| A: database open refusals match the errors the engine constructs (`Store(SchemaMismatch)`, `Store(DestinationExists)`); covered by a test | done; re-adapts when C8's one `Error` lands |
 | Hosted verbs over log-core's sans-IO `Machine<Cache>` (open, step/feed, submit, migrate, snapshot, close) | done |
 
 The bridge depends on the new `bumbledb-log` core only for hosted databases. The directory fence

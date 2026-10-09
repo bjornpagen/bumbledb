@@ -1212,3 +1212,47 @@ fn a_cancelled_draft_chunk_spends_the_draft_without_fabricating_usage() {
         Err(RuntimeError::SpentHandle)
     ));
 }
+
+#[test]
+fn database_open_refusals_are_domain_outcomes() {
+    use crate::runtime::owners::ManagedDbOutcome;
+    use crate::runtime_wire::open_db;
+    bumbledb::schema! {
+        pub Other;
+        relation Item { a: u64 }
+    }
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("open-refusals");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let reference = owner.reference();
+    let mini = crate::schema::sealed(&Mini.descriptor());
+    let ctx = work();
+    let Ok(ManagedDbOutcome::Opened(db)) = open_db(&reference, "db", Arc::clone(&mini), true, &ctx)
+    else {
+        panic!("a fresh directory creates")
+    };
+    assert!(matches!(
+        open_db(&reference, "db", Arc::clone(&mini), true, &ctx),
+        Ok(ManagedDbOutcome::DestinationExists { .. })
+    ));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    db.drain(Box::new(move |report| sender.send(report).unwrap()));
+    assert_eq!(
+        receiver.recv_timeout(Duration::from_secs(10)).unwrap(),
+        CloseReport::Closed
+    );
+    let other = crate::schema::sealed(&Other.descriptor());
+    assert!(matches!(
+        open_db(&reference, "db", other, false, &ctx),
+        Ok(ManagedDbOutcome::FingerprintMismatch { .. })
+    ));
+    let Ok(ManagedDbOutcome::Opened(reopened)) = open_db(&reference, "db", mini, false, &ctx)
+    else {
+        panic!("the matching schema reopens")
+    };
+    drop(reopened);
+    drop(owner);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -360,44 +360,57 @@ pub fn runtime_directory_db_open(
         .runtime()
         .submit_owned(owner, WorkContext::new(), notification(callback)?, |_| {
             Ok(Box::new(move |context| {
-                let path = reference.child_path(&child_name)?;
-                context.checkpoint()?;
-                let descriptor = schema.descriptor.clone();
-                let opened = if create {
-                    match crate::Engine::create(&path, descriptor, context.clone()) {
-                        Ok(bumbledb::Admission::Accepted(db)) => Ok(db),
-                        Ok(bumbledb::Admission::Rejected(violations)) => {
-                            return Ok(Output::Db(ManagedDbOutcome::Rejected(
-                                crate::violations_out(&schema.descriptor, &violations),
-                            )));
-                        }
-                        Err(error) => Err(error),
-                    }
-                } else {
-                    crate::Engine::open(&path, descriptor, context.clone())
-                };
-                match opened {
-                    Ok(db) => {
-                        let managed = reference.attach_db(crate::assemble_inner(db, schema))?;
-                        Ok(Output::Db(ManagedDbOutcome::Opened(managed)))
-                    }
-                    Err(error @ bumbledb::Error::SchemaMismatch { .. }) => {
-                        Ok(Output::Db(ManagedDbOutcome::FingerprintMismatch {
-                            message: error.to_string(),
-                        }))
-                    }
-                    Err(error @ bumbledb::Error::DestinationExists { .. }) => {
-                        Ok(Output::Db(ManagedDbOutcome::DestinationExists {
-                            message: error.to_string(),
-                        }))
-                    }
-                    Err(bumbledb::Error::EnvironmentLocked) => Err(RuntimeError::DirectoryBusy),
-                    Err(error) => Err(crate::runtime::session::engine_error(&error)),
-                }
+                open_db(&reference, &child_name, schema, create, context).map(Output::Db)
             }))
         })
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(owner.runtime(), operation))
+}
+
+pub(crate) fn open_db(
+    reference: &crate::runtime::owners::DirectoryReference,
+    child_name: &str,
+    schema: Arc<crate::schema::SchemaHandle>,
+    create: bool,
+    context: &WorkContext,
+) -> Result<ManagedDbOutcome, RuntimeError> {
+    use bumbledb::store::StoreError;
+    let path = reference.child_path(child_name)?;
+    context.checkpoint()?;
+    let descriptor = schema.descriptor.clone();
+    let opened = if create {
+        match crate::Engine::create(&path, descriptor, context.clone()) {
+            Ok(bumbledb::Admission::Accepted(db)) => Ok(db),
+            Ok(bumbledb::Admission::Rejected(violations)) => {
+                return Ok(ManagedDbOutcome::Rejected(crate::violations_out(
+                    &schema.descriptor,
+                    &violations,
+                )));
+            }
+            Err(error) => Err(error),
+        }
+    } else {
+        crate::Engine::open(&path, descriptor, context.clone())
+    };
+    match opened {
+        Ok(db) => Ok(ManagedDbOutcome::Opened(
+            reference.attach_db(crate::assemble_inner(db, schema))?,
+        )),
+        Err(bumbledb::Error::Store(store)) => match *store {
+            StoreError::SchemaMismatch => Ok(ManagedDbOutcome::FingerprintMismatch {
+                message: StoreError::SchemaMismatch.to_string(),
+            }),
+            error @ StoreError::DestinationExists { .. } => {
+                Ok(ManagedDbOutcome::DestinationExists {
+                    message: error.to_string(),
+                })
+            }
+            error => Err(crate::runtime::session::engine_error(
+                &bumbledb::Error::Store(Box::new(error)),
+            )),
+        },
+        Err(error) => Err(crate::runtime::session::engine_error(&error)),
+    }
 }
 
 /// A database open outcome. Refusals are domain outcomes, not failures.
