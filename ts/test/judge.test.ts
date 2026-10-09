@@ -4,6 +4,7 @@ import { Effect, Exit, Fiber, ManagedRuntime, Option, Result, Scope } from "effe
 import { ChangeSet } from "../src/changes.ts"
 import type { Witness } from "../src/db.ts"
 import { Db } from "../src/db.ts"
+import type { DbError } from "../src/errors.ts"
 import { str, u64 } from "../src/fields.ts"
 import { addon } from "../src/native/addon.ts"
 import { relation } from "../src/relation.ts"
@@ -48,8 +49,12 @@ test("judge and apply share final-state admission, including net counts and add-
 					assert.equal(submitted, 0, "construction is inert")
 					addon.runtimeDbJudge = original
 					const judgment = yield* operation
-					assert.deepEqual(judgment, { _tag: "Admitted", base: before.witness, changes: { added: 2n, removed: 0n } })
-					assert.equal((yield* db.inspect()).generation, before.witness.generation)
+					assert.deepEqual(judgment, {
+						_tag: "Admitted",
+						generation: before.generation,
+						changes: { added: 2n, removed: 0n }
+					})
+					assert.equal((yield* db.inspect()).generation, before.generation)
 					assert.ok(Option.isNone(yield* (yield* db.snapshot()).get(ItemById, { id: 1n })))
 					assert.equal((yield* db.apply(changes, exact))._tag, "Committed")
 					const landed = yield* db.snapshot()
@@ -57,27 +62,26 @@ test("judge and apply share final-state admission, including net counts and add-
 					assert.ok(Option.isNone(yield* before.get(ItemById, { id: 1n })), "the old snapshot is still coherent")
 					assert.deepEqual(yield* db.judge(changes), {
 						_tag: "Admitted",
-						base: landed.witness,
+						generation: landed.generation,
 						changes: { added: 0n, removed: 0n }
 					})
 					const replacement = { id: 1n, text: "replacement" }
 					const replace = yield* delta([replacement, replacement], [a, absent])
 					assert.deepEqual(yield* db.judge(replace), {
 						_tag: "Admitted",
-						base: landed.witness,
+						generation: landed.generation,
 						changes: { added: 1n, removed: 1n }
 					})
 					const conflict = yield* delta([replacement, replacement], [b, absent])
 					const rejected = yield* db.judge(conflict)
 					assert.equal(rejected._tag, "Rejected")
 					if (rejected._tag !== "Rejected") return
-					assert.deepEqual(rejected.base, landed.witness)
-					assert.deepEqual(rejected.changes, { added: 1n, removed: 1n })
+					assert.equal(rejected.generation, landed.generation)
 					assert.ok(rejected.violations.length > 0)
 					const applied = yield* db.apply(conflict)
 					assert.equal(applied._tag, "Rejected")
 					if (applied._tag === "Rejected") assert.deepEqual(applied.violations, rejected.violations)
-					assert.equal((yield* db.inspect()).generation, landed.witness.generation)
+					assert.equal((yield* db.inspect()).generation, landed.generation)
 					assert.deepEqual(Option.getOrThrow(yield* (yield* db.snapshot()).get(ItemById, { id: 2n })), b)
 					assert.equal((yield* db.apply(replace, landed.witness))._tag, "Committed")
 					assert.deepEqual(Option.getOrThrow(yield* (yield* db.snapshot()).get(ItemById, { id: 1n })), replacement)
@@ -89,7 +93,7 @@ test("judge and apply share final-state admission, including net counts and add-
 	}
 })
 
-test("moved is unjudged; foreign witnesses, schemas, and malformed intent are operational errors", async () => {
+test("moved is unjudged; foreign witnesses, schemas and malformed intent are errors", async () => {
 	const runtime = ManagedRuntime.make(Bumble.layer(runtimeOptions))
 	try {
 		await runtime.runPromise(
@@ -101,25 +105,28 @@ test("moved is unjudged; foreign witnesses, schemas, and malformed intent are op
 					yield* db.apply(changes)
 					const current = yield* db.snapshot()
 					const stale = before.witness
-					const moved = { _tag: "Moved", witnessed: before.witness, current: current.witness }
+					const moved = { _tag: "Moved", witnessed: before.generation, current: current.generation }
 					assert.deepEqual(yield* db.judge(changes, stale), moved)
 					assert.deepEqual(yield* db.apply(changes, stale), moved)
-					const badOptions: readonly unknown[] = [
-						{},
-						{ store: current.witness.store },
-						{ generation: current.witness.generation },
-						{ ...current.witness, generation: -1n },
-						{ ...current.witness, generation: 2n ** 64n }
+					const other = yield* Db.create(storeDir("judge-moved-other"), Theory)
+					const foreign = (yield* other.snapshot()).witness
+					const verbs: readonly Effect.Effect<unknown, DbError>[] = [
+						db.judge(changes, foreign),
+						db.apply(changes, foreign)
 					]
-					for (const options of badOptions) {
-						assert.ok(Result.isFailure(yield* Effect.result(db.judge(changes, options as never))))
-						assert.ok(Result.isFailure(yield* Effect.result(db.apply(changes, options as never))))
+					for (const verb of verbs) {
+						const result = yield* Effect.result(verb)
+						assert.ok(Result.isFailure(result))
+						const reason = result.failure.reason
+						assert.equal(reason._tag === "Engine" && reason.kind, "ForeignWitness")
 					}
+					assert.ok(Result.isFailure(yield* Effect.result(db.judge(changes, {} as never))))
+					assert.ok(Result.isFailure(yield* Effect.result(db.apply(changes, {} as never))))
 					const foreignDraft = yield* ChangeSet.builder(Learning)
 					const foreignChanges = yield* foreignDraft.finish()
 					assert.ok(Result.isFailure(yield* Effect.result(db.judge(foreignChanges as never))))
 					assert.ok(Result.isFailure(yield* Effect.result(db.judge({} as never))))
-					assert.equal((yield* db.inspect()).generation, current.witness.generation)
+					assert.equal((yield* db.inspect()).generation, current.generation)
 				})
 			)
 		)
@@ -148,9 +155,8 @@ test("containment and capacity rejection agree with apply and preserve the base"
 						assert.equal(applied._tag, "Rejected")
 						if (judged._tag !== "Rejected" || applied._tag !== "Rejected") continue
 						assert.deepEqual(judged.violations, applied.violations)
-						assert.deepEqual(judged.changes, { added: includeStudent ? 2n : 1n, removed: 0n })
-						assert.deepEqual(judged.base, snapshot.witness)
-						assert.equal((yield* db.inspect()).generation, snapshot.witness.generation)
+						assert.equal(judged.generation, snapshot.generation)
+						assert.equal((yield* db.inspect()).generation, snapshot.generation)
 					}
 				})
 			)
@@ -180,10 +186,10 @@ test("cancelled judgment delivery releases the writer and retains no mutation", 
 					assert.ok(Exit.hasInterrupts(yield* Fiber.await(fiber)))
 					lateCallback()
 					addon.runtimeDbJudge = original
-					assert.equal((yield* db.inspect()).generation, before.witness.generation)
+					assert.equal((yield* db.inspect()).generation, before.generation)
 					assert.deepEqual(yield* db.judge(changes), {
 						_tag: "Admitted",
-						base: before.witness,
+						generation: before.generation,
 						changes: { added: 1n, removed: 0n }
 					})
 					assert.equal((yield* db.apply(changes, before.witness))._tag, "Committed")

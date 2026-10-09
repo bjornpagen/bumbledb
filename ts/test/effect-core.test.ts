@@ -243,8 +243,7 @@ test("apply is the three-coordinate judgment: accepted, no-change, invariant-rej
 					const db = yield* Db.create(storeDir("apply-outcomes"), Learning)
 					const changes = yield* seeded(studentId, attemptId)
 					const first = yield* db.apply(changes)
-					// The identical sealed change is reusable while open: a
-					// second application of the same final set is no-change.
+					// Applying the same sealed change again commits without changing the state.
 					const second = yield* db.apply(changes)
 
 					// A violating candidate: an attempt referencing an
@@ -272,7 +271,11 @@ test("apply is the three-coordinate judgment: accepted, no-change, invariant-rej
 			)
 		)
 		assert.equal(outcomes.first._tag, "Committed")
-		assert.equal(outcomes.second._tag, "NoChange")
+		assert.equal(outcomes.second._tag, "Committed")
+		if (outcomes.first._tag === "Committed" && outcomes.second._tag === "Committed") {
+			assert.equal(outcomes.first.changed, true)
+			assert.deepEqual(outcomes.second, { _tag: "Committed", generation: outcomes.first.generation, changed: false })
+		}
 		assert.equal(outcomes.rejected._tag, "Rejected")
 		if (outcomes.rejected._tag === "Rejected") {
 			assert.ok(outcomes.rejected.violations.length > 0, "complete statement diagnostics, never a bare boolean")

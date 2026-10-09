@@ -12,15 +12,9 @@ import { membersAgree } from "./closed.ts"
 import type { SchemaId } from "./compile.ts"
 import { compiledOf, declaredKey, schemaTables } from "./compile.ts"
 import { argumentError, DbError } from "./errors.ts"
-import type { DbRef, DirectoryRef, PreparedRef, SnapshotRef } from "./native/addon.ts"
+import type { DbRef, DirectoryRef, PreparedRef, SnapshotRef, WitnessRef } from "./native/addon.ts"
 import { addon } from "./native/addon.ts"
-import type {
-	ApplyOutcome,
-	DbInspection as DbInspectionOut,
-	DbOpened,
-	JudgeOutcome,
-	WitnessOut
-} from "./native/binding.d.ts"
+import type { ApplyOutcome, DbInspection as DbInspectionOut, DbOpened, JudgeOutcome } from "./native/binding.d.ts"
 import type { Start } from "./native/op.ts"
 import { call, drain, scoped } from "./native/op.ts"
 import type { AnyQuery } from "./query/lower.ts"
@@ -39,8 +33,11 @@ import { schemaDescriptor, schemasAgree } from "./schema.ts"
 import type { Key, QueryTemplate, Rel } from "./shape.ts"
 import type { KeyStatement } from "./statements.ts"
 
-/** The store's identity plus its generation: the state a write can be conditioned on. */
-type Witness = WitnessOut
+/**
+ * The state one snapshot observed, as an opaque proof: a write given it applies only while that
+ * state is current. Only a snapshot mints one, and it is valid only for the database that did.
+ */
+type Witness = WitnessRef
 
 /** Database diagnostics: measurements, never retained rows. */
 interface DbInspection extends DbInspectionOut {
@@ -67,6 +64,8 @@ interface QueryReader<S extends AnySchema> {
 
 interface Snapshot<S extends AnySchema> extends QueryReader<S> {
 	readonly witness: Witness
+	/** The committed generation the snapshot observed. */
+	readonly generation: bigint
 }
 
 /** One compiled plan and its reusable buffers, pinned to the snapshot that prepared it. */
@@ -233,11 +232,13 @@ class SnapshotLive<S extends AnySchema> implements Snapshot<S> {
 	readonly #theory: S
 	readonly #handle: SnapshotRef
 	readonly witness: Witness
+	readonly generation: bigint
 
-	constructor(theory: S, handle: SnapshotRef, witness: Witness) {
+	constructor(theory: S, handle: SnapshotRef, witness: Witness, generation: bigint) {
 		this.#theory = theory
 		this.#handle = handle
 		this.witness = witness
+		this.generation = generation
 	}
 
 	get<K extends KeyStatement<Rel<S>, readonly string[]>>(
@@ -273,7 +274,7 @@ function scopedSnapshot<S extends AnySchema>(
 			call(operation, start, addon.runtimeSnapshotTake),
 			(opened) => (done) => addon.runtimeSnapshotClose(opened.snapshot, done)
 		),
-		(opened): Snapshot<S> => new SnapshotLive(theory, opened.snapshot, Object.freeze(opened.witness))
+		(opened): Snapshot<S> => new SnapshotLive(theory, opened.snapshot, opened.witness, opened.generation)
 	)
 }
 

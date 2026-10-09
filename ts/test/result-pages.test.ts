@@ -251,6 +251,8 @@ test("borrowed native delivery preserves exact values and independent byte owner
 		span: { start: -(1n << 63n), end: (1n << 63n) - 1n },
 		precise: 0.5
 	}))
+	const byId = <T extends { readonly id: Uuid }>(rows: readonly T[]) =>
+		[...rows].sort((left, right) => (left.id < right.id ? -1 : 1))
 	const rt = runtime()
 	try {
 		const delivered = await rt.runPromise(
@@ -266,13 +268,13 @@ test("borrowed native delivery preserves exact values and independent byte owner
 					const result = yield* snapshot.execute(all, {})
 					yield* Scope.close(snapshotScope, Exit.void)
 					const first = yield* result.collect()
-					assert.deepEqual(first, expected)
+					assert.deepEqual(byId(first), expected)
 					first[0]?.raw.fill(255)
 					const again = yield* result.collect()
-					assert.deepEqual(again, expected, "changing an owned blob cannot mutate the result backing")
+					assert.deepEqual(byId(again), expected, "changing an owned blob cannot mutate the result backing")
 					const pages = yield* Stream.runCollect(result.pages())
 					assert.equal(pages.length, 1, "one valid oversized row is not a quota refusal")
-					const rows = pages.flat()
+					const rows = byId(pages.flat())
 					assert.deepEqual(rows, expected)
 					return rows
 				})

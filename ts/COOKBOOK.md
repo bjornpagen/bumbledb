@@ -150,8 +150,7 @@ const applyOnce = Effect.scoped(
 		const outcome: ApplyOutcome = yield* db.apply(changes)
 		switch (outcome._tag) {
 			case "Committed":
-			case "NoChange":
-				return outcome.witness
+				return outcome.generation
 			case "Rejected":
 				// Complete statement diagnostics, typed data — never a throw.
 				return yield* Effect.fail(outcome.violations)
@@ -165,9 +164,9 @@ void applyOnce
 
 For a noncommitting check, `db.judge` runs the same admission procedure and
 aborts its private candidate on the native worker. It briefly takes the
-writer; it does not hold a writer session open in JavaScript. Admitted and
-rejected judgments include the actual base and net proposed fact counts.
-Operational errors stay in the Effect error channel.
+writer; it does not hold a writer session open in JavaScript. A judgment
+carries the generation it judged against, and an admitted one also carries the
+net proposed fact counts. Operational errors stay in the Effect error channel.
 
 ```ts
 const judgeOnce = Effect.scoped(
@@ -183,8 +182,8 @@ void judgeOnce
 ```
 
 Judgment is optional: `apply` always judges for itself. To act on a judgment,
-pass its base as the expected witness and handle `Moved`; do not assume
-another writer could not change the database between these operations.
+judge and apply with the same snapshot's witness and handle `Moved`; do not
+assume another writer could not change the database between these operations.
 
 Change sets also work as inspectable values without a database. Their
 `counts` report distinct requested additions/removals, not the net change
@@ -417,8 +416,8 @@ void [okOrRefused, mintOnce]
 
 ## 10. Witnessed correction: exact expected state
 
-Read under a short scope, keep the copied witness, and pass it to `apply` as
-the expected state. An intervening net change moves the apply instead of
+Read under a short scope, keep the snapshot's witness (an opaque value that
+outlives the snapshot), and pass it to `apply` as the expected state. An intervening net change moves the apply instead of
 silently overwriting.
 
 ```ts
@@ -482,7 +481,7 @@ const Items = schema("Items", { Item }, [key(Item, ["id"])])
 const shortLived = Effect.scoped(
 	Effect.gen(function* () {
 		const db = yield* Db.open(localPath, Items)
-		const generation = yield* Effect.scoped(Effect.map(db.snapshot(), (snapshot) => snapshot.witness.generation))
+		const generation = yield* Effect.scoped(Effect.map(db.snapshot(), (snapshot) => snapshot.generation))
 		return generation
 	})
 )

@@ -272,7 +272,7 @@ test("host admission matches the real native codec; rejected facts do not enter 
 					const draft = yield* ChangeSet.builder(Theory)
 					assert.ok(Result.isFailure(yield* Effect.result(draft.insert(Row, [{ ...good, obsolete: true }] as never))))
 					assert.ok(Result.isFailure(yield* Effect.result(draft.finish())), "an invalid row spends the draft")
-					assert.equal((yield* db.inspect()).generation, snapshot.witness.generation)
+					assert.equal((yield* db.inspect()).generation, snapshot.generation)
 				})
 			)
 		)

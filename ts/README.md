@@ -136,7 +136,7 @@ const program = Effect.scoped(
 		const changes = yield* draft.finish()
 
 		const outcome = yield* db.apply(changes)
-		if (outcome._tag !== "Committed" && outcome._tag !== "NoChange") {
+		if (outcome._tag !== "Committed") {
 			return outcome
 		}
 		const snapshot = yield* db.snapshot()
@@ -184,13 +184,14 @@ and query representations.
 - `Bumble.layer()` owns the shared native runtime with sensible defaults;
   provide it once in the app graph. `Db.create` and `Db.open` are scoped
   Effects over that runtime; `open` never creates and `create` refuses
-  existing authority. `db.apply(changes, { expected })` judges one
-  immutable final-state change: `accepted`, `no-change`,
-  `invariant-rejected` (complete statement diagnostics), or `moved`.
-  `db.judge(changes, { expected })` uses the same admission path but aborts
-  the private candidate. It returns `admitted` or `invariant-rejected` with
-  the actual base witness and net additions/removals, or `moved` without
-  judging. Both use `WriteOptions`; judgment never guarantees a later apply.
+  existing authority. `db.apply(changes, expected?)` judges one immutable
+  final-state change: `Committed` (with the generation, and `changed: false`
+  when the state already held it), `Rejected` (complete statement
+  diagnostics), or `Moved` when `expected`, a snapshot's opaque `witness`, is
+  no longer current. `db.judge(changes, expected?)` uses the same admission
+  path and stores nothing: `Admitted` with net additions and removals,
+  `Rejected`, or `Moved` without judging. A judgment never guarantees a later
+  apply.
 - `ChangeSet.builder(schema)` acquires a scoped database-free draft;
   `insert`/`delete` are lazy bounded ingestion effects, `finish()` seals the
   immutable `ChangeSet`. It exposes `schemaId`, `counts`, and `byteLength`.

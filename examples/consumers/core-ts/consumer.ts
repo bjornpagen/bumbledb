@@ -126,7 +126,7 @@ export const coreProgram = (localPath: string) =>
 			const attemptId = yield* Effect.sync(() => randomUUID())
 			const changes = yield* newAttempt(studentId, attemptId)
 			const outcome = yield* db.apply(changes)
-			if (outcome._tag !== "Committed" && outcome._tag !== "NoChange") {
+			if (outcome._tag !== "Committed") {
 				return { outcome, rows: [] as const }
 			}
 			const snapshot = yield* db.snapshot()

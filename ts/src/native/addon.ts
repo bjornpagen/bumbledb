@@ -18,6 +18,7 @@ type CursorRef = External<Binding.CursorHandle>
 type DraftRef = External<Binding.DraftHandle>
 type ChangesRef = External<Binding.ChangesHandle>
 type ChangesCursorRef = External<Binding.ChangesCursorHandle>
+type WitnessRef = External<Binding.WitnessHandle>
 
 let loaded: Addon | undefined
 
@@ -47,6 +48,7 @@ export type {
 	ResultRef,
 	RuntimeRef,
 	SchemaRef,
-	SnapshotRef
+	SnapshotRef,
+	WitnessRef
 }
 export { addon }

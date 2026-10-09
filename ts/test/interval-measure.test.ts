@@ -41,7 +41,7 @@ for (const element of [u64, i64]) {
 							const before = yield* db.snapshot()
 							const refused = yield* db.apply(yield* draft.finish())
 							assert.equal(refused._tag, "Rejected", `false measure ${cents} refuses`)
-							assert.deepEqual((yield* db.snapshot()).witness, before.witness)
+							assert.equal((yield* db.snapshot()).generation, before.generation)
 						}
 						const draft = yield* ChangeSet.builder(Theory)
 						yield* draft.insert(Slice, [{ id: 1n, span, cents: 10n }])
