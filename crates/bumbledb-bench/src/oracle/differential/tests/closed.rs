@@ -142,7 +142,8 @@ fn the_closed_write_classes_agree_with_the_engine() {
         )],
     }));
 
-    for _ in 0..crate::fixture::sweep(25) {
+    let sweep = crate::fixture::sweep(25);
+    for _ in 0..sweep {
         let query = random_query(&mut rng, CFG);
         for draw in params_for(&query, &mut rng, CFG) {
             let mut params: Vec<ParamValue> =
@@ -169,7 +170,7 @@ fn the_closed_write_classes_agree_with_the_engine() {
         "every judgment case plus the stranding delete aborts"
     );
     assert_eq!(summary.commits, 4, "seed, replacement, drop, control");
-    assert_eq!(summary.queries, 100, "25 queries x 4 draws");
+    assert_eq!(summary.queries, sweep * 4, "four draws per query");
 
     for case in &cases {
         assert_eq!(
