@@ -217,13 +217,10 @@ impl NaiveDb {
             else {
                 continue;
             };
-            for fact in &state[relation.0 as usize] {
-                if self.functionality_violated(state, *relation, projection, fact) {
-                    found.push(Violation::Functionality {
-                        statement: statement_id(sid),
-                    });
-                    break;
-                }
+            if self.functionality_violated(&state[relation.0 as usize], *relation, projection) {
+                found.push(Violation::Functionality {
+                    statement: statement_id(sid),
+                });
             }
         }
         for (sid, statement) in self.statements.iter().enumerate() {
@@ -510,37 +507,41 @@ impl NaiveDb {
         u64::try_from(rank).expect("intern rank fits u64")
     }
 
+    /// Two distinct facts agree on the projection's scalar fields and, when
+    /// the projection holds an interval field, overlap on it.
     fn functionality_violated(
         &self,
-        state: &[BTreeSet<Tuple>],
+        facts: &BTreeSet<Tuple>,
         relation: RelationId,
         projection: &[bumbledb::FieldId],
-        fact: &Tuple,
     ) -> bool {
         let interval = projection
             .iter()
             .position(|field| self.is_interval(relation, *field));
-        for other in &state[relation.0 as usize] {
-            if other == fact {
-                continue;
-            }
-            let scalars_agree = projection.iter().enumerate().all(|(index, field)| {
-                interval == Some(index) || other.0[field.0 as usize] == fact.0[field.0 as usize]
-            });
-            if !scalars_agree {
-                continue;
-            }
-            match interval {
-                None => return true,
-                Some(index) => {
-                    let field = projection[index].0 as usize;
-                    if overlaps(endpoints(&fact.0[field]), endpoints(&other.0[field])) {
-                        return true;
-                    }
-                }
-            }
+        let mut groups: std::collections::BTreeMap<Tuple, Vec<&Tuple>> =
+            std::collections::BTreeMap::new();
+        for fact in facts {
+            let key = Tuple(
+                projection
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| interval != Some(*index))
+                    .map(|(_, field)| fact.0[field.0 as usize].clone())
+                    .collect(),
+            );
+            groups.entry(key).or_default().push(fact);
         }
-        false
+        groups.values().any(|group| match interval {
+            None => group.len() > 1,
+            Some(index) => {
+                let field = projection[index].0 as usize;
+                group.iter().enumerate().any(|(i, fact)| {
+                    group[i + 1..].iter().any(|other| {
+                        overlaps(endpoints(&fact.0[field]), endpoints(&other.0[field]))
+                    })
+                })
+            }
+        })
     }
 
     /// engine's compiled member set — the model must not share the
