@@ -70,10 +70,10 @@ jobs:
           core="family/bjornpagen-bumbledb-${GITHUB_REF_NAME#v}.tgz"
           for tarball in family/*.tgz; do
             if [ "$tarball" != "$core" ]; then
-              npm publish "$tarball" --access public
+              npm publish "$tarball"
             fi
           done
-          npm publish "$core" --access public
+          npm publish "$core"
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
