@@ -3,7 +3,7 @@ use std::path::Path;
 use bumbledb::{Db, RelationId, Value};
 
 use crate::harness::{self, Measurement, Protocol};
-use crate::worlds::corpus_gen::{GenConfig, Rng};
+use crate::worlds::corpus_gen::Rng;
 use crate::worlds::writebench::write_protocol;
 
 #[cfg(test)]
@@ -207,7 +207,6 @@ pub fn commit_window_exclusion(
 }
 
 pub fn write_families(
-    _cfg: GenConfig,
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
 ) -> Result<Vec<crate::harness::report::WriteFamilyReport>, String> {

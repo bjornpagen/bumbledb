@@ -78,13 +78,11 @@ pub(super) fn write_families(
     // Scratch worlds, engine-only rows: after the ledger commit rows (same
     // fsync-bound class), before insert_stream (which stays last).
     out.extend(crate::worlds::windowed::write_families(
-        cfg,
         &scratch.join("windowed"),
         selected,
     )?);
 
     out.extend(crate::worlds::capacity::write_families(
-        cfg,
         &scratch.join("capacity"),
         selected,
     )?);

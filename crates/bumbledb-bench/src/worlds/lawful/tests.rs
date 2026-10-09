@@ -106,7 +106,7 @@ fn the_enforcement_map_is_total_over_the_materialized_statements() {
 fn the_lawful_twins_load_value_identical_at_tiny() {
     let sizes = LawSizes::of(Scale::Tiny);
     let dir = crate::fixture::TempDir::new("twin");
-    let (db, conn) = super::load::load_stores(&dir, 7, sizes).expect("load");
+    let (db, conn) = super::load::load_stores(&dir, sizes).expect("load");
     for (rel, expected) in [
         (ids::TASK, sizes.tasks),
         (ids::ATTEMPT, sizes.tasks * sizes.attempts_per_task),
@@ -243,7 +243,7 @@ fn assert_twins_identical(db: &Db<LawfulWorld>, conn: &rusqlite::Connection) {
 fn every_lawful_commit_family_leaves_the_twins_value_identical() {
     let sizes = LawSizes::of(Scale::Tiny);
     let dir = crate::fixture::TempDir::new("legal-families");
-    let (db, conn) = super::load::load_stores(&dir, 7, sizes).expect("load");
+    let (db, conn) = super::load::load_stores(&dir, sizes).expect("load");
     let mut ours_cursor = LawCursor::at_base(sizes);
     let mut theirs_cursor = LawCursor::at_base(sizes);
     let stream = lanes::attempt_ops(sizes, COUNT * 2);
@@ -280,7 +280,7 @@ fn every_lawful_commit_family_leaves_the_twins_value_identical() {
 fn every_rejection_lane_refuses_on_both_engines_and_commits_nothing() {
     let sizes = LawSizes::of(Scale::Tiny);
     let dir = crate::fixture::TempDir::new("rejections");
-    let (db, conn) = super::load::load_stores(&dir, 7, sizes).expect("load");
+    let (db, conn) = super::load::load_stores(&dir, sizes).expect("load");
     let mut ours_cursor = LawCursor::at_base(sizes);
     let mut theirs_cursor = LawCursor::at_base(sizes);
     lanes::fill_window_target_engine(&db, sizes, &mut ours_cursor).expect("window setup engine");

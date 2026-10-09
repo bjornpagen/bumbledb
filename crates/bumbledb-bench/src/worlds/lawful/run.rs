@@ -53,7 +53,7 @@ pub fn run_with(
     }
     let selected =
         move |name: &str| only.is_none_or(|names| names.iter().any(|n| n.as_str() == name));
-    let rows = run_twins(dir, seed, sizes, samples, &selected)?;
+    let rows = run_twins(dir, sizes, samples, &selected)?;
     Ok((render::markdown(seed, &rows), render::json(seed, &rows)))
 }
 
@@ -72,13 +72,12 @@ fn ratio(ours: u64, theirs: u64) -> f64 {
 
 fn run_twins(
     dir: &Path,
-    seed: u64,
     sizes: LawSizes,
     samples: Option<u32>,
     selected: &dyn Fn(&str) -> bool,
 ) -> Result<Vec<LawRow>, String> {
     eprintln!("bench: lawful — loading the twin pair");
-    let (db, conn) = load::load_stores(&dir.join("lawful"), seed, sizes)?;
+    let (db, conn) = load::load_stores(&dir.join("lawful"), sizes)?;
     let mut ours_cursor = lanes::LawCursor::at_base(sizes);
     let mut theirs_cursor = lanes::LawCursor::at_base(sizes);
 

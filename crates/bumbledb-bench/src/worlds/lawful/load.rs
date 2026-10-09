@@ -11,13 +11,9 @@ use super::{LawSizes, LawfulWorld, corpus, enforcement, ids, schema};
 /// pragma set plus `PRAGMA foreign_keys=ON`, read back as 1 because the FK
 /// rows of the enforcement map are dead letters without it, then the
 /// map-derived DDL, the same row streams, `ANALYZE`, a truncating WAL
-/// checkpoint, and the parity readback.
-/// misconfigured twin refuses here, before any lane runs.
-pub fn load_stores(
-    dir: &Path,
-    _seed: u64,
-    sizes: LawSizes,
-) -> Result<(Db<LawfulWorld>, Connection), String> {
+/// checkpoint, and the parity readback. A misconfigured twin refuses here,
+/// before any lane runs.
+pub fn load_stores(dir: &Path, sizes: LawSizes) -> Result<(Db<LawfulWorld>, Connection), String> {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("lawful scratch: {e}"))?;
     let db = crate::harness::create_db(&dir.join("db.bdb"), LawfulWorld)?;

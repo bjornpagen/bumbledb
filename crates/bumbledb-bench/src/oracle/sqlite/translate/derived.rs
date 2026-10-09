@@ -254,7 +254,7 @@ pub fn refuse_interval_columns(query: &Query, schema: &Schema) -> Result<(), Str
         } => {
             let flags = refuse_interior_intervals(interiors, schema)?;
             let base: Vec<Rule> = rec.base.iter().map(RecRule::to_rule).collect();
-            let row = head_intervals(&rec.head(), &base, schema, &flags);
+            let row = head_intervals(&base, schema, &flags);
             if row.iter().any(|b| *b) {
                 return Err(
                     "interval-typed derived column (the recursive lane is scalar-shaped)".into(),
@@ -271,12 +271,7 @@ fn refuse_interior_intervals(
 ) -> Result<Vec<Vec<bool>>, String> {
     let mut flags: Vec<Vec<bool>> = Vec::new();
     for interior in interiors {
-        flags.push(head_intervals(
-            &interior.head(),
-            &interior.rules,
-            schema,
-            &flags,
-        ));
+        flags.push(head_intervals(&interior.rules, schema, &flags));
         if flags.last().is_some_and(|row| row.iter().any(|b| *b)) {
             return Err(
                 "interval-typed derived column (the recursive lane is scalar-shaped)".into(),
@@ -286,12 +281,7 @@ fn refuse_interior_intervals(
     Ok(flags)
 }
 
-fn head_intervals(
-    _head: &[bumbledb::HeadTerm],
-    rules: &[Rule],
-    schema: &Schema,
-    prior: &[Vec<bool>],
-) -> Vec<bool> {
+fn head_intervals(rules: &[Rule], schema: &Schema, prior: &[Vec<bool>]) -> Vec<bool> {
     let Some(rule) = rules.first() else {
         return Vec::new();
     };
