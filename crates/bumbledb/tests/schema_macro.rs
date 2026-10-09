@@ -6,7 +6,58 @@ use bumbledb::schema::{
 };
 use bumbledb::{Db, Fact, Interval, Value};
 
-mod common;
+/// Store helpers; every `TempDir` is unique to its process and call.
+mod common {
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use bumbledb::{Admission, Result, Violations, WorkContext};
+
+    pub fn work() -> WorkContext {
+        WorkContext::new()
+    }
+
+    #[track_caller]
+    pub fn expect_rejected<T: std::fmt::Debug>(result: Result<Admission<T>>) -> Violations {
+        match result {
+            Ok(Admission::Rejected(violations)) => violations,
+            Ok(Admission::Accepted(_)) => panic!("expected a rejection, the write was admitted"),
+            Err(error) => panic!("expected a rejection, the engine said {error:?}"),
+        }
+    }
+
+    pub struct TempDir {
+        root: PathBuf,
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        pub fn new(tag: &str) -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let id = NEXT.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "bumbledb-schema-macro-{tag}-{}-{id}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("create the test directory");
+            Self {
+                path: root.join("store"),
+                root,
+            }
+        }
+
+        pub fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+}
 
 fn declared() -> bumbledb::Schema {
     use bumbledb::Theory as _;
@@ -45,7 +96,7 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     }
 }
 
-fn fresh_field(name: &str) -> FieldDescriptor {
+fn id_field(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
@@ -88,13 +139,13 @@ fn hand_built() -> bumbledb::schema::Schema {
             RelationDescriptor {
                 extension: None,
                 name: "Holder".into(),
-                fields: vec![fresh_field("id"), field("name", ValueType::String)],
+                fields: vec![id_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
                 extension: None,
                 name: "Account".into(),
                 fields: vec![
-                    fresh_field("id"),
+                    id_field("id"),
                     field("holder", ValueType::U64),
                     field("kind", ValueType::U64),
                     field(
@@ -189,8 +240,8 @@ fn statements_land_in_source_order_with_equality_lowered() {
         })
         .collect();
 
-    // The closed relation's auto-handle key first, then the declared
-    // statements in source order (there are no fresh-implied keys).
+    // The closed relation's handle key first, then the declared
+    // statements in source order.
     assert_eq!(descriptors.len(), 6);
     assert_eq!(
         descriptors[0],
@@ -350,9 +401,7 @@ fn typed_round_trip_through_fact_bytes() {
         let decoded: Vec<Account> = snap.scan_facts()?.collect::<Result<_, _>>()?;
         assert_eq!(decoded, vec![original]);
 
-        // A fact never written is absent through the same typed encode
-        // path (the Probe/intern-lookup surface is deleted with the
-        // dictionary: absence is a set answer, not a codec verdict).
+        // A fact never written is absent through the same typed encode.
         let ghost = Holder {
             id: HolderId(9),
             name: "nobody",
@@ -786,7 +835,7 @@ mod closed_relations {
 }
 
 mod closed_column_accessors {
-    //! Declared columns project too (ruled 2026-07-23, R14 —
+    //! Declared columns of a closed relation project as const accessors.
     use bumbledb::Theory as _;
     use bumbledb::schema::ValidateDescriptor as _;
 
@@ -1189,7 +1238,7 @@ mod extension_forms {
         assert_eq!(exclusion.hi.to_bound(), Some(Bound::Lit(0)));
     }
 
-    /// absence (ruled 2026-07-24, C4).
+    /// The capacity descriptor's target is the left side.
     #[test]
     fn the_capacity_descriptor_is_target_left() {
         let descriptor = Tracker.descriptor();
@@ -1348,7 +1397,7 @@ mod duration_named_field {
 }
 
 mod radix_literals {
-    //! Integer literals are rustc's (ruled 2026-07-23, R8): the
+    //! Integer literals take rustc's radix prefixes and `_` separators.
     use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{Bound, FixedIntervalElement, LiteralSet, ValueType};
     use bumbledb::{Theory as _, Value};
@@ -1739,9 +1788,9 @@ mod element_domain_typing {
 
     #[test]
     fn the_playlist_recipe_validates_and_a_tiling_commits() {
-        let dir = crate::common::TempDir::new("macro-q1-tiling");
+        let dir = crate::common::TempDir::new("macro-playlist-tiling");
         let db = Db::create(dir.path(), Playlists, crate::common::work())
-            .expect("Q1: the recipe validates")
+            .expect("the recipe validates")
             .expect("accepted");
         let id = tile(&db);
         db.read(crate::common::work(), |snap| {
@@ -1755,7 +1804,7 @@ mod element_domain_typing {
 
     #[test]
     fn a_gap_delta_aborts() {
-        let dir = crate::common::TempDir::new("macro-q1-gap");
+        let dir = crate::common::TempDir::new("macro-playlist-gap");
         let db = Db::create(dir.path(), Playlists, crate::common::work())
             .expect("create")
             .expect("accepted");
@@ -1791,7 +1840,7 @@ mod element_domain_typing {
 
     #[test]
     fn an_overlap_delta_aborts() {
-        let dir = crate::common::TempDir::new("macro-q1-overlap");
+        let dir = crate::common::TempDir::new("macro-playlist-overlap");
         let db = Db::create(dir.path(), Playlists, crate::common::work())
             .expect("create")
             .expect("accepted");
@@ -1820,7 +1869,7 @@ mod element_domain_typing {
 
     #[test]
     fn a_slot_past_the_span_aborts() {
-        let dir = crate::common::TempDir::new("macro-q1-past-end");
+        let dir = crate::common::TempDir::new("macro-playlist-past-end");
         let db = Db::create(dir.path(), Playlists, crate::common::work())
             .expect("create")
             .expect("accepted");
@@ -1849,7 +1898,7 @@ mod element_domain_typing {
 
     #[test]
     fn a_mixed_width_allen_query_classifies_with_hand_answers() {
-        let dir = crate::common::TempDir::new("macro-q1-allen");
+        let dir = crate::common::TempDir::new("macro-playlist-allen");
         let db = Db::create(dir.path(), Playlists, crate::common::work())
             .expect("create")
             .expect("accepted");
@@ -1886,7 +1935,7 @@ mod element_domain_typing {
         let answers = |mask: AllenMask| -> Vec<u64> {
             let mut prepared = db
                 .prepare(&query(mask), crate::common::work())
-                .expect("Q1: mixed widths classify");
+                .expect("mixed widths classify");
             db.read(crate::common::work(), |snap| {
                 let out = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
                 let mut tracks: Vec<u64> = (0..out.len())

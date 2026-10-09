@@ -355,7 +355,7 @@ fn wrong_value_kinds_stay_typed_bind_errors() {
             .expect_err("a u64 in an uuid slot refuses");
         assert!(
             matches!(error, bumbledb::Error::ParamTypeMismatch { .. }),
-            "the C05 typed bind error surfaces: {error:?}"
+            "the typed bind error surfaces: {error:?}"
         );
         Ok(())
     })
