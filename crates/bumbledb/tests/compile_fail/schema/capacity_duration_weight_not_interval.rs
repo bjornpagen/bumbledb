@@ -1,5 +1,5 @@
 //! `[Duration(field)]` weighs by an interval field.
-//@ error: `Duration(watts)` reads an interval, and `Device.watts` is not one
+//@ error: `[Duration(field)]` reads a discrete interval, and `Device.watts` is not one
 //@ line: 12
 
 bumbledb::schema! {

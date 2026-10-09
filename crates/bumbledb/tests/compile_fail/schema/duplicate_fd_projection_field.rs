@@ -1,5 +1,5 @@
 //! A determinant is a set of fields.
-//@ error: `kind` appears twice in the determinant of `Task(kind, kind) -> Task`
+//@ error: `Task.kind` is projected twice
 //@ line: 13
 
 bumbledb::schema! {

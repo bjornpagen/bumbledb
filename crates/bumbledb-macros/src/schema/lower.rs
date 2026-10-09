@@ -15,19 +15,23 @@ use proc_macro2::{Ident, Span};
 use super::{Bound, FieldTy, Literal, Literals, Relation, Schema, Side, Statement, Weight, Window};
 use crate::lex::{Error, Int, LitKind, Result, fail};
 
-pub(super) fn descriptor(schema: &Schema) -> Result<SchemaDescriptor> {
+/// The descriptor, with the spans that map the resolver's and the
+/// checker's ids and names back to tokens.
+pub(super) fn descriptor(schema: &Schema) -> Result<(SchemaDescriptor, Spans)> {
     let mut spans = Spans::default();
     let spec = SchemaSpec {
         relations: lower_relations(schema, &mut spans)?,
         statements: lower_statements(schema, &mut spans)?,
     };
-    spec.descriptor()
-        .map_err(|error| issue_errors(error.issues(), &spans))
+    let descriptor = spec
+        .descriptor()
+        .map_err(|error| issue_errors(error.issues(), &spans))?;
+    Ok((descriptor, spans))
 }
 
 /// Source spans keyed the way the resolver's issues address names.
 #[derive(Default)]
-struct Spans {
+pub(super) struct Spans {
     relation_names: BTreeMap<usize, Span>,
     relations: BTreeMap<(usize, String), Vec<Span>>,
     fields: BTreeMap<(usize, String, String), Vec<Span>>,
@@ -51,6 +55,40 @@ impl Spans {
             .entry((statement, relation.to_string(), field.to_string()))
             .or_default()
             .push(field.span());
+    }
+
+    pub(super) fn fields_of(&self, statement: usize, relation: &str, field: &str) -> Vec<Span> {
+        self.fields
+            .get(&(statement, relation.to_owned(), field.to_owned()))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn relations_of(&self, statement: usize, relation: &str) -> Vec<Span> {
+        self.relations
+            .get(&(statement, relation.to_owned()))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Every relation token of one statement.
+    pub(super) fn statement_relations(&self, statement: usize) -> Vec<Span> {
+        self.relations
+            .range((statement, String::new())..)
+            .take_while(|((at, _), _)| *at == statement)
+            .flat_map(|(_, spans)| spans.iter().copied())
+            .collect()
+    }
+
+    pub(super) fn set_of(&self, statement: usize, field: &str, len: usize) -> Vec<Span> {
+        self.sets
+            .get(&(statement, field.to_owned(), len))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn window_of(&self, statement: usize) -> Option<Span> {
+        self.windows.get(&statement).copied()
     }
 }
 
@@ -158,8 +196,6 @@ fn lower_statements(schema: &Schema, spans: &mut Spans) -> Result<Vec<StatementS
                 source,
             } => {
                 spans.windows.insert(index, *window_span);
-                check_weight(schema, &source.relation, weight)?;
-                check_bounds(schema, &target.relation, weight, window)?;
                 let weight = match weight {
                     Weight::Unit => WeightSpec::Unit,
                     Weight::Field(field) => {
@@ -202,82 +238,6 @@ fn lower_statements(schema: &Schema, spans: &mut Spans) -> Result<Vec<StatementS
         });
     }
     Ok(statements)
-}
-
-/// `[field]` reads a u64 source field (a signed weight could lower a sum on
-/// insert); `[Duration(field)]` reads an interval. Unknown names are left
-/// to the resolver's `UnknownField`.
-fn check_weight(schema: &Schema, relation: &Ident, weight: &Weight) -> Result<()> {
-    let (field, interval) = match weight {
-        Weight::Unit => return Ok(()),
-        Weight::Field(field) => (field, false),
-        Weight::Duration(field) => (field, true),
-    };
-    match (schema.field_ty(relation, field), interval) {
-        (None | Some(FieldTy::U64), false)
-        | (None | Some(FieldTy::Interval(_) | FieldTy::FixedInterval(..)), true) => Ok(()),
-        (Some(FieldTy::I64), false) => fail(
-            field.span(),
-            format!(
-                "schema!: weight field `{relation}.{field}` is signed — a negative weight would \
-                 let an insert lower a sum; weigh by a u64 field"
-            ),
-        ),
-        (Some(_), false) => fail(
-            field.span(),
-            format!("schema!: weight field `{relation}.{field}` is not u64"),
-        ),
-        (Some(_), true) => fail(
-            field.span(),
-            format!(
-                "schema!: `Duration({field})` reads an interval, and `{relation}.{field}` is not one"
-            ),
-        ),
-    }
-}
-
-/// A dependent bound reads a u64 or interval field of the target's row, and
-/// a count window cannot be bounded by a duration.
-fn check_bounds(schema: &Schema, relation: &Ident, weight: &Weight, window: &Window) -> Result<()> {
-    for bound in window.bounds() {
-        match bound {
-            Bound::Lit(_) => {}
-            Bound::Field(field) => match schema.field_ty(relation, field) {
-                None | Some(FieldTy::U64) => {}
-                Some(_) => {
-                    return fail(
-                        field.span(),
-                        format!("schema!: bound field `{relation}.{field}` is not u64"),
-                    );
-                }
-            },
-            Bound::Duration(field) => {
-                if !matches!(
-                    schema.field_ty(relation, field),
-                    None | Some(FieldTy::Interval(_) | FieldTy::FixedInterval(..))
-                ) {
-                    return fail(
-                        field.span(),
-                        format!(
-                            "schema!: `Duration({field})` reads an interval, and \
-                             `{relation}.{field}` is not one"
-                        ),
-                    );
-                }
-                if matches!(weight, Weight::Unit) {
-                    return fail(
-                        field.span(),
-                        format!(
-                            "schema!: a count window bounded by `Duration({field})` mixes \
-                             dimensions — weigh the source with `[Duration(field)]`, or bound \
-                             by a u64 field or literal"
-                        ),
-                    );
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 fn lower_side(

@@ -1,5 +1,5 @@
 //! `Duration(field)` bounds by an interval field.
-//@ error: `Duration(supply)` reads an interval, and `Pool.supply` is not one
+//@ error: `Duration(field)` bounds by a discrete interval, and `Pool.supply` is not one
 //@ line: 12
 
 bumbledb::schema! {

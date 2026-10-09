@@ -1524,7 +1524,11 @@ fn rejects_a_unit_window_against_a_duration_bound() {
     *hi = Some(Bound::TargetDuration(FieldId(1)));
     assert_eq!(
         decl.validate().unwrap_err(),
-        StatementErrorKind::CapacityDimensionMixing { field: FieldId(1) }.at(StatementId(1))
+        StatementErrorKind::CapacityDimensionMixing {
+            relation: RelationId(0),
+            field: FieldId(1)
+        }
+        .at(StatementId(1))
     );
 }
 

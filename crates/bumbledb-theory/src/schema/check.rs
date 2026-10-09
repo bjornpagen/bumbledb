@@ -1224,7 +1224,11 @@ fn check_capacity(
                 .at(id));
             }
             if weight == SealedWeight::Unit {
-                return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
+                return Err(StatementErrorKind::CapacityDimensionMixing {
+                    relation: target.relation,
+                    field,
+                }
+                .at(id));
             }
             SealedBound::Duration { field, tail }
         }

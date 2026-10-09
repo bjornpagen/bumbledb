@@ -1,6 +1,7 @@
 //! `schema!`: the declaration grammar's parse. Names keep their source
 //! idents, so every later error and every emitted item points at the token
 //! the user wrote.
+mod check;
 mod emit;
 mod lower;
 
@@ -13,7 +14,8 @@ use crate::lex::{Cursor, Lit, Result};
 /// generated code treat it as the macro's, not as code the user wrote.
 pub(crate) fn expand(input: TokenStream) -> Result<TokenStream> {
     let schema = parse(input)?;
-    let descriptor = lower::descriptor(&schema)?;
+    let (descriptor, spans) = lower::descriptor(&schema)?;
+    check::check(&schema, &descriptor, &spans)?;
     Ok(call_site(emit::schema(&schema, &descriptor)?))
 }
 
@@ -110,16 +112,6 @@ enum Window {
     Floor(Bound),
 }
 
-impl Window {
-    fn bounds(&self) -> impl Iterator<Item = &Bound> {
-        let (lo, hi) = match self {
-            Self::Exact(bound) | Self::Floor(bound) => (bound, None),
-            Self::Range(lo, hi) => (lo, Some(hi)),
-        };
-        std::iter::once(lo).chain(hi)
-    }
-}
-
 enum Statement {
     Key {
         relation: Ident,
@@ -214,9 +206,6 @@ fn parse_fields(c: &mut Cursor) -> Result<Vec<Field>> {
             );
         }
         c.next();
-        if fields.iter().any(|field| field.name == name) {
-            return c.fail(name.span(), format!("the field `{name}` is declared twice"));
-        }
         fields.push(parse_field(name, c)?);
         c.list_separator()?;
     }
@@ -286,12 +275,6 @@ fn parse_interval(name: &Ident, c: &mut Cursor) -> Result<FieldTy> {
     }
     let (width, span) = count(c, "the interval width")?;
     c.punct('>', "`>`")?;
-    if width == 0 {
-        return c.fail(
-            span,
-            format!("field `{name}`: an interval width is at least 1"),
-        );
-    }
     match element {
         IntervalElement::U64 => Ok(FieldTy::FixedInterval(FixedIntervalElement::U64, width)),
         IntervalElement::I64 => Ok(FieldTy::FixedInterval(FixedIntervalElement::I64, width)),
@@ -349,12 +332,6 @@ fn parse_closed_relation(c: &mut Cursor) -> Result<Relation> {
     c.punct('=', "`=` before the extension")?;
     let extension = c.group(Delimiter::Brace, "the extension `{ … }`")?;
     let rows = parse_extension(&name, &fields, &mut c.of(&extension))?;
-    if rows.is_empty() {
-        return c.fail(
-            extension.span(),
-            format!("closed relation `{name}` declares an empty extension"),
-        );
-    }
     c.punct(';', "`;` after the extension")?;
     Ok(Relation {
         name,
@@ -367,12 +344,6 @@ fn parse_extension(name: &Ident, fields: &[Field], c: &mut Cursor) -> Result<Vec
     let mut rows: Vec<ClosedRow> = Vec::new();
     while !c.is_empty() {
         let handle = c.ident("a handle")?;
-        if rows.iter().any(|row| row.handle == handle) {
-            return c.fail(
-                handle.span(),
-                format!("closed relation `{name}` declares the handle `{handle}` twice"),
-            );
-        }
         let mut entries: Vec<(Ident, Literal)> = Vec::new();
         if c.peek_group(Delimiter::Brace) {
             let block = c.group(Delimiter::Brace, "a row's column block")?;
@@ -532,17 +503,6 @@ fn parse_key(c: &mut Cursor, left: Side, right: &Ident) -> Result<Statement> {
         .collect::<Vec<_>>()
         .join(", ");
     let rel = &left.relation;
-    for (index, field) in left.projection.iter().enumerate() {
-        if left.projection[..index].contains(field) {
-            return c.fail(
-                field.span(),
-                format!(
-                    "`{field}` appears twice in the determinant of `{rel}({fields}) -> {rel}` — \
-                     a determinant is a set of fields"
-                ),
-            );
-        }
-    }
     if *right != *rel {
         return c.fail(
             right.span(),

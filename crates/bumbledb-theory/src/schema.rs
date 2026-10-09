@@ -10,7 +10,7 @@ pub use check::{
     CapacityResolution, Checked, CheckedRelation, CheckedRow, CheckedStatement, MemberSet,
     Resolution, SealedBound, SealedWeight, check, mirror_links,
 };
-pub use error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
+pub use error::{Mismatch, Named, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
 
 use crate::value::Value;
 

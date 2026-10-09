@@ -1,5 +1,5 @@
 //! A signed weight could lower a sum on insert.
-//@ error: weight field `Device.drift` is signed
+//@ error: the weight field `Device.drift` is not u64; a signed weight
 //@ line: 12
 
 bumbledb::schema! {
