@@ -37,7 +37,6 @@ pub struct BenchArgs {
     pub samples: Option<u32>,
     /// Fixed operations per timed read sample; None retains automatic batching.
     pub read_batch: Option<std::num::NonZeroU32>,
-    pub alloc: bool,
     pub out: Option<PathBuf>,
 
     pub i_am_lying: bool,
@@ -120,8 +119,6 @@ pub struct ScenarioArgs {
     pub only: Option<Vec<String>>,
 
     pub samples: Option<u32>,
-
-    pub alloc: bool,
     pub out: Option<PathBuf>,
 }
 
@@ -132,24 +129,13 @@ impl Default for ScenarioArgs {
             dir: PathBuf::from("bench-data"),
             only: None,
             samples: None,
-            alloc: false,
             out: None,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StorageProfile {
-    Corpus,
-    HomeCosts,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageArgs {
-    pub profile: StorageProfile,
-    /// Opt-in home-cost experiment only; ordinary corpus scales are unchanged.
-    pub rows: u64,
-    pub samples: u32,
     pub scales: Vec<Scale>,
     pub seed: u64,
     pub dir: PathBuf,
@@ -160,9 +146,6 @@ pub struct StorageArgs {
 impl Default for StorageArgs {
     fn default() -> Self {
         Self {
-            profile: StorageProfile::Corpus,
-            rows: 16_384,
-            samples: 64,
             scales: vec![Scale::S],
             seed: 1,
             dir: PathBuf::from("bench-data"),

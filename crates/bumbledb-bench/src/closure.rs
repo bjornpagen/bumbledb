@@ -15,7 +15,7 @@ use bumbledb::{
 
 use crate::corpus_gen::{GenConfig, Scale};
 use crate::families::{Draw, Kind, param_args, scalar_draw};
-use crate::harness::{self, Modes, Protocol, Rotation};
+use crate::harness::{self, Protocol, Rotation};
 use crate::translate::{ParamSlot, Translated};
 use crate::{compare, report, sqlite_run, sqlmap};
 
@@ -319,7 +319,6 @@ pub fn bench_families(
     selected: &dyn Fn(&str) -> bool,
     proto: Protocol,
     read_batch: Option<std::num::NonZeroU32>,
-    modes: Modes,
 ) -> Result<Vec<report::ReadFamilyReport>, String> {
     if !all().iter().any(|family| selected(family.name)) {
         return Ok(Vec::new());
@@ -355,8 +354,7 @@ pub fn bench_families(
             Ok(buffer.len() as u64)
         };
         let initial_batch = read_batch.map_or(1, std::num::NonZeroU32::get);
-        let ours =
-            harness::measure_batched(proto, modes, initial_batch, || run_ours(&mut prepared))?;
+        let ours = harness::measure_batched(proto, initial_batch, || run_ours(&mut prepared))?;
         let batch = if read_batch.is_none() && ours.stats.p50 < harness::QUANTUM_FLOOR_NS {
             harness::MAX_READ_BATCH
         } else {
@@ -368,7 +366,7 @@ pub fn bench_families(
                 family.name,
                 harness::QUANTUM_FLOOR_NS
             );
-            harness::measure_batched(proto, modes, batch, || run_ours(&mut prepared))?
+            harness::measure_batched(proto, batch, || run_ours(&mut prepared))?
         } else {
             ours
         };
@@ -380,14 +378,13 @@ pub fn bench_families(
         )?;
         let mut cursor = 0usize;
         let sets = draws;
-        let theirs = harness::measure_batched(proto, Modes::default(), batch, || {
+        let theirs = harness::measure_batched(proto, batch, || {
             let index = cursor;
             cursor = (cursor + 1) % sets.len();
             sqlite_run::sample_args(&mut mirror, &sets[index])
         })?;
 
         let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
-        let alloc_report = ours.alloc.map(report::AllocReport::from);
         out.push(report::ReadFamilyReport {
             name: family.name.to_owned(),
             batch,
@@ -396,7 +393,6 @@ pub fn bench_families(
             ours: ours.stats,
             theirs: theirs.stats,
             ratio_p50,
-            alloc: alloc_report,
         });
     }
     Ok(out)

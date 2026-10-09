@@ -3,13 +3,10 @@ use std::cell::Cell;
 use bumbledb::schema::{SchemaDescriptor, StatementView, ValueType};
 use bumbledb::{Answers, RelationId, StatementId, Value};
 
-use super::{
-    LaneOutcome, LaneReport, QueryModes, QueryReport, Scenario, ScenarioQuery, Stores, Surface,
-    Twin,
-};
+use super::{LaneOutcome, LaneReport, QueryReport, Scenario, ScenarioQuery, Stores, Surface, Twin};
 use crate::compare;
 use crate::families::bind_values;
-use crate::harness::{self, Modes, Protocol, Rotation};
+use crate::harness::{self, Protocol, Rotation};
 use crate::sqlite_run::{CapOutcome, PreparedFamily, sample_capped};
 use crate::translate::{Translated, translate};
 
@@ -29,7 +26,7 @@ enum Engine {
 }
 
 impl Engine {
-    /// The same operation in timing, allocation and native-sampling windows.
+    /// The same operation in timing and native-sampling windows.
     fn sample(
         &mut self,
         stores: &Stores,
@@ -217,15 +214,13 @@ pub(super) fn gate(
 /// every `SQLite` lane — uncapped lanes exactly as before; capped lanes
 /// pre-flight one untimed sample per param set and report
 /// [`LaneOutcome::ExceededCap`] the moment any sample trips (no censored
-/// percentiles can exist). The optional allocation pass ([`QueryModes`])
-/// run after timing, each a separate scoped window.
+/// percentiles can exist).
 pub(super) fn run_query(
     stores: &Stores,
     scenario: &Scenario,
     sq: &ScenarioQuery,
     seed: u64,
     proto: Protocol,
-    modes: &QueryModes,
 ) -> Result<QueryReport, String> {
     let Gated {
         mut engine,
@@ -240,18 +235,6 @@ pub(super) fn run_query(
     let ours = harness::measure(proto, || {
         engine.sample(stores, rotation.next_set(), &mut buffer)
     })?;
-
-    let alloc = if modes.alloc {
-        let mut rotation = Rotation::new(sets.clone());
-        let alloc_modes = Modes { alloc_window: true };
-        let mut buffer = Answers::new();
-        let measured = harness::measure_batched(proto, alloc_modes, 1, || {
-            engine.sample(stores, rotation.next_set(), &mut buffer)
-        })?;
-        measured.alloc.map(crate::report::AllocReport::from)
-    } else {
-        None
-    };
 
     let ratio = |theirs_p50: u64| ours.stats.p50 as f64 / theirs_p50.max(1) as f64;
 
@@ -317,7 +300,6 @@ pub(super) fn run_query(
         answers: ours.work / u64::from(proto.samples.max(1)),
         ours: ours.stats,
         lanes: lane_reports,
-        alloc,
     })
 }
 

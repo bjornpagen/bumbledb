@@ -1,4 +1,4 @@
-//! Ordinary benchmark timing, parameter rotation, and allocation diagnostics.
+//! Benchmark timing, parameter rotation, and fresh benchmark stores.
 use bumbledb::Value;
 
 mod cold;
@@ -48,13 +48,6 @@ pub struct Stats {
 pub struct Measurement {
     pub stats: Stats,
     pub work: u64,
-
-    pub alloc: Option<bumbledb::alloc_counter::AllocSnapshot>,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Modes {
-    pub alloc_window: bool,
 }
 
 pub const QUANTUM_FLOOR_NS: u64 = 500;

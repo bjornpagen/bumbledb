@@ -63,7 +63,7 @@ fn batched_measurement_divides_time_and_sums_all_work() {
         samples: 4,
     };
     let mut calls = 0u64;
-    let m = measure_batched(proto, Modes::default(), 8, || {
+    let m = measure_batched(proto, 8, || {
         calls += 1;
         Ok(3)
     })
@@ -74,30 +74,6 @@ fn batched_measurement_divides_time_and_sums_all_work() {
         "warmups run once each; samples run batch times"
     );
     assert_eq!(m.work, 4 * 8 * 3, "work sums every batched call");
-}
-
-#[cfg(feature = "alloc-counter")]
-#[test]
-fn the_alloc_window_returns_a_snapshot() {
-    let proto = Protocol {
-        warmups: 2,
-        samples: 4,
-    };
-    let m = measure_batched(proto, Modes { alloc_window: true }, 1, || {
-        Ok(std::hint::black_box(vec![1u8; 4096]).len() as u64)
-    })
-    .expect("measures");
-    let alloc = m.alloc.expect("windowed");
-    assert!(alloc.window.allocs >= 4, "each sample allocates");
-    assert!(alloc.window.alloc_bytes >= 4 * 4096);
-}
-
-#[cfg(not(feature = "alloc-counter"))]
-#[test]
-fn the_alloc_window_refuses_without_the_feature() {
-    let err = measure_batched(Protocol::COLD, Modes { alloc_window: true }, 1, || Ok(0))
-        .expect_err("must refuse");
-    assert!(err.contains("alloc-counter feature"), "{err}");
 }
 
 /// The touch runs before every sample (warmups included), and generations

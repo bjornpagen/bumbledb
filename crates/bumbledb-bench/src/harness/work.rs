@@ -1,6 +1,4 @@
-//! Fresh cancellation contexts for independent benchmark operations.
-//! Allocation measurements belong to the separate allocator pass, not to
-//! counters on the product's ordinary execution path.
+//! Fresh cancellation contexts and stores for independent benchmark operations.
 
 use std::path::Path;
 

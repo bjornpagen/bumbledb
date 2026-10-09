@@ -172,7 +172,7 @@ fn measure_world<S: bumbledb::Theory + Copy>(
         .expect("accepted");
     (spec.load_engine)(&db)?;
     let engine_raw_bytes = db
-        .disk_size(crate::harness::bench_work())
+        .disk_size()
         .map_err(|e| fail("raw disk_size", format!("{e:?}")))?;
 
     // ENGINE COMPACTED: compact into a sibling, drop raw, reopen.
@@ -183,7 +183,7 @@ fn measure_world<S: bumbledb::Theory + Copy>(
     let db = Db::open(&compacted_dir, spec.theory, crate::harness::bench_work())
         .map_err(|e| fail("open compacted", format!("{e:?}")))?;
     let engine_compacted_bytes = db
-        .disk_size(crate::harness::bench_work())
+        .disk_size()
         .map_err(|e| fail("compacted disk_size", format!("{e:?}")))?;
     let mut engine_counts = Vec::with_capacity(spec.expected.len());
     for rel in 0..spec.expected.len() {
@@ -373,9 +373,6 @@ fn render(report: &StorageReport) -> String {
 
 /// # Errors
 pub fn run(args: &StorageArgs) -> Result<i32, String> {
-    if args.profile == crate::cli::StorageProfile::HomeCosts {
-        return crate::space::variants::run_home_costs(args);
-    }
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(
             "{}-storage",
@@ -539,7 +536,6 @@ mod tests {
             seed: 1,
             dir: dir.clone(),
             out: Some(out.clone()),
-            ..StorageArgs::default()
         })
         .expect("the lane runs");
         assert_eq!(code, 0);
@@ -647,8 +643,7 @@ mod tests {
         )
         .expect("load");
         assert_eq!(
-            db.disk_size(crate::harness::bench_work())
-                .expect("disk_size"),
+            db.disk_size().expect("disk_size"),
             file_bytes(&store.join("data.mdb")).expect("stat")
         );
         drop(db);

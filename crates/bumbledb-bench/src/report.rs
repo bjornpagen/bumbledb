@@ -53,25 +53,6 @@ pub enum Verdict {
 
 pub const P99_BUDGET_NS: u64 = 10_000_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AllocReport {
-    pub allocs: u64,
-    pub deallocs: u64,
-    pub alloc_bytes: u64,
-    pub dealloc_bytes: u64,
-}
-
-impl From<bumbledb::alloc_counter::AllocSnapshot> for AllocReport {
-    fn from(s: bumbledb::alloc_counter::AllocSnapshot) -> Self {
-        Self {
-            allocs: s.window.allocs,
-            deallocs: s.window.deallocs,
-            alloc_bytes: s.window.alloc_bytes,
-            dealloc_bytes: s.window.dealloc_bytes,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReadFamilyReport {
     pub name: String,
@@ -82,7 +63,6 @@ pub struct ReadFamilyReport {
     pub theirs: Stats,
     pub ratio_p50: f64,
     pub verdict: Verdict,
-    pub alloc: Option<AllocReport>,
     pub p99_within_budget: bool,
 }
 

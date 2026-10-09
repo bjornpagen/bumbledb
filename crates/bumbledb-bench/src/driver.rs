@@ -46,7 +46,6 @@ struct BenchRun<'a> {
     cfg: GenConfig,
     proto: Protocol,
     read_batch: Option<std::num::NonZeroU32>,
-    alloc: bool,
 
     first_family_warmed: bool,
     db: &'a Db<Ledger>,

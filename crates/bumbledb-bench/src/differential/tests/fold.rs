@@ -5,7 +5,6 @@ use bumbledb::schema::{
 };
 use bumbledb::{
     CmpOp, Comparison, ConditionTree, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId,
-    with_grounding_disabled,
 };
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
@@ -117,12 +116,10 @@ fn stores(
     (db, naive)
 }
 
-fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, _marks: usize, tag: &str) {
-    let on = engine_query(db, query, &[]);
-    let off = with_grounding_disabled(|| engine_query(db, query, &[]));
+fn agrees(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, tag: &str) {
+    let engine = engine_query(db, query, &[]);
     let model = Answers::Ok(naive.query(query, &[]).expect("the model executes"));
-    assert_eq!(on, off, "folded and unfolded disagree ({tag})");
-    assert_eq!(on, model, "engine and model disagree ({tag})");
+    assert_eq!(engine, model, "engine and model disagree ({tag})");
 }
 
 fn selected(rank: u64) -> Query {
@@ -200,7 +197,7 @@ fn negated_whole() -> Query {
 }
 
 #[test]
-fn the_fold_family_agrees_three_ways_across_randomized_draws() {
+fn the_fold_family_agrees_with_the_model_across_randomized_draws() {
     let descriptor = descriptor();
     let mut rng = Rng::new(0x0700_0001);
     for round in 0..6 {
@@ -208,37 +205,24 @@ fn the_fold_family_agrees_three_ways_across_randomized_draws() {
         let rows = 24 + rng.range(24);
         let (db, naive) = stores(dir.path(), &descriptor, corpus(&mut rng, rows));
         for rank in [10, 20, 30] {
-            three_way(&db, &naive, &selected(rank), 1, &format!("selected {rank}"));
-            three_way(
-                &db,
-                &naive,
-                &selected_count(rank),
-                1,
-                &format!("count {rank}"),
-            );
-            three_way(
+            agrees(&db, &naive, &selected(rank), &format!("selected {rank}"));
+            agrees(&db, &naive, &selected_count(rank), &format!("count {rank}"));
+            agrees(
                 &db,
                 &naive,
                 &negated_subset(rank),
-                1,
                 &format!("negated {rank}"),
             );
         }
-        three_way(&db, &naive, &dead_payload(), 1, "dead payload");
+        agrees(&db, &naive, &dead_payload(), "dead payload");
 
-        three_way(&db, &naive, &double_closed(), 2, "double closed");
+        agrees(&db, &naive, &double_closed(), "double closed");
 
-        three_way(&db, &naive, &selected(99), 0, "S = ∅ (dead rule)");
+        agrees(&db, &naive, &selected(99), "S = ∅ (dead rule)");
 
-        three_way(&db, &naive, &negated_subset(99), 1, "negated S = ∅");
+        agrees(&db, &naive, &negated_subset(99), "negated S = ∅");
 
-        three_way(
-            &db,
-            &naive,
-            &negated_whole(),
-            0,
-            "complement = ∅ (dead rule)",
-        );
+        agrees(&db, &naive, &negated_whole(), "complement = ∅ (dead rule)");
     }
 }
 
@@ -294,15 +278,13 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
             for (param, values) in &draw.sets {
                 params[usize::from(param.0)] = ParamValue::Set(values.clone());
             }
-            let on = engine_query(&db, &query, &params);
-            let off = with_grounding_disabled(|| engine_query(&db, &query, &params));
+            let engine = engine_query(&db, &query, &params);
             let model = match naive.query(&query, &params) {
                 Ok(rows) => Answers::Ok(rows),
                 Err(QueryError::Overflow { .. }) => Answers::Overflow,
                 Err(QueryError::Scalar { .. }) => Answers::Scalar,
             };
-            assert_eq!(on, off, "folded and unfolded disagree: {query:?}");
-            assert_eq!(on, model, "engine and model disagree: {query:?}");
+            assert_eq!(engine, model, "engine and model disagree: {query:?}");
             compared += 1;
         }
     }

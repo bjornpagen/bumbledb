@@ -10,7 +10,7 @@ use bumbledb::{
 
 use crate::corpus_gen::{GenConfig, Scale, mix};
 use crate::families::{Draw, Kind, param_args, scalar_draw};
-use crate::harness::{self, Modes, Protocol, Rotation};
+use crate::harness::{self, Protocol, Rotation};
 use crate::translate::translate;
 use crate::{compare, report, sqlite_run, sqlmap};
 
@@ -386,7 +386,6 @@ pub fn bench_families(
     selected: &dyn Fn(&str) -> bool,
     samples: Option<u32>,
     read_batch: Option<std::num::NonZeroU32>,
-    modes: Modes,
 ) -> Result<Vec<report::ReadFamilyReport>, String> {
     if !all().iter().any(|family| selected(family.name)) {
         return Ok(Vec::new());
@@ -433,7 +432,6 @@ pub fn bench_families(
         let mut foreign = ForeignStream::new(family.displace_mib);
         let ours = harness::measure_interleaved(
             proto,
-            modes,
             initial_batch,
             || foreign.stream(),
             || run_ours(&mut prepared),
@@ -451,7 +449,6 @@ pub fn bench_families(
             );
             harness::measure_interleaved(
                 proto,
-                modes,
                 batch,
                 || foreign.stream(),
                 || run_ours(&mut prepared),
@@ -472,7 +469,6 @@ pub fn bench_families(
         let mut cursor = 0usize;
         let theirs = harness::measure_interleaved(
             proto,
-            Modes::default(),
             batch,
             || foreign.stream(),
             || {
@@ -483,7 +479,6 @@ pub fn bench_families(
         )?;
 
         let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
-        let alloc_report = ours.alloc.map(report::AllocReport::from);
         out.push(report::ReadFamilyReport {
             name: family.name.to_owned(),
             batch,
@@ -492,7 +487,6 @@ pub fn bench_families(
             ours: ours.stats,
             theirs: theirs.stats,
             ratio_p50,
-            alloc: alloc_report,
         });
     }
     Ok(out)

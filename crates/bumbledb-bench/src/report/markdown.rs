@@ -108,31 +108,7 @@ fn markdown_family_tables(out: &mut String, report: &RunReport) {
     let _ = writeln!(out);
 }
 
-fn markdown_diagnostics(out: &mut String, report: &RunReport) {
-    let _ = writeln!(out, "## Allocations\n");
-    let mut any_window = false;
-    for family in &report.reads {
-        let Some(alloc) = family.alloc else { continue };
-        if !any_window {
-            let _ = writeln!(
-                out,
-                "| family | allocs | deallocs | alloc bytes | dealloc bytes |"
-            );
-            let _ = writeln!(out, "|---|---|---|---|---|");
-            any_window = true;
-        }
-        let _ = writeln!(
-            out,
-            "| {} | {} | {} | {} | {} |",
-            family.name, alloc.allocs, alloc.deallocs, alloc.alloc_bytes, alloc.dealloc_bytes,
-        );
-    }
-    if any_window {
-        let _ = writeln!(out);
-    } else {
-        let _ = writeln!(out, "(not captured — run with the alloc window)\n");
-    }
-
+fn markdown_store(out: &mut String, report: &RunReport) {
     let _ = writeln!(out, "## Store\n");
     let _ = writeln!(
         out,
@@ -147,6 +123,6 @@ pub fn to_markdown(report: &RunReport) -> String {
     let mut out = String::new();
     markdown_header(&mut out, report);
     markdown_family_tables(&mut out, report);
-    markdown_diagnostics(&mut out, report);
+    markdown_store(&mut out, report);
     out
 }

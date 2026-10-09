@@ -46,15 +46,7 @@ fn push_query(out: &mut String, r: &QueryReport) {
         }
         push_lane(out, lane);
     }
-    out.push(']');
-    if let Some(alloc) = &r.alloc {
-        let _ = write!(
-            out,
-            ",\"alloc\":{{\"allocs\":{},\"deallocs\":{},\"alloc_bytes\":{},\"dealloc_bytes\":{}}}",
-            alloc.allocs, alloc.deallocs, alloc.alloc_bytes, alloc.dealloc_bytes
-        );
-    }
-    out.push('}');
+    out.push_str("]}");
 }
 
 #[must_use]

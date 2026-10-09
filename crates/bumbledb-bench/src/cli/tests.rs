@@ -77,7 +77,6 @@ fn bench_parses_every_knob() {
         "8",
         "--read-batch",
         "16",
-        "--alloc",
         "--out",
         "artifacts",
         "--i-am-lying",
@@ -90,7 +89,6 @@ fn bench_parses_every_knob() {
             families: Some(vec!["point".to_owned(), "containment_walk".to_owned()]),
             samples: Some(8),
             read_batch: std::num::NonZeroU32::new(16),
-            alloc: true,
             out: Some(PathBuf::from("artifacts")),
             i_am_lying: true,
         })
@@ -178,7 +176,7 @@ fn native_profile_keeps_the_corpus_and_rejects_invalid_windows() {
 }
 
 #[test]
-fn storage_parses_the_lane_flags() {
+fn storage_parses_its_flags() {
     let cmd = parse(&argv(&[
         "storage",
         "--scales",
@@ -198,7 +196,6 @@ fn storage_parses_the_lane_flags() {
             seed: 7,
             dir: PathBuf::from("/tmp/x"),
             out: Some(PathBuf::from("artifacts")),
-            ..StorageArgs::default()
         })
     );
 
@@ -212,49 +209,6 @@ fn storage_parses_the_lane_flags() {
     assert!(err.contains("XXL"), "{err}");
     let err = parse(&argv(&["storage", "--scales", ""])).unwrap_err();
     assert!(err.contains("--scales"), "{err}");
-}
-
-#[test]
-fn storage_home_costs_is_opt_in_bounded_and_separate_from_corpus_options() {
-    assert_eq!(
-        parse(&argv(&[
-            "storage",
-            "--profile",
-            "home-costs",
-            "--rows",
-            "512",
-            "--samples",
-            "4"
-        ])),
-        Ok(Cmd::Storage(StorageArgs {
-            profile: StorageProfile::HomeCosts,
-            rows: 512,
-            samples: 4,
-            ..StorageArgs::default()
-        }))
-    );
-    assert_eq!(
-        parse(&argv(&["storage", "--profile", "home-costs"])),
-        Ok(Cmd::Storage(StorageArgs {
-            profile: StorageProfile::HomeCosts,
-            ..StorageArgs::default()
-        }))
-    );
-    for flags in [
-        vec!["--rows", "256"],
-        vec!["--samples", "4"],
-        vec!["--profile", "unknown"],
-        vec!["--profile", "home-costs", "--scales", "S"],
-        vec!["--profile", "home-costs", "--rows", "0"],
-        vec!["--profile", "home-costs", "--rows", "257"],
-        vec!["--profile", "home-costs", "--rows", "1048832"],
-        vec!["--profile", "home-costs", "--samples", "0"],
-        vec!["--profile", "home-costs", "--samples", "4097"],
-    ] {
-        let mut args = vec!["storage"];
-        args.extend(flags);
-        assert!(parse(&argv(&args)).is_err(), "accepted {args:?}");
-    }
 }
 
 #[test]
@@ -399,7 +353,6 @@ fn crud_parses_its_flags() {
             dir: PathBuf::from("x"),
             only: Some(vec!["crud_insert".to_owned(), "crud_rmw".to_owned()]),
             samples: Some(9),
-            alloc: false,
             out: Some(PathBuf::from("y")),
         })
     );
@@ -431,7 +384,6 @@ fn lawful_parses_its_flags() {
                 "law_reject_window".to_owned()
             ]),
             samples: Some(9),
-            alloc: false,
             out: Some(PathBuf::from("y")),
         })
     );
@@ -443,23 +395,6 @@ fn crud_refuses_an_unknown_flag() {
     let err = parse(&argv(&["crud", "--scale", "S"])).unwrap_err();
     assert!(err.contains("--scale"), "{err}");
     assert!(err.contains("crud"), "{err}");
-}
-
-#[test]
-fn scenarios_parses_the_allocation_flag() {
-    let Cmd::Scenarios(args) = parse(&argv(&["scenarios", "--alloc"])).expect("parses") else {
-        panic!("scenarios");
-    };
-    assert!(args.alloc);
-}
-
-#[test]
-fn the_write_worlds_refuse_alloc() {
-    for cmd in ["crud", "lawful"] {
-        let err = parse(&argv(&[cmd, "--alloc"])).unwrap_err();
-        assert!(err.contains("no alloc pass"), "{cmd}: {err}");
-        assert!(err.contains(cmd), "{cmd}: {err}");
-    }
 }
 
 #[test]

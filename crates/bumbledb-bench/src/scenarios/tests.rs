@@ -160,33 +160,6 @@ fn check_query(
     }
 }
 
-#[cfg(feature = "alloc-counter")]
-#[test]
-fn the_alloc_pass_scopes_a_reading_per_query() {
-    use crate::harness::Protocol;
-    let root = std::env::temp_dir().join("bumbledb-scenario-alloc-smoke");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("root");
-    let modes = super::QueryModes { alloc: true };
-    let only = vec!["points".to_owned()];
-    let proto = Protocol {
-        warmups: 1,
-        samples: 2,
-    };
-    let (_markdown, reports) =
-        super::run(&root, 7, proto, Some(only.as_slice()), &modes).expect("alloc scenario run");
-    assert!(!reports.is_empty());
-    for r in &reports {
-        assert!(
-            r.alloc.is_some(),
-            "{}/{}: per-query alloc",
-            r.scenario,
-            r.name
-        );
-    }
-    let _ = std::fs::remove_dir_all(&root);
-}
-
 #[test]
 fn scenario_rows_are_deterministic() {
     for scenario in all() {

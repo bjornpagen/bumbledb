@@ -21,13 +21,6 @@ pub(super) fn stamp_refusal(corpus: &CorpusArgs) -> String {
     )
 }
 
-pub(super) fn alloc_missing(what: &str) -> String {
-    format!(
-        "{what} needs an alloc-counter build; run:\n\
-         cargo run -p bumbledb-bench --features alloc-counter --release -- …"
-    )
-}
-
 pub(super) fn stamp_is_fresh(paths: &CorpusPaths, cfg: GenConfig) -> bool {
     let Ok(raw) = std::fs::read_to_string(paths.root.join(CASES_FILE)) else {
         return false;
@@ -44,10 +37,6 @@ pub(super) fn stamp_is_fresh(paths: &CorpusPaths, cfg: GenConfig) -> bool {
 }
 
 fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, bool), String> {
-    if args.alloc && !cfg!(feature = "alloc-counter") {
-        return Err(alloc_missing("--alloc"));
-    }
-
     let paths = ensure_corpus(&args.corpus.dir, cfg)?;
     let verified = stamp_is_fresh(&paths, cfg);
     if !verified && !args.i_am_lying {
@@ -110,7 +99,6 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         cfg,
         proto,
         read_batch: args.read_batch,
-        alloc: args.alloc,
         first_family_warmed: false,
         db: &db,
         conn: &conn,
@@ -139,9 +127,6 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         &selected,
         proto,
         args.read_batch,
-        crate::harness::Modes {
-            alloc_window: args.alloc,
-        },
     )?);
     reads.extend(crate::displaced::bench_families(
         cfg,
@@ -149,9 +134,6 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         &selected,
         args.samples,
         args.read_batch,
-        crate::harness::Modes {
-            alloc_window: args.alloc,
-        },
     )?);
 
     // Fsync-heavy write families follow every read family.
@@ -159,9 +141,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
 
     // File sizes are disk measurements, not image-cache memory usage.
     let store = report::StoreNumbers {
-        db_bytes: db
-            .disk_size(crate::harness::bench_work())
-            .map_err(|e| format!("{e:?}"))?,
+        db_bytes: db.disk_size().map_err(|e| format!("{e:?}"))?,
         sqlite_bytes: std::fs::metadata(&paths.oracle).map_or(0, |m| m.len()),
     };
 

@@ -46,12 +46,6 @@ fn fixture() -> RunReport {
             theirs: stats(20_000),
             ratio_p50: 0.5,
             verdict: Verdict::Win,
-            alloc: Some(AllocReport {
-                allocs: 0,
-                deallocs: 0,
-                alloc_bytes: 0,
-                dealloc_bytes: 0,
-            }),
             p99_within_budget: true,
         }],
         writes: vec![WriteFamilyReport {
@@ -100,12 +94,6 @@ Batch is operations per timed sample, shared by both engines. For batch > 1, qua
 | family | ours p50 (us) | sqlite p50 (us) | facts/sec |
 |---|---|---|---|
 | commit_single | 100.0 | 120.0 | - |
-
-## Allocations
-
-| family | allocs | deallocs | alloc bytes | dealloc bytes |
-|---|---|---|---|---|
-| point | 0 | 0 | 0 | 0 |
 
 ## Store
 

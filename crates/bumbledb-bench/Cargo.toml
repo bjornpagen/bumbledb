@@ -4,16 +4,10 @@ version.workspace = true
 edition = "2024"
 publish = false
 
-[features]
-alloc-counter = ["bumbledb/alloc-counter"]
-
 [dependencies]
 blake3 = "1.8.7"
 bumbledb = { path = "../bumbledb" }
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
-
-[dev-dependencies]
-bumbledb = { path = "../bumbledb", features = ["ground-off"] }
 
 [lints]
 workspace = true

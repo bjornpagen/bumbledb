@@ -1,4 +1,4 @@
-use super::bench::{alloc_missing, stamp_refusal};
+use super::bench::stamp_refusal;
 use super::*;
 use crate::cli::{BenchArgs, CorpusArgs};
 use crate::corpus_gen::Scale;
@@ -57,11 +57,6 @@ fn the_refusal_messages_substitute_the_flags() {
         "no fresh verify stamp for this corpus.\n\
          run first: bumbledb-bench verify --scale M --seed 9 --dir /tmp/corpora"
     );
-    assert_eq!(
-        alloc_missing("--alloc"),
-        "--alloc needs an alloc-counter build; run:\n\
-         cargo run -p bumbledb-bench --features alloc-counter --release -- …"
-    );
 }
 
 #[test]
@@ -76,34 +71,12 @@ fn bench_refuses_without_a_stamp() {
         families: Some(vec!["point".to_owned()]),
         samples: Some(8),
         read_batch: None,
-        alloc: false,
-
         out: Some(dir.join("out")),
         i_am_lying: false,
     };
     let err = cmd_bench(&args).unwrap_err();
     assert!(err.contains("bumbledb-bench verify"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[cfg(not(feature = "alloc-counter"))]
-#[test]
-fn alloc_without_counter_names_the_cargo_invocation() {
-    let args = BenchArgs {
-        corpus: CorpusArgs::default(),
-        families: None,
-        samples: None,
-        read_batch: None,
-        alloc: true,
-
-        out: None,
-        i_am_lying: false,
-    };
-    let err = cmd_bench(&args).unwrap_err();
-    assert!(
-        err.contains("cargo run -p bumbledb-bench --features alloc-counter --release"),
-        "{err}"
-    );
 }
 
 #[test]
@@ -155,8 +128,6 @@ fn the_full_sequence_runs_at_tiny() {
         families: Some(vec!["point".to_owned()]),
         samples: Some(8),
         read_batch: None,
-        alloc: false,
-
         out: Some(out.clone()),
         i_am_lying: false,
     };

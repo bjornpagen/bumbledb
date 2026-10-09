@@ -26,7 +26,6 @@ pub mod querygen;
 pub mod report;
 pub mod scenarios;
 pub mod schema;
-pub mod space;
 pub mod sqlite_run;
 pub mod sqlmap;
 pub mod translate;

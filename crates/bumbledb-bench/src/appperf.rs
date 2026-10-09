@@ -11,10 +11,9 @@ use bumbledb::{Answers, Db, PreparedQuery, RelationId};
 
 use crate::cli::AppPerfArgs;
 use crate::corpus_gen::{GenConfig, relation_rows};
-use crate::harness::{self, Modes, Protocol, Stats};
+use crate::harness::{self, Protocol, Stats};
 use crate::report;
 use crate::schema::{Ledger, ids};
-use crate::space::{census, store_source};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Regime {
@@ -207,7 +206,7 @@ pub fn cold_open(dir: &Path, samples: Option<u32>) -> Result<RegimeRow, String> 
         samples: samples.unwrap_or(Protocol::COLD.samples),
         ..Protocol::COLD
     };
-    let m = harness::measure_batched(proto, Modes::default(), 1, || {
+    let m = harness::measure_batched(proto, 1, || {
         let db = Db::open(dir, Ledger, work()).map_err(|e| format!("cold open: {e:?}"))?;
         let mut prepared = db
             .prepare(&query, work())
@@ -245,7 +244,7 @@ pub fn warm_scan(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, Str
         warmups: Protocol::WARM.warmups,
         samples: samples.unwrap_or(Protocol::WARM.samples),
     };
-    let m = harness::measure_batched(proto, Modes::default(), 1, || {
+    let m = harness::measure_batched(proto, 1, || {
         let count = execute_projection(db, &mut prepared, &mut answers)?;
         if count != expected {
             return Err("warm projection cardinality changed".to_owned());
@@ -574,11 +573,10 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
     let corpus_dir = scratch.join("corpus");
     let db = harness::create_db(&corpus_dir, Ledger)?;
     crate::corpus::load_bumbledb(&db, cfg).map_err(|e| format!("corpus load: {e:?}"))?;
-    let data = store_source::data_mdb(&corpus_dir);
-    let file_bytes = std::fs::metadata(&data)
-        .map_err(|e| format!("store size {}: {e}", data.display()))?
-        .len();
-    let allocated_bytes = census::allocated_bytes(&data)?;
+    let data = corpus_dir.join("data.mdb");
+    let meta = std::fs::metadata(&data).map_err(|e| format!("stat {}: {e}", data.display()))?;
+    let file_bytes = meta.len();
+    let allocated_bytes = std::os::unix::fs::MetadataExt::blocks(&meta) * 512;
 
     let wanted = |regime: Regime| {
         args.regimes

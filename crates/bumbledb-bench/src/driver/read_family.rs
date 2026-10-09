@@ -2,7 +2,7 @@ use bumbledb::{Answers, Db, Query};
 
 use crate::calendar;
 use crate::families::{Draw, Kind, param_args, set_bindings};
-use crate::harness::{self, Modes, Rotation};
+use crate::harness::{self, Rotation};
 use crate::schema::schema;
 use crate::translate::{Translated, translate};
 use crate::{families, report, sqlite_run};
@@ -52,8 +52,7 @@ impl BenchRun<'_> {
         self.measure_read(db, conn, &spec)
     }
 
-    /// Time the registered parameter stream, with frequency and optional
-    /// allocation diagnostics kept outside the ordinary timing windows.
+    /// Time the registered parameter stream on both engines.
     fn measure_read<S>(
         &mut self,
         db: &Db<S>,
@@ -82,9 +81,6 @@ impl BenchRun<'_> {
             .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         };
-        let modes = Modes {
-            alloc_window: self.alloc,
-        };
         let proto = self.proto;
 
         if !self.first_family_warmed {
@@ -94,8 +90,7 @@ impl BenchRun<'_> {
             self.first_family_warmed = true;
         }
         let initial_batch = self.read_batch.map_or(1, std::num::NonZeroU32::get);
-        let ours =
-            harness::measure_batched(proto, modes, initial_batch, || run_ours(&mut prepared))?;
+        let ours = harness::measure_batched(proto, initial_batch, || run_ours(&mut prepared))?;
 
         let batch = if self.read_batch.is_none() && ours.stats.p50 < harness::QUANTUM_FLOOR_NS {
             harness::MAX_READ_BATCH
@@ -108,7 +103,7 @@ impl BenchRun<'_> {
                 spec.name,
                 harness::QUANTUM_FLOOR_NS
             );
-            harness::measure_batched(proto, modes, batch, || run_ours(&mut prepared))?
+            harness::measure_batched(proto, batch, || run_ours(&mut prepared))?
         } else {
             ours
         };
@@ -124,7 +119,7 @@ impl BenchRun<'_> {
             )?);
         }
         let mut rotation = Rotation::new((0..sets.len()).collect::<Vec<_>>());
-        let theirs = harness::measure_batched(proto, Modes::default(), batch, || {
+        let theirs = harness::measure_batched(proto, batch, || {
             let index = rotation.next_index();
             sqlite_run::sample_args(&mut sqlite_families[index], &sets[index])
         })?;
@@ -138,7 +133,6 @@ impl BenchRun<'_> {
             ours: ours.stats,
             theirs: theirs.stats,
             ratio_p50,
-            alloc: ours.alloc.map(report::AllocReport::from),
         })
     }
 }

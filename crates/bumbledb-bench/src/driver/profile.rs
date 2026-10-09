@@ -25,9 +25,6 @@ use super::corpus_paths;
 /// # Errors
 /// Refuses unknown families, unverified stores, and output overwrites.
 pub fn cmd_profile(args: &ProfileArgs) -> Result<(), String> {
-    if cfg!(feature = "alloc-counter") {
-        return Err("native profile needs a build without `alloc-counter`".to_owned());
-    }
     let cfg = gen_config(&args.corpus);
     let paths = corpus_paths(&args.corpus.dir, cfg);
     let out = args.out.clone().unwrap_or_else(|| {

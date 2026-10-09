@@ -5,7 +5,7 @@ use crate::verify::DEFAULT_RANDOM_CASES;
 
 use super::{
     AppPerfArgs, BenchArgs, Cmd, CorpusArgs, CurvesArgs, HeapArgs, ProfileArgs, ScenarioArgs,
-    StorageArgs, StorageProfile, WritesArgs,
+    StorageArgs, WritesArgs,
 };
 
 struct Tokens<'a> {
@@ -121,7 +121,6 @@ fn parse_bench(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
         families: None,
         samples: None,
         read_batch: None,
-        alloc: false,
         out: None,
         i_am_lying: false,
     };
@@ -145,7 +144,6 @@ fn parse_bench(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
                 }
                 args.read_batch = std::num::NonZeroU32::new(batch);
             }
-            "--alloc" => args.alloc = true,
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             "--i-am-lying" => args.i_am_lying = true,
             _ => return Err(unknown("bench", &flag)),
@@ -198,12 +196,6 @@ fn parse_world(cmd: &str, tokens: &mut Tokens<'_>) -> Result<ScenarioArgs, Strin
                 args.only = Some(tokens.value(&flag)?.split(',').map(str::to_owned).collect());
             }
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
-            "--alloc" if cmd == "scenarios" => args.alloc = true,
-            "--alloc" => {
-                return Err(format!(
-                    "`{cmd}` has no alloc pass — `--alloc` is a `scenarios` mode"
-                ));
-            }
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown(cmd, &flag)),
         }
@@ -225,45 +217,15 @@ fn parse_lawful(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
 
 fn parse_storage(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     let mut args = StorageArgs::default();
-    let mut home_options = false;
-    let mut corpus_options = false;
     while let Some(flag) = tokens.next() {
         let flag = flag.to_owned();
         match flag.as_str() {
-            "--profile" => {
-                args.profile = match tokens.value(&flag)? {
-                    "corpus" => StorageProfile::Corpus,
-                    "home-costs" => StorageProfile::HomeCosts,
-                    other => return Err(format!("unknown storage profile `{other}`")),
-                };
-            }
-            "--rows" => {
-                home_options = true;
-                args.rows = parse_u64(&flag, tokens.value(&flag)?)?;
-            }
-            "--samples" => {
-                home_options = true;
-                args.samples = parse_u32(&flag, tokens.value(&flag)?)?;
-            }
-            "--scales" => {
-                corpus_options = true;
-                args.scales = parse_scale_list(&flag, tokens.value(&flag)?)?;
-            }
+            "--scales" => args.scales = parse_scale_list(&flag, tokens.value(&flag)?)?,
             "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
             "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown("storage", &flag)),
         }
-    }
-    match args.profile {
-        StorageProfile::Corpus if home_options => {
-            return Err("--rows/--samples require storage --profile home-costs".into());
-        }
-        StorageProfile::HomeCosts if corpus_options => {
-            return Err("home-costs cannot use --scales".into());
-        }
-        StorageProfile::HomeCosts => crate::space::variants::validate_home_args(&args)?,
-        StorageProfile::Corpus => {}
     }
     Ok(Cmd::Storage(args))
 }

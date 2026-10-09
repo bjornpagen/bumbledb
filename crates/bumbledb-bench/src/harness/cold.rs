@@ -25,7 +25,6 @@ where
     Ok(Measurement {
         stats: stats(&mut samples),
         work,
-        alloc: None,
     })
 }
 

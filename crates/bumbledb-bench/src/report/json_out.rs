@@ -20,17 +20,6 @@ fn push_read_family(out: &mut String, family: &ReadFamilyReport) {
         family.verdict.label(),
         family.p99_within_budget
     );
-    out.push_str(",\"alloc\":");
-    match family.alloc {
-        Some(alloc) => {
-            let _ = write!(
-                out,
-                "{{\"allocs\":{},\"deallocs\":{},\"alloc_bytes\":{},\"dealloc_bytes\":{}}}",
-                alloc.allocs, alloc.deallocs, alloc.alloc_bytes, alloc.dealloc_bytes
-            );
-        }
-        None => out.push_str("null"),
-    }
     out.push('}');
 }
 

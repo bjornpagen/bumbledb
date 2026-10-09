@@ -2,7 +2,7 @@ use bumbledb::Theory as _;
 use bumbledb::schema::ValidateDescriptor as _;
 
 use crate::corpus_gen::{GenConfig, Scale};
-use crate::harness::{self, Modes, Protocol};
+use crate::harness::{self, Protocol};
 
 use super::{
     DispSizes, FORCED_MAP_DISTINCT, FORCED_MAP_POSITIONS, ForeignStream, forced_spoke_map_bytes,
@@ -121,7 +121,6 @@ fn the_interleaved_harness_runs_between_every_pass() {
     let mut passes = 0u64;
     let m = harness::measure_interleaved(
         proto,
-        Modes::default(),
         1,
         || between += 1,
         || {

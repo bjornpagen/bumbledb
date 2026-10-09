@@ -3,10 +3,7 @@ use std::path::Path;
 use bumbledb::schema::{
     FieldId, RelationDescriptor, SchemaDescriptor, StatementDescriptor, ValueType,
 };
-use bumbledb::{
-    Atom, Db, FindTerm, FoldOp, Query, RelationId, Rule, Term, Value, VarId,
-    with_grounding_disabled,
-};
+use bumbledb::{Atom, Db, FindTerm, FoldOp, Query, RelationId, Rule, Term, Value, VarId};
 
 use crate::differential::{Answers, engine_query};
 use crate::fixture::{TempDir, atom, field, side, var};
@@ -37,23 +34,20 @@ fn stores(
     (db, naive)
 }
 
-fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: &str) {
-    let on = engine_query(db, query, &[]);
-    let off = with_grounding_disabled(|| engine_query(db, query, &[]));
+/// The grounded engine plan against the independent model; `fallen` names the
+/// atom the grounding drops.
+fn agrees(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: &str) {
+    let engine = engine_query(db, query, &[]);
     let model = Answers::Ok(naive.query(query, &[]).expect("the model executes"));
-    assert_eq!(on, off, "grounding-on and ground-off disagree ({fallen})");
-    assert_eq!(on, model, "engine and model disagree ({fallen})");
-    let Answers::Ok(rows) = &on else {
+    assert_eq!(engine, model, "engine and model disagree ({fallen})");
+    let Answers::Ok(rows) = &engine else {
         unreachable!("fixture queries never overflow")
     };
     assert!(!rows.is_empty(), "the fixture produces rows ({fallen})");
 }
 
-/// Posting(id u64, account u64, amount i64); Account(id u64, holder u64) —
-/// application-owned ids with DECLARED keys (the successor has no fresh
-/// generation attribute; entity identity is ordinary supplied data), then
-/// Posting(account) <= Account(id) as statement 2 after the two declared
-/// id keys, preserving the historical statement numbering.
+/// Posting(id u64, account u64, amount i64); Account(id u64, holder u64) with
+/// declared id keys, then Posting(account) <= Account(id) as statement 2.
 fn walk_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -110,7 +104,7 @@ fn walk_inserts() -> Vec<(RelationId, Vec<Value>)> {
 }
 
 #[test]
-fn the_existence_walk_agrees_three_ways_on_both_sinks() {
+fn the_existence_walk_agrees_with_the_model_on_both_sinks() {
     let dir = TempDir::new("walk");
     let descriptor = walk_descriptor();
     let (db, naive) = stores(dir.path(), &descriptor, walk_inserts());
@@ -136,8 +130,8 @@ fn the_existence_walk_agrees_three_ways_on_both_sinks() {
         negated: vec![],
         conditions: vec![],
     });
-    three_way(&db, &naive, &projection, "Account");
-    three_way(&db, &naive, &aggregate, "Account");
+    agrees(&db, &naive, &projection, "Account");
+    agrees(&db, &naive, &aggregate, "Account");
 }
 
 /// Grading(id u64 — application-owned, declared key; kind u64 — 0 = Det,
@@ -204,7 +198,7 @@ fn du_atoms() -> (Atom, Atom) {
 }
 
 #[test]
-fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
+fn the_du_header_direction_agrees_with_the_model_on_both_sinks() {
     let dir = TempDir::new("du-header");
     let descriptor = du_descriptor();
     let (db, naive) = stores(dir.path(), &descriptor, du_inserts());
@@ -225,8 +219,8 @@ fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
         negated: vec![],
         conditions: vec![],
     });
-    three_way(&db, &naive, &projection, "Grading");
-    three_way(&db, &naive, &aggregate, "Grading");
+    agrees(&db, &naive, &projection, "Grading");
+    agrees(&db, &naive, &aggregate, "Grading");
 }
 
 /// The DU one-sided walk, child direction, both sinks: `Q(g):- Grading(id = g,
@@ -234,7 +228,7 @@ fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
 /// `rate` stays unread; the statement scan order fells the child before the
 /// header's turn, and support acyclicity keeps the header standing).
 #[test]
-fn the_du_child_direction_agrees_three_ways_on_both_sinks() {
+fn the_du_child_direction_agrees_with_the_model_on_both_sinks() {
     let dir = TempDir::new("du-child");
     let descriptor = du_descriptor();
     let (db, naive) = stores(dir.path(), &descriptor, du_inserts());
@@ -252,8 +246,8 @@ fn the_du_child_direction_agrees_three_ways_on_both_sinks() {
         negated: vec![],
         conditions: vec![],
     });
-    three_way(&db, &naive, &projection, "Det");
-    three_way(&db, &naive, &aggregate, "Det");
+    agrees(&db, &naive, &projection, "Det");
+    agrees(&db, &naive, &aggregate, "Det");
 }
 
 /// The missing-φ near-miss refuses on the real pipeline, and the unrewritten

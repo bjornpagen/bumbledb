@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::load::load;
 use super::run_query::{gate, run_query};
-use super::{QueryModes, QueryReport, Scenario, all, render};
+use super::{QueryReport, Scenario, all, render};
 use crate::harness::Protocol;
 
 /// # Errors
@@ -11,7 +11,6 @@ pub fn run(
     seed: u64,
     proto: Protocol,
     only: Option<&[String]>,
-    modes: &QueryModes,
 ) -> Result<(String, Vec<QueryReport>), String> {
     let mut reports = Vec::new();
     for scenario in all() {
@@ -23,7 +22,7 @@ pub fn run(
         let stores = load(dir, &scenario, seed)?;
         for sq in (scenario.queries)() {
             eprintln!("scenario {}: {}", scenario.name, sq.name);
-            reports.push(run_query(&stores, &scenario, &sq, seed, proto, modes)?);
+            reports.push(run_query(&stores, &scenario, &sq, seed, proto)?);
         }
     }
     if reports.is_empty() {

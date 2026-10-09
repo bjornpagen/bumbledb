@@ -17,9 +17,8 @@ pub fn cmd_scenarios(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
         ))
     });
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("out dir: {e}"))?;
-    let modes = crate::scenarios::QueryModes { alloc: args.alloc };
     let (markdown, reports) =
-        crate::scenarios::run(&args.dir, args.seed, proto, args.only.as_deref(), &modes)?;
+        crate::scenarios::run(&args.dir, args.seed, proto, args.only.as_deref())?;
     std::fs::write(out_dir.join("scenarios.md"), &markdown)
         .map_err(|e| format!("artifact: {e}"))?;
     std::fs::write(

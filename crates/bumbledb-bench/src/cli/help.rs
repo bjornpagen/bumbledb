@@ -50,7 +50,6 @@ pub fn help() -> String {
          \x20 --samples N     measured samples per read family (default 256)\n\
          \x20 --read-batch N  operations per timed read sample, 1..=16 (default auto)\n\
          \x20                N > 1 reports batch-average quantiles, not per-call tails\n\
-         \x20 --alloc         allocation windows (needs the alloc-counter feature build)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>)\n\
          \x20 --i-am-lying    skip the stamp gate; the report reads UNVERIFIED\n\
          \n\
@@ -61,7 +60,7 @@ pub fn help() -> String {
          \x20                 complete draw cycles; ledger/calendar need verify stamp\n\
          \x20                 closure/displaced/scenarios: fresh corpus + SQLite gate\n\
          \x20                 scenarios have fixed scale S; displaced retains foreign stream\n\
-         \x20                 no alloc-counter feature; use cargo --profile profiling\n\
+         \x20                 use cargo --profile profiling\n\
          \n\
          SCENARIOS / CRUD / LAWFUL (the world commands share one flag vocabulary):\n\
          \x20 --seed N        corpus seed              (default 1)\n\
@@ -69,15 +68,9 @@ pub fn help() -> String {
          \x20 --only a,b      run only these scenarios/families\n\
          \x20 --samples N     measured samples/query   (default 64; crud and\n\
          \x20                 lawful fall back to their registered protocols)\n\
-         \x20 --alloc         per-query alloc windows (scenarios ONLY; needs\n\
-         \x20                 the alloc-counter feature; a separate pass)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-<command>)\n\
          \n\
          STORAGE:\n\
-         \x20 --profile corpus|home-costs              (default corpus)\n\
-         \x20 --rows N        home-costs only: 256-row multiples, max 1048576 (default 16384)\n\
-         \x20 --samples N     home-costs read samples, 1..4096 (default 64)\n\
-         \x20                 home-costs emits home-costs.json; no corpus-scale option\n\
          \x20 --scales S,M,L  corpus scales            (default S)\n\
          \x20 --seed N        corpus seed              (default 1)\n\
          \x20 --dir PATH      corpus cache root        (default bench-data)\n\

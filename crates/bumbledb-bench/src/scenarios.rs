@@ -87,11 +87,6 @@ pub struct Scenario {
     pub queries: fn() -> Vec<ScenarioQuery>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct QueryModes {
-    pub alloc: bool,
-}
-
 pub struct QueryReport {
     pub scenario: &'static str,
     pub name: &'static str,
@@ -101,8 +96,6 @@ pub struct QueryReport {
     pub ours: harness::Stats,
 
     pub lanes: Vec<LaneReport>,
-
-    pub alloc: Option<crate::report::AllocReport>,
 }
 
 impl QueryReport {

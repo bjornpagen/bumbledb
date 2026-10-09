@@ -104,23 +104,5 @@ pub fn render(reports: &[QueryReport], proto: Protocol) -> String {
         );
     }
 
-    if reports.iter().any(|r| r.alloc.is_some()) {
-        let _ = writeln!(out, "\n## Allocations (per query, --alloc)\n");
-        let _ = writeln!(
-            out,
-            "| query | allocs | alloc bytes | deallocs | dealloc bytes |"
-        );
-        let _ = writeln!(out, "|---|---:|---:|---:|---:|");
-        for r in reports {
-            if let Some(a) = &r.alloc {
-                let _ = writeln!(
-                    out,
-                    "| {} | {} | {} | {} | {} |",
-                    r.name, a.allocs, a.alloc_bytes, a.deallocs, a.dealloc_bytes,
-                );
-            }
-        }
-    }
-
     out
 }
