@@ -34,6 +34,10 @@ impl Partial {
             AggSpec::Fold {
                 op: FoldOp::Min | FoldOp::Max,
                 ..
+            }
+            | AggSpec::Float {
+                op: FoldOp::Min | FoldOp::Max,
+                ..
             } => Self::Extrema {
                 min: u64::MAX,
                 max: u64::MIN,
@@ -149,8 +153,17 @@ impl Partial {
                 Self::Extrema { max, .. },
                 AggSpec::Fold {
                     op: FoldOp::Max, ..
+                }
+                | AggSpec::Float {
+                    op: FoldOp::Max, ..
                 },
             ) => Acc::Max(*max),
+            (
+                Self::Extrema { min, max },
+                AggSpec::Float {
+                    op: FoldOp::Min, ..
+                },
+            ) => Acc::Min(if *max == super::NAN_KEY { 0 } else { *min }),
             _ => unreachable!("output operator matches its compiled scan kernel"),
         }
     }
@@ -213,7 +226,11 @@ impl AggregateSink {
                     };
                     *n = n.saturating_add(count);
                 }
-                AggSpec::Fold { slot, .. } => {
+                AggSpec::Fold { slot, .. }
+                | AggSpec::Float {
+                    op: FoldOp::Min | FoldOp::Max,
+                    slot,
+                } => {
                     let source = sources.next().expect("one source per fold");
                     let output = match source {
                         FoldSource::Column(input) => {

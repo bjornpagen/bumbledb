@@ -1,6 +1,8 @@
 use crate::error::{Error, FindIndex, OverflowKind, Result};
 use crate::exec::kernel::numeric::ExactF64Accumulator;
-use crate::exec::sink::{Acc, AggregateSink, GroupState, GroupTable, SinkSpec, i64_to_word};
+use crate::exec::sink::{
+    Acc, AggSpec, AggregateSink, FoldOp, GroupState, GroupTable, SinkSpec, i64_to_word,
+};
 use crate::interval::sweep::{Continuation, sweep};
 
 impl AggregateSink {
@@ -169,19 +171,21 @@ fn emit_fold_row(
                 key_cursor += width;
             }
             SinkSpec::Agg(spec) => {
-                let word = if let Acc::Float { index, .. } = accs[acc_cursor] {
-                    let crate::exec::sink::AggSpec::Float { op, .. } = spec else {
-                        unreachable!("float accumulator has float find")
-                    };
-                    let value = match op {
-                        crate::ir::FoldOp::Sum => floats[index].sum(),
-                        crate::ir::FoldOp::Mean => floats[index].mean(),
+                let word = match (spec, accs[acc_cursor]) {
+                    (AggSpec::Float { op, .. }, Acc::Float { index, .. }) => match op {
+                        FoldOp::Sum => floats[index].sum(),
+                        FoldOp::Mean => floats[index].mean(),
                         _ => unreachable!("exact float bank is Sum/Mean only"),
                     }
-                    .expect("groups exist only after at least one binding");
-                    value.to_order_key()
-                } else {
-                    finalize_acc(accs[acc_cursor], find_idx)?
+                    .expect("groups exist only after at least one binding")
+                    .to_order_key(),
+                    (
+                        AggSpec::Float {
+                            op: FoldOp::Min, ..
+                        },
+                        Acc::Min(word),
+                    ) => super::min_output(word),
+                    (_, acc) => finalize_acc(acc, find_idx)?,
                 };
                 answer_scratch.push(word);
                 acc_cursor += 1;

@@ -16,7 +16,7 @@ kernel seam, timing-pin removal.
 | E4a: fearless_simd filter/fold/gather | landed |
 | E4b: portable Allen, Avx2 compress | landed |
 | E3: read-only FP environment check | landed; waiting on the `lib.rs` re-export swap to delete `UnsupportedNumericalPlatform` |
-| E5: MIN NaN propagation | todo (needs engine-query lowering, see request) |
+| E5: MIN NaN propagation | landed on the aggregate side; live once engine-query lowers F64 `Min`/`Max` to `AggSpec::Float` |
 | E6: xsum exact SUM/AVG | landed |
 | E7: columnar computed outputs | landed |
 | C4: aggregate spill deletion | landed; `stream_finalize` stays until `reach.rs` stops calling it |
@@ -61,11 +61,11 @@ kernel seam, timing-pin removal.
 
 ### E5 (engine-query)
 
-- MIN must know its argument is F64. Plan: the aggregate path first learns to run
-  `AggSpec::Float { op: Min | Max, slot }` (I announce it here when committed). Then, request:
-  lower F64 `Min`/`Max` to `AggSpec::Float { op, slot }` (drop the `Sum | Mean` guard at
-  `build.rs:935`) and update the `AggSpec::Float` doc to "F64 argument". Until that lowering
-  lands, F64 MIN keeps today's word-order semantics.
+- **Ready for the lowering (request):** the aggregate path runs `AggSpec::Float { op: Min | Max,
+  slot }` on the row, batch and scan paths, with MIN propagating NaN and MAX unchanged. Please
+  lower F64 `Min`/`Max` to `AggSpec::Float { op, slot }` (drop the `Sum | Mean` guard in
+  `build.rs`) and change the `AggSpec::Float` doc to "F64 argument: Sum/Mean exact, Min/Max over
+  order keys with NaN propagating". `AggSpec::seed_acc` is never called for `Float`.
 
 ## API changes (announcements)
 

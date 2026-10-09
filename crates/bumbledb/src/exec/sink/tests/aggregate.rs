@@ -954,3 +954,74 @@ fn dense_group_tables_match_the_hashed_map_word_for_word() {
         "mixed-radix ordinals reconstruct every key word"
     );
 }
+
+/// F64 MIN and MAX propagate NaN (MAX through NaN's top order key, MIN
+/// through its fold as key 0) on the row path, the gathered batch path and
+/// the outer-constant path, and agree with each other.
+#[test]
+fn f64_min_and_max_propagate_nan_on_every_path() {
+    use bumbledb_theory::F64;
+    let f = |x: f64| F64::from(x).to_order_key();
+    let finds = [
+        FindSpec::Var { slot: 0, width: 1 },
+        FindSpec::Agg(AggSpec::Float {
+            op: FoldOp::Min,
+            slot: 1,
+        }),
+        FindSpec::Agg(AggSpec::Float {
+            op: FoldOp::Max,
+            slot: 1,
+        }),
+        FindSpec::Agg(AggSpec::Float {
+            op: FoldOp::Min,
+            slot: 2,
+        }),
+        FindSpec::Agg(AggSpec::Count),
+    ];
+    let groups: [(u64, &[f64]); 4] = [
+        (0, &[3.0, f64::NAN, -1.0]),
+        (1, &[2.0, f64::NEG_INFINITY, 5.0]),
+        (2, &[f64::NAN]),
+        (3, &[0.0, -2.5, f64::INFINITY]),
+    ];
+    let expected = |values: &[f64], outer: f64| {
+        let nan = values.iter().any(|v| v.is_nan());
+        let keys: Vec<u64> = values.iter().map(|&v| f(v)).collect();
+        let min = if nan {
+            f(f64::NAN)
+        } else {
+            *keys.iter().min().unwrap()
+        };
+        vec![
+            *keys.iter().max().unwrap(),
+            min,
+            f(outer),
+            u64::try_from(values.len()).unwrap(),
+        ]
+    };
+    for outer in [7.5, f64::NAN] {
+        let mut batched = AggregateSink::new(&finds, 3);
+        let mut rows = AggregateSink::new(&finds, 3);
+        for &(group, values) in &groups {
+            let keys: Vec<u64> = values.iter().map(|&v| f(v)).collect();
+            let survivors: Vec<u32> = (0..u32::try_from(keys.len()).unwrap()).collect();
+            feed_batch_and_reference(
+                &mut batched,
+                &mut rows,
+                &[1],
+                &keys,
+                &survivors,
+                &[group, 0, f(outer)],
+            );
+        }
+        for sink in [&mut batched, &mut rows] {
+            let got = sorted_aggregate_rows(sink);
+            for (row, &(group, values)) in got.iter().zip(&groups) {
+                let mut want = vec![group];
+                let tail = expected(values, outer);
+                want.extend([tail[1], tail[0], tail[2], tail[3]]);
+                assert_eq!(row, &want, "group {group} outer {outer}");
+            }
+        }
+    }
+}

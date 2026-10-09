@@ -47,6 +47,17 @@ impl AggregateSink {
                     let acc = &mut accs[group_idx * n_aggs + acc_cursor];
                     acc_cursor += 1;
                     match spec {
+                        AggSpec::Float {
+                            op: FoldOp::Min | FoldOp::Max,
+                            slot,
+                        } => {
+                            let word = get(*slot, &self.cached_leaf_words);
+                            match acc {
+                                Acc::Min(best) => *best = (*best).min(super::min_key(word)),
+                                Acc::Max(best) => *best = (*best).max(word),
+                                _ => unreachable!("F64 extrema fold words"),
+                            }
+                        }
                         AggSpec::Float { slot, .. } => {
                             let Acc::Float { index, primary } = acc else {
                                 unreachable!("float accumulator handle")

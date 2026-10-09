@@ -1,5 +1,5 @@
 use crate::error::{Capacity, Error};
-use crate::exec::sink::{Acc, AggSpec, AggregateSink, GroupState, GroupTable, SinkSpec};
+use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, GroupTable, SinkSpec};
 use std::num::NonZeroU32;
 
 pub(super) fn load_group_key(
@@ -107,11 +107,15 @@ impl AggregateSink {
                     let first_acc = accs.len();
                     for i in 0..self.finds.len() {
                         if let SinkSpec::Agg(spec) = self.finds[i] {
-                            if let AggSpec::Float { slot, .. } = spec {
+                            if let AggSpec::Float {
+                                op: FoldOp::Sum | FoldOp::Mean,
+                                slot,
+                            } = spec
+                            {
                                 let alias = self.share_float_inputs.then(|| {
                                     self.finds[..i].iter().filter_map(|find| {
                                         if let SinkSpec::Agg(spec) = find { Some(spec) } else { None }
-                                    }).position(|previous| matches!(previous, AggSpec::Float { slot: previous, .. } if *previous == slot))
+                                    }).position(|previous| matches!(previous, AggSpec::Float { op: FoldOp::Sum | FoldOp::Mean, slot: previous } if *previous == slot))
                                 }).flatten();
                                 let (index, primary) = if let Some(alias) = alias {
                                     let Acc::Float { index, .. } = accs[first_acc + alias] else {
@@ -130,7 +134,15 @@ impl AggregateSink {
                                 };
                                 accs.push(Acc::Float { index, primary });
                             } else {
-                                accs.push(spec.seed_acc());
+                                accs.push(match spec {
+                                    AggSpec::Float {
+                                        op: FoldOp::Min, ..
+                                    } => Acc::Min(u64::MAX),
+                                    AggSpec::Float {
+                                        op: FoldOp::Max, ..
+                                    } => Acc::Max(u64::MIN),
+                                    _ => spec.seed_acc(),
+                                });
                             }
                         }
                     }
