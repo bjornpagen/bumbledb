@@ -75,6 +75,14 @@ impl EitherSink {
 }
 
 impl Sink for EitherSink {
+    /// Only the aggregate arm accepts a traversal proof
+    /// ([`super::run_join::RuleSink::set_physical_distinct`]); the executor
+    /// enables the traversal only when that proof is installed.
+    #[inline]
+    fn may_use_distinct_traversal() -> bool {
+        true
+    }
+
     fn emit(&mut self, bindings: &Bindings) -> crate::exec::run::Flow {
         let flow = match self {
             Self::Computed(sink) => sink.emit(bindings),

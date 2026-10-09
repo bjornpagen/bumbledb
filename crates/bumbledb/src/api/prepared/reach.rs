@@ -4,39 +4,16 @@
 //! Queries containing only interiors never enter this loop.
 use std::sync::Arc;
 
-use super::run_join::run_join;
+use super::run_join::{RuleCtx, RuleScratch, SinkUse, run_free_join, run_rule};
 use super::{
     Bindings, EitherSink, FreeJoinRule, PreparedInterior, PreparedPipeline, PreparedQuery,
     PreparedRule, ProjectionSink,
 };
 use crate::error::Result;
 use crate::exec::run::Counters;
-use crate::exec::sink::FindSpec;
 use crate::image::SourceImages;
-use crate::image::intern::InternerHandle;
-use crate::image::view::Const;
 use crate::image::{RelationImage, TransientImage};
-use crate::schema::Schema;
 use bumbledb_theory::schema::ValueType;
-
-/// The one aim surface the derived rule loop needs: reach's sink stays a
-/// plain projection (the recursive cycle is projection-only by type),
-/// while an interior's stage sink is the full [`EitherSink`].
-pub(super) trait StageSink: crate::exec::run::Sink {
-    fn aim_stage(&mut self, finds: &[FindSpec], slot_count: usize, spans: &[(usize, usize)]);
-}
-
-impl StageSink for ProjectionSink {
-    fn aim_stage(&mut self, finds: &[FindSpec], _slot_count: usize, _spans: &[(usize, usize)]) {
-        self.aim(finds);
-    }
-}
-
-impl StageSink for EitherSink {
-    fn aim_stage(&mut self, finds: &[FindSpec], slot_count: usize, spans: &[(usize, usize)]) {
-        self.aim(finds, slot_count, spans);
-    }
-}
 
 pub(crate) struct ReachDriver {
     pub(super) base: Vec<PreparedRule>,
@@ -203,15 +180,6 @@ fn seal_interior(
     }
 }
 
-struct RunCtx<'a> {
-    schema: &'a Schema,
-    images: &'a SourceImages<'a>,
-    interner: &'a InternerHandle<'a>,
-    resolved_params: &'a [Const],
-    missed_params: &'a [bool],
-    fast_eligible: bool,
-}
-
 impl<S> PreparedQuery<S> {
     pub(super) fn run_derived<Cnt: Counters>(
         &mut self,
@@ -236,9 +204,15 @@ impl<S> PreparedQuery<S> {
                 }
             }
         }
-        let fast_eligible = self.params.is_empty();
         let mut ran = false;
         let interner = images.interner();
+        let ctx = RuleCtx {
+            schema: self.schema.as_ref(),
+            images,
+            interner: &interner,
+            params: &self.resolved_params,
+            missed: &self.missed_params,
+        };
 
         let n_interiors = self.pipeline.interiors().len();
         if n_interiors > 0 {
@@ -258,33 +232,30 @@ impl<S> PreparedQuery<S> {
                         &self.pipeline.interiors()[i].rules[rule_idx],
                         &mut self.derived,
                     );
-                    let mut ctx = RunCtx {
-                        schema: self.schema.as_ref(),
-                        images,
-                        interner: &interner,
-                        resolved_params: &self.resolved_params,
-                        missed_params: &self.missed_params,
-                        fast_eligible,
-                    };
                     let occ_images = std::mem::take(&mut self.derived.occ_images);
                     let mut retired = std::mem::take(&mut self.derived.retired);
-                    let interiors = self.pipeline.interiors_mut();
-                    let units = interiors[i].units;
-                    let interior = &mut interiors[i];
-                    ran |= run_into_projection(
-                        &mut ctx,
-                        &mut interior.rules,
-                        rule_idx,
-                        units,
-                        &occ_images,
-                        &mut retired,
+                    let interior = &mut self.pipeline.interiors_mut()[i];
+                    let sink_use = if interior.units > 1 {
+                        SinkUse::Shared
+                    } else {
+                        SinkUse::Sole
+                    };
+                    let result = run_rule(
+                        &ctx,
+                        &mut RuleScratch {
+                            bindings: &mut self.bindings,
+                            key_scratch: &mut self.key_scratch,
+                            occ_images: &occ_images,
+                            retired: &mut retired,
+                        },
+                        &mut interior.rules[rule_idx],
+                        sink_use,
                         &mut interior.sink,
-                        &mut self.bindings,
-                        &mut self.key_scratch,
                         counters,
-                    )?;
+                    );
                     self.derived.occ_images = occ_images;
                     self.derived.retired = retired;
+                    ran |= result?;
                 }
                 // Seal the stage: aggregate/computed stages finalize HERE,
                 // so a required producer error (overflow, cardinality,
@@ -308,17 +279,12 @@ impl<S> PreparedQuery<S> {
             PreparedPipeline::Reach { driver, rec_id, .. } => {
                 let rec_id = usize::try_from(rec_id.0).expect("rec_id stored at validate");
                 run_reach(
+                    &ctx,
                     driver,
                     rec_id,
                     &mut self.derived,
                     &mut self.bindings,
                     &mut self.key_scratch,
-                    self.schema.as_ref(),
-                    images,
-                    &interner,
-                    &self.resolved_params,
-                    &self.missed_params,
-                    fast_eligible,
                     &mut self.execution_texts,
                     counters,
                 )?
@@ -340,21 +306,16 @@ impl<S> PreparedQuery<S> {
 }
 
 fn run_reach<Cnt: Counters>(
+    ctx: &RuleCtx<'_>,
     driver: &mut ReachDriver,
     rec_id: usize,
-
     derived: &mut DerivedImages,
     bindings: &mut Bindings,
     key_scratch: &mut crate::image::view::ResolvedWords,
-    schema: &Schema,
-    images: &SourceImages<'_>,
-    interner: &InternerHandle<'_>,
-    resolved_params: &[Const],
-    missed_params: &[bool],
-    fast_eligible: bool,
     retained_texts: &mut crate::image::TextOwners,
     counters: &mut Cnt,
 ) -> Result<bool> {
+    let images = ctx.images;
     let mut ran = false;
 
     driver.sink.reset();
@@ -369,26 +330,24 @@ fn run_reach<Cnt: Counters>(
         unbind_interior_rule(rule, &mut derived.retired);
     }
 
-    for rule_idx in 0..driver.base.len() {
-        fill_finished_images(&driver.base[rule_idx], derived);
-        let mut ctx = RunCtx {
-            schema,
-            images,
-            interner,
-            resolved_params,
-            missed_params,
-            fast_eligible,
-        };
-        ran |= run_into_projection(
-            &mut ctx,
-            &mut driver.base,
-            rule_idx,
-            driver.units,
-            &derived.occ_images,
-            &mut derived.retired,
+    let sink_use = if driver.units > 1 {
+        SinkUse::Shared
+    } else {
+        SinkUse::Sole
+    };
+    for rule in &mut driver.base {
+        fill_finished_images(rule, derived);
+        ran |= run_rule(
+            ctx,
+            &mut RuleScratch {
+                bindings,
+                key_scratch,
+                occ_images: &derived.occ_images,
+                retired: &mut derived.retired,
+            },
+            rule,
+            sink_use,
             &mut driver.sink,
-            bindings,
-            key_scratch,
             counters,
         )?;
     }
@@ -427,22 +386,17 @@ fn run_reach<Cnt: Counters>(
 
         for rule in &mut driver.rec {
             fill_plan_images(&rule.plan, derived);
-            let mut ctx = RunCtx {
-                schema,
-                images,
-                interner,
-                resolved_params,
-                missed_params,
-                fast_eligible,
-            };
-            let result = run_free_join_into_projection(
-                &mut ctx,
+            let result = run_free_join(
+                ctx,
+                &mut RuleScratch {
+                    bindings,
+                    key_scratch,
+                    occ_images: &derived.occ_images,
+                    retired: &mut derived.retired,
+                },
                 rule,
-                driver.units,
-                &derived.occ_images,
-                &mut derived.retired,
+                sink_use,
                 &mut driver.sink,
-                bindings,
                 counters,
             );
             // End every consumer lease, including a failed arm, before
@@ -543,102 +497,6 @@ fn fill_plan_images(plan: &crate::plan::fj::ValidatedPlan, derived: &mut Derived
             .occ_images
             .insert(occ_idx, Arc::clone(&derived.published[id.index()]));
     }
-}
-
-fn run_into_projection<S: StageSink, Cnt: Counters>(
-    ctx: &mut RunCtx<'_>,
-    rules: &mut [PreparedRule],
-    rule_idx: usize,
-    units: usize,
-    occ_images: &OccImages,
-    retired: &mut Vec<Vec<u32>>,
-    sink: &mut S,
-    bindings: &mut Bindings,
-    key_scratch: &mut crate::image::view::ResolvedWords,
-    counters: &mut Cnt,
-) -> Result<bool> {
-    let multi_unit = units > 1;
-    match &mut rules[rule_idx] {
-        PreparedRule::KeyProbe(rule) => {
-            bindings.resize(rule.plan.slot_count());
-            if multi_unit {
-                sink.aim_stage(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
-            }
-            crate::exec::dispatch::execute_key_probe(
-                &rule.plan,
-                ctx.images.source(),
-                ctx.schema,
-                ctx.interner,
-                ctx.resolved_params,
-                &mut rule.row,
-                key_scratch,
-                bindings,
-                sink,
-                counters,
-            )?;
-            Ok(true)
-        }
-        PreparedRule::FreeJoin(rule) => run_free_join_into_projection(
-            ctx, rule, units, occ_images, retired, sink, bindings, counters,
-        ),
-    }
-}
-
-fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
-    ctx: &mut RunCtx<'_>,
-    rule: &mut FreeJoinRule,
-    units: usize,
-    occ_images: &OccImages,
-    retired: &mut Vec<Vec<u32>>,
-    sink: &mut S,
-    bindings: &mut Bindings,
-    counters: &mut Cnt,
-) -> Result<bool> {
-    let multi_unit = units > 1;
-    bindings.resize(rule.plan.slot_count());
-    let resolved = if ctx.fast_eligible && rule.resolution == super::ResolutionState::Complete {
-        true
-    } else {
-        let complete = super::bind::LiteralResolution {
-            interner: ctx.interner,
-            work: ctx.images.source().work(),
-            params: ctx.resolved_params,
-            missed: ctx.missed_params,
-        }
-        .filters(
-            &rule.plan,
-            &mut rule.resolved_filters,
-            &mut rule.resolved_selections,
-        )?;
-        rule.resolution = if complete {
-            super::ResolutionState::Complete
-        } else {
-            super::ResolutionState::Pending
-        };
-        complete
-    };
-    if !resolved {
-        return Ok(false);
-    }
-    if multi_unit {
-        sink.aim_stage(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
-    }
-    run_join(
-        &rule.plan,
-        ctx.schema,
-        ctx.images,
-        ctx.images.source().work(),
-        &mut rule.executor,
-        bindings,
-        &rule.resolved_filters,
-        &rule.resolved_selections,
-        &mut rule.memo,
-        occ_images,
-        retired,
-        sink,
-        counters,
-    )?;
-    Ok(true)
 }
 
 #[cfg(test)]

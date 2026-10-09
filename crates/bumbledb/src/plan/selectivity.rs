@@ -7,7 +7,6 @@
 //! Requested resident columns count once on demand under this prepare's work
 //! allowance. Only the scalar is cached; temporary counting tables are released.
 use crate::api::prepared::source::QuerySource;
-use crate::image::ImageBind;
 use crate::image::SourceImages;
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::WordCmp;

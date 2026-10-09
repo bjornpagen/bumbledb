@@ -3,6 +3,7 @@ use super::{
     ValueType,
 };
 
+use crate::canonical::field::i64_word;
 use crate::error::{Error, Mismatch, Result};
 use crate::image::intern::InternerHandle;
 use crate::image::view::ResolvedWords;
@@ -570,10 +571,6 @@ fn convert_scalar(
         _ => return Ok(None),
     };
     Ok(Some(resolved))
-}
-
-fn i64_word(value: i64) -> u64 {
-    u64::from_be_bytes(crate::encoding::encode_i64(value))
 }
 
 fn uuid_words(id: crate::Uuid) -> [u64; 2] {

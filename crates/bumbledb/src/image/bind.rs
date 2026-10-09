@@ -11,22 +11,6 @@ use crate::schema::Schema;
 use crate::work::GenerationHandle;
 use bumbledb_theory::schema::RelationId;
 
-pub(crate) trait ImageBind {
-    fn epoch(&self, schema: &Schema, relation: RelationId) -> Result<ViewEpoch>;
-    /// Build or reuse an image in this execution's resolver generation.
-    fn image(&self, schema: &Schema, relation: RelationId) -> Result<Arc<RelationImage>>;
-    fn peek(&self, schema: &Schema, relation: RelationId) -> Result<Option<Arc<RelationImage>>>;
-    /// A query-local superset of the selected rows, or None when no supported
-    /// index is bound. Never publish this image as a full relation.
-    fn selection_image(
-        &self,
-        schema: &Schema,
-        relation: RelationId,
-        selections: &[crate::plan::fj::Selection],
-        keys: &[crate::image::view::ResolvedWords],
-    ) -> Result<Option<Arc<RelationImage>>>;
-}
-
 /// One execution's image access: the prepared query's cache bound to the
 /// execution's row source, plus the acquired generation that owns every
 /// token this execution interprets.
@@ -69,26 +53,37 @@ impl<'a> SourceImages<'a> {
     }
 }
 
-impl ImageBind for SourceImages<'_> {
-    fn epoch(&self, _schema: &Schema, relation: RelationId) -> Result<ViewEpoch> {
+impl SourceImages<'_> {
+    pub(crate) fn epoch(&self, _schema: &Schema, relation: RelationId) -> Result<ViewEpoch> {
         match self.cache.slot(relation) {
             RelationSlot::Closed(_) => Ok(ViewEpoch::Closed),
             RelationSlot::Ordinary(_) => self.source.relation_epoch(relation),
         }
     }
 
-    fn image(&self, schema: &Schema, relation: RelationId) -> Result<Arc<RelationImage>> {
+    /// Build or reuse an image in this execution's resolver generation.
+    pub(crate) fn image(
+        &self,
+        schema: &Schema,
+        relation: RelationId,
+    ) -> Result<Arc<RelationImage>> {
         let epoch = self.epoch(schema, relation)?;
         self.cache
             .get_or_build_with(self.source, schema, relation, epoch, &self.generation)
     }
 
-    fn peek(&self, schema: &Schema, relation: RelationId) -> Result<Option<Arc<RelationImage>>> {
+    pub(crate) fn peek(
+        &self,
+        schema: &Schema,
+        relation: RelationId,
+    ) -> Result<Option<Arc<RelationImage>>> {
         let epoch = self.epoch(schema, relation)?;
         Ok(self.cache.peek_at(relation, epoch, &self.generation))
     }
 
-    fn selection_image(
+    /// A query-local superset of the selected rows, or None when no supported
+    /// index is bound. Never published as a full relation image.
+    pub(crate) fn selection_image(
         &self,
         schema: &Schema,
         relation: RelationId,

@@ -1,30 +1,195 @@
-use super::{Bindings, Executor, FilterPredicate, Schema, ViewMemo};
+//! The one rule runner: main rules, interior rules and rec arms resolve their
+//! literals, aim a shared sink, bind their views and join through here.
+use super::reach::OccImages;
+use super::{
+    Bindings, FilterPredicate, FreeJoinRule, PreparedRule, ResolutionState, Schema, ViewMemo,
+};
 
 use crate::error::Result;
-use crate::image::ImageBind;
-use crate::image::ViewEpoch;
-use crate::image::view::apply;
+use crate::exec::run::{Counters, Sink};
+use crate::exec::sink::FindSpec;
+use crate::image::intern::InternerHandle;
+use crate::image::view::{Const, ResolvedWords, apply};
+use crate::image::{SourceImages, ViewEpoch};
+use crate::plan::fj::ScalarSetTraversal;
 
-pub(super) fn run_join<S, C, I>(
-    plan: &crate::plan::fj::ValidatedPlan,
-    schema: &Schema,
-    images: &I,
-    work: &crate::work::WorkContext,
-    executor: &mut Executor,
-    bindings: &mut Bindings,
-    resolved_filters: &[Vec<FilterPredicate>],
-    resolved_selections: &[Vec<crate::image::view::ResolvedWords>],
-    memo: &mut ViewMemo,
-    derived_images: &super::reach::OccImages,
-    derived_retired: &mut Vec<Vec<u32>>,
+/// What one execution's rule runs read: sources and bound constants.
+pub(super) struct RuleCtx<'a> {
+    pub(super) schema: &'a Schema,
+    pub(super) images: &'a SourceImages<'a>,
+    pub(super) interner: &'a InternerHandle<'a>,
+    pub(super) params: &'a [Const],
+    pub(super) missed: &'a [bool],
+}
+
+/// The scratch one rule run borrows.
+pub(super) struct RuleScratch<'a> {
+    pub(super) bindings: &'a mut Bindings,
+    pub(super) key_scratch: &'a mut ResolvedWords,
+    pub(super) occ_images: &'a OccImages,
+    pub(super) retired: &'a mut Vec<Vec<u32>>,
+}
+
+/// How a rule relates to the sink it emits into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SinkUse {
+    /// Several rules emit into the sink; it is aimed at each in turn.
+    Shared,
+    /// The only rule of an interior or the rec base.
+    Sole,
+    /// The only main rule: a scalar-set traversal may stand in for dedup.
+    SoleMain,
+}
+
+/// A sink a rule can emit into.
+pub(super) trait RuleSink: Sink {
+    fn aim_rule(&mut self, finds: &[FindSpec], slot_count: usize, spans: &[(usize, usize)]);
+
+    /// Accept a physical distinct-traversal proof for one invocation; returns
+    /// the proof the sink can use.
+    fn set_physical_distinct(
+        &mut self,
+        witness: Option<ScalarSetTraversal>,
+    ) -> Option<ScalarSetTraversal> {
+        let _ = witness;
+        None
+    }
+}
+
+impl RuleSink for crate::exec::sink::ProjectionSink {
+    fn aim_rule(&mut self, finds: &[FindSpec], _slot_count: usize, _spans: &[(usize, usize)]) {
+        self.aim(finds);
+    }
+}
+
+impl RuleSink for super::EitherSink {
+    fn aim_rule(&mut self, finds: &[FindSpec], slot_count: usize, spans: &[(usize, usize)]) {
+        self.aim(finds, slot_count, spans);
+    }
+
+    fn set_physical_distinct(
+        &mut self,
+        witness: Option<ScalarSetTraversal>,
+    ) -> Option<ScalarSetTraversal> {
+        match self {
+            Self::Aggregate(sink) => sink.set_physical_distinct(witness),
+            Self::Computed(_) | Self::Projection(_) => None,
+        }
+    }
+}
+
+/// Run one prepared rule into `sink`. `Ok(false)` when a missed parameter
+/// leaves the rule nothing to join.
+pub(super) fn run_rule<S: RuleSink, C: Counters>(
+    ctx: &RuleCtx<'_>,
+    scratch: &mut RuleScratch<'_>,
+    rule: &mut PreparedRule,
+    sink_use: SinkUse,
     sink: &mut S,
     counters: &mut C,
-) -> Result<()>
-where
-    S: crate::exec::run::Sink,
-    C: crate::exec::run::Counters,
-    I: ImageBind,
-{
+) -> Result<bool> {
+    match rule {
+        PreparedRule::KeyProbe(rule) => {
+            scratch.bindings.resize(rule.plan.slot_count());
+            if sink_use == SinkUse::Shared {
+                sink.aim_rule(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
+            }
+            crate::exec::dispatch::execute_key_probe(
+                &rule.plan,
+                ctx.images.source(),
+                ctx.schema,
+                ctx.interner,
+                ctx.params,
+                &mut rule.row,
+                scratch.key_scratch,
+                scratch.bindings,
+                sink,
+                counters,
+            )?;
+            Ok(true)
+        }
+        PreparedRule::FreeJoin(rule) => run_free_join(ctx, scratch, rule, sink_use, sink, counters),
+    }
+}
+
+/// Run one Free Join rule into `sink`.
+pub(super) fn run_free_join<S: RuleSink, C: Counters>(
+    ctx: &RuleCtx<'_>,
+    scratch: &mut RuleScratch<'_>,
+    rule: &mut FreeJoinRule,
+    sink_use: SinkUse,
+    sink: &mut S,
+    counters: &mut C,
+) -> Result<bool> {
+    scratch.bindings.resize(rule.plan.slot_count());
+    if !resolve(ctx, rule)? {
+        return Ok(false);
+    }
+    if sink_use == SinkUse::Shared {
+        sink.aim_rule(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
+    }
+    let witness = (sink_use == SinkUse::SoleMain)
+        .then(|| rule.plan.scalar_set_traversal())
+        .flatten();
+    let witness = sink.set_physical_distinct(witness);
+    rule.executor.set_physical_distinct(witness);
+    let joined = join(ctx, scratch, rule, sink, counters);
+    // The proof belongs to this invocation; restore before propagating errors.
+    rule.executor.set_physical_distinct(None);
+    let _ = sink.set_physical_distinct(None);
+    joined.map(|()| true)
+}
+
+/// Substitute this execution's constants into the rule's filters and
+/// selections. A parameter-free rule reuses a completed resolution.
+fn resolve(ctx: &RuleCtx<'_>, rule: &mut FreeJoinRule) -> Result<bool> {
+    if ctx.params.is_empty() && rule.resolution == ResolutionState::Complete {
+        return Ok(true);
+    }
+    let complete = super::bind::LiteralResolution {
+        interner: ctx.interner,
+        work: ctx.images.source().work(),
+        params: ctx.params,
+        missed: ctx.missed,
+    }
+    .filters(
+        &rule.plan,
+        &mut rule.resolved_filters,
+        &mut rule.resolved_selections,
+    )?;
+    rule.resolution = if complete {
+        ResolutionState::Complete
+    } else {
+        ResolutionState::Pending
+    };
+    Ok(complete)
+}
+
+/// Bind every occurrence's view, select, and run the executor.
+fn join<S: Sink, C: Counters>(
+    ctx: &RuleCtx<'_>,
+    scratch: &mut RuleScratch<'_>,
+    rule: &mut FreeJoinRule,
+    sink: &mut S,
+    counters: &mut C,
+) -> Result<()> {
+    let FreeJoinRule {
+        plan,
+        executor,
+        resolved_filters,
+        resolved_selections,
+        memo,
+        ..
+    } = rule;
+    let plan = &*plan;
+    let resolved_filters = &resolved_filters[..];
+    let resolved_selections = &resolved_selections[..];
+    let schema = ctx.schema;
+    let images = ctx.images;
+    let work = images.source().work();
+    let bindings = &mut *scratch.bindings;
+    let derived_images = scratch.occ_images;
+    let derived_retired = &mut *scratch.retired;
     memo.tick += 1;
 
     // Bind the current operation on every COLT before any view reset,
@@ -57,9 +222,6 @@ where
             continue;
         }
 
-        // Scratch-backed derived occurrences never reach this arm:
-        // `rule_uses_scratch_derived` selects fallback before COLT build,
-        // so join/negation walks the sealed stage instead of rematerializing.
         if occurrence.bind.edb().is_none() {
             let image = derived_images.image(occ_idx);
             let mut buffer = std::mem::take(memo.spare_mut(occ_idx));

@@ -1,4 +1,5 @@
-use crate::encoding::{encode_bool, encode_f64, encode_i64};
+use crate::canonical::field::i64_word;
+use crate::encoding::{encode_bool, encode_f64};
 use crate::image::view::Const;
 use crate::ir::Value;
 
@@ -75,10 +76,6 @@ pub(super) fn point_word(value: &Value) -> u64 {
         Value::F64(v) => v.to_order_key(),
         _ => unreachable!("validated: interval points are U64/I64/F64"),
     }
-}
-
-fn i64_word(value: i64) -> u64 {
-    u64::from_be_bytes(encode_i64(value))
 }
 
 #[cfg(test)]

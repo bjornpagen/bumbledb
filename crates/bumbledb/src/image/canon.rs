@@ -135,10 +135,6 @@ impl<'a> Reader<'a> {
     }
 }
 
-pub(crate) const fn i64_word(value: i64) -> u64 {
-    field::i64_word(value)
-}
-
 /// Decode one canonical row into flat column words (one word per image
 /// column, `Bool` as 0/1), appended to `out`. The caller charges scan
 /// work per row; this walker charges per text byte through the intern arm.
@@ -165,7 +161,7 @@ pub(crate) fn row_words(
             },
             (1, ValueType::U64) => out.push(u64::from_be_bytes(reader.word()?)),
             (2, ValueType::I64) => {
-                out.push(i64_word(i64::from_be_bytes(reader.word()?)));
+                out.push(field::i64_word(i64::from_be_bytes(reader.word()?)));
             }
             (3, ValueType::F64) => {
                 let value = bumbledb_theory::F64::from_canonical_be_bytes(reader.word()?)

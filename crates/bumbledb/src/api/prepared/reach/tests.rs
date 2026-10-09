@@ -2,6 +2,7 @@ use super::*;
 use crate::exec::run::{Bindings, Sink};
 use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, ProjectionSink};
 use crate::image::CacheGeneration;
+use crate::image::intern::InternerHandle;
 use crate::work::{GenerationHandle, GenerationState, WorkContext};
 use bumbledb_theory::schema::ValueType;
 

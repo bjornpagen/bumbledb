@@ -22,7 +22,7 @@ mod stride;
 pub(crate) mod testsupport;
 mod text_eq;
 
-pub(crate) use bind::{ImageBind, SourceImages};
+pub(crate) use bind::SourceImages;
 pub(crate) use build::build_from_source;
 pub(crate) use epoch::{CacheGeneration, ViewEpoch};
 

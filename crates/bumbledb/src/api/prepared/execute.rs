@@ -1,17 +1,14 @@
 use std::sync::Arc;
 
 use super::finalize::finalize;
-use super::run_join::run_join;
+use super::run_join::{RuleCtx, RuleScratch, SinkUse, run_rule};
 use super::source::QuerySource;
-use super::{Answers, PreparedPipeline, PreparedQuery, PreparedRule, ValueType};
+use super::{Answers, PreparedPipeline, PreparedQuery, ValueType};
 
 use crate::api::db::{OwnedInstance, ReadInstance};
 use crate::error::Result;
-use crate::exec::dispatch::execute_key_probe;
 use crate::exec::run::{Counters, NoopCounters};
 use crate::image::SourceImages;
-
-use super::bind::LiteralResolution;
 
 impl<S> PreparedQuery<S> {
     /// Execute against one committed snapshot lease.
@@ -191,137 +188,45 @@ impl<S> PreparedQuery<S> {
         Ok(ran)
     }
 
-    pub(super) fn run_rule<Cnt: Counters>(
+    fn run_rule<Cnt: Counters>(
         &mut self,
         rule_idx: usize,
         images: &SourceImages<'_>,
         counters: &mut Cnt,
     ) -> Result<bool> {
-        let rule_count = self.pipeline.main_rules().len();
-        if rule_count > 1 {
-            let rule = &self.pipeline.main_rules()[rule_idx];
-            self.sink
-                .aim(rule.finds(), rule.slot_count(), rule.dedup_spans());
-        }
-        let slot_count = self.pipeline.main_rules()[rule_idx].slot_count();
-        self.bindings.resize(slot_count);
-
         self.fill_main_images(rule_idx);
         let occ_images = std::mem::take(&mut self.derived.occ_images);
         let mut retired = std::mem::take(&mut self.derived.retired);
-        let fast_eligible = self.params.is_empty();
         let interner = images.interner();
-        let rules = self.pipeline.main_rules_mut();
-        let ran = match &mut rules[rule_idx] {
-            PreparedRule::KeyProbe(rule) => {
-                execute_key_probe(
-                    &rule.plan,
-                    images.source(),
-                    self.schema.as_ref(),
-                    &interner,
-                    &self.resolved_params,
-                    &mut rule.row,
-                    &mut self.key_scratch,
-                    &mut self.bindings,
-                    &mut self.sink,
-                    counters,
-                )?;
-                true
-            }
-            PreparedRule::FreeJoin(rule) => {
-                let plan = &rule.plan;
-                let resolved =
-                    if fast_eligible && rule.resolution == super::ResolutionState::Complete {
-                        true
-                    } else {
-                        let complete = LiteralResolution {
-                            interner: &interner,
-                            work: images.source().work(),
-                            params: &self.resolved_params,
-                            missed: &self.missed_params,
-                        }
-                        .filters(
-                            plan,
-                            &mut rule.resolved_filters,
-                            &mut rule.resolved_selections,
-                        )?;
-                        rule.resolution = if complete {
-                            super::ResolutionState::Complete
-                        } else {
-                            super::ResolutionState::Pending
-                        };
-                        complete
-                    };
-                if resolved {
-                    let work = images.source().work();
-                    match &mut self.sink {
-                        super::EitherSink::Computed(s) => run_join(
-                            plan,
-                            self.schema.as_ref(),
-                            images,
-                            work,
-                            &mut rule.executor,
-                            &mut self.bindings,
-                            &rule.resolved_filters,
-                            &rule.resolved_selections,
-                            &mut rule.memo,
-                            &occ_images,
-                            &mut retired,
-                            s.as_mut(),
-                            counters,
-                        )?,
-                        super::EitherSink::Projection(s) => run_join(
-                            plan,
-                            self.schema.as_ref(),
-                            images,
-                            work,
-                            &mut rule.executor,
-                            &mut self.bindings,
-                            &rule.resolved_filters,
-                            &rule.resolved_selections,
-                            &mut rule.memo,
-                            &occ_images,
-                            &mut retired,
-                            s,
-                            counters,
-                        )?,
-                        super::EitherSink::Aggregate(s) => {
-                            // The capability belongs to one invocation, not the
-                            // prepared sink: unions still require dedup.
-                            let witness = (rule_count == 1)
-                                .then(|| plan.scalar_set_traversal())
-                                .flatten();
-                            let witness = s.set_physical_distinct(witness);
-                            rule.executor.set_physical_distinct(witness);
-                            let joined = run_join(
-                                plan,
-                                self.schema.as_ref(),
-                                images,
-                                work,
-                                &mut rule.executor,
-                                &mut self.bindings,
-                                &rule.resolved_filters,
-                                &rule.resolved_selections,
-                                &mut rule.memo,
-                                &occ_images,
-                                &mut retired,
-                                s.as_mut(),
-                                counters,
-                            );
-                            // Restore the invocation-local proof before propagating errors.
-                            rule.executor.set_physical_distinct(None);
-                            let _ = s.set_physical_distinct(None);
-                            joined?;
-                        }
-                    }
-                }
-                resolved
-            }
+        let ctx = RuleCtx {
+            schema: self.schema.as_ref(),
+            images,
+            interner: &interner,
+            params: &self.resolved_params,
+            missed: &self.missed_params,
         };
-
+        let rules = self.pipeline.main_rules_mut();
+        let sink_use = if rules.len() > 1 {
+            SinkUse::Shared
+        } else {
+            SinkUse::SoleMain
+        };
+        let ran = run_rule(
+            &ctx,
+            &mut RuleScratch {
+                bindings: &mut self.bindings,
+                key_scratch: &mut self.key_scratch,
+                occ_images: &occ_images,
+                retired: &mut retired,
+            },
+            &mut rules[rule_idx],
+            sink_use,
+            &mut self.sink,
+            counters,
+        );
         self.derived.occ_images = occ_images;
         self.derived.retired = retired;
-        Ok(ran)
+        ran
     }
 
     pub(super) fn execute_key_probe_direct(

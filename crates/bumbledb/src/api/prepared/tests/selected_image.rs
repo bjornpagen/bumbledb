@@ -200,7 +200,6 @@ fn indexed_image_coverage_survives_old_snapshots_refusal_and_generation_rotation
 
 #[test]
 fn cancelled_selected_image_publishes_no_cache_entry() {
-    use crate::image::ImageBind;
     use crate::storage::store::StoreError;
     use crate::work::WorkError;
 
