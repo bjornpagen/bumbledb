@@ -91,6 +91,7 @@ fn rejects_interval_widths_outside_the_range() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn rejects_a_relation_whose_derived_column_count_overflows_u16() {
     let wide = |name: String, count: usize, value_type: ValueType, columns: usize| {
         let decl = one_relation(
@@ -127,6 +128,7 @@ fn rejects_a_relation_whose_derived_column_count_overflows_u16() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_column_cap_fires_before_any_u16_field_id_is_minted() {
     // The cap must fire before per-field checks that mint u16 ids (an
     // invalid bytes<0> width rejection cannot run until after the ids are

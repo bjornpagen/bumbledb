@@ -327,6 +327,7 @@ fn adjacent_target_spans_cover_through_the_run_table() {
 /// Determinism: one fixture judged twice yields byte-identical verdicts —
 /// citation order is the state's own deterministic iteration order.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn judgments_are_deterministic() {
     let schema = text_keyed_schema();
     let judge_once = || {

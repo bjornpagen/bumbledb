@@ -1090,6 +1090,7 @@ fn delta_local_key_judgment_never_streams_any_relation() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn scalar_key_valid_growth_retains_no_good_groups() {
     let schema = theory();
     let parent = [(USER, user(999, "existing")), (USER, user(1000, "removed"))];
@@ -1517,6 +1518,7 @@ fn scalar_containment_theory() -> Schema {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn scalar_containment_witness_skips_existing_source_fanout() {
     let source = RelationId(0);
     let target = RelationId(1);
