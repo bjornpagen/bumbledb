@@ -1,113 +1,87 @@
 //! Allocation accounting for allocation gates and benchmark diagnostics.
 //! This crate's unit tests register [`CountingAllocator`] globally; another
-//! test binary registers it with its own `#[global_allocator]`. The process
-//! counters assume one test per process (nextest); [`thread_counts`] sees only
-//! the calling thread, so the test harness's own allocations never leak in.
+//! test binary registers it with its own `#[global_allocator]`. Every counter
+//! belongs to the calling thread, so a measured window sees only the work that
+//! thread did, never the test harness's other threads.
 #![allow(unsafe_code)] // GlobalAlloc delegates to the system allocator below.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
-static DEALLOCATIONS: AtomicU64 = AtomicU64::new(0);
-static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
-static DEALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
-static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
-static PEAK_LIVE: AtomicU64 = AtomicU64::new(0);
+/// Where a thread's live level starts. A thread that frees memory another
+/// thread allocated stays far above zero, so differences between two readings
+/// are always exact; the absolute value means nothing.
+const LIVE_ORIGIN: u64 = 1 << 62;
 
-fn bump_live(add: u64) {
-    let prev = LIVE_BYTES.fetch_add(add, Ordering::Relaxed);
-    PEAK_LIVE.fetch_max(prev.saturating_add(add), Ordering::Relaxed);
-}
-
-/// One thread's allocation events and bytes since it started.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ThreadCounts {
-    pub allocs: u64,
-    pub alloc_bytes: u64,
-    pub dealloc_bytes: u64,
-}
-
-impl ThreadCounts {
-    /// Bytes this thread allocated and has not freed (it may be negative when
-    /// the thread frees memory another thread allocated).
-    #[must_use]
-    pub fn net_bytes(self) -> i128 {
-        i128::from(self.alloc_bytes) - i128::from(self.dealloc_bytes)
-    }
+#[derive(Clone, Copy)]
+struct Counters {
+    allocs: u64,
+    deallocs: u64,
+    alloc_bytes: u64,
+    dealloc_bytes: u64,
+    live: u64,
+    peak: u64,
 }
 
 thread_local! {
     // Const-initialized and without a destructor, so the allocator can touch it
     // at any point in a thread's life without allocating.
-    static THREAD: Cell<ThreadCounts> = const { Cell::new(ThreadCounts { allocs: 0, alloc_bytes: 0, dealloc_bytes: 0 }) };
+    static COUNTERS: Cell<Counters> = const {
+        Cell::new(Counters {
+            allocs: 0,
+            deallocs: 0,
+            alloc_bytes: 0,
+            dealloc_bytes: 0,
+            live: LIVE_ORIGIN,
+            peak: LIVE_ORIGIN,
+        })
+    };
 }
 
-fn count_thread(allocs: u64, alloc_bytes: u64, dealloc_bytes: u64) {
-    let _ = THREAD.try_with(|cell| {
-        let mut counts = cell.get();
-        counts.allocs += allocs;
-        counts.alloc_bytes += alloc_bytes;
-        counts.dealloc_bytes += dealloc_bytes;
-        cell.set(counts);
+/// Wrapping arithmetic: a panic inside the allocator would abort the process.
+fn record(allocs: u64, deallocs: u64, alloc_bytes: u64, dealloc_bytes: u64) {
+    let _ = COUNTERS.try_with(|cell| {
+        let mut c = cell.get();
+        c.allocs = c.allocs.wrapping_add(allocs);
+        c.deallocs = c.deallocs.wrapping_add(deallocs);
+        c.alloc_bytes = c.alloc_bytes.wrapping_add(alloc_bytes);
+        c.dealloc_bytes = c.dealloc_bytes.wrapping_add(dealloc_bytes);
+        c.live = c.live.wrapping_add(alloc_bytes).wrapping_sub(dealloc_bytes);
+        c.peak = c.peak.max(c.live);
+        cell.set(c);
     });
 }
 
-/// The calling thread's counters, unaffected by allocations on other threads.
-#[must_use]
-pub fn thread_counts() -> ThreadCounts {
-    THREAD.try_with(Cell::get).unwrap_or_default()
+fn read() -> Counters {
+    COUNTERS.with(Cell::get)
 }
 
 /// The counting wrapper around the system allocator.
 pub struct CountingAllocator;
 
 // SAFETY: every method forwards the caller's GlobalAlloc contract to System.
-// Accounting uses atomics and does not allocate or alter pointers/layouts.
+// Accounting touches only a thread-local `Cell` and does not allocate or alter
+// pointers/layouts.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        let bytes = layout.size() as u64;
-        ALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed);
-        bump_live(bytes);
-        count_thread(1, bytes, 0);
+        record(1, 0, layout.size() as u64, 0);
         // SAFETY: forwarded contract.
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        let bytes = layout.size() as u64;
-        ALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed);
-        bump_live(bytes);
-        count_thread(1, bytes, 0);
+        record(1, 0, layout.size() as u64, 0);
         // SAFETY: forwarded contract.
         unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        DEALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        let bytes = layout.size() as u64;
-        DEALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed);
-        LIVE_BYTES.fetch_sub(bytes, Ordering::Relaxed);
-        count_thread(0, 0, bytes);
+        record(0, 1, 0, layout.size() as u64);
         // SAFETY: forwarded contract.
         unsafe { System.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        let old = layout.size() as u64;
-        let new = new_size as u64;
-        ALLOC_BYTES.fetch_add(new, Ordering::Relaxed);
-        DEALLOC_BYTES.fetch_add(old, Ordering::Relaxed);
-        count_thread(1, new, old);
-
-        if new >= old {
-            bump_live(new - old);
-        } else {
-            LIVE_BYTES.fetch_sub(old - new, Ordering::Relaxed);
-        }
+        record(1, 0, new_size as u64, layout.size() as u64);
         // SAFETY: forwarded contract.
         unsafe { System.realloc(ptr, layout, new_size) }
     }
@@ -117,7 +91,8 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
-/// Window-relative counters: events and bytes since the last [`reset`].
+/// Window-relative counters: this thread's events and bytes since its last
+/// [`reset`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocWindow {
     pub allocs: u64,
@@ -129,7 +104,8 @@ pub struct AllocWindow {
     pub dealloc_bytes: u64,
 }
 
-/// Process-lifetime counters: live heap and its high-water.
+/// This thread's live heap level and its high-water. Compare two readings;
+/// the absolute values carry an arbitrary origin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocAbsolute {
     pub live_bytes: u64,
@@ -144,50 +120,56 @@ pub struct AllocSnapshot {
     pub absolute: AllocAbsolute,
 }
 
-/// Reads every counter at once.
+/// Reads every counter of the calling thread at once.
 #[must_use]
 pub fn snapshot() -> AllocSnapshot {
+    let c = read();
     AllocSnapshot {
         window: AllocWindow {
-            allocs: ALLOCATIONS.load(Ordering::Relaxed),
-            deallocs: DEALLOCATIONS.load(Ordering::Relaxed),
-            alloc_bytes: ALLOC_BYTES.load(Ordering::Relaxed),
-            dealloc_bytes: DEALLOC_BYTES.load(Ordering::Relaxed),
+            allocs: c.allocs,
+            deallocs: c.deallocs,
+            alloc_bytes: c.alloc_bytes,
+            dealloc_bytes: c.dealloc_bytes,
         },
         absolute: AllocAbsolute {
-            live_bytes: LIVE_BYTES.load(Ordering::Relaxed),
-            peak_live_bytes: PEAK_LIVE.load(Ordering::Relaxed),
+            live_bytes: c.live,
+            peak_live_bytes: c.peak,
         },
     }
 }
 
-/// Zeroes the window counters (events and bytes) — the start of a measured
-/// window. Live bytes are absolute and unaffected.
+/// Zeroes the calling thread's window counters (events and bytes) — the start
+/// of a measured window. The live level is unaffected.
 pub fn reset() {
-    ALLOCATIONS.store(0, Ordering::Relaxed);
-    DEALLOCATIONS.store(0, Ordering::Relaxed);
-    ALLOC_BYTES.store(0, Ordering::Relaxed);
-    DEALLOC_BYTES.store(0, Ordering::Relaxed);
+    COUNTERS.with(|cell| {
+        let c = cell.get();
+        cell.set(Counters {
+            allocs: 0,
+            deallocs: 0,
+            alloc_bytes: 0,
+            dealloc_bytes: 0,
+            ..c
+        });
+    });
 }
 
-/// Allocation events (including reallocations) since the last [`reset`].
+/// This thread's allocation events (including reallocations) since its last
+/// [`reset`].
 #[must_use]
 pub fn count() -> u64 {
-    ALLOCATIONS.load(Ordering::Relaxed)
+    read().allocs
 }
 
-/// Deallocation events since the last [`reset`].
+/// This thread's deallocation events since its last [`reset`].
 #[must_use]
 pub fn dealloc_count() -> u64 {
-    DEALLOCATIONS.load(Ordering::Relaxed)
+    read().deallocs
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    static EXCLUSIVE: Mutex<()> = Mutex::new(());
     // Miri interprets every byte a probe writes; 64 KiB blocks keep the same
     // accounting checks well above background noise there.
     const BLOCK_USIZE: usize = if cfg!(miri) { 1 << 16 } else { 1 << 20 };
@@ -195,7 +177,6 @@ mod tests {
 
     #[test]
     fn bytes_track_a_known_allocation_and_its_free() {
-        let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
         let before = snapshot();
         let v: Vec<u8> = Vec::with_capacity(8 * BLOCK_USIZE);
         let mid = snapshot();
@@ -232,7 +213,7 @@ mod tests {
 
     #[test]
     fn reset_zeroes_windows_but_not_absolutes() {
-        let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
+        let before = snapshot();
         let keep: Vec<u8> = Vec::with_capacity(8 * BLOCK_USIZE);
         reset();
         let snap = snapshot();
@@ -243,7 +224,7 @@ mod tests {
             "windows rebased: {snap:?}"
         );
         assert!(
-            snap.absolute.live_bytes >= 8 * BLOCK,
+            snap.absolute.live_bytes >= before.absolute.live_bytes + 8 * BLOCK,
             "live is absolute and survives reset"
         );
         assert!(
@@ -255,7 +236,6 @@ mod tests {
 
     #[test]
     fn zeroed_allocations_count_once_like_plain_ones() {
-        let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
         let before = snapshot();
         let v = vec![0u8; 8 * BLOCK_USIZE];
         let mid = snapshot();
@@ -280,7 +260,6 @@ mod tests {
 
     #[test]
     fn realloc_accounts_both_byte_sides() {
-        let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
         let mut v: Vec<u8> = Vec::with_capacity(2 * BLOCK_USIZE);
         v.extend(std::iter::repeat_n(0u8, 2 * BLOCK_USIZE));
         let before = snapshot();

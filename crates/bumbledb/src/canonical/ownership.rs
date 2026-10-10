@@ -63,7 +63,7 @@ fn decode_visitor_releases_large_payloads_and_reuses_small_row_capacity() {
     let small = CanonicalRow::encode(&numeric, &[Value::U64(7)], &work).unwrap();
     let mut scratch = DecodeScratch::new(&work);
     scratch.prepare(1).unwrap();
-    let before = crate::alloc_counter::thread_counts();
+    let before = crate::alloc_counter::snapshot();
     for _ in 0..32 {
         scratch
             .with_decoded(&fields, &large, |values| {
@@ -75,13 +75,13 @@ fn decode_visitor_releases_large_payloads_and_reuses_small_row_capacity() {
             })
             .unwrap();
     }
-    let after_large = crate::alloc_counter::thread_counts();
+    let after_large = crate::alloc_counter::snapshot();
     assert!(
-        after_large.net_bytes() <= before.net_bytes(),
+        after_large.absolute.live_bytes <= before.absolute.live_bytes,
         "only vector capacity survives each visitor"
     );
     assert!(
-        after_large.allocs - before.allocs <= 32,
+        after_large.window.allocs - before.window.allocs <= 32,
         "at most one text allocation per visit"
     );
     for _ in 0..128 {
@@ -92,9 +92,9 @@ fn decode_visitor_releases_large_payloads_and_reuses_small_row_capacity() {
             })
             .unwrap();
     }
-    let after_small = crate::alloc_counter::thread_counts();
+    let after_small = crate::alloc_counter::snapshot();
     assert_eq!(
-        after_small.allocs, after_large.allocs,
+        after_small.window.allocs, after_large.window.allocs,
         "warm scalar visits reuse the vector without allocating"
     );
 }
