@@ -21,6 +21,8 @@ use crate::replica::{CacheError, Image, Judgment, Migrated, Population, Replica,
 const NONCE_CONTEXT: &str = "bdb.entry.v1 nonce";
 /// Encoded bytes of one decided command besides its changes.
 const DECIDED_OVERHEAD: usize = 128;
+/// How far past the head catch-up probes, in probe windows.
+const LOOKAHEAD_WINDOWS: u32 = 4;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -916,19 +918,28 @@ impl<R: Replica> Machine<R> {
         }
         if outstanding.get(&next).is_none_or(|issued| *issued < need) {
             self.get_slot(next);
+            outstanding.insert(next, self.epoch);
         }
+        // `window` GETs in flight, not `window` slots: one slow GET at the
+        // head must not idle the rest. The lookahead bounds buffered entries,
+        // and nothing is probed past a slot already seen empty.
         let window = self
             .config
             .probe_window
             .min(self.tail.streak.saturating_add(1));
+        let mut in_flight = outstanding.range(next..).count();
         let mut seq = next;
-        for _ in 1..window {
+        for _ in 1..window.saturating_mul(LOOKAHEAD_WINDOWS) {
+            if in_flight >= window as usize {
+                break;
+            }
             seq = seq.next();
-            if !outstanding.contains_key(&seq)
-                && !self.tail.found.contains_key(&seq)
-                && !self.tail.missing.contains_key(&seq)
-            {
+            if self.tail.missing.contains_key(&seq) {
+                break;
+            }
+            if !outstanding.contains_key(&seq) && !self.tail.found.contains_key(&seq) {
                 self.get_slot(seq);
+                in_flight += 1;
             }
         }
     }

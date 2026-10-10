@@ -19,7 +19,11 @@ interface S3Sender {
 }
 
 interface S3StoreOptions {
-	/** The application's own `S3Client`: it owns credentials, region, endpoint and SDK retries. */
+	/**
+	 * The application's own `S3Client`: it owns credentials, region, endpoint and SDK retries. Its
+	 * connections resolve DNS on libuv's thread pool, 4 threads by default, which serializes a cold
+	 * open's parallel reads where lookups are slow.
+	 */
 	readonly client: S3Sender
 	/** The commit log bucket, ideally an S3 Express directory bucket (`name--azid--x-s3`). */
 	readonly log: { readonly bucket: string }

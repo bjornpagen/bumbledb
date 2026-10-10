@@ -286,6 +286,56 @@ fn a_cold_replica_installs_the_newest_checkpoint_and_replays_only_the_tail() {
 }
 
 #[test]
+fn a_slow_slot_at_the_head_does_not_idle_catch_up() {
+    let schema = schema();
+    let mut world = World::new(11, 2, &bundle(), Faults::NONE);
+    world.clients[0].config.checkpoint.every = 1_000;
+    world.clients[1].config.probe_window = 4;
+    world.start(0);
+    world.drain();
+    for request in 1..=20 {
+        submit(
+            &mut world,
+            0,
+            command(&schema, request, &[(u64::from(request), 0)]),
+        );
+        world.drain();
+    }
+    world.start(1);
+    let applied = |world: &World| {
+        world
+            .machine(1)
+            .replica()
+            .state()
+            .map_or(0, |state| state.head.seq.get())
+    };
+    while applied(&world) < 4 {
+        world.execute_as(0, Fate::Answered);
+    }
+    let held = bumbledb_log::log_key(Seq::new(applied(&world) + 1).unwrap());
+    let mut probed = Vec::new();
+    while let Some(index) = world.find(1, |request| request.key != held) {
+        probed.extend(
+            world
+                .issued()
+                .filter(|(client, request)| *client == 1 && request.bucket == Bucket::Log)
+                .map(|(_, request)| request.key.clone()),
+        );
+        world.execute_as(index, Fate::Answered);
+    }
+    probed.sort();
+    probed.dedup();
+    let beyond = probed.iter().filter(|key| **key > held).count();
+    assert!(
+        beyond >= 8,
+        "{beyond} slots past the held head were fetched; a window of 4 must keep going"
+    );
+    world.drain();
+    assert_eq!(applied(&world), 21);
+    check(&world);
+}
+
+#[test]
 fn every_log_object_parses_and_carries_a_fresh_nonce() {
     let schema = schema();
     let mut world = opened(10, 2);

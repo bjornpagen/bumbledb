@@ -170,6 +170,10 @@ real surface by `test/readme.test.ts` — the examples cannot drift.
 it through a local cache that is only a cache. The store is `S3Store` (the log
 in an S3 Express directory bucket, checkpoints in a Standard bucket, through the
 app's `S3Client`), `FsStore` (a durable local directory) or `MemStore` (tests).
+A cold open fetches up to 32 log objects at once, and every new connection
+resolves DNS on one of libuv's 4 threads. Where lookups are slow, start Node
+with `UV_THREADPOOL_SIZE=64` or give the `S3Client` an agent that caches
+lookups.
 
 Migrations are bundled with the code. `bumbledb generate --schema
 src/schema.ts#App --name <name>` writes `migrations/NNNN_<name>/` and
