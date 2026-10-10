@@ -67,6 +67,21 @@ impl CanonicalRow {
         values: &[Value],
         work: &WorkContext,
     ) -> Result<Self, RowError> {
+        let mut bytes = Vec::new();
+        Self::encode_into(fields, values, work, &mut bytes)?;
+        Ok(Self {
+            bytes: bytes.into_boxed_slice(),
+        })
+    }
+
+    /// [`Self::encode`] into a caller-owned buffer, replacing its contents;
+    /// a probe loop reuses one allocation.
+    pub(crate) fn encode_into(
+        fields: &[FieldDescriptor],
+        values: &[Value],
+        work: &WorkContext,
+        bytes: &mut Vec<u8>,
+    ) -> Result<(), RowError> {
         work.checkpoint()?;
         if fields.len() != values.len() || fields.len() > usize::from(u16::MAX) {
             return Err(RowError::Arity);
@@ -90,7 +105,7 @@ impl CanonicalRow {
                 .checked_add(1 + payload)
                 .ok_or(RowError::LengthOverflow)?;
         }
-        let mut bytes = Vec::new();
+        bytes.clear();
         bytes
             .try_reserve_exact(size)
             .map_err(|_| RowError::Allocation)?;
@@ -100,12 +115,10 @@ impl CanonicalRow {
                 .to_be_bytes(),
         );
         for value in values {
-            append_value(&mut bytes, value);
+            append_value(bytes, value);
         }
         debug_assert_eq!(bytes.len(), size);
-        Ok(Self {
-            bytes: bytes.into_boxed_slice(),
-        })
+        Ok(())
     }
 
     /// Strict wire parsing: alternative NaNs/negative zero, malformed scalar

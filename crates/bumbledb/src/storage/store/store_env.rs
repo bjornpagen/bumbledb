@@ -53,6 +53,9 @@ pub struct Options {
     /// A write that needs more pages fails with [`crate::Error::Full`].
     pub map_ceiling: u64,
     pub durability: Durability,
+    /// The cap on cached query-image bytes; the least recently used image is
+    /// evicted past it.
+    pub image_cache_bytes: usize,
 }
 
 impl Default for Options {
@@ -60,6 +63,7 @@ impl Default for Options {
         Self {
             map_ceiling: DEFAULT_MAP_CEILING,
             durability: Durability::Durable,
+            image_cache_bytes: crate::image::cache::DEFAULT_IMAGE_CACHE_BYTES,
         }
     }
 }
@@ -73,8 +77,7 @@ pub(crate) struct StoreInner {
     pub(crate) dets: Database<Bytes, Bytes>,
     pub(crate) gate: TransactionGate,
     writer: WriterSlot,
-    ceiling: u64,
-    durability: Durability,
+    options: Options,
     pub(crate) identity: StoreIdentity,
     pub(crate) schema_fp: SchemaFingerprint,
     pub(crate) fingerprinter: Fingerprinter,
@@ -89,7 +92,7 @@ impl StoreInner {
     /// A write-path LMDB failure: map exhaustion is the typed fixed-ceiling
     /// refusal, everything else keeps its LMDB identity.
     pub(crate) fn txn_error(&self, error: heed::Error) -> Error {
-        full_or(error, self.ceiling)
+        full_or(error, self.options.map_ceiling)
     }
 
     #[cfg(test)]
@@ -101,7 +104,7 @@ impl StoreInner {
             == Some(index)
         {
             return Err(Error::Full {
-                ceiling: self.ceiling,
+                ceiling: self.options.map_ceiling,
             });
         }
         Ok(())
@@ -319,8 +322,7 @@ impl Store {
                 dets,
                 gate: TransactionGate::default(),
                 writer: WriterSlot::default(),
-                ceiling: options.map_ceiling,
-                durability: options.durability,
+                options,
                 identity: StoreIdentity {
                     database,
                     environment: EnvironmentId::mint(),
@@ -340,12 +342,8 @@ impl Store {
         self.inner.identity
     }
 
-    pub(crate) fn ceiling(&self) -> u64 {
-        self.inner.ceiling
-    }
-
-    pub(crate) fn durability(&self) -> Durability {
-        self.inner.durability
+    pub(crate) fn options(&self) -> Options {
+        self.inner.options
     }
 
     /// One coherent owned snapshot.
@@ -409,7 +407,7 @@ impl Store {
             .map_err(|error| self.inner.txn_error(error))?;
         Ok(GatedRwTxn {
             txn,
-            ceiling: self.inner.ceiling,
+            ceiling: self.inner.options.map_ceiling,
             _pass: pass,
         })
     }

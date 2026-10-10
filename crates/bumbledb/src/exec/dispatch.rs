@@ -127,6 +127,7 @@ pub(crate) struct ProbeBuffers {
     pub(crate) row: crate::image::canon::RowWords,
     key: crate::image::view::ResolvedWords,
     values: Vec<crate::ir::Value>,
+    encoded: Vec<u8>,
     walk_fields: Vec<FieldId>,
     walk_words: Vec<u64>,
 }
@@ -137,6 +138,7 @@ impl ProbeBuffers {
             row: crate::image::canon::RowWords::prepared(field_types),
             key: crate::image::view::ResolvedWords::default(),
             values: Vec::with_capacity(field_types.len()),
+            encoded: Vec::new(),
             walk_fields: Vec::new(),
             walk_words: Vec::new(),
         }
@@ -146,6 +148,7 @@ impl ProbeBuffers {
         self.row.release_memory();
         self.key = crate::image::view::ResolvedWords::default();
         self.values = Vec::new();
+        self.encoded = Vec::new();
         self.walk_fields = Vec::new();
         self.walk_words = Vec::new();
     }

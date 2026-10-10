@@ -78,7 +78,10 @@ impl<S> Db<S> {
     pub(super) fn assemble(store: Store, schema: Schema, work: WorkContext) -> Result<Self> {
         work.checkpoint().map_err(Error::from)?;
         let schema = Arc::new(schema);
-        let cache = Arc::new(ImageCache::new(schema.as_ref()));
+        let cache = Arc::new(ImageCache::with_byte_cap(
+            schema.as_ref(),
+            store.options().image_cache_bytes,
+        ));
         Ok(Self {
             store,
             schema,

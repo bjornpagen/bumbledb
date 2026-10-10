@@ -189,17 +189,21 @@ pub(crate) fn key_probe_row(
             // exact membership. A word that cannot embed (an inverted
             // interval from a hostile template) is a nonmatch.
             if key_values(interner, fields, key_words.iter(), buf) {
-                let encoded =
-                    crate::canonical::CanonicalRow::encode(fields, &buf.values, source.work())
-                        .map_err(row_error)?;
-                if source.contains(plan.relation, encoded.as_bytes())? {
+                crate::canonical::CanonicalRow::encode_into(
+                    fields,
+                    &buf.values,
+                    source.work(),
+                    &mut buf.encoded,
+                )
+                .map_err(row_error)?;
+                if source.contains(plan.relation, &buf.encoded)? {
                     // The row is the probe: decode the canonical bytes just
                     // built (intern mode) so finds and filters read the same
                     // words a scan would produce.
                     crate::api::prepared::decode_row(
                         &mut buf.row,
                         fields,
-                        encoded.as_bytes(),
+                        &buf.encoded,
                         interner,
                         source.work(),
                         true,

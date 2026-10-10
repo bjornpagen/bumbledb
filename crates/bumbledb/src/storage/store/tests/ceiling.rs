@@ -67,7 +67,10 @@ fn reopening_keeps_the_rows_under_a_different_ceiling() {
     );
     drop(store);
     let reopened = open_default(&path);
-    assert_eq!(reopened.ceiling(), Options::default().map_ceiling);
+    assert_eq!(
+        reopened.options().map_ceiling,
+        Options::default().map_ceiling
+    );
     assert!(reopened.file_bytes().expect("file bytes") < SMALL_CEILING);
     let snapshot = reopened.snapshot(&work()).expect("snapshot");
     assert_eq!(snapshot.row_count(NOTE).expect("count"), 1);

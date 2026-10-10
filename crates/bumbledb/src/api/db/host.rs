@@ -382,10 +382,7 @@ impl<S> Population<S> {
                 .and_then(|prepared| prepared.seal(host))
                 .and_then(SealedWrite::commit)?;
         }
-        let options = store::Options {
-            map_ceiling: store.ceiling(),
-            durability: store.durability(),
-        };
+        let options = store.options();
         drop(store);
         let published = staging.publish(&schema, options)?;
         let schema = Arc::try_unwrap(schema).unwrap_or_else(|shared| (*shared).clone());
