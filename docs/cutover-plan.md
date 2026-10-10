@@ -1,6 +1,13 @@
 # bumbledb cutover plan (living document)
 
-Status: **v6, 2026-10-09.** Setup is committed. **One-wave swarm in progress (§4.3).**
+Status: **done, 2026-10-09.** All nine lanes and the consolidator landed on `main`; the release is **2.0.0** ([release notes](release-2.0.md)).
+
+## Outcome
+
+- **Landed:** A, B, C1–C17, D (sans-IO log core, checkpoints, migrations, Freeze/Migration/Thaw), E1–E8, F (one package, generated bridge outputs, serde inputs, one validator, `Database`), G (CI lanes, one allocation counter, one compile-fail runner, README and cookbook as doctests, bench restructure, toolchain bump script), H, I and L. D20 `bdb` naming is applied repo-wide. Swarm tooling and lane boards are deleted.
+- **Final local gate:** fmt; clippy default and `--all-features`; rustdoc `-D warnings`; nextest 1918 passed, 1 skipped; doctests (README and 32 cookbook recipes included); addon build, TS lint, typecheck, `dts.sh --check`, 283 TS tests, package pack and smoke; notes typecheck, 8 tests, `migrations:check`, `next build`; the Rust consumer.
+- **Not run locally:** cargo-deny and cargo-shear (not installed), Miri, musl, the deep sweeps, udeps and benchmarks (owner instruction). 2.0 has not been benchmarked; `docs/perf/results.md` is the 1.3.0 run.
+- **Open, for the owner:** U10 (Lambda `nodejs26.x` availability); U13 (Express and Standard buckets plus the OIDC role for the AWS lanes); the SeaweedFS and AWS S3 lanes run only in CI and have not run yet; the `release` environment and npm trusted publishing for `release.yml`; U12 log GC stays deferred. CLAUDE.md's swarm protocol section still names the deleted `scripts/swarm/` tooling.
 
 **Governing law:** [docs/design/representation-first.md](design/representation-first.md). Every item below is justified as a representation change, not a new branch. Items are tagged with the rule they apply: R1–R7, the bumbledb rules at the end of that document.
 
