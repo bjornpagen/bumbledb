@@ -41,12 +41,12 @@ const deliver = Effect.fn("outbox.deliver")(function* (row: OutboxRow) {
 /** One pass: delivers and retires every pending row, stopping at the first that does not retire. */
 export const dispatchOutbox = Effect.fn("outbox.dispatch")(function* (db: Database<typeof App>) {
 	const rows = yield* Effect.scoped(Effect.flatMap(db.read("latest"), listPendingOutbox))
-	let retired = 0
+	let dispatched = 0
 	for (const row of rows) {
 		yield* deliver(row)
 		const outcome = yield* retireOutbox(db, row)
-		if (outcome._tag !== "Decided") return { retired, stopped: outcome.refusal._tag } as const
-		retired += 1
+		if (outcome._tag !== "Decided") return { dispatched, stopped: outcome.refusal._tag } as const
+		dispatched += 1
 	}
-	return { retired, stopped: null } as const
+	return { dispatched, stopped: null } as const
 })

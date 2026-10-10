@@ -23,4 +23,4 @@ const program = Effect.scoped(
 	)
 )
 const report = await Effect.runPromise(program.pipe(Effect.provide(Bumble.layer(runtimePolicy.native))))
-console.log(`outbox: retired ${report.retired}${report.stopped === null ? "" : ` (stopped: ${report.stopped})`}`)
+console.log(`outbox: dispatched ${report.dispatched}${report.stopped === null ? "" : ` (stopped: ${report.stopped})`}`)

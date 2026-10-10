@@ -4,7 +4,7 @@ Hand-written synthetic lane reports (`host: "fixture"`, `git_rev:
 "fixture"`) whose only job is to exercise every code path in
 `scripts/bench_viz.py`'s lane charts — schema-exact twins of the
 `to_json` outputs pinned by the shape tests in
-`crates/bumbledb-bench/src/lanes/{storage,writes,curves}.rs`. They are
+`crates/bumbledb-bench/src/harness/lanes/{storage,writes,curves}.rs`. They are
 NEVER measurement output; no number in them was ever timed, and none may
 be quoted as a claim.
 
@@ -15,10 +15,6 @@ be quoted as a claim.
 - `fixture-curves-report.json` — 4 families × 3 scale points, with one
   capped point, one hand-tuned twin, and one warmth object
   (`bench-curves.svg`, `bench-warmth.svg`).
-
-Historical lane names in synthetic renderer fixtures are compatibility
-inputs for the chart parser, not currently supported engine modes. In
-particular, the current engine has no no-sync write API.
 
 Dry-run against them into a temp dir:
 

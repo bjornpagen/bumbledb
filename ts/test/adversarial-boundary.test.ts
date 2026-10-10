@@ -108,13 +108,13 @@ test("retained wrappers cannot reach native resources after close", async () => 
 	assert.throws(() => addon.runtimeDirectoryBegin(owner), typedRefusal)
 	assert.equal(addon.runtimeInspect(runtime).phase, "Closed")
 
-	const successor = addon.runtimeOpen(wire)
+	const next = addon.runtimeOpen(wire)
 	try {
-		const reopened = await openDb(successor, dir, false)
+		const reopened = await openDb(next, dir, false)
 		await new Promise((resolve) => addon.runtimeManagedDbClose(reopened.db, resolve))
 		await new Promise((resolve) => addon.runtimeDirectoryClose(reopened.owner, false, resolve))
 	} finally {
-		await close(successor)
+		await close(next)
 	}
 	fs.rmSync(dir, { recursive: true, force: true })
 })

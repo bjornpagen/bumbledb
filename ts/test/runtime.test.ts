@@ -165,8 +165,8 @@ test("interrupting runtime acquisition after the runtime opened still closes it"
 	} finally {
 		addon.runtimeReady = original
 	}
-	const successor = addon.runtimeOpen(wire)
-	assert.equal((await close(successor))._tag, "Closed", "the interrupted runtime was released")
+	const next = addon.runtimeOpen(wire)
+	assert.equal((await close(next))._tag, "Closed", "the interrupted runtime was released")
 })
 
 test("interruption cancels and joins a native operation, and its late completion is ignored", async () => {

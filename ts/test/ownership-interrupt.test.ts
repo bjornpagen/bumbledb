@@ -41,8 +41,8 @@ test("interrupt after directory acquire and before db output adoption drains bot
 			assert.ok(Exit.hasInterrupts(exit), "interruption is Cause")
 			lateCallback()
 			original.runtimeDirectoryDbOpen = open
-			const successor = await rt.runPromiseExit(Effect.scoped(Db.open(path, Learning).pipe(Effect.asVoid)))
-			assert.equal(successor._tag, "Success", "the same directory is unlocked and its created database can reopen")
+			const reopened = await rt.runPromiseExit(Effect.scoped(Db.open(path, Learning).pipe(Effect.asVoid)))
+			assert.equal(reopened._tag, "Success", "the same directory is unlocked and its created database can reopen")
 		} finally {
 			original.runtimeDirectoryDbOpen = open
 		}

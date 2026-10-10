@@ -34,15 +34,6 @@ kind and size ride along as inputs["store_kind"] / inputs["rep_count"].
   write-throughput.svg    facts/sec per commit batch, per durability lane  [write_throughput]
   adversarial-dnf.svg     ours vs SQLite, capped twins drawn as capped     [adversarial]
 
-Retired charts, reasons on the record: storage-bytes-per-fact.svg
-and curves-loglog.svg
-consumed lane payloads no emitter writes — their data is fully rendered by
-bench-storage.svg / bench-curves.svg from the real flag-shaped reports;
-cold-warm-memo.svg's contract had no theirs-memo slot, so it could not even
-represent the real warmth measurement (curves-report.json times
-theirs_memoized) that bench-warmth.svg draws whole. No phantom-input chart
-survives.
-
 Usage:
   python3 scripts/bench_viz.py <run-dir> ... [--scenarios <scenarios.md|scenarios.json>] [--out <dir>]
   python3 scripts/bench_viz.py --night <night-dir> [--out <dir>]
@@ -54,8 +45,7 @@ cap_ms} — the true representation; the scenarios.md table is its
 rendering. A DNF lane has no stats object, so it draws NO bar anywhere:
 it becomes a right-edge annotation, excluded and counted in the title.
 Anything else is a rendered scenarios.md table, parsed by its own
-header row (the legacy 6-col pin and the lane-bearing 7-col format both
-parse; a `DNF>cap` p50 cell parses to None and is skipped-and-counted
+header row (a `DNF>cap` p50 cell parses to None and is skipped-and-counted
 with the same annotation idiom). inputs["scenarios"] carries the parsed
 tag ("json"|"md", path); the scenario, world, and waterfall charts all
 consume that one tagged input.
@@ -359,7 +349,7 @@ def discover(night_dir):
     return inputs
 
 def gather(run_dirs):
-    """Legacy mode -> the same inputs dict: each positional run dir's
+    """Positional run dirs -> the same inputs dict: each run dir's
     report.json, classified exactly like discovery (the contamination
     marker honored identically)."""
     inputs = {"durable_runs": [], "ephemeral_runs": [], "contaminated_runs": 0}
@@ -415,7 +405,7 @@ def derive_pools(inputs):
 def prov_note(payload):
     """The shared-machine caveat from the payload's OWN provenance
     stamp — a lane measured on a loaded machine under boosted QoS says
-    so on the chart itself (owner ruling 2026-07-20)."""
+    so on the chart itself."""
     provenance = payload.get("provenance") if isinstance(payload, dict) else None
     if not isinstance(provenance, dict):
         return ""
@@ -506,10 +496,8 @@ def _md_p50(cell):
 def load_scenarios(path):
     """Parse scenarios.md: [(scenario, query, lane, ours_us, sqlite_us)].
 
-    Column indices come from each table's own header row, so the legacy
-    6-col pin and the lane-bearing 7-col format both parse — no
-    positional indexing. A table without a `lane` column is the
-    pre-lane pin: every row is the canonical "sqlite" lane. A `DNF>cap`
+    Column indices come from each table's own header row, never
+    positional indexing. A `DNF>cap`
     p50 cell parses to None (consumers skip-and-count it under the
     annotation idiom); the rounded ratio column is never read — every
     ratio derives from the raw p50s."""
@@ -521,12 +509,11 @@ def load_scenarios(path):
             cells = [c.strip() for c in line.strip("|").split("|")]
             if cells[0] == "query":  
                 cols = {name: index for index, name in enumerate(cells)}
-                for needed in ("ours p50 (us)", "sqlite p50 (us)"):
+                for needed in ("lane", "ours p50 (us)", "sqlite p50 (us)"):
                     if needed not in cols:
                         raise SystemExit(f'{path}: table header lacks "{needed}"')
             elif cols:
-                lane = cells[cols["lane"]] if "lane" in cols else "sqlite"
-                rows.append((scenario, cells[cols["query"]], lane,
+                rows.append((scenario, cells[cols["query"]], cells[cols["lane"]],
                              _md_p50(cells[cols["ours p50 (us)"]]),
                              _md_p50(cells[cols["sqlite p50 (us)"]])))
     return rows
@@ -536,7 +523,7 @@ def load_scenarios_json(path):
     ours_stats, outcome_dict)] — one row per (query, lane); ours_stats
     is the query's own stats object (ns percentiles), the outcome dict
     verbatim from the emitter's tagged union (crates/bumbledb-bench/src/
-    scenarios/json_out.rs): {"outcome": "timed", "stats": {...},
+    worlds/scenarios/json_out.rs): {"outcome": "timed", "stats": {...},
     "ratio_p50": f} or {"outcome": "exceeded_cap", "cap_ms": n}. Unknown
     extra keys are ignored (standard dict access, forward-compatible)."""
     doc = json.loads(Path(path).read_text())
@@ -954,7 +941,7 @@ def chart_ratio_waterfall(inputs, out):
 
 def chart_tails_fan(inputs, out):
     """tails-fan.svg: the p50 → p90 → p99 fan per read family, both
-    engines — the legacy bench-tails.svg (p95) chart stays untouched."""
+    engines, beside bench-tails.svg (p95)."""
     reads = inputs["reads"]
     names = [n for n in ordered(reads, READ_ORDER) if "theirs" in reads[n]]
     fig, ax = plt.subplots(figsize=(9.6, max(6.2, 0.30 * len(names) + 1.6)),
@@ -1436,7 +1423,7 @@ def main():
     ap.add_argument("run_dirs", nargs="*", metavar="run-dir",
                     help="suite run directories, each holding a report.json")
     ap.add_argument("--scenarios", metavar="PATH",
-                    help="a committed scenarios.md (legacy per-query table) or "
+                    help="a committed scenarios.md (per-query table) or "
                          "scenarios.json (the lane-aware machine artifact); "
                          "dispatched on the extension")
     ap.add_argument("--night", metavar="DIR",

@@ -1778,7 +1778,7 @@ fn scoped_read_borrows_metadata_while_owned_read_retains_it() {
 }
 
 #[test]
-fn owned_read_keeps_rows_but_does_not_retain_retired_resolvers() {
+fn owned_read_keeps_rows_but_does_not_retain_rotated_resolvers() {
     let dir = TempDir::new("db-owned-read-resolver-retirement");
     let db = create(&dir);
     db.write(operation(), |tx| {
@@ -1790,13 +1790,13 @@ fn owned_read_keeps_rows_but_does_not_retain_retired_resolvers() {
     })
     .expect("seed")
     .expect("lawful seed");
-    let retired = db.cache.weak_current();
+    let rotated = db.cache.weak_current();
     let snapshot = db.owned_read().expect("snapshot");
     let generation = snapshot.generation();
     db.clear_cache();
     assert!(
-        retired.upgrade().is_none(),
-        "a canonical-row snapshot must not retain an unused retired text resolver"
+        rotated.upgrade().is_none(),
+        "a canonical-row snapshot must not retain an unused rotated text resolver"
     );
     assert_eq!(snapshot.generation(), generation);
     assert_eq!(

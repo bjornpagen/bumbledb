@@ -1971,7 +1971,7 @@ mod tests {
         assert_eq!(
             runtime.registry.route_count(),
             0,
-            "drained snapshot routes are absent, not tombstones"
+            "drained snapshot routes are absent"
         );
         drop(owner);
         assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
