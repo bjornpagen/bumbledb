@@ -31,7 +31,7 @@ differences. The bumbledb-specific rules are at the end of that document.
   dependency all the way to the latest versions.
 - **Work directly on `main`.** No worktrees, no feature branches. Do not run adversarial
   review or verification agent waves. Use the repo's own tests and oracles as the gate.
-- **The active plan** is [docs/cutover-plan.md](docs/cutover-plan.md).
+- **The 2.0 cutover is done.** [docs/cutover-plan.md](docs/cutover-plan.md) records what landed and the open owner items.
 
 ## Comments (strict)
 
@@ -63,19 +63,3 @@ timing races, no machine-speed-dependent rosters, no scanning cargo's internal b
 no exact allocator-layout transcriptions, and no "returns early when unconfigured = PASS". Delete
 a flaky test rather than tolerating or retrying it, then cover the behavior deterministically if
 it matters. Timing measurements are non-asserting bench reports, never `cargo test` gates.
-
-## Swarm protocol (parallel agents on the one `main` tree)
-
-- **Ownership.** You edit only the paths you were assigned. If something outside them blocks
-  you, stop and report it; do not fix it.
-- **Build and test** only through the sandbox, which runs committed HEAD plus your owned paths
-  so other agents' uncommitted edits cannot interfere:
-  `scripts/swarm/sandbox.sh <label> <owned paths…> -- cargo nextest run -p <crate>`.
-- **Commit** each plan item separately, after its sandbox gate passes, with
-  `scripts/swarm/commit.sh "<ID>: <summary>" <owned paths…>`.
-  - Never `git add -A`, `git commit -a`, `stash`, `reset`, `checkout`, or `restore` on
-    paths you do not own.
-  - Never commit `Cargo.lock`; the coordinator owns it.
-  - Never push.
-- **Dependency changes:** edit your crate's `Cargo.toml` and report the change. The
-  coordinator regenerates and commits `Cargo.lock` at the wave gate.
