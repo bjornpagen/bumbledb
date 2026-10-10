@@ -216,6 +216,30 @@ fn a_slot_refused_by_a_write_that_never_landed_is_filled_by_the_refused_writer()
 }
 
 #[test]
+fn a_hole_a_dead_writer_left_is_sealed_by_the_next_reader() {
+    let schema = schema();
+    let mut world = opened(5, 2);
+    submit(&mut world, 0, command(&schema, 1, &[(1, 1)]));
+    world.execute_as(world.find(0, put_at(2)).unwrap(), Fate::Conflicted);
+    world.execute_as(world.find(0, put_at(3)).unwrap(), Fate::Answered);
+    world.kill(0, false);
+    assert_eq!(world.log.len(), 2, "slot 2 is empty under the entry at 3");
+    let sync = world.ticket(1, Ask::Sync);
+    world.input(1, Input::Sync(sync));
+    world.drain();
+    assert_eq!(
+        settled(&world, sync),
+        &Settled::Synced(Seq::new(3).unwrap())
+    );
+    let states = check(&world);
+    assert_eq!(
+        states.last().unwrap().receipts.len(),
+        1,
+        "the copy decides once"
+    );
+}
+
+#[test]
 fn a_refused_writer_moves_past_every_slot_it_has_read() {
     let schema = schema();
     let mut world = opened(4, 2);
@@ -228,12 +252,13 @@ fn a_refused_writer_moves_past_every_slot_it_has_read() {
         world.drain();
     }
     let late = submit(&mut world, 1, command(&schema, 9, &[(9, 9)]));
-    world.execute_as(world.find(1, put_at(2)).unwrap(), Fate::Answered);
+    let sync = world.ticket(1, Ask::Sync);
+    world.input(1, Input::Sync(sync));
     let slow = bumbledb_log::log_key(Seq::new(2).unwrap());
     while let Some(index) = world.find(1, |request| !is_put(request) && request.key != slow) {
         world.execute_as(index, Fate::Answered);
     }
-    world.execute_as(world.find(1, put_at(3)).unwrap(), Fate::Answered);
+    world.execute_as(world.find(1, put_at(2)).unwrap(), Fate::Answered);
     assert!(
         world.find(1, put_at(6)).is_some(),
         "the next write goes past slot 5, the last one read"
@@ -382,6 +407,13 @@ fn a_batch_landing_on_a_frozen_head_decides_nothing_and_its_commands_meet_the_fr
     world.execute_as(world.find(1, put_at(3)).unwrap(), Fate::Answered);
     world.execute_as(world.find(2, put_at(2)).unwrap(), Fate::Answered);
     world.execute_as(world.find(2, put_at(3)).unwrap(), Fate::Answered);
+    // Refused twice before reading either slot, the late freeze waits for a read.
+    while world.find(2, put_at(4)).is_none() {
+        world.execute_as(
+            world.find(2, |request| !is_put(request)).unwrap(),
+            Fate::Answered,
+        );
+    }
     world.execute_as(world.find(2, put_at(4)).unwrap(), Fate::Answered);
     world.drain();
     assert!(matches!(
@@ -447,7 +479,9 @@ fn a_failed_write_is_put_again_with_identical_bytes() {
     let a = submit(&mut world, 0, command(&schema, 1, &[(1, 1)]));
     let first = put_body(&world, 0);
     world.execute_as(0, Fate::Lost);
-    world.execute_as(0, Fate::Answered);
+    while world.find(0, is_put).is_none() {
+        world.execute_as(0, Fate::Answered);
+    }
     assert_eq!(put_body(&world, 0), first, "the same nonce and bytes");
     world.drain();
     assert_eq!(receipt_of(settled(&world, a)).seq, Seq::new(2).unwrap());
@@ -558,13 +592,16 @@ fn a_cold_replica_reads_the_tail_while_the_newest_checkpoint_downloads() {
     );
     let tail: Vec<String> = probed
         .iter()
-        .filter(|key| *key != &bumbledb_log::log_key(Seq::GENESIS))
+        .filter(|key| {
+            *key != &bumbledb_log::log_key(Seq::GENESIS)
+                && *key != &bumbledb_log::log_key(Seq::GENESIS.next())
+        })
         .cloned()
         .collect();
     assert!(
         tail.iter()
             .all(|key| key.as_str() > bumbledb_log::log_key(Seq::new(12).unwrap()).as_str()),
-        "nothing else at or below the checkpoint is fetched: {probed:?}"
+        "past the open's first two probes, nothing at or below the checkpoint is fetched: {probed:?}"
     );
     assert!(tail.contains(&bumbledb_log::log_key(Seq::new(14).unwrap())));
     world.drain();

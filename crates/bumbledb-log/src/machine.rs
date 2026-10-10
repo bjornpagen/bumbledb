@@ -23,6 +23,9 @@ const NONCE_CONTEXT: &str = "bdb.entry.v1 nonce";
 const PROPOSAL_OVERHEAD: usize = 128;
 /// How far past the head catch-up probes, in probe windows.
 const LOOKAHEAD_WINDOWS: u32 = 4;
+/// Slots probed at least, whatever the window: the tail ends only where two
+/// slots read empty, so a one-slot hole under a landed entry is always seen.
+const HOLE_PROBES: u32 = 2;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -181,8 +184,8 @@ enum Purpose {
         issued: u64,
     },
     Put,
-    /// The flight's bytes, PUT at a slot below it that read empty.
-    Fill,
+    /// A copy of an entry PUT into an empty slot below it.
+    Fill(Seq),
     Upload,
     List,
     Fetch,
@@ -237,6 +240,10 @@ struct Flight {
     /// The epoch of the latest refusal: only a read at least this fresh that
     /// finds a slot below `slot` empty shows a competing write that failed.
     refused: u64,
+    /// A refused slot not yet read taken. The flight moves past no second one
+    /// meanwhile, so a hole it can leave is one slot deep, which every reader
+    /// at the tip sees and seals.
+    unseen: Option<Seq>,
     bytes: Vec<u8>,
     cargo: Cargo,
     state: FlightState,
@@ -252,6 +259,9 @@ enum FlightState {
     Verifying {
         need: u64,
     },
+    /// Refused again while an earlier refused slot is unseen; moves on once
+    /// that slot is read taken.
+    Parked,
 }
 
 enum Cargo {
@@ -345,6 +355,7 @@ impl<R: Replica> Machine<R> {
 
     fn drive(&mut self) {
         self.advance();
+        self.unpark();
         self.plan();
         self.refill();
     }
@@ -459,33 +470,8 @@ impl<R: Replica> Machine<R> {
                     bytes,
                     last_modified,
                 },
-            ) => {
-                if seq >= self.next_slot() {
-                    self.tail.found.insert(seq, (bytes, last_modified));
-                    self.tail.streak = self.tail.streak.saturating_add(1);
-                }
-            }
-            (Purpose::Slot { seq, issued }, IoResult::Missing) => match &self.writer {
-                // A refusal moved the flight past this slot, so it is taken or
-                // was being written. If that write failed the slot stays empty:
-                // the flight's own bytes fill it, and a duplicate decides nothing.
-                Writer::InFlight(flight) if seq < flight.slot => {
-                    let moves = matches!(flight.cargo, Cargo::Commands(_) | Cargo::Freeze(_));
-                    if moves && issued >= flight.refused && seq >= self.next_slot() {
-                        let bytes = flight.bytes.clone();
-                        self.request(
-                            Bucket::Log,
-                            log_key(seq),
-                            Op::PutIfAbsent(IoBody::Bytes(bytes)),
-                            Purpose::Fill,
-                        );
-                    }
-                }
-                _ => {
-                    let seen = self.tail.missing.entry(seq).or_insert(issued);
-                    *seen = (*seen).max(issued);
-                }
-            },
+            ) => self.slot_found(seq, bytes, last_modified),
+            (Purpose::Slot { seq, issued }, IoResult::Missing) => self.slot_empty(seq, issued),
             (Purpose::Put, result) => self.put_returned(id, result, date),
             (Purpose::Upload, result) => self.upload_returned(id, &result),
             (Purpose::List, IoResult::Keys(keys)) => self.listed(&keys),
@@ -506,7 +492,7 @@ impl<R: Replica> Machine<R> {
             }
             (Purpose::Checkpoint(_), _) => self.checkpoints.uploading = false,
             (Purpose::Prune(newest), IoResult::Keys(keys)) => self.prune(newest, &keys),
-            (Purpose::Slot { .. } | Purpose::Fill | Purpose::Prune(_) | Purpose::Delete, _) => {}
+            (Purpose::Slot { .. } | Purpose::Fill(_) | Purpose::Prune(_) | Purpose::Delete, _) => {}
         }
     }
 
@@ -514,6 +500,78 @@ impl<R: Replica> Machine<R> {
     /// its predecessors. Refused: a batch or a freeze, which stands wherever
     /// it lands, goes to the next slot at once; the catch-up reads the
     /// refused one. Anything else is unclear until the slot is read.
+    /// A slot read taken. A slot below it read empty is stale or a hole (a
+    /// write there failed after another writer moved past it): it is read
+    /// again, and a hole is sealed with a copy of this entry.
+    fn slot_found(&mut self, seq: Seq, bytes: Vec<u8>, at: Millis) {
+        let next = self.next_slot();
+        if seq < next {
+            return;
+        }
+        let holes: Vec<Seq> = self
+            .tail
+            .missing
+            .range(next..seq)
+            .map(|(hole, _)| *hole)
+            .collect();
+        for hole in holes {
+            self.tail.missing.remove(&hole);
+            self.fill(hole, &bytes);
+        }
+        self.tail.found.insert(seq, (bytes, at));
+        self.tail.streak = self.tail.streak.saturating_add(1);
+    }
+
+    /// A slot read empty. Below a known entry it is stale or a hole: it is
+    /// read again, and a hole is sealed with a copy of the nearest entry
+    /// above. Below a flight that moved past it it is taken or being written;
+    /// a read fresher than the refusal finds that write failed, and the
+    /// flight's own bytes seal it.
+    fn slot_empty(&mut self, seq: Seq, issued: u64) {
+        if seq < self.next_slot() {
+            return;
+        }
+        if let Some((_, (bytes, _))) = self.tail.found.range(seq.next()..).next() {
+            let bytes = bytes.clone();
+            self.fill(seq, &bytes);
+            return;
+        }
+        if let Writer::InFlight(flight) = &self.writer
+            && seq < flight.slot
+        {
+            if issued >= flight.refused {
+                let bytes = flight.bytes.clone();
+                self.fill(seq, &bytes);
+            }
+            return;
+        }
+        let seen = self.tail.missing.entry(seq).or_insert(issued);
+        *seen = (*seen).max(issued);
+    }
+
+    /// PUT a copy of `bytes` at `seq` unless one is in flight; only a batch or
+    /// a freeze may land at any slot. A refusal means the slot was taken after
+    /// all.
+    fn fill(&mut self, seq: Seq, bytes: &[u8]) {
+        let movable = Entry::parse(bytes)
+            .is_ok_and(|entry| matches!(entry.body, Body::Commands(_) | Body::Freeze(_)));
+        if !movable {
+            return;
+        }
+        let filling = self
+            .io
+            .values()
+            .any(|purpose| matches!(purpose, Purpose::Fill(slot) if *slot == seq));
+        if !filling {
+            self.request(
+                Bucket::Log,
+                log_key(seq),
+                Op::PutIfAbsent(IoBody::Bytes(bytes.to_vec())),
+                Purpose::Fill(seq),
+            );
+        }
+    }
+
     fn put_returned(&mut self, id: IoId, result: IoResult, date: Option<Millis>) {
         let Writer::InFlight(flight) = &mut self.writer else {
             return;
@@ -530,25 +588,57 @@ impl<R: Replica> Machine<R> {
             }
             IoResult::Occupied if matches!(flight.cargo, Cargo::Commands(_) | Cargo::Freeze(_)) => {
                 self.tail.missing.remove(&flight.slot);
-                // Race at the tip: past every slot known taken, and probe
-                // afresh for slots taken since.
-                let known = self.tail.found.last_key_value().map(|(seq, _)| *seq);
-                flight.slot = known
-                    .map_or(flight.slot, |known| known.max(flight.slot))
-                    .next();
                 self.epoch += 1;
                 flight.refused = self.epoch;
-                let grows = matches!(flight.cargo, Cargo::Commands(_)) && !self.queue.is_empty();
-                if grows && self.takes_commands() {
-                    self.regrow();
+                if flight.unseen.is_some() {
+                    flight.state = FlightState::Parked;
                 } else {
-                    self.put_entry();
+                    flight.unseen = Some(flight.slot);
+                    self.move_on();
                 }
             }
             _ => {
                 self.epoch += 1;
                 flight.state = FlightState::Verifying { need: self.epoch };
             }
+        }
+    }
+
+    /// Race at the tip: write the flight past its refused slot and every slot
+    /// known taken, regrown with the queue when it is a batch.
+    fn move_on(&mut self) {
+        let Writer::InFlight(flight) = &mut self.writer else {
+            return;
+        };
+        let known = self.tail.found.last_key_value().map(|(seq, _)| *seq);
+        flight.slot = known
+            .map_or(flight.slot, |known| known.max(flight.slot))
+            .next();
+        let grows = matches!(flight.cargo, Cargo::Commands(_)) && !self.queue.is_empty();
+        if grows && self.takes_commands() {
+            self.regrow();
+        } else {
+            self.put_entry();
+        }
+    }
+
+    /// Once the flight's unseen refused slot is read taken (or applied), a
+    /// parked flight moves on.
+    fn unpark(&mut self) {
+        let next = self.next_slot();
+        let Writer::InFlight(flight) = &mut self.writer else {
+            return;
+        };
+        let Some(unseen) = flight.unseen else {
+            return;
+        };
+        if unseen >= next && !self.tail.found.contains_key(&unseen) {
+            return;
+        }
+        flight.unseen = None;
+        if flight.state == FlightState::Parked {
+            flight.unseen = Some(flight.slot);
+            self.move_on();
         }
     }
 
@@ -750,9 +840,15 @@ impl<R: Replica> Machine<R> {
                 self.land(next, bytes, at);
                 continue;
             }
-            if let Some(issued) = self.tail.missing.remove(&next) {
+            // A hole is at most one slot deep: the tail ends at `next` only
+            // when the slot after it reads empty too.
+            if let (Some(&issued), Some(&after)) = (
+                self.tail.missing.get(&next),
+                self.tail.missing.get(&next.next()),
+            ) {
+                self.tail.missing.remove(&next);
                 self.tail.streak = 0;
-                self.empty(issued);
+                self.empty(issued.min(after));
             }
             break;
         }
@@ -1058,12 +1154,16 @@ impl<R: Replica> Machine<R> {
             return;
         }
         let next = self.fetch_from();
+        // A slot being sealed is read again once its copy is answered.
         let mut outstanding = BTreeMap::new();
         for purpose in self.io.values() {
-            if let Purpose::Slot { seq, issued } = purpose {
-                let newest = outstanding.entry(*seq).or_insert(*issued);
-                *newest = (*newest).max(*issued);
-            }
+            let (seq, issued) = match purpose {
+                Purpose::Slot { seq, issued } => (*seq, *issued),
+                Purpose::Fill(seq) => (*seq, u64::MAX),
+                _ => continue,
+            };
+            let newest = outstanding.entry(seq).or_insert(issued);
+            *newest = (*newest).max(issued);
         }
         let (first, verifying) = match &self.writer {
             Writer::InFlight(flight) => match flight.state {
@@ -1108,8 +1208,13 @@ impl<R: Replica> Machine<R> {
         let window = self
             .config
             .probe_window
-            .min(self.tail.streak.saturating_add(1));
-        let mut in_flight = outstanding.range(first..).count();
+            .min(self.tail.streak.saturating_add(1))
+            .max(HOLE_PROBES);
+        // A GET older than the need answers nothing it asks.
+        let mut in_flight = outstanding
+            .range(first..)
+            .filter(|(_, issued)| **issued >= need)
+            .count();
         let mut seq = first;
         for _ in 1..window.saturating_mul(LOOKAHEAD_WINDOWS) {
             if in_flight >= window as usize {
@@ -1423,6 +1528,7 @@ impl<R: Replica> Machine<R> {
         self.writer = Writer::InFlight(Box::new(Flight {
             slot,
             refused: 0,
+            unseen: None,
             bytes,
             cargo,
             state,
@@ -1539,7 +1645,9 @@ impl<R: Replica> Machine<R> {
         if let Writer::InFlight(flight) = std::mem::replace(&mut self.writer, Writer::Idle) {
             let unclear = match flight.state {
                 FlightState::Uploading(_) => Refusal::NotSubmitted,
-                FlightState::Putting(_) | FlightState::Verifying { .. } => Refusal::Unknown,
+                FlightState::Putting(_) | FlightState::Verifying { .. } | FlightState::Parked => {
+                    Refusal::Unknown
+                }
             };
             self.abandon(*flight, &unclear);
         }
