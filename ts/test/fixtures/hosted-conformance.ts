@@ -65,9 +65,11 @@ async function run<A>(body: Effect.Effect<A, DbError, Scope.Scope | Bumble>): Pr
 
 /**
  * `store`, recording the checkpoint images a cache asked to upload, the first one that was created,
- * and the ones it served to a cache.
+ * and the ones it served to a cache. Log reads wait for the first checkpoint listing to answer, so a
+ * cold open always sees the checkpoint before it could replay past it.
  */
 function watched(store: ObjectStore) {
+	const listed = Promise.withResolvers<void>()
 	const created = Promise.withResolvers<void>()
 	const offered = new Set<string>()
 	const served: string[] = []
@@ -82,11 +84,19 @@ function watched(store: ObjectStore) {
 					})
 				)
 			}),
+		list: (prefix, startAfter, maxKeys) =>
+			Effect.ensuring(
+				store.list(prefix, startAfter, maxKeys),
+				Effect.sync(() => listed.resolve())
+			),
 		get: (bucket, name, target) =>
-			Effect.tap(store.get(bucket, name, target), (reply) =>
-				Effect.sync(() => {
-					if (name.startsWith("ckpt/") && reply.result._tag === "Saved") served.push(name)
-				})
+			Effect.andThen(
+				bucket === "Log" ? Effect.promise(() => listed.promise) : Effect.void,
+				Effect.tap(store.get(bucket, name, target), (reply) =>
+					Effect.sync(() => {
+						if (name.startsWith("ckpt/") && reply.result._tag === "Saved") served.push(name)
+					})
+				)
 			)
 	}
 	return { store: watchedStore, created: created.promise, offered, served }

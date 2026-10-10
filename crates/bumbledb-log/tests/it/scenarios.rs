@@ -197,6 +197,52 @@ fn a_refused_batch_is_written_again_at_the_next_slot_in_the_same_step() {
     assert_eq!(standings(&world, &states).rebased, 1);
 }
 
+#[test]
+fn a_slot_refused_by_a_write_that_never_landed_is_filled_by_the_refused_writer() {
+    let schema = schema();
+    let mut world = opened(3, 2);
+    let a = submit(&mut world, 0, command(&schema, 1, &[(1, 1)]));
+    let b = submit(&mut world, 1, command(&schema, 2, &[(2, 2)]));
+    world.execute_as(world.find(0, put_at(2)).unwrap(), Fate::Conflicted);
+    world.execute_as(world.find(1, put_at(2)).unwrap(), Fate::Lost);
+    world.drain();
+    assert_eq!(
+        receipt_of(settled(&world, a)).seq,
+        Seq::new(2).unwrap(),
+        "the refused writer filled the slot it was refused at"
+    );
+    assert!(matches!(settled(&world, b), Settled::Decided(_)));
+    check(&world);
+}
+
+#[test]
+fn a_refused_writer_moves_past_every_slot_it_has_read() {
+    let schema = schema();
+    let mut world = opened(4, 2);
+    for request in 1..=4 {
+        submit(
+            &mut world,
+            0,
+            command(&schema, request, &[(u64::from(request), 0)]),
+        );
+        world.drain();
+    }
+    let late = submit(&mut world, 1, command(&schema, 9, &[(9, 9)]));
+    world.execute_as(world.find(1, put_at(2)).unwrap(), Fate::Answered);
+    let slow = bumbledb_log::log_key(Seq::new(2).unwrap());
+    while let Some(index) = world.find(1, |request| !is_put(request) && request.key != slow) {
+        world.execute_as(index, Fate::Answered);
+    }
+    world.execute_as(world.find(1, put_at(3)).unwrap(), Fate::Answered);
+    assert!(
+        world.find(1, put_at(6)).is_some(),
+        "the next write goes past slot 5, the last one read"
+    );
+    world.drain();
+    assert_eq!(receipt_of(settled(&world, late)).seq, Seq::new(6).unwrap());
+    check(&world);
+}
+
 fn requests_at(world: &World, client: usize, seq: u64, schema: &Schema) -> Vec<RequestId> {
     let Body::Commands(batch) = Entry::parse(&body_at(world, client, seq)).unwrap().body else {
         panic!("a batch at {seq}");

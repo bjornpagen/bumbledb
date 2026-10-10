@@ -76,13 +76,33 @@ async function send<O>(
 			date = dateOf(response?.headers) ?? date
 			return result
 		}
-	;(command.middlewareStack.add as (middleware: unknown, options: object) => void)(capture, {
-		step: "deserialize",
-		priority: "low",
-		name: "bumbledbResponseDate"
-	})
+	const add = command.middlewareStack.add as (middleware: unknown, options: object) => void
+	add(capture, { step: "deserialize", priority: "low", name: "bumbledbResponseDate" })
 	const output = (await client.send(command as never, { abortSignal: signal })) as O
 	return { output, date }
+}
+
+/**
+ * S3 answers a create-only PUT that overlaps another conditional write to its key with 409. The
+ * SDK would retry it with backoff into a late 412. A log slot being written is taken for the log's
+ * purposes (it reads ownership back itself), so there the 409 is answered at once, as a refusal.
+ */
+const conflict = Symbol("bdb.conflict")
+
+function answerConflicts(command: { middlewareStack: { add: (...args: never[]) => void } }): void {
+	const add = command.middlewareStack.add as (middleware: unknown, options: object) => void
+	add(
+		(next: (args: unknown) => Promise<unknown>) => async (args: unknown) => {
+			try {
+				return await next(args)
+			} catch (cause) {
+				if (refusalOf(cause).status !== 409) throw cause
+				const response = "$response" in (cause as object) ? (cause as { $response?: unknown }).$response : undefined
+				return { output: { [conflict]: refusalOf(cause) }, response }
+			}
+		},
+		{ step: "deserialize", priority: "high", name: "bumbledbConflictAnswer" }
+	)
 }
 
 function millisOf(value: Date | undefined): Millis {
@@ -154,11 +174,16 @@ function make(options: S3StoreOptions): ObjectStore {
 						body._tag === "Bytes"
 							? { Body: body.bytes, ContentLength: body.bytes.byteLength }
 							: { Body: createReadStream(body.path), ContentLength: (await fs.stat(body.path)).size }
-					const answer = await send(
-						client,
-						new PutObjectCommand({ Bucket: bucketName(bucket), Key: `${prefix}${key}`, IfNoneMatch: "*", ...payload }),
-						signal
-					)
+					const command = new PutObjectCommand({
+						Bucket: bucketName(bucket),
+						Key: `${prefix}${key}`,
+						IfNoneMatch: "*",
+						...payload
+					})
+					if (bucket === "Log") answerConflicts(command)
+					const answer = await send<{ [conflict]?: Refusal }>(client, command, signal)
+					const refused = answer.output[conflict]
+					if (refused !== undefined) return { date: refused.date ?? answer.date, result: { _tag: "Occupied" } }
 					return { date: answer.date, result: { _tag: "Created" } }
 				},
 				(refusal) => (refusal.status === 412 ? { date: refusal.date, result: { _tag: "Occupied" } } : undefined)

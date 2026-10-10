@@ -29,13 +29,14 @@ type Fetched =
 	| { readonly _tag: "Saved"; readonly lastModified: Millis }
 	| { readonly _tag: "Missing" }
 
+/** `Occupied`: the key exists, or, for a log object, another conditional write to it was in progress. */
 type Created = { readonly _tag: "Created" } | { readonly _tag: "Occupied" }
 
 type Listed = { readonly _tag: "Keys"; readonly keys: readonly string[] }
 
 type Deleted = { readonly _tag: "Deleted" }
 
-/** `Failed` covers everything a store could not answer definitively: 409, 5xx, timeouts, transport. */
+/** `Failed` covers everything a store could not answer definitively: 5xx, timeouts, transport. */
 type IoResult = Fetched | Created | Listed | Deleted | { readonly _tag: "Failed" }
 
 interface IoResponse {

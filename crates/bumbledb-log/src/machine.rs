@@ -176,8 +176,13 @@ enum Life {
 
 #[derive(Debug, Clone)]
 enum Purpose {
-    Slot { seq: Seq, issued: u64 },
+    Slot {
+        seq: Seq,
+        issued: u64,
+    },
     Put,
+    /// The flight's bytes, PUT at a slot below it that read empty.
+    Fill,
     Upload,
     List,
     Fetch,
@@ -457,15 +462,29 @@ impl<R: Replica> Machine<R> {
                     self.tail.streak = self.tail.streak.saturating_add(1);
                 }
             }
-            (Purpose::Slot { seq, issued }, IoResult::Missing) => {
-                // Below the flight's slot the answer is stale: the slot is taken.
-                let taken = matches!(&self.writer, Writer::InFlight(flight) if seq < flight.slot);
-                if !taken {
+            (Purpose::Slot { seq, issued }, IoResult::Missing) => match &self.writer {
+                // A refusal moved the flight past this slot, so it is taken or
+                // was being written. If that write failed the slot stays empty:
+                // the flight's own bytes fill it, and a duplicate decides nothing.
+                Writer::InFlight(flight) if seq < flight.slot => {
+                    let moves = matches!(flight.cargo, Cargo::Commands(_) | Cargo::Freeze(_));
+                    if moves && seq >= self.next_slot() {
+                        let bytes = flight.bytes.clone();
+                        self.request(
+                            Bucket::Log,
+                            log_key(seq),
+                            Op::PutIfAbsent(IoBody::Bytes(bytes)),
+                            Purpose::Fill,
+                        );
+                    }
+                }
+                _ => {
                     let seen = self.tail.missing.entry(seq).or_insert(issued);
                     *seen = (*seen).max(issued);
                 }
-            }
+            },
             (Purpose::Put, result) => self.put_returned(id, result, date),
+            (Purpose::Fill, _) => {}
             (Purpose::Upload, result) => self.upload_returned(id, &result),
             (Purpose::List, IoResult::Keys(keys)) => self.listed(&keys),
             (Purpose::List, _) => self.listed(&[]),
@@ -509,7 +528,13 @@ impl<R: Replica> Machine<R> {
             }
             IoResult::Occupied if matches!(flight.cargo, Cargo::Commands(_) | Cargo::Freeze(_)) => {
                 self.tail.missing.remove(&flight.slot);
-                flight.slot = flight.slot.next();
+                // Race at the tip: past every slot known taken, and probe
+                // afresh for slots taken since.
+                let known = self.tail.found.last_key_value().map(|(seq, _)| *seq);
+                flight.slot = known
+                    .map_or(flight.slot, |known| known.max(flight.slot))
+                    .next();
+                self.epoch += 1;
                 let grows = matches!(flight.cargo, Cargo::Commands(_)) && !self.queue.is_empty();
                 if grows && self.takes_commands() {
                     self.regrow();
@@ -1053,11 +1078,13 @@ impl<R: Replica> Machine<R> {
             }
             seq = seq.next();
         }
+        let racing = (first > next).then_some(self.epoch);
         let need = self
             .waiters
             .iter()
             .map(|waiter| waiter.need)
             .chain(verifying)
+            .chain(racing)
             .max();
         let Some(need) = need else {
             return;
@@ -1086,10 +1113,17 @@ impl<R: Replica> Machine<R> {
                 break;
             }
             seq = seq.next();
-            if self.tail.missing.contains_key(&seq) {
+            if self
+                .tail
+                .missing
+                .get(&seq)
+                .is_some_and(|issued| *issued >= need)
+            {
                 break;
             }
-            if !outstanding.contains_key(&seq) && !self.tail.found.contains_key(&seq) {
+            if outstanding.get(&seq).is_none_or(|issued| *issued < need)
+                && !self.tail.found.contains_key(&seq)
+            {
                 self.get_slot(seq);
                 in_flight += 1;
             }

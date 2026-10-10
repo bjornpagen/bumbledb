@@ -54,6 +54,9 @@ pub struct Faults {
     pub put_unanswered: u64,
     /// A PUT lands and a retry of it answers that the key is taken.
     pub put_retried: u64,
+    /// A log PUT never lands and answers that the key is taken: a 409 against
+    /// a competing write that then failed.
+    pub put_conflicted: u64,
     /// A response is held back and delivered later, out of order.
     pub delayed: u64,
     /// A GET or LIST fails.
@@ -65,6 +68,7 @@ impl Faults {
         put_lost: 0,
         put_unanswered: 0,
         put_retried: 0,
+        put_conflicted: 0,
         delayed: 0,
         read_failed: 0,
     };
@@ -73,6 +77,7 @@ impl Faults {
         put_lost: 8,
         put_unanswered: 8,
         put_retried: 4,
+        put_conflicted: 4,
         delayed: 15,
         read_failed: 6,
     };
@@ -88,6 +93,9 @@ pub enum Fate {
     /// Reaches the store; the response is `Occupied`, as for a retry of a
     /// PUT that landed.
     Retried,
+    /// Never reaches the store; the response is `Occupied`, as for a 409
+    /// against a competing write that then failed.
+    Conflicted,
     /// Reaches the store; the response arrives later.
     Delayed,
 }
@@ -161,6 +169,7 @@ pub struct Tally {
     pub occupied: u64,
     pub unanswered: u64,
     pub retried: u64,
+    pub conflicted: u64,
     pub lost: u64,
     pub delayed: u64,
     pub kills: u64,
@@ -172,6 +181,7 @@ impl std::ops::AddAssign for Tally {
         self.occupied += other.occupied;
         self.unanswered += other.unanswered;
         self.retried += other.retried;
+        self.conflicted += other.conflicted;
         self.lost += other.lost;
         self.delayed += other.delayed;
         self.kills += other.kills;
@@ -398,6 +408,11 @@ impl World {
             Fate::Unanswered
         } else if is_put && self.rng.chance(self.faults.put_retried) {
             Fate::Retried
+        } else if is_put
+            && self.issued[index].request.bucket == Bucket::Log
+            && self.rng.chance(self.faults.put_conflicted)
+        {
+            Fate::Conflicted
         } else if self.rng.chance(self.faults.delayed) {
             Fate::Delayed
         } else {
@@ -430,6 +445,10 @@ impl World {
             Fate::Retried => {
                 self.tally.retried += 1;
                 self.apply(client, incarnation, &request, body);
+                IoResult::Occupied
+            }
+            Fate::Conflicted => {
+                self.tally.conflicted += 1;
                 IoResult::Occupied
             }
             Fate::Answered | Fate::Delayed => self.apply(client, incarnation, &request, body),

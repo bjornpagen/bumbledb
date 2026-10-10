@@ -75,12 +75,15 @@ pub enum IoResult {
     Missing,
     /// `PutIfAbsent` created the object.
     Created,
-    /// `PutIfAbsent` found the key taken (412).
+    /// `PutIfAbsent` found the key taken (412) or, for a log object, being
+    /// written by another conditional write (409); after a 409 the slot stays
+    /// empty if that write fails.
     Occupied,
     Keys(Vec<String>),
     Deleted,
     /// Anything else, after the executor's own retries of idempotent reads:
-    /// 409, 5xx, timeouts, transport errors. A failed write may have landed.
+    /// 5xx, timeouts, transport errors, a 409 outside the log. A failed write
+    /// may have landed.
     Failed,
 }
 

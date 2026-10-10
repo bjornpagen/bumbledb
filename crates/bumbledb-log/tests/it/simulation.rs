@@ -129,7 +129,11 @@ fn hostile_store_with_three_writers() {
     let tally = total.tally;
     assert!(total.decided > 1_000, "{total:?}");
     assert!(
-        tally.occupied > 0 && tally.unanswered > 0 && tally.retried > 0 && tally.lost > 0,
+        tally.occupied > 0
+            && tally.unanswered > 0
+            && tally.retried > 0
+            && tally.conflicted > 0
+            && tally.lost > 0,
         "{total:?}"
     );
     assert!(
