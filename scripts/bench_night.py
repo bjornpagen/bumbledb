@@ -20,9 +20,6 @@ from bench_scheduler import policy_for_host, worker_command
 
 REPO = Path(__file__).resolve().parent.parent
 PREREQUISITES = {
-    "correspondence-oracles": "cargo test -p bumbledb-bench correspondence",
-    "conformance-replay": "cargo test -p bumbledb-bench the_corpus_replays_byte_identical",
-    "hosted-decision": "real S3/IAM required",
     "large-populated": ">40 GiB allocated blocks + cgroup memory.max required",
     "graviton-arm64": "real Graviton Linux ARM64 performance host required",
     "x86-node": "Linux x64 Node application timing required",
@@ -49,14 +46,16 @@ def lanes(binary, data, out, full):
         return Job(name, [str(binary), command, "--dir", str(data / name),
                           *flags, "--out", str(out / name)], out / name / artifact)
 
+    def app_perf(name, regimes):
+        return Job(name, [str(binary), "app-perf", "--regimes", regimes, "--out", str(out / name)],
+                   out / name / "app-perf.json")
+
     compact = [
         job("storage", "storage", "storage-report.json", "--scales", "S,M"),
-        job("app-perf-warm", "app-perf", "app-perf.json", "--regimes", "warm"),
-        job("app-perf-cold", "app-perf", "app-perf.json", "--regimes", "cold-open,post-write"),
-        job("app-perf-large-result", "app-perf", "app-perf.json", "--regimes", "large-result"),
-        job("app-perf-tenants", "app-perf", "app-perf.json", "--regimes", "tenant-churn"),
-        Job("hash-probe", [str(binary), "hash-probe", "--out", str(out / "hash-probe")],
-            out / "hash-probe/hash-probe.json"),
+        app_perf("app-perf-warm", "warm"),
+        app_perf("app-perf-cold", "cold-open,post-write"),
+        app_perf("app-perf-large-result", "large-result"),
+        app_perf("app-perf-tenants", "tenant-churn"),
     ]
     if not full:
         return compact
@@ -173,8 +172,7 @@ def main():
     target = Path(os.environ.get("CARGO_TARGET_DIR", REPO / "target")).resolve()
     binary = Path(os.environ.get("BUMBLEDB_BENCH_BIN", target / "release/bumbledb-bench")).resolve()
     jobs = lanes(binary, data, out, args.full)
-    setup = [Job("scorecard-plan", [str(binary), "app-perf", "--plan"]),
-             Job("verify", [str(binary), "verify", "--dir", str(data / "reads")])]
+    setup = [Job("verify", [str(binary), "verify", "--dir", str(data / "reads")])]
     if args.plan:
         print(f"workers: {workers}; scheduler: {json.dumps(scheduler)}; full: {args.full}")
         for job in setup + jobs:

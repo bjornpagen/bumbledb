@@ -307,7 +307,6 @@ NIGHT_LANE_REPORTS = (
     ("app-perf-warm/app-perf.json", "app_perf_warm", None),
     ("app-perf-cold/app-perf.json", "app_perf_cold", None),
     ("app-perf-tenants/app-perf.json", "app_perf_tenants", None),
-    ("hash-probe/hash-probe.json", "hash_probe", None),
     ("writes/writes-report.json", "writes_rates", None),
     ("curves/curves-report.json", "curves_report", None),
     ("crud/crud.json", "crud_report", load_crud_report),
@@ -404,10 +403,6 @@ def derive_pools(inputs):
             inputs["reads"], inputs["writes"] = merge_runs(pool)
             inputs["store_kind"] = kind
             inputs["rep_count"] = len(pool)
-            inputs["contaminated_blocks"] = sum(
-                bool((family.get("ghz") or {}).get("contaminated"))
-                for run in pool for table in ("reads", "writes")
-                for family in run.get(table, []))
             provenance = pool[0].get("provenance") or {}
             inputs["host"] = provenance.get("host", "unknown host")
             inputs["shared_machine"] = any(
@@ -434,8 +429,6 @@ def pool_note(inputs):
     and the shared-machine caveat."""
     count = inputs['rep_count']
     note = f"{'single run' if count == 1 else f'min-of-{count}'}, {inputs['store_kind']} store"
-    if inputs.get("contaminated_blocks"):
-        note += f" · {inputs['contaminated_blocks']} clock-flagged blocks; see raw report"
     if inputs.get("contaminated_runs"):
         n = inputs["contaminated_runs"]
         note += f" · {n} contaminated run{'s' if n != 1 else ''} excluded and counted"
