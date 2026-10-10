@@ -231,9 +231,12 @@ enum Writer {
 }
 
 struct Flight {
-    /// Every slot after the head and before this one is occupied: the flight
-    /// moved past each on a refused PUT.
+    /// Every slot after the head and before this one is taken or was being
+    /// written: the flight moved past each on a refused PUT.
     slot: Seq,
+    /// The epoch of the latest refusal: only a read at least this fresh that
+    /// finds a slot below `slot` empty shows a competing write that failed.
+    refused: u64,
     bytes: Vec<u8>,
     cargo: Cargo,
     state: FlightState,
@@ -468,7 +471,7 @@ impl<R: Replica> Machine<R> {
                 // the flight's own bytes fill it, and a duplicate decides nothing.
                 Writer::InFlight(flight) if seq < flight.slot => {
                     let moves = matches!(flight.cargo, Cargo::Commands(_) | Cargo::Freeze(_));
-                    if moves && seq >= self.next_slot() {
+                    if moves && issued >= flight.refused && seq >= self.next_slot() {
                         let bytes = flight.bytes.clone();
                         self.request(
                             Bucket::Log,
@@ -534,6 +537,7 @@ impl<R: Replica> Machine<R> {
                     .map_or(flight.slot, |known| known.max(flight.slot))
                     .next();
                 self.epoch += 1;
+                flight.refused = self.epoch;
                 let grows = matches!(flight.cargo, Cargo::Commands(_)) && !self.queue.is_empty();
                 if grows && self.takes_commands() {
                     self.regrow();
@@ -1418,6 +1422,7 @@ impl<R: Replica> Machine<R> {
         };
         self.writer = Writer::InFlight(Box::new(Flight {
             slot,
+            refused: 0,
             bytes,
             cargo,
             state,
