@@ -103,7 +103,7 @@ fn posting_rule(conditions: Vec<ConditionTree>) -> Rule {
 
 #[test]
 fn lowered_rule_set_union_equals_naive_tree_evaluation() {
-    for seed in 0..crate::fixture::sweep(300) {
+    for seed in 0..300 {
         let mut rng = Rng::new(seed);
         let rows = 1 + rng.range(24);
         let db = corpus(&mut rng, rows);

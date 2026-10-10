@@ -8,7 +8,7 @@ import { after, before, test } from "node:test"
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-notes-test-"))
 process.env.SESSION_SECRET = "test-secret-test-secret-test-secret!"
-process.env.BUMBLEDB_DATA_DIR = scratch
+process.chdir(scratch)
 
 const TENANT_A = "student-a"
 const TENANT_B = "student-b"

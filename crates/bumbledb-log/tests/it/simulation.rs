@@ -4,7 +4,7 @@
 
 use bumbledb_log::{Input, Refusal, Settled};
 
-use crate::sim::{Ask, Faults, Standings, Tally, World, check, seeds, standings};
+use crate::sim::{Ask, Faults, Standings, Tally, World, check, standings};
 use crate::support::{bundle, schema};
 
 /// What the run settled, beside what the world tallied.
@@ -123,9 +123,8 @@ fn sweep(seeds: std::ops::Range<u64>, clients: usize, faults: Faults, steps: usi
     total
 }
 
-#[test]
-fn hostile_store_with_three_writers() {
-    let total = sweep(seeds(0..48), 3, Faults::HOSTILE, 500);
+fn hostile_three(seeds: std::ops::Range<u64>) {
+    let total = sweep(seeds, 3, Faults::HOSTILE, 500);
     let tally = total.tally;
     assert!(total.decided > 1_000, "{total:?}");
     assert!(
@@ -147,18 +146,49 @@ fn hostile_store_with_three_writers() {
     assert!(total.standings.rebased > 100, "{total:?}");
 }
 
-#[test]
-fn honest_store_with_five_writers() {
-    let total = sweep(seeds(100..116), 5, Faults::NONE, 400);
+fn honest_five(seeds: std::ops::Range<u64>) {
+    let total = sweep(seeds, 5, Faults::NONE, 400);
     assert!(total.tally.occupied > 0 && total.batched > 0, "{total:?}");
     assert!(total.standings.rebased > 0, "{total:?}");
 }
 
-#[test]
-fn lone_writer_through_hostile_store() {
-    let total = sweep(seeds(200..232), 1, Faults::HOSTILE, 400);
+fn lone_hostile(seeds: std::ops::Range<u64>) {
+    let total = sweep(seeds, 1, Faults::HOSTILE, 400);
     assert!(
         total.decided > 500 && total.tally.unanswered > 0,
         "{total:?}"
     );
+}
+
+#[test]
+fn hostile_store_with_three_writers() {
+    hostile_three(0..48);
+}
+
+#[test]
+fn honest_store_with_five_writers() {
+    honest_five(100..116);
+}
+
+#[test]
+fn lone_writer_through_hostile_store() {
+    lone_hostile(200..232);
+}
+
+/// The sweeps above, 750 times wider over the same seed sequences.
+mod deep {
+    #[test]
+    fn hostile_store_with_three_writers() {
+        super::hostile_three(0..36_000);
+    }
+
+    #[test]
+    fn honest_store_with_five_writers() {
+        super::honest_five(75_000..87_000);
+    }
+
+    #[test]
+    fn lone_writer_through_hostile_store() {
+        super::lone_hostile(150_000..174_000);
+    }
 }

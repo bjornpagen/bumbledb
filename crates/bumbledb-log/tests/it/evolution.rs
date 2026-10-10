@@ -4,7 +4,7 @@
 
 use bumbledb_log::{Input, Mode, Replica as _, Settled};
 
-use crate::sim::{Ask, Faults, World, check, population, seeds};
+use crate::sim::{Ask, Faults, World, check, population};
 use crate::support::{bundle, bundle2, migration_id, schema, schema2, tags};
 
 #[derive(Default)]
@@ -98,10 +98,9 @@ fn run(seed: u64, steps: usize) -> Seen {
     }
 }
 
-#[test]
-fn writers_of_two_code_versions_race_a_migration() {
+fn race_a_migration(seeds: std::ops::Range<u64>) {
     let mut total = Seen::default();
-    for seed in seeds(300..340) {
+    for seed in seeds {
         let seen = run(seed, 500);
         total.migrations += seen.migrations;
         total.frozen += seen.frozen;
@@ -114,4 +113,17 @@ fn writers_of_two_code_versions_race_a_migration() {
         total.frozen,
         total.thawed
     );
+}
+
+#[test]
+fn writers_of_two_code_versions_race_a_migration() {
+    race_a_migration(300..340);
+}
+
+/// The sweep above, 750 times wider over the same seed sequence.
+mod deep {
+    #[test]
+    fn writers_of_two_code_versions_race_a_migration() {
+        super::race_a_migration(225_000..255_000);
+    }
 }

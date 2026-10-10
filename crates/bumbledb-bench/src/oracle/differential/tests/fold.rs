@@ -263,7 +263,7 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
 
     let mut rng = Rng::new(CFG.seed);
     let mut compared = 0u64;
-    let queries = crate::fixture::sweep(30);
+    let queries = 30;
     for _ in 0..queries {
         let query = random_query(&mut rng, CFG);
         for draw in params_for(&query, &mut rng, CFG) {

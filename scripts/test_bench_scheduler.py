@@ -85,7 +85,7 @@ class NightTests(unittest.TestCase):
                 night.job_count(value)
 
     def test_full_roster_and_data_paths_are_independent(self):
-        jobs = night.lanes(Path("/bin/bench"), Path("/corpus with spaces"), Path("/out"), True)
+        jobs = night.lanes(["/bin/bench"], Path("/corpus with spaces"), Path("/out"), True)
         self.assertEqual(len(jobs), 12)
         self.assertEqual(len({job.name for job in jobs}), 12)
         data_paths = [job.command[job.command.index("--dir") + 1] for job in jobs if "--dir" in job.command]
@@ -149,8 +149,8 @@ class NightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
             out = Path(directory) / "run"
             policy = {"worker_limit": 8, "cpu_ids": None}
-            args = ["bench-night", str(out), "--allow-macos-qos"]
-            env = {"BUMBLEDB_BENCH_BIN": sys.executable, "BENCH_NIGHT_UNDER_LOCK": "1"}
+            args = ["bench-night", str(out), "--allow-macos-qos", "--bin", sys.executable]
+            env = {"BENCH_NIGHT_UNDER_LOCK": "1"}
             with patch.object(sys, "argv", args), patch.dict(os.environ, env), patch.object(night, "policy_for_host", return_value=policy), patch.object(night, "run_jobs", return_value=False) as runner:
                 self.assertEqual(night.main(), 1)
             self.assertEqual(runner.call_count, 1)

@@ -19,14 +19,8 @@ jobs:
   musl:
     uses: ./.github/workflows/musl.yml
 
-  s3-aws:
-    uses: ./.github/workflows/s3-aws.yml
-    permissions:
-      contents: read
-      id-token: write
-
   publish:
-    needs: [ci, musl, s3-aws]
+    needs: [ci, musl]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release

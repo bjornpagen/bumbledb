@@ -472,11 +472,7 @@ mod differential {
         assert!(float.is_some());
         // Miri interprets every lane of every program: a short prefix of the
         // same sequence keeps it within its time budget.
-        let rounds = if cfg!(miri) {
-            60
-        } else {
-            crate::exec::sweep(1500)
-        };
+        let rounds = if cfg!(miri) { 60 } else { 1500 };
         for round in 0..rounds {
             let columns = bindings(&mut rng);
             let t = [T::U64, T::I64, T::F64, T::Bool][round % 4];

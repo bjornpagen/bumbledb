@@ -133,7 +133,8 @@ rejected. Code that runs on an older schema is refused with `SchemaAdvanced`.
 
 Rust nightly-2026-10-09, kept current by `scripts/bump-toolchain.sh` and a
 weekly canary. CI is `scripts/ci.sh <lane>`: lint, test and addon on every pull
-request; SeaweedFS and AWS S3 lanes; Miri, musl and the deep sweeps nightly.
+request; Miri (four shards on two Linux runners), musl and the deep sweeps
+nightly.
 
 ## Not yet measured
 

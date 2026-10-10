@@ -125,12 +125,13 @@ pub fn help() -> String {
          \x20 --tenants N     churn tenant count       (default 8, min 2)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-app-perf)\n\
          \n\
-         SHARED-MACHINE BOOST:\n\
-         \x20 BUMBLEDB_BENCH_BOOST=1  claim user-interactive QoS before any\n\
-         \x20                 measurement subcommand (macOS); on Linux set and\n\
-         \x20                 verify absolute nice -10 (needs priority permission)\n\
-         \x20                 and stamp shared_machine provenance. Default off\n\
-         \x20                 (unset/0); bench-night.sh always sets it.\n\
+         GLOBAL OPTIONS (before the command):\n\
+         \x20 --boost   claim user-interactive QoS before any measurement\n\
+         \x20           command (macOS); on Linux set and verify absolute\n\
+         \x20           nice -10 (needs priority permission). Stamps\n\
+         \x20           shared_machine provenance. bench_night.py always passes it.\n\
+         \x20 --jobs N  the runner's concurrent worker count, stamped as\n\
+         \x20           parallel_jobs provenance\n\
          \n\
          EXIT CODES: 0 ok / gate won; 1 verify mismatch, store findings, or\n\
          gate loss; 2 usage.\n",

@@ -374,13 +374,12 @@ def native_symbols(profile_path, request, log_path):
     caches one inline stack per function there). The API looks up each address
     independently. No browser/upload; the owned localhost server always exits.
     """
-    samply = os.environ.get("BUMBLEDB_SAMPLY", "samply")
     with tempfile.TemporaryDirectory(prefix="bumbledb-symbols-") as scratch:
         alias = os.path.join(scratch, "capture.json.gz")
         os.symlink(os.path.abspath(profile_path), alias)
         with open(log_path, "x", encoding="utf-8") as log:
             proc = subprocess.Popen(
-                [samply, "load", "--no-open", "--address", "127.0.0.1",
+                ["samply", "load", "--no-open", "--address", "127.0.0.1",
                  "--port", "3000+", "--symbol-dir", os.path.dirname(os.path.abspath(profile_path)), alias],
                 stdout=subprocess.PIPE, stderr=log, text=True,
             )

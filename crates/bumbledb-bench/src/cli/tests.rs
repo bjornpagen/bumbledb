@@ -408,7 +408,7 @@ fn help_names_the_home_turf_worlds() {
 #[test]
 fn help_names_the_shared_machine_boost_switch() {
     let text = help();
-    assert!(text.contains("BUMBLEDB_BENCH_BOOST"), "{text}");
+    assert!(text.contains("--boost"), "{text}");
     assert!(text.contains("shared_machine"), "{text}");
 }
 
@@ -562,4 +562,20 @@ fn micro_compare_takes_exactly_two_reports() {
     );
     assert!(parse(&argv(&["micro", "--compare", "old.json"])).is_err());
     assert!(parse(&argv(&["micro", "--compare", "a", "b", "c"])).is_err());
+}
+
+#[test]
+fn global_options_precede_the_command() {
+    let (globals, cmd) =
+        parse_invocation(&argv(&["--boost", "--jobs", "4", "micro"])).expect("parses");
+    assert!(globals.boost);
+    assert_eq!(globals.jobs.map(std::num::NonZeroUsize::get), Some(4));
+    assert!(matches!(cmd, Cmd::Micro(_)));
+    assert_eq!(
+        parse_invocation(&argv(&["help"])),
+        Ok((Globals::default(), Cmd::Help))
+    );
+    assert!(parse_invocation(&argv(&["--jobs", "0", "micro"])).is_err());
+    assert!(parse_invocation(&argv(&["--jobs"])).is_err());
+    assert!(parse(&argv(&["micro", "--boost"])).is_err());
 }

@@ -23,9 +23,15 @@ cargo nextest run -p bumbledb-bench -E 'test(/conformance::tests/)'
 python3 scripts/structural-corpus.py
 ```
 
-`BUMBLEDB_BLESS=1` rewrites the curated cases and both digest lists from the
-current generators. Inspect every changed expectation first; blessing must not
-silence a disagreement. The structural corpus is independently owned; its
+The ignored `bless` test rewrites the curated cases and both digest lists from
+the current generators:
+
+```sh
+cargo nextest run -p bumbledb-bench --run-ignored only -E 'test(/conformance::tests::bless$/)'
+```
+
+Inspect every changed expectation first; blessing must not silence a
+disagreement. The structural corpus is independently owned; its
 generator checks by default and writes only with `--write`.
 
 The interchange format uses explicit value tags, hexadecimal float payloads,

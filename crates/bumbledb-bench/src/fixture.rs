@@ -50,19 +50,8 @@ pub(crate) fn string(text: &str) -> Value {
     Value::String(text.into())
 }
 
-/// A seeded sweep's case count: `n`, or sixteen times `n` under
-/// `BUMBLEDB_DEEP=1`. The extra cases extend the same seed sequence.
-#[cfg(test)]
-pub(crate) fn sweep(n: u64) -> u64 {
-    if std::env::var_os("BUMBLEDB_DEEP").is_some_and(|deep| deep == "1") {
-        n * 16
-    } else {
-        n
-    }
-}
-
-/// A scratch directory under the system temp dir (or `BUMBLEDB_SCRATCH_DIR`),
-/// unique to this process and moment, removed on drop.
+/// A scratch directory under the system temp dir, unique to this process and
+/// moment, removed on drop.
 pub(crate) struct TempDir(std::path::PathBuf);
 
 impl TempDir {
@@ -71,9 +60,7 @@ impl TempDir {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock after epoch")
             .as_nanos();
-        let root = std::env::var_os("BUMBLEDB_SCRATCH_DIR")
-            .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
-        let path = root.join(format!(
+        let path = std::env::temp_dir().join(format!(
             "bumbledb-bench-{tag}-{}-{nanos}",
             std::process::id()
         ));

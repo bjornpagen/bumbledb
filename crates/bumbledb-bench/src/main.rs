@@ -1,7 +1,7 @@
 //! Exit codes: 0 ok / gates won; 1 verify mismatch or gate loss; 2 usage or
 //! refusal (each refusal names the remedy).
 use bumbledb_bench::cli;
-use bumbledb_bench::harness::{appperf, boost, driver, lanes, micro};
+use bumbledb_bench::harness::{appperf, boost, driver, lanes, micro, report};
 use bumbledb_bench::worlds::families;
 
 fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
@@ -37,16 +37,20 @@ fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let cmd = match cli::parse(&args) {
-        Ok(cmd) => cmd,
+    let (globals, cmd) = match cli::parse_invocation(&args) {
+        Ok(invocation) => invocation,
         Err(message) => {
             eprintln!("error: {message}\n");
             eprint!("{}", cli::help());
             std::process::exit(2);
         }
     };
-    if cmd.runs_measurements()
-        && let Err(message) = boost::engage_from_env()
+    if let Some(jobs) = globals.jobs {
+        report::record_parallel_jobs(jobs);
+    }
+    if globals.boost
+        && cmd.runs_measurements()
+        && let Err(message) = boost::engage()
     {
         eprintln!("error: {message}");
         std::process::exit(2);

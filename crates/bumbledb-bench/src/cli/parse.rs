@@ -4,8 +4,8 @@ use crate::oracle::sqlite::verify::DEFAULT_RANDOM_CASES;
 use crate::worlds::corpus_gen::Scale;
 
 use super::{
-    AppPerfArgs, BenchArgs, Cmd, CorpusArgs, CurvesArgs, HeapArgs, ProfileArgs, ScenarioArgs,
-    StorageArgs, WritesArgs,
+    AppPerfArgs, BenchArgs, Cmd, CorpusArgs, CurvesArgs, Globals, HeapArgs, ProfileArgs,
+    ScenarioArgs, StorageArgs, WritesArgs,
 };
 
 struct Tokens<'a> {
@@ -399,6 +399,29 @@ fn parse_micro(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
         }
     }
     Ok(Cmd::Micro(args))
+}
+
+/// Splits the leading global options from the command.
+pub fn parse_invocation(args: &[String]) -> Result<(Globals, Cmd), String> {
+    let mut globals = Globals::default();
+    let mut rest = args;
+    loop {
+        match rest.first().map(String::as_str) {
+            Some("--boost") => {
+                globals.boost = true;
+                rest = &rest[1..];
+            }
+            Some("--jobs") => {
+                let raw = rest.get(1).ok_or("`--jobs` needs a value")?;
+                let jobs = raw
+                    .parse()
+                    .map_err(|_| format!("`--jobs` needs a positive integer, got `{raw}`"))?;
+                globals.jobs = Some(jobs);
+                rest = &rest[2..];
+            }
+            _ => return Ok((globals, parse(rest)?)),
+        }
+    }
 }
 
 pub fn parse(args: &[String]) -> Result<Cmd, String> {

@@ -1,6 +1,6 @@
-# Profiles: default (local), ci (pull requests and main), deep (nightly
-# BUMBLEDB_DEEP sweeps), default-miri (selected automatically by
-# `cargo miri nextest`). Every profile inherits default's settings and overrides.
+# Profiles: default (local), ci (pull requests and main), deep (nightly; adds
+# the wide sweeps in `deep` test modules), default-miri (selected automatically
+# by `cargo miri nextest`). Every profile inherits default's settings and overrides.
 
 # Tests named `disk_*` or living in a `disk` module saturate the disk (fsync
 # loops, crash children); two at a time keeps them off each other's latency.
@@ -8,6 +8,7 @@
 disk = { max-threads = 2 }
 
 [profile.default]
+default-filter = "not test(/(^|::)deep::/)"
 fail-fast = false
 slow-timeout = { period = "60s", terminate-after = 5 }
 
@@ -19,6 +20,7 @@ test-group = "disk"
 failure-output = "immediate-final"
 
 [profile.deep]
+default-filter = "all()"
 failure-output = "immediate-final"
 slow-timeout = { period = "300s", terminate-after = 6 }
 

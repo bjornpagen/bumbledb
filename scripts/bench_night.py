@@ -41,13 +41,14 @@ class Job:
     artifact: Path | None = None
 
 
-def lanes(binary, data, out, full):
+def lanes(bench, data, out, full):
+    """`bench` is the bench binary with its global options."""
     def job(name, command, artifact, *flags):
-        return Job(name, [str(binary), command, "--dir", str(data / name),
+        return Job(name, [*bench, command, "--dir", str(data / name),
                           *flags, "--out", str(out / name)], out / name / artifact)
 
     def app_perf(name, regimes):
-        return Job(name, [str(binary), "app-perf", "--regimes", regimes, "--out", str(out / name)],
+        return Job(name, [*bench, "app-perf", "--regimes", regimes, "--out", str(out / name)],
                    out / name / "app-perf.json")
 
     compact = [
@@ -156,6 +157,9 @@ def parser():
     ap.add_argument("--jobs", type=job_count, default=1, metavar="auto|N",
                     help="lane workers (default: 1 for latency comparisons); auto explicitly opts into P-core-count concurrent load")
     ap.add_argument("--cpus", help="Linux performance CPU IDs, e.g. 0-7,16-23; required on Linux")
+    ap.add_argument("--bin", type=Path,
+                    help="an already-built bumbledb-bench to run as is; default: build target/release/bumbledb-bench")
+    ap.add_argument("--data", type=Path, default=REPO / "bench-data", help="corpus root (default bench-data)")
     ap.add_argument("--allow-macos-qos", action="store_true",
                     help="accept macOS QoS steering, which cannot guarantee P-core-only placement")
     return ap
@@ -168,11 +172,13 @@ def main():
     if workers > scheduler["worker_limit"]:
         raise ValueError(f"--jobs {workers} exceeds the selected performance CPU count {scheduler['worker_limit']}")
     out = args.out.resolve()
-    data = Path(os.environ.get("BUMBLEDB_BENCH_DATA", REPO / "bench-data")).resolve()
+    data = args.data.resolve()
     target = Path(os.environ.get("CARGO_TARGET_DIR", REPO / "target")).resolve()
-    binary = Path(os.environ.get("BUMBLEDB_BENCH_BIN", target / "release/bumbledb-bench")).resolve()
-    jobs = lanes(binary, data, out, args.full)
-    setup = [Job("verify", [str(binary), "verify", "--dir", str(data / "reads")])]
+    binary = (args.bin or target / "release/bumbledb-bench").resolve()
+    # Both engines execute inside the same explicitly prioritized process.
+    bench = [str(binary), "--boost", "--jobs", str(workers)]
+    jobs = lanes(bench, data, out, args.full)
+    setup = [Job("verify", [*bench, "verify", "--dir", str(data / "reads")])]
     if args.plan:
         print(f"workers: {workers}; scheduler: {json.dumps(scheduler)}; full: {args.full}")
         for job in setup + jobs:
@@ -186,20 +192,19 @@ def main():
                          "QoS steering with --allow-macos-qos")
     if out.exists():
         raise ValueError(f"output already exists: {out}; use a fresh directory (no stale reports are reused)")
-    lock = Path(os.environ.get("BUMBLEDB_MEASURE_LOCK", "/tmp/bdb.measure.lock"))
+    lock = Path("/tmp/bdb.measure.lock")
     if os.environ.get("BENCH_NIGHT_UNDER_LOCK") != "1":
         if lock.exists():
             raise ValueError(f"measurement lock held: {lock}; wait for the other measurement")
         env = dict(os.environ, BENCH_NIGHT_UNDER_LOCK="1")
         os.execve(str(REPO / "scripts/measure.sh"),
                   [str(REPO / "scripts/measure.sh"), sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]], env)
-    if not os.environ.get("BUMBLEDB_BENCH_BIN"):
+    if args.bin is None:
         subprocess.run(["cargo", "build", "--release", "-p", "bumbledb-bench"], cwd=REPO, check=True)
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError(f"missing executable: {binary}")
     out.mkdir(parents=True)
-    # Both engines execute inside the same explicitly prioritized process.
-    env = dict(os.environ, BUMBLEDB_BENCH_JOBS=str(workers), BUMBLEDB_BENCH_BOOST="1")
+    env = dict(os.environ)
     records = {}
     manifest = {"format": 1, "started": now(), "binary": str(binary),
                 "binary_sha256": sha256(binary), "source_revision": subprocess.check_output(

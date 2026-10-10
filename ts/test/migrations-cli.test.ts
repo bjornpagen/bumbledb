@@ -82,11 +82,12 @@ test("the bumbledb command generates a migration from a schema module", () => {
 
 test("bumbledb migrate creates the database its config describes", () => {
 	const dir = path.join(root, "migrate")
-	const migrate = spawnSync(process.execPath, ["src/bin.ts", "migrate", "--config", "test/fixtures/cli-config.ts"], {
-		encoding: "utf8",
-		cwd: path.resolve("."),
-		env: { ...process.env, BUMBLEDB_TEST_DIR: dir }
-	})
+	fs.mkdirSync(dir)
+	const migrate = spawnSync(
+		process.execPath,
+		[path.resolve("src/bin.ts"), "migrate", "--config", path.resolve("test/fixtures/cli-config.ts")],
+		{ encoding: "utf8", cwd: dir }
+	)
 	assert.equal(migrate.status, 0, migrate.stderr)
 	assert.match(migrate.stdout, /migrated/)
 	assert.ok(fs.readdirSync(path.join(dir, "log", "log")).length > 0, "the log has its genesis entry")

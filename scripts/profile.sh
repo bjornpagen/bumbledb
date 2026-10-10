@@ -14,9 +14,8 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$1"
 BIN="$2"
 shift 2
-SAMPLY="${BUMBLEDB_SAMPLY:-samply}"
-command -v "$SAMPLY" >/dev/null || {
-    echo "profile.sh: samply not found (set BUMBLEDB_SAMPLY or install it)" >&2
+command -v samply >/dev/null || {
+    echo "profile.sh: samply not found on PATH" >&2
     exit 2
 }
 if [ ! -f "$BIN" ] || [ ! -x "$BIN" ]; then
@@ -47,10 +46,20 @@ FROZEN="$OUT/$(basename "$BIN")"
 # success gate. Keep generic command captures available, but validate every
 # `profile` workload automatically, before announcing a completed capture.
 WORKLOAD_REPORT=""
-if [ "${1:-}" = profile ]; then
-    ARGS=("$@")
+ARGS=("$@")
+# The bench binary's global options precede its command.
+BOOST=0
+CMD=0
+while :; do
+    case "${ARGS[$CMD]:-}" in
+    --boost) BOOST=1; CMD=$((CMD + 1)) ;;
+    --jobs) CMD=$((CMD + 2)) ;;
+    *) break ;;
+    esac
+done
+if [ "${ARGS[$CMD]:-}" = profile ]; then
     WORKLOAD_OUT=""
-    for ((i=1; i<${#ARGS[@]}; i++)); do
+    for ((i=CMD+1; i<${#ARGS[@]}; i++)); do
         if [ "${ARGS[$i]}" = --out ]; then
             if ((i + 1 >= ${#ARGS[@]})); then
                 echo "profile.sh: --out needs a workload directory" >&2
@@ -89,11 +98,11 @@ printf '%s\0' "$FROZEN" "$@" > "$OUT/command.argv"
         sw_vers
         sysctl -n machdep.cpu.brand_string hw.memsize hw.pagesize
     fi
-    "$SAMPLY" --version
+    samply --version
     shasum -a 256 "$FROZEN" "$OUT/source.patch"
     printf 'input_binary: %s\n' "$BIN"
     printf 'source_context: capture-time worktree relative to the recorded HEAD\n'
-    printf 'bench_boost: %s\n' "${BUMBLEDB_BENCH_BOOST:-0}"
+    printf 'bench_boost: %s\n' "$BOOST"
     printf 'sampling_hz: 1000\ndiagnostic_only: true\n'
 } > "$OUT/provenance.txt"
 
@@ -103,7 +112,7 @@ printf '%s\0' "$FROZEN" "$@" > "$OUT/command.argv"
 # Do not enable it. `flame.py native` resolves every address independently.
 # No function-entry instrumentation, allocator counters, or frame-pointer
 # changes are added to the sampled engine.
-"$SAMPLY" record --save-only --rate 1000 \
+samply record --save-only --rate 1000 \
     --symbol-dir "$OUT" --output "$OUT/profile.json.gz" \
     "$FROZEN" "$@" > "$OUT/capture.log" 2>&1
 if [ -n "$WORKLOAD_REPORT" ]; then
@@ -111,8 +120,8 @@ if [ -n "$WORKLOAD_REPORT" ]; then
 fi
 printf 'profile: %s\n' "$OUT/profile.json.gz"
 printf 'view locally: samply load %q\n' "$OUT/profile.json.gz"
-printf 'export CPU flamegraph: BUMBLEDB_SAMPLY=%q python3 %q native %q %q' \
-    "$SAMPLY" "$REPO/scripts/flame.py" "$OUT/profile.json.gz" "$OUT/cpu"
+printf 'export CPU flamegraph: python3 %q native %q %q' \
+    "$REPO/scripts/flame.py" "$OUT/profile.json.gz" "$OUT/cpu"
 if [ -n "$WORKLOAD_REPORT" ]; then
     printf ' --workload %q' "$WORKLOAD_REPORT"
 fi

@@ -60,9 +60,9 @@ only after every lane succeeds, and a renderer failure makes the run incomplete.
 The default without `--full` is the compact storage and lifecycle subset.
 It does not include the main Free Join versus SQLite comparison.
 
-`BUMBLEDB_BENCH_BIN=/absolute/path/to/frozen/bumbledb-bench` skips the build
-and runs that exact executable. `BUMBLEDB_BENCH_DATA=/absolute/corpus/root`
-isolates generated corpora and scratch databases from prior layouts. The
+`--bin /absolute/path/to/frozen/bumbledb-bench` skips the build and runs that
+exact executable. `--data /absolute/corpus/root` isolates generated corpora and
+scratch databases from prior layouts. The
 manifest records the binary digest. The main read panel fixes read batching
 to one, so its percentiles describe individual calls, not batch averages.
 
@@ -114,8 +114,7 @@ matching dSYM with `cp -RL`: a relative symlink can become dangling, and
 rerunning `dsymutil` after temporary compiler objects disappear cannot recover
 complete symbols. Check matching binary/dSYM UUIDs and actual source/inline
 resolution. The profile stays local; nothing is uploaded and no browser opens.
-`BUMBLEDB_SAMPLY` can name an installed Samply binary outside `PATH` for both
-scripts. Build/test jobs must already have stopped.
+Both scripts run `samply` from `PATH`. Build/test jobs must already have stopped.
 
 The source patch includes staged and unstaged changes plus untracked source.
 It records the capture-time worktree, not proof of what built an arbitrary

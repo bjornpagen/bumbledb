@@ -22,8 +22,7 @@ SESSION_SECRET=<32+ characters> pnpm dev
 
 Run `pnpm install` again after rebuilding `../../ts`.
 
-In development each tenant's log is a directory under `BUMBLEDB_DATA_DIR`
-(default `.bdb/`). A tenant's database is created and migrated the first
+In development each tenant's log is a directory under `.bdb/`. A tenant's database is created and migrated the first
 time a request names it. In production (`NODE_ENV=production`) databases open
 with `onOpen: "verify"`, which refuses a tenant whose migrations have not run.
 `pnpm migrate <tenant>...` creates or migrates tenants before they receive
@@ -85,10 +84,9 @@ created outside Alchemy. Checkpoints go in `BUMBLEDB_CKPT_BUCKET`. Run
 `pnpm migrate <tenant>...` with the same bucket environment before a tenant
 receives traffic.
 
-The build ships the platform package named by `BUMBLEDB_TARGET` (default
-`linux-arm64`), so `../../ts/npm/linux-arm64/bdb.node` must hold that
-platform's addon (the CI artifact `bdb.linux-arm64.node`) and the install
-must include that platform. The function runs on `nodejs24.x`, the newest
+The build ships the `linux-arm64` platform package, so
+`../../ts/npm/linux-arm64/bdb.node` must hold that platform's addon (the CI
+artifact `bdb.linux-arm64.node`) and the install must include that platform. The function runs on `nodejs24.x`, the newest
 runtime Alchemy offers, while bumbledb requires Node 26.
 
 ## Verification

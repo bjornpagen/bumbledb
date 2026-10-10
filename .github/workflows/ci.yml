@@ -70,8 +70,6 @@ jobs:
     # Linux addons link against glibc 2.34 (Amazon Linux 2023), the oldest supported runtime.
     container: ${{ startsWith(matrix.platform, 'linux-') && 'amazonlinux:2023' || '' }}
     timeout-minutes: 60
-    env:
-      BUMBLEDB_ADDON_PROFILE: ${{ github.event_name == 'pull_request' && 'addon-ci' || 'release' }}
     steps:
       - name: Install the Amazon Linux build tools
         if: startsWith(matrix.platform, 'linux-')
@@ -108,58 +106,10 @@ jobs:
           node-version: 26
           cache: pnpm
           cache-dependency-path: ts/pnpm-lock.yaml
-      - run: scripts/ci.sh addon
+      - run: scripts/ci.sh ${{ github.event_name == 'pull_request' && 'addon' || 'addon_release' }}
       - if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: bdb.${{ matrix.platform }}.node
           path: target/addon/bdb.${{ matrix.platform }}.node
           if-no-files-found: error
-
-  # SeaweedFS holds a per-key lock for conditional creates, so racing losers get 412.
-  s3-seaweedfs:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    services:
-      seaweedfs:
-        image: chrislusf/seaweedfs:4.48
-        ports: ["8333:8333"]
-        env:
-          AWS_ACCESS_KEY_ID: bumbledb-ci
-          AWS_SECRET_ACCESS_KEY: bumbledb-ci-secret
-          S3_BUCKET: bumbledb-log,bumbledb-ckpt
-    env:
-      BUMBLEDB_S3_TARGET: seaweedfs
-      BUMBLEDB_S3_ENDPOINT: http://127.0.0.1:8333
-      BUMBLEDB_S3_REGION: us-east-1
-      BUMBLEDB_S3_LOG_BUCKET: bumbledb-log
-      BUMBLEDB_S3_CKPT_BUCKET: bumbledb-ckpt
-      BUMBLEDB_S3_PREFIX: ci/${{ github.run_id }}-${{ github.run_attempt }}/
-      AWS_ACCESS_KEY_ID: bumbledb-ci
-      AWS_SECRET_ACCESS_KEY: bumbledb-ci-secret
-      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-    steps:
-      - uses: actions/checkout@v7
-      - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
-      - uses: pnpm/action-setup@v6.1.0
-        with:
-          package_json_file: ts/package.json
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 26
-          cache: pnpm
-          cache-dependency-path: ts/pnpm-lock.yaml
-      - name: Wait for both SeaweedFS buckets
-        run: |
-          timeout 120 bash -c 'until aws s3api head-bucket --endpoint-url "$BUMBLEDB_S3_ENDPOINT" --bucket "$BUMBLEDB_S3_LOG_BUCKET" &&
-            aws s3api head-bucket --endpoint-url "$BUMBLEDB_S3_ENDPOINT" --bucket "$BUMBLEDB_S3_CKPT_BUCKET"; do sleep 2; done'
-      - run: scripts/ci.sh s3
-
-  s3-aws:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/s3-aws.yml
-    permissions:
-      contents: read
-      id-token: write

@@ -1,7 +1,7 @@
 //! Semantic cases on which the engine and the independent evaluators agree.
 //! Curated cases are checked in as JSON and replay byte-identical; seeded cases
 //! are regenerated from their seeds and checked against recorded BLAKE3
-//! digests. `BUMBLEDB_BLESS=1` rewrites both from the current generators.
+//! digests. The ignored `tests::bless` rewrites both from the current generators.
 pub mod complete;
 pub mod judgment;
 pub mod reach;
@@ -1570,16 +1570,17 @@ pub fn digest_lines(cases: &[SeededCase]) -> String {
     out
 }
 
-/// Checks freshly generated seeded cases against a checked-in digest list, or
-/// rewrites the list under `BUMBLEDB_BLESS=1`.
+/// Rewrites a checked-in digest list from freshly generated seeded cases.
+pub fn bless_digests(file: &str, cases: &[SeededCase]) {
+    std::fs::write(corpus_dir().join(file), digest_lines(cases)).expect("write the digest list");
+}
+
+/// Checks freshly generated seeded cases against a checked-in digest list.
 /// # Panics
 /// When the roster or any document digest differs.
 pub fn check_digests(file: &str, cases: &[SeededCase]) {
     let path = corpus_dir().join(file);
     let fresh = digest_lines(cases);
-    if std::env::var_os("BUMBLEDB_BLESS").is_some() {
-        std::fs::write(&path, &fresh).expect("write the digest list");
-    }
     let recorded =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     for (line, (recorded, fresh)) in recorded.lines().zip(fresh.lines()).enumerate() {
@@ -1724,11 +1725,21 @@ mod tests {
         );
     }
 
+    /// Rewrites the curated cases and both digest lists. Run it explicitly with
+    /// `cargo nextest run -p bumbledb-bench --run-ignored only -E 'test(/conformance::tests::bless$/)'`.
+    #[test]
+    #[ignore = "rewrites the checked-in corpus"]
+    fn bless() {
+        bless_curated_corpus();
+        bless_digests("seeded.digests", &seeded_corpus().1);
+        bless_digests(
+            "reach-seeded.digests",
+            &reach::seeded_reach_corpus(&build_world(WORLD_SEEDS[0])).1,
+        );
+    }
+
     #[test]
     fn the_curated_corpus_replays_byte_identical() {
-        if std::env::var_os("BUMBLEDB_BLESS").is_some() {
-            bless_curated_corpus();
-        }
         let cases = replay_checked_in_corpus();
         assert!(cases > 0);
     }

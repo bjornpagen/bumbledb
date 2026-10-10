@@ -142,7 +142,7 @@ fn the_closed_write_classes_agree_with_the_engine() {
         )],
     }));
 
-    let sweep = crate::fixture::sweep(25);
+    let sweep = 25;
     for _ in 0..sweep {
         let query = random_query(&mut rng, CFG);
         for draw in params_for(&query, &mut rng, CFG) {

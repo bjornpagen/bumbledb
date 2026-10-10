@@ -215,7 +215,7 @@ void Effect.runPromise(program.pipe(Effect.provide(Bumble.layer())))
 
 1. **The log is the database.** A database is the sequence of objects `log/{seq}` in an S3 Express directory bucket, each created with `If-None-Match: *`. Nothing under `log/` is ever overwritten or deleted.
 2. **One `PUT` per commit.** A warm submit decides against a read snapshot and creates the next entry. Commands that arrive while a write is in flight commit together in the next entry, with no batching timer.
-3. **Fair under contention.** An entry names the head its writer judged against and carries each command whole with its outcome there. A writer that finds its slot taken writes its batch at the next slot at once, joined by the commands queued behind it, while it reads the winner, so every writer races for every slot. Catching up applies an entry that landed right after its head as recorded and judges a later one again where it landed.
+3. **Contended writers retry at once.** An entry names the head its writer judged against and carries each command whole with its outcome there. A writer that finds its slot taken writes its batch at the next slot at once, joined by the commands queued behind it, while it reads the winner, so every writer races for every slot. Catching up applies an entry that landed right after its head as recorded and judges a later one again where it landed.
 4. **Safe retries.** Each entry carries a per-submission nonce. After an ambiguous `PUT`, the writer reads the object back and compares bytes. A request is decided once, even when two copies of its batch land.
 5. **Bounded cold starts.** Checkpoints are automatic, immutable images on an S3 Standard bucket, verified by a digest of their contents. A cold open lists checkpoints and reads the log in the same round trip, fetches the tail while the newest image downloads, and replays only that tail.
 6. **Sans-IO core.** The protocol is a Rust state machine (`crates/bumbledb-log`) tested with deterministic fault-injection simulations. The TypeScript package runs its requests through your own `S3Client`. `FsStore` runs the same protocol on a local directory, and `MemStore` runs it in memory.
@@ -294,7 +294,8 @@ The last full benchmark suite ran on the 1.3.0 engine (Apple M2 Max, 2026-09-11)
 bumbledb has no stability guarantees yet.
 
 - **No upgrade path from 1.x.** 2.0 is a hard cutover: every format is new, and a 1.x store is refused as `NotABumbleDb`.
-- **The S3 path is not proven against AWS yet.** The S3 test lanes (SeaweedFS on every pull request, AWS S3 Express and Standard on main) have not run against real buckets.
+- **S3 has been checked by hand, not in CI.** The store conformance suite passed against a real S3 Express log bucket and an S3 Standard checkpoint bucket. CI runs the protocol against the in-memory and filesystem stores and through deterministic fault-injection simulations; no CI lane talks to S3.
+- **Contention is correct, not tuned.** Under many concurrent writers every command is still decided exactly once, but throughput is not evenly shared between writers.
 - **Not qualified for production.** Treat the hosted mode accordingly.
 
 ## Install
@@ -324,6 +325,8 @@ linux-x64, and the matching platform package installs automatically.
 scripts/ci.sh lint    # fmt, clippy, rustdoc, TypeScript lint and typecheck
 scripts/ci.sh test    # nextest over the workspace, doctests
 scripts/ci.sh addon   # native addon, TypeScript tests, packed-package smoke
+scripts/ci.sh deep    # adds the wide sweeps in `deep` test modules (nightly)
+scripts/ci.sh miri_1  # one of four Miri shards over the engine's unit tests (nightly)
 ```
 
 **Rules for contributors:**

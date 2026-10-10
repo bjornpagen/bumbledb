@@ -23,10 +23,8 @@ export const Website = AWS.Website.Nextjs("Website", {
 	runtime: "nodejs24.x",
 	architecture: "arm64",
 	env: {
-		BUMBLEDB_TARGET: "linux-arm64",
 		BUMBLEDB_LOG_BUCKET: logBucket,
 		BUMBLEDB_CKPT_BUCKET: checkpointBucket,
-		BUMBLEDB_CACHE_DIR: "/tmp/bdb",
 		NODE_ENV: "production"
 	}
 })

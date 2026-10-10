@@ -8,7 +8,16 @@ mod parse;
 mod tests;
 
 pub use help::help;
-pub use parse::parse;
+pub use parse::{parse, parse_invocation};
+
+/// Options that precede the command and apply to the whole run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Globals {
+    /// Claim the scheduler boost before a measurement command.
+    pub boost: bool,
+    /// The concurrent worker count a runner stamps into provenance.
+    pub jobs: Option<std::num::NonZeroUsize>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CorpusArgs {

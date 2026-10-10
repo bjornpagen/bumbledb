@@ -23,8 +23,7 @@ base_a="$(basename "${AFTER%.folded}")"
 base_b="$(basename "${BEFORE%.folded}")"
 NAME="${3:-${base_a}-vs-${base_b}}"
 
-OUT_BASE="${BUMBLEDB_FLAME_OUT:-$REPO/bench-out}"
-FLAME_DIR="$OUT_BASE/flame"
+FLAME_DIR="$REPO/bench-out/flame"
 
 python3 "$REPO/scripts/flame.py" diff "$BEFORE" "$AFTER" "$FLAME_DIR" "$NAME"
 echo "flamediff.sh: wrote $FLAME_DIR/$NAME.diff.folded and .diff.svg"

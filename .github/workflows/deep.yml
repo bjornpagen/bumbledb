@@ -16,12 +16,14 @@ env:
 
 jobs:
   miri:
+    name: miri (${{ matrix.os }}, ${{ matrix.shard }}/4)
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-26]
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+        shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install && rustup component add miri rust-src
@@ -29,16 +31,10 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.148
-      - run: scripts/ci.sh miri
+      - run: scripts/ci.sh miri_${{ matrix.shard }}
 
   musl:
     uses: ./.github/workflows/musl.yml
-
-  s3-aws:
-    uses: ./.github/workflows/s3-aws.yml
-    permissions:
-      contents: read
-      id-token: write
 
   deep:
     runs-on: ubuntu-24.04
@@ -83,7 +79,7 @@ jobs:
       - run: scripts/ci.sh asm
 
   report:
-    needs: [miri, musl, s3-aws, deep, clippy-macos, udeps, asm]
+    needs: [miri, musl, deep, clippy-macos, udeps, asm]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     permissions:

@@ -1,9 +1,5 @@
 use std::sync::OnceLock;
 
-/// The switch: `BUMBLEDB_BENCH_BOOST=1` boosts, unset/empty/`0` does not,
-/// anything else is a refusal naming the remedy.
-pub const ENV: &str = "BUMBLEDB_BENCH_BOOST";
-
 #[cfg(target_os = "macos")]
 pub const QOS_LABEL: &str = "qos-user-interactive";
 
@@ -29,20 +25,8 @@ pub struct Engaged {
 
 static ENGAGED: OnceLock<Engaged> = OnceLock::new();
 
-fn wants_boost(value: Option<&str>) -> Result<bool, String> {
-    match value {
-        None | Some("" | "0") => Ok(false),
-        Some("1") => Ok(true),
-        Some(other) => Err(format!(
-            "{ENV} must be 1 (boost) or 0/unset (no boost), got `{other}`"
-        )),
-    }
-}
-
-pub fn engage_from_env() -> Result<(), String> {
-    if !wants_boost(std::env::var(ENV).ok().as_deref())? {
-        return Ok(());
-    }
+/// Claims the scheduler boost and stamps it for provenance.
+pub fn engage() -> Result<(), String> {
     claim_qos()?;
     let _ = ENGAGED.set(Engaged {
         boost: QOS_LABEL,
@@ -174,19 +158,6 @@ pub fn loadavg() -> [f64; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Unset, empty and `0` mean off, `1` means on, anything else is a
-    /// refusal naming the variable.
-    #[test]
-    fn the_switch_semantics_are_pinned() {
-        assert_eq!(wants_boost(None), Ok(false));
-        assert_eq!(wants_boost(Some("")), Ok(false));
-        assert_eq!(wants_boost(Some("0")), Ok(false));
-        assert_eq!(wants_boost(Some("1")), Ok(true));
-        let err = wants_boost(Some("yes")).unwrap_err();
-        assert!(err.contains(ENV), "{err}");
-        assert!(err.contains("yes"), "{err}");
-    }
 
     /// The `QoS` claim succeeds on macOS (the return code, not any timing).
     #[test]
