@@ -3,15 +3,21 @@
 
 use bumbledb::Schema;
 use bumbledb_log::{
-    Body, Bucket, Bundle, Command, Entry, Input, IoBody, Op, Outcome, Precondition, Refusal,
-    RequestId, Revision, Seq, Settled, Ticket,
+    Body, Bucket, Bundle, Command, Entry, Input, IoBody, IoRequest, Mode, Op, Outcome,
+    Precondition, Refusal, Replica as _, RequestId, Revision, Seq, Settled, Target, Ticket,
 };
 
-use crate::sim::{Ask, Fate, Faults, World, check, receipt_of};
-use crate::support::{bundle, items, schema};
+use crate::sim::{Ask, Fate, Faults, World, check, receipt_of, standings};
+use crate::support::{bundle, bundle2, items, migration_id, schema};
 
 fn opened(seed: u64, clients: usize) -> World {
-    let mut world = World::new(seed, clients, &bundle(), Faults::NONE);
+    opened_with(seed, vec![bundle(); clients])
+}
+
+/// One client per bundle, each started and caught up in turn.
+fn opened_with(seed: u64, bundles: Vec<Bundle>) -> World {
+    let clients = bundles.len();
+    let mut world = World::with_bundles(seed, bundles, Faults::NONE);
     for client in 0..clients {
         world.start(client);
         world.drain();
@@ -35,8 +41,34 @@ fn settled(world: &World, ticket: Ticket) -> &Settled {
     &world.results[&ticket].settled
 }
 
-fn is_put(request: &bumbledb_log::IoRequest) -> bool {
+fn is_put(request: &IoRequest) -> bool {
     request.bucket == Bucket::Log && matches!(request.op, Op::PutIfAbsent(_))
+}
+
+fn put_at(seq: u64) -> impl Fn(&IoRequest) -> bool {
+    move |request| is_put(request) && request.key == bumbledb_log::log_key(Seq::new(seq).unwrap())
+}
+
+fn get_at(seq: u64) -> impl Fn(&IoRequest) -> bool {
+    move |request| {
+        request.bucket == Bucket::Log
+            && matches!(request.op, Op::Get(_))
+            && request.key == bumbledb_log::log_key(Seq::new(seq).unwrap())
+    }
+}
+
+/// The body of `client`'s issued PUT at `seq`.
+fn body_at(world: &World, client: usize, seq: u64) -> Vec<u8> {
+    let index = world.find(client, put_at(seq)).expect("a PUT at the slot");
+    let (_, request) = world.issued().nth(index).expect("issued");
+    let Op::PutIfAbsent(IoBody::Bytes(bytes)) = &request.op else {
+        panic!("an entry PUT carries bytes");
+    };
+    bytes.clone()
+}
+
+fn head(world: &World, client: usize) -> Seq {
+    world.machine(client).replica().head().expect("a head").seq
 }
 
 fn put_body(world: &World, client: usize) -> Vec<u8> {
@@ -134,27 +166,157 @@ fn commands_arriving_during_a_write_share_the_next_entry() {
 }
 
 #[test]
-fn a_lost_race_applies_the_winner_and_decides_again_at_the_next_slot() {
+fn a_refused_batch_is_written_again_at_the_next_slot_in_the_same_step() {
     let schema = schema();
     let mut world = opened(3, 2);
     let a = submit(&mut world, 0, command(&schema, 1, &[(1, 1)]));
-    let b = submit(&mut world, 1, command(&schema, 2, &[(1, 2)]));
-    let b_put = world.find(1, is_put).unwrap();
-    world.execute_as(b_put, Fate::Answered);
-    let a_put = world.find(0, is_put).unwrap();
-    world.execute_as(a_put, Fate::Answered);
+    let b = submit(&mut world, 1, command(&schema, 2, &[(2, 2)]));
+    let refused = body_at(&world, 0, 2);
+    world.execute_as(world.find(1, put_at(2)).unwrap(), Fate::Answered);
+    world.execute_as(world.find(0, put_at(2)).unwrap(), Fate::Answered);
+    assert_eq!(
+        body_at(&world, 0, 3),
+        refused,
+        "the same bytes go to the next slot"
+    );
+    assert!(
+        world.find(0, get_at(2)).is_some(),
+        "the refused slot is read"
+    );
+    assert_eq!(head(&world, 0), Seq::GENESIS, "nothing was read yet");
     world.drain();
     let (a, b) = (
         receipt_of(settled(&world, a)),
         receipt_of(settled(&world, b)),
     );
-    assert_eq!(b.seq, Seq::new(2).unwrap());
+    assert_eq!((b.seq, b.revision), (Seq::new(2).unwrap(), Revision(1)));
+    assert_eq!((a.seq, a.revision), (Seq::new(3).unwrap(), Revision(2)));
+    assert!(matches!(a.outcome, Outcome::Committed(_)));
+    assert_eq!(world.log.len(), 3);
+    let states = check(&world);
+    assert_eq!(standings(&world, &states).rebased, 1);
+}
+
+#[test]
+fn a_rebased_batch_is_judged_where_it_lands() {
+    let schema = schema();
+    let mut world = opened(14, 2);
+    let a = submit(&mut world, 0, command(&schema, 1, &[(1, 1)]));
+    let b = submit(&mut world, 1, command(&schema, 2, &[(1, 2)]));
+    world.execute_as(world.find(1, put_at(2)).unwrap(), Fate::Answered);
+    world.execute_as(world.find(0, put_at(2)).unwrap(), Fate::Answered);
+    world.drain();
+    let (a, b) = (
+        receipt_of(settled(&world, a)),
+        receipt_of(settled(&world, b)),
+    );
+    assert!(matches!(b.outcome, Outcome::Committed(_)));
     assert_eq!(a.seq, Seq::new(3).unwrap());
     assert!(
         matches!(a.outcome, Outcome::InvariantRejected(_)),
-        "decided again against the winner's state"
+        "judged against the winner's state, not as recorded"
     );
-    check(&world);
+    let Body::Commands(batch) = Entry::parse(&world.log_entries()[2]).unwrap().body else {
+        panic!("a batch at 3");
+    };
+    assert_eq!(batch.base, Seq::GENESIS);
+    assert!(matches!(
+        batch.proposals(&schema).unwrap()[0].outcome,
+        Outcome::Committed(_)
+    ));
+    let states = check(&world);
+    assert_eq!(
+        states[2].rows, states[1].rows,
+        "the rejection changed nothing"
+    );
+}
+
+#[test]
+fn a_writer_that_reads_the_winner_first_decides_again_at_the_new_head() {
+    let schema = schema();
+    let mut world = opened(15, 2);
+    let a = submit(&mut world, 0, command(&schema, 1, &[(1, 1)]));
+    submit(&mut world, 1, command(&schema, 2, &[(1, 2)]));
+    world.execute_as(world.find(1, put_at(2)).unwrap(), Fate::Answered);
+    let refused = body_at(&world, 0, 2);
+    world.execute_as(world.find(0, put_at(2)).unwrap(), Fate::Delayed);
+    let sync = world.ticket(0, Ask::Sync);
+    world.input(0, Input::Sync(sync));
+    world.execute_as(world.find(0, get_at(2)).unwrap(), Fate::Answered);
+    assert_ne!(
+        body_at(&world, 0, 3),
+        refused,
+        "a batch decided again at the head it read"
+    );
+    world.drain();
+    let a = receipt_of(settled(&world, a));
+    assert_eq!(a.seq, Seq::new(3).unwrap());
+    assert!(matches!(a.outcome, Outcome::InvariantRejected(_)));
+    let states = check(&world);
+    assert_eq!(standings(&world, &states).rebased, 0);
+}
+
+#[test]
+fn a_batch_landing_on_a_frozen_head_decides_nothing_and_its_commands_meet_the_freeze() {
+    let schema = schema();
+    let mut world = opened_with(16, vec![bundle2(), bundle(), bundle2()]);
+    let a = submit(&mut world, 1, command(&schema, 1, &[(1, 1)]));
+    let freeze = world.ticket(0, Ask::Freeze);
+    world.input(0, Input::Freeze(freeze, 60_000));
+    let late = world.ticket(2, Ask::Freeze);
+    world.input(2, Input::Freeze(late, 60_000));
+    world.execute_as(world.find(0, put_at(2)).unwrap(), Fate::Answered);
+    assert_eq!(
+        settled(&world, freeze),
+        &Settled::Frozen(Seq::new(2).unwrap())
+    );
+    world.execute_as(world.find(1, put_at(2)).unwrap(), Fate::Answered);
+    world.execute_as(world.find(1, put_at(3)).unwrap(), Fate::Answered);
+    world.execute_as(world.find(2, put_at(2)).unwrap(), Fate::Answered);
+    world.execute_as(world.find(2, put_at(3)).unwrap(), Fate::Answered);
+    world.execute_as(world.find(2, put_at(4)).unwrap(), Fate::Answered);
+    world.drain();
+    assert!(matches!(
+        settled(&world, a),
+        Settled::Refused(Refusal::Frozen { .. })
+    ));
+    assert_eq!(
+        settled(&world, late),
+        &Settled::Refused(Refusal::Stale {
+            head: Seq::new(4).unwrap()
+        })
+    );
+    assert_eq!(world.log.len(), 4);
+    let states = check(&world);
+    assert_eq!(standings(&world, &states).void, 1);
+    assert!(
+        states[3].receipts.is_empty(),
+        "a void batch records nothing"
+    );
+    assert!(
+        matches!(states[3].head.mode, Mode::Frozen { since, .. } if since == world.log_modified(Seq::new(2).unwrap())),
+        "the late freeze is void"
+    );
+}
+
+#[test]
+fn a_batch_landing_twice_decides_each_request_once() {
+    let schema = schema();
+    let mut world = opened(17, 1);
+    let a = submit(&mut world, 0, command(&schema, 1, &[(1, 1)]));
+    world.execute_as(world.find(0, put_at(2)).unwrap(), Fate::Retried);
+    world.execute_as(world.find(0, put_at(3)).unwrap(), Fate::Answered);
+    world.drain();
+    assert_eq!(receipt_of(settled(&world, a)).seq, Seq::new(2).unwrap());
+    let entries = world.log_entries();
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[1], entries[2], "one batch at two slots");
+    let late = submit(&mut world, 0, command(&schema, 2, &[(2, 2)]));
+    world.drain();
+    assert_eq!(receipt_of(settled(&world, late)).seq, Seq::new(4).unwrap());
+    let states = check(&world);
+    assert_eq!(states[2].receipts, states[1].receipts);
+    assert_eq!(states[2].head.revision, Revision(1));
 }
 
 #[test]
@@ -246,7 +408,7 @@ fn a_sync_sees_every_entry_written_before_it() {
 }
 
 #[test]
-fn a_cold_replica_installs_the_newest_checkpoint_and_replays_only_the_tail() {
+fn a_cold_replica_reads_the_tail_while_the_newest_checkpoint_downloads() {
     let schema = schema();
     let mut world = World::new(9, 2, &bundle(), Faults::NONE);
     world.clients[0].config.checkpoint.every = 4;
@@ -265,23 +427,115 @@ fn a_cold_replica_installs_the_newest_checkpoint_and_replays_only_the_tail() {
     let seqs: Vec<u64> = checkpoints.iter().map(|key| key.seq.get()).collect();
     assert_eq!(seqs, [12, 8], "every 4 entries, the newest 2 kept");
     world.start(1);
+    let is_list = |request: &IoRequest| matches!(request.op, Op::List { .. });
+    assert!(
+        world.find(1, is_list).is_some() && world.find(1, get_at(1)).is_some(),
+        "the LIST and the first slot go out together"
+    );
+    world.execute_as(world.find(1, is_list).unwrap(), Fate::Answered);
+    let is_image = |request: &IoRequest| matches!(request.op, Op::Get(Target::File(_)));
+    assert!(
+        world.find(1, is_image).is_some(),
+        "the newest checkpoint downloads"
+    );
     let mut probed = Vec::new();
-    while world.issued().count() > 0 {
-        for (client, request) in world.issued() {
-            if client == 1 && request.bucket == Bucket::Log {
-                probed.push(request.key.clone());
-            }
-        }
-        world.execute_as(0, Fate::Answered);
+    while let Some(index) = world.find(1, |request| request.bucket == Bucket::Log) {
+        let (_, request) = world.issued().nth(index).unwrap();
+        probed.push(request.key.clone());
+        world.execute_as(index, Fate::Answered);
     }
     assert!(
-        probed
-            .iter()
-            .all(|key| key.as_str() > bumbledb_log::log_key(Seq::new(12).unwrap()).as_str()),
-        "nothing at or below the checkpoint is fetched: {probed:?}"
+        world.find(1, is_image).is_some() && world.machine(1).replica().head().is_none(),
+        "the tail was read before the image arrived"
     );
-    let head = world.machine(1).replica().state().unwrap().head.seq;
-    assert_eq!(head, Seq::new(14).unwrap());
+    let tail: Vec<String> = probed
+        .iter()
+        .filter(|key| *key != &bumbledb_log::log_key(Seq::GENESIS))
+        .cloned()
+        .collect();
+    assert!(
+        tail.iter()
+            .all(|key| key.as_str() > bumbledb_log::log_key(Seq::new(12).unwrap()).as_str()),
+        "nothing else at or below the checkpoint is fetched: {probed:?}"
+    );
+    assert!(tail.contains(&bumbledb_log::log_key(Seq::new(14).unwrap())));
+    world.drain();
+    assert_eq!(head(&world, 1), Seq::new(14).unwrap());
+    let opens: Vec<_> = world
+        .asks
+        .iter()
+        .filter(|(_, (client, ask))| *client == 1 && matches!(ask, Ask::Open))
+        .map(|(ticket, _)| world.results[ticket].settled.clone())
+        .collect();
+    assert_eq!(opens, [Settled::Opened { pending: 0 }]);
+    check(&world);
+}
+
+/// Run `client`'s requests alone until it has none left.
+fn run_alone(world: &mut World, client: usize) {
+    while let Some(index) = world.find(client, |_| true) {
+        world.execute_as(index, Fate::Answered);
+    }
+}
+
+#[test]
+fn a_checkpoint_at_the_tip_is_awaited_without_probing_again() {
+    let schema = schema();
+    let mut world = World::new(18, 2, &bundle(), Faults::NONE);
+    world.clients[0].config.checkpoint.every = 4;
+    world.start(0);
+    world.drain();
+    for request in 1..=11 {
+        submit(&mut world, 0, command(&schema, request, &[(1, 0)]));
+        world.drain();
+    }
+    assert_eq!(head(&world, 0), Seq::new(12).unwrap());
+    world.start(1);
+    let is_list = |request: &IoRequest| matches!(request.op, Op::List { .. });
+    world.execute_as(world.find(1, is_list).unwrap(), Fate::Answered);
+    let is_image = |request: &IoRequest| matches!(request.op, Op::Get(Target::File(_)));
+    let mut gets = 0;
+    while let Some(index) = world.find(1, |request| request.bucket == Bucket::Log) {
+        gets += 1;
+        assert!(gets < 10, "a slot seen empty is not probed again");
+        world.execute_as(index, Fate::Answered);
+    }
+    assert!(world.find(1, is_image).is_some());
+    world.drain();
+    assert_eq!(head(&world, 1), Seq::new(12).unwrap());
+    check(&world);
+}
+
+#[test]
+fn a_checkpoint_listed_after_the_open_settles_moves_no_head() {
+    let schema = schema();
+    let mut world = World::new(19, 2, &bundle(), Faults::NONE);
+    world.clients[0].config.checkpoint.every = 4;
+    world.start(0);
+    world.drain();
+    world.start(1);
+    let is_list = |request: &IoRequest| matches!(request.op, Op::List { .. });
+    while let Some(index) = world.find(1, |request| !matches!(request.op, Op::List { .. })) {
+        world.execute_as(index, Fate::Answered);
+    }
+    let opened = world
+        .asks
+        .iter()
+        .find(|(_, (client, ask))| *client == 1 && matches!(ask, Ask::Open))
+        .map(|(ticket, _)| *ticket)
+        .unwrap();
+    assert_eq!(settled(&world, opened), &Settled::Opened { pending: 0 });
+    for request in 1..=7 {
+        submit(&mut world, 0, command(&schema, request, &[(1, 0)]));
+        run_alone(&mut world, 0);
+    }
+    assert_eq!(
+        crate::sim::checkpoint_keys(&world)[0].seq,
+        Seq::new(8).unwrap()
+    );
+    world.execute_as(world.find(1, is_list).unwrap(), Fate::Answered);
+    assert_eq!(head(&world, 1), Seq::GENESIS);
+    assert_eq!(world.sync(1), Settled::Synced(Seq::new(8).unwrap()));
     check(&world);
 }
 
@@ -349,10 +603,10 @@ fn every_log_object_parses_and_carries_a_fresh_nonce() {
     }
     let mut nonces = std::collections::BTreeSet::new();
     for bytes in world.log_entries() {
-        let entry = Entry::parse(&schema, &bytes).unwrap();
+        let entry = Entry::parse(&bytes).unwrap();
         assert!(nonces.insert(entry.nonce), "nonces are unique");
-        if let Body::Commands(decided) = &entry.body {
-            assert!(!decided.is_empty());
+        if let Body::Commands(batch) = &entry.body {
+            assert!(!batch.proposals(&schema).unwrap().is_empty());
         }
     }
     check(&world);
@@ -425,4 +679,65 @@ fn a_command_for_another_schema_is_refused_and_the_writer_goes_on() {
     world.drain();
     assert!(matches!(settled(&world, fine), Settled::Decided(_)));
     check(&world);
+}
+
+#[test]
+fn an_entry_stands_by_the_head_it_lands_on() {
+    use bumbledb_log::{
+        Batch, DatabaseId, Evidence, Freeze, Head, Ledger, Millis, Misplaced, Proposal, Rejection,
+        Standing, standing,
+    };
+    let schema = schema();
+    let open = Head {
+        database: DatabaseId([1; 16]),
+        seq: Seq::new(5).unwrap(),
+        revision: Revision(3),
+        schema: bundle().initial().fingerprint,
+        ledger: Ledger {
+            applied: vec![migration_id("0000_init")],
+            rejected: vec![Rejection {
+                migration: migration_id("0002_bad"),
+                evidence: Evidence::new([1].into()).unwrap(),
+            }],
+        },
+        mode: Mode::Open,
+    };
+    let freeze = |name: &str| Freeze {
+        migration: migration_id(name),
+        lease_millis: 10,
+    };
+    let frozen = Head {
+        mode: Mode::Frozen {
+            freeze: freeze("0001_tags"),
+            since: Millis(1),
+        },
+        ..open.clone()
+    };
+    let batch = |base: u64, schema_of: &Head| {
+        let proposal = Proposal {
+            command: command(&schema, 1, &[(1, 1)]),
+            outcome: Outcome::NoChange,
+        };
+        Body::Commands(Batch::new(Seq::new(base).unwrap(), schema_of.schema, &[proposal]).unwrap())
+    };
+    let other = Head {
+        schema: bundle2().steps()[1].fingerprint,
+        ..open.clone()
+    };
+    let at = Seq::new(6).unwrap();
+    let stands = |head: &Head, body: &Body| standing(Some(head), at, body);
+    assert_eq!(stands(&open, &batch(5, &open)), Ok(Standing::Fresh));
+    assert_eq!(stands(&open, &batch(2, &open)), Ok(Standing::Rebased));
+    assert_eq!(stands(&open, &batch(2, &other)), Ok(Standing::Void));
+    assert_eq!(stands(&frozen, &batch(5, &open)), Ok(Standing::Void));
+    assert_eq!(stands(&open, &batch(6, &open)), Err(Misplaced));
+    assert_eq!(
+        standing(Some(&open), Seq::new(7).unwrap(), &batch(5, &open)),
+        Err(Misplaced)
+    );
+    let freezing = |name: &str| Body::Freeze(freeze(name));
+    assert_eq!(stands(&open, &freezing("0001_tags")), Ok(Standing::Fresh));
+    assert_eq!(stands(&frozen, &freezing("0001_tags")), Ok(Standing::Void));
+    assert_eq!(stands(&open, &freezing("0000_init")), Ok(Standing::Void));
+    assert_eq!(stands(&open, &freezing("0002_bad")), Ok(Standing::Void));
 }

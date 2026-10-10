@@ -16,12 +16,13 @@ use bumbledb::{
     Violations, WorkContext,
 };
 
+use crate::command::{Command, Precondition};
 use crate::head::Head;
 use crate::ids::{DatabaseId, ImageDigest, RequestId};
 use crate::io::hex;
-use crate::receipt::{Delta, Evidence, Receipt};
+use crate::receipt::{Delta, Evidence, Outcome, Receipt};
 use crate::replica::{
-    Bundle, BundledMigration, CacheError, Image, Judgment, Migrated, Population, Replica, Update,
+    Bundle, BundledMigration, CacheError, Image, Migrated, Population, Replica, Update,
 };
 
 const CURRENT: &str = "CURRENT";
@@ -192,23 +193,39 @@ impl Replica for Cache {
             .transpose()
     }
 
-    fn judge(&self, accepted: &[ChangeSet], next: &ChangeSet) -> Result<Judgment, CacheError> {
+    fn judge(&self, commands: &[&Command]) -> Result<Vec<Outcome>, CacheError> {
         let live = self.live();
         let work = WorkContext::new();
-        let mut sets = accepted.to_vec();
-        sets.push(next.clone());
-        let judged = live
-            .db
-            .host_writer(&work)
-            .and_then(|mut session| session.decide_all(&sets))
-            .map_err(local)?;
-        match judged.last().expect("the next set is judged") {
-            Judged::Accepted(applied) => Ok(Delta::new(applied.added, applied.removed)
-                .map_or(Judgment::Unchanged, Judgment::Changed)),
-            Judged::Rejected(violations) => {
-                evidence_of(live.db.schema(), violations).map(Judgment::Rejected)
-            }
-        }
+        let mut session = live.db.host_writer(&work).map_err(local)?;
+        let mut decider = session.decider().map_err(local)?;
+        let mut revision = live.head.revision;
+        commands
+            .iter()
+            .map(|command| {
+                Ok(match command.precondition() {
+                    Precondition::ExactRevision(expected) if expected != revision => {
+                        Outcome::PreconditionFailed {
+                            expected,
+                            observed: revision,
+                        }
+                    }
+                    _ => match decider.decide(command.changes()).map_err(local)? {
+                        Judged::Accepted(applied) => {
+                            match Delta::new(applied.added, applied.removed) {
+                                Some(delta) => {
+                                    revision = revision.next();
+                                    Outcome::Committed(delta)
+                                }
+                                None => Outcome::NoChange,
+                            }
+                        }
+                        Judged::Rejected(violations) => {
+                            Outcome::InvariantRejected(evidence_of(live.db.schema(), &violations)?)
+                        }
+                    },
+                })
+            })
+            .collect()
     }
 
     fn apply(&mut self, update: Update<'_>) -> Result<(), CacheError> {
@@ -219,7 +236,7 @@ impl Replica for Cache {
         let sets: Vec<ChangeSet> = update
             .commits
             .iter()
-            .map(|(changes, _)| (*changes).clone())
+            .map(|(changes, _)| changes.clone())
             .collect();
         let receipts: BTreeMap<Vec<u8>, Vec<u8>> = update
             .receipts

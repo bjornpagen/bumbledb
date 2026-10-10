@@ -9,10 +9,11 @@ use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::fingerprint::fingerprint;
 use bumbledb::{ChangeSet, RelationId, Schema, SchemaDescriptor, SchemaError, SchemaFingerprint};
 
+use crate::command::Command;
 use crate::entry::MigrationId;
 use crate::head::Head;
 use crate::ids::{ImageDigest, RequestId, Seq};
-use crate::receipt::{Delta, Evidence, Receipt};
+use crate::receipt::{Delta, Evidence, Outcome, Receipt};
 
 /// The migrations this code ships, oldest first. The first one is the
 /// initial schema a new database starts from.
@@ -121,19 +122,11 @@ fn writable(relations: &[RelationDescriptor]) -> Vec<(RelationId, &RelationDescr
         .collect()
 }
 
-/// How one change set fares against the state it would apply to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Judgment {
-    Changed(Delta),
-    Unchanged,
-    Rejected(Evidence),
-}
-
 /// One entry's effect: the committed change sets in decision order with the
 /// net delta each produced, the receipts, and the head after it.
 pub struct Update<'a> {
     pub head: &'a Head,
-    pub commits: &'a [(&'a ChangeSet, Delta)],
+    pub commits: &'a [(ChangeSet, Delta)],
     pub receipts: &'a [Receipt],
 }
 
@@ -192,10 +185,12 @@ pub trait Replica {
     /// Local failure.
     fn receipt(&self, request: RequestId) -> Result<Option<Receipt>, CacheError>;
 
-    /// Judge `next` against the head state with `accepted` applied in order.
+    /// Judge `commands` in order against the head state: each precondition
+    /// against the revision the earlier commits produced, each change set
+    /// with the earlier accepted ones applied. Nothing is applied.
     /// # Errors
     /// Local failure.
-    fn judge(&self, accepted: &[ChangeSet], next: &ChangeSet) -> Result<Judgment, CacheError>;
+    fn judge(&self, commands: &[&Command]) -> Result<Vec<Outcome>, CacheError>;
 
     /// Apply one entry's effect atomically.
     /// # Errors

@@ -1,14 +1,14 @@
 //! The sans-IO protocol: [`Machine::step`] turns one [`Input`] into store
 //! requests and settled tickets. It owns every invariant: one entry write in
-//! flight, byte comparison of every unclear write, receipts before decisions,
-//! freeze deadlines on store time, checkpoint cadence. It never sleeps or
-//! reads a clock; time arrives only as the store's `Date` and `Last-Modified`.
+//! flight, a refused batch or freeze written again at the next slot, byte
+//! comparison of every unclear write, receipts before decisions, checkpoint
+//! cadence, freeze deadlines on store time. It never sleeps or reads a clock.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::command::{Command, CommandRef, Precondition};
-use crate::entry::{Body, Decided, Entry, Freeze, Genesis, Migration, Thaw, Verdict};
-use crate::fold::{Folded, fold, migrated_head};
+use crate::command::{Command, CommandRef};
+use crate::entry::{Batch, Body, Entry, Freeze, Genesis, Migration, Proposal, Thaw};
+use crate::fold::{Standing, fold, migrated_head, standing};
 use crate::head::{Comparison, Mode, Rejection};
 use crate::ids::{DatabaseId, Millis, Nonce, RequestId, Seq};
 use crate::io::{
@@ -16,11 +16,11 @@ use crate::io::{
     IoResult, Op, Target, image_key, log_key,
 };
 use crate::receipt::Receipt;
-use crate::replica::{CacheError, Image, Judgment, Migrated, Population, Replica, Update};
+use crate::replica::{CacheError, Image, Migrated, Population, Replica, Update};
 
 const NONCE_CONTEXT: &str = "bdb.entry.v1 nonce";
-/// Encoded bytes of one decided command besides its changes.
-const DECIDED_OVERHEAD: usize = 128;
+/// Encoded bytes of one proposal besides its changes.
+const PROPOSAL_OVERHEAD: usize = 128;
 /// How far past the head catch-up probes, in probe windows.
 const LOOKAHEAD_WINDOWS: u32 = 4;
 
@@ -95,7 +95,8 @@ pub enum Settled {
 }
 
 /// Why a request settled without the effect it asked for. Every refusal of
-/// a submit except [`Refusal::Unknown`] proves the command is not in the log.
+/// a submit except [`Refusal::Unknown`] proves the log does not decide the
+/// command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
     NotOpen,
@@ -225,9 +226,10 @@ enum Writer {
 }
 
 struct Flight {
+    /// Every slot after the head and before this one is occupied: the flight
+    /// moved past each on a refused PUT.
     slot: Seq,
     bytes: Vec<u8>,
-    entry: Entry,
     cargo: Cargo,
     state: FlightState,
 }
@@ -363,9 +365,7 @@ impl<R: Replica> Machine<R> {
                     },
                     Purpose::List,
                 );
-                if self.replica.head().is_some() {
-                    self.register(Wait::Open);
-                }
+                self.register(Wait::Open);
             }
             Life::Opening | Life::Open => {
                 self.opens.push(ticket);
@@ -382,7 +382,7 @@ impl<R: Replica> Machine<R> {
         if let Some(refusal) = self.refusal() {
             return self.settle(ticket, Settled::Refused(refusal));
         }
-        if command.changes().as_bytes().len() + DECIDED_OVERHEAD > self.config.max_entry_bytes {
+        if command.changes().as_bytes().len() + PROPOSAL_OVERHEAD > self.config.max_entry_bytes {
             return self.settle(ticket, Settled::Refused(Refusal::TooLarge));
         }
         let reference = command.reference();
@@ -458,8 +458,12 @@ impl<R: Replica> Machine<R> {
                 }
             }
             (Purpose::Slot { seq, issued }, IoResult::Missing) => {
-                let seen = self.tail.missing.entry(seq).or_insert(issued);
-                *seen = (*seen).max(issued);
+                // Below the flight's slot the answer is stale: the slot is taken.
+                let taken = matches!(&self.writer, Writer::InFlight(flight) if seq < flight.slot);
+                if !taken {
+                    let seen = self.tail.missing.entry(seq).or_insert(issued);
+                    *seen = (*seen).max(issued);
+                }
             }
             (Purpose::Put, result) => self.put_returned(id, result, date),
             (Purpose::Upload, result) => self.upload_returned(id, &result),
@@ -485,6 +489,10 @@ impl<R: Replica> Machine<R> {
         }
     }
 
+    /// A PUT of the flight answered. Created: the entry waits in the tail for
+    /// its predecessors. Refused: a batch or a freeze, which stands wherever
+    /// it lands, goes to the next slot at once; the catch-up reads the
+    /// refused one. Anything else is unclear until the slot is read.
     fn put_returned(&mut self, id: IoId, result: IoResult, date: Option<Millis>) {
         let Writer::InFlight(flight) = &mut self.writer else {
             return;
@@ -492,14 +500,22 @@ impl<R: Replica> Machine<R> {
         if flight.state != FlightState::Putting(id) {
             return;
         }
-        if result == IoResult::Created {
-            let at = date.or(self.now).unwrap_or(Millis(0));
-            let bytes = flight.bytes.clone();
-            let slot = flight.slot;
-            self.land(slot, bytes, at);
-        } else {
-            self.epoch += 1;
-            flight.state = FlightState::Verifying { need: self.epoch };
+        match result {
+            IoResult::Created => {
+                let at = date.or(self.now).unwrap_or(Millis(0));
+                self.tail
+                    .found
+                    .insert(flight.slot, (flight.bytes.clone(), at));
+            }
+            IoResult::Occupied if matches!(flight.cargo, Cargo::Commands(_) | Cargo::Freeze(_)) => {
+                self.tail.missing.remove(&flight.slot);
+                flight.slot = flight.slot.next();
+                self.put_entry();
+            }
+            _ => {
+                self.epoch += 1;
+                flight.state = FlightState::Verifying { need: self.epoch };
+            }
         }
     }
 
@@ -536,7 +552,7 @@ impl<R: Replica> Machine<R> {
             self.checkpoints.last = self.checkpoints.last.max(Some(key.seq));
         }
         self.checkpoints.known = true;
-        if self.life != Life::Opening {
+        if self.life != Life::Opening || !matches!(self.writer, Writer::Idle) {
             return;
         }
         let head = self.replica.head().map(|head| head.seq);
@@ -555,9 +571,6 @@ impl<R: Replica> Machine<R> {
                 Purpose::Fetch,
             );
             self.install = Some(Installing::Checkpoint { io, key });
-        }
-        if head.is_none() {
-            self.register(Wait::Open);
         }
     }
 
@@ -598,9 +611,10 @@ impl<R: Replica> Machine<R> {
         }
     }
 
-    /// Install a downloaded checkpoint. One that cannot be installed (a
-    /// damaged download, an image this platform or bundle cannot open) only
-    /// costs replaying the log from the current head instead.
+    /// Install a downloaded checkpoint; the tail fetched past it meanwhile
+    /// stays. One that cannot be installed (a damaged download, an image this
+    /// platform or bundle cannot open) only costs replaying the log from the
+    /// current head instead.
     fn install_checkpoint(&mut self, key: CheckpointKey) {
         if self.replica.head().is_some_and(|head| head.seq >= key.seq) {
             return;
@@ -615,9 +629,8 @@ impl<R: Replica> Machine<R> {
             || head.schema != key.schema
             || database.is_some_and(|database| database != head.database)
         {
-            return self.break_down(Refusal::Corrupt(key.seq));
+            self.break_down(Refusal::Corrupt(key.seq));
         }
-        self.tail = Tail::default();
     }
 
     fn install_migration(&mut self, seq: Seq, entry: &Entry, lost: Option<Box<Flight>>) {
@@ -634,7 +647,7 @@ impl<R: Replica> Machine<R> {
             Ok(()) if self.replica.head() == Some(&expected) => {
                 self.after_land();
                 if let Some(flight) = lost {
-                    self.lost(flight);
+                    self.lost(*flight);
                 }
             }
             Ok(()) | Err(CacheError::Digest) => self.break_down(Refusal::Corrupt(seq)),
@@ -661,6 +674,15 @@ impl<R: Replica> Machine<R> {
         self.replica
             .head()
             .map_or(Seq::GENESIS, |head| head.seq.next())
+    }
+
+    /// Where catch-up reads from: past a downloading checkpoint, else the
+    /// next slot.
+    fn fetch_from(&self) -> Seq {
+        match &self.install {
+            Some(Installing::Checkpoint { key, .. }) => key.seq.next(),
+            _ => self.next_slot(),
+        }
     }
 
     /// Apply every known entry at the next slot; act on a known-empty slot.
@@ -716,16 +738,70 @@ impl<R: Replica> Machine<R> {
         }
     }
 
-    /// The content of the next slot is known: apply it.
+    /// The content of the next slot is known: apply it. The flight ends when
+    /// its entry decides here, or when its own slot resolves without that; a
+    /// void copy below its slot leaves the PUT at the slot outstanding.
     fn land(&mut self, seq: Seq, bytes: Vec<u8>, at: Millis) {
         debug_assert_eq!(seq, self.next_slot());
-        let ours = matches!(&self.writer, Writer::InFlight(flight)
-            if flight.slot == seq && flight.bytes == bytes);
-        if ours {
-            let Writer::InFlight(flight) = std::mem::replace(&mut self.writer, Writer::Idle) else {
-                unreachable!()
-            };
-            return self.landed(flight, at);
+        let Ok(entry) = Entry::parse(&bytes) else {
+            return self.break_down(Refusal::Corrupt(seq));
+        };
+        if let Body::Migration(migration) = &entry.body {
+            match std::mem::replace(&mut self.writer, Writer::Idle) {
+                Writer::InFlight(flight) if flight.bytes == bytes => {
+                    return self.migrated(&flight, seq, migration);
+                }
+                writer => self.writer = writer,
+            }
+            return self.follow_migration(seq, entry);
+        }
+        let Some(standing) = self.apply(seq, &entry, at) else {
+            return;
+        };
+        self.after_land();
+        match std::mem::replace(&mut self.writer, Writer::Idle) {
+            Writer::InFlight(flight) if flight.bytes == bytes && standing != Standing::Void => {
+                self.landed(*flight, seq, &entry);
+            }
+            Writer::InFlight(flight) if flight.slot == seq => self.lost(*flight),
+            writer => self.writer = writer,
+        }
+    }
+
+    /// Our own migration landed: install the image it was built from.
+    fn migrated(&mut self, flight: &Flight, seq: Seq, migration: &Migration) {
+        let Cargo::Migration(ticket, image) = &flight.cargo else {
+            unreachable!("migration bytes ride migration cargo")
+        };
+        let head = self.replica.head().expect("a migration follows a head");
+        let expected = migrated_head(head, seq, &migration.migration, migration.schema);
+        self.settle(*ticket, Settled::Migrated(seq));
+        match self
+            .replica
+            .install(&image.path, migration.image, migration.schema)
+        {
+            Ok(()) if self.replica.head() == Some(&expected) => self.after_land(),
+            Ok(()) => self.break_down(Refusal::Corrupt(seq)),
+            Err(error) => self.break_down(Refusal::Cache(error)),
+        }
+    }
+
+    /// Another writer's migration landed: download its image, or stop before
+    /// a schema this code does not ship.
+    fn follow_migration(&mut self, seq: Seq, entry: Entry) {
+        let Body::Migration(migration) = &entry.body else {
+            unreachable!("a migration install holds a migration entry")
+        };
+        if self.replica.head().is_none() {
+            return self.break_down(Refusal::Corrupt(seq));
+        }
+        if self.replica.bundle().by_schema(migration.schema).is_none() {
+            // The flight can only land after this migration, at a schema it
+            // was not judged at.
+            if let Writer::InFlight(flight) = std::mem::replace(&mut self.writer, Writer::Idle) {
+                self.abandon(*flight, &Refusal::SchemaAdvanced);
+            }
+            return self.halt(Life::Advanced, &Refusal::SchemaAdvanced);
         }
         let lost = match std::mem::replace(&mut self.writer, Writer::Idle) {
             Writer::InFlight(flight) if flight.slot == seq => Some(flight),
@@ -734,69 +810,55 @@ impl<R: Replica> Machine<R> {
                 None
             }
         };
-        let bundle = self.replica.bundle();
-        let schema = match self.replica.head() {
-            None => Some(&bundle.initial().schema),
-            Some(head) => bundle.by_schema(head.schema).map(|step| &step.schema),
-        };
-        let Some(entry) = schema.and_then(|schema| Entry::parse(schema, &bytes).ok()) else {
-            return self.break_down(Refusal::Corrupt(seq));
-        };
-        if let Body::Migration(migration) = &entry.body {
-            if self.replica.head().is_none() {
-                return self.break_down(Refusal::Corrupt(seq));
-            }
-            if self.replica.bundle().by_schema(migration.schema).is_none() {
-                if let Some(flight) = lost {
-                    self.abandon(flight, &Refusal::SchemaAdvanced);
-                }
-                return self.halt(Life::Advanced, &Refusal::SchemaAdvanced);
-            }
-            let io = self.request(
-                Bucket::Checkpoints,
-                image_key(migration.image),
-                Op::Get(Target::File(self.replica.download_path())),
-                Purpose::Fetch,
-            );
-            self.install = Some(Installing::Migration {
-                io,
-                seq,
-                entry: Box::new(entry),
-                lost,
-            });
-            return;
-        }
-        if self.apply(seq, &entry, at).is_some() {
-            self.after_land();
-            if let Some(flight) = lost {
-                self.lost(flight);
-            }
-        }
+        let io = self.request(
+            Bucket::Checkpoints,
+            image_key(migration.image),
+            Op::Get(Target::File(self.replica.download_path())),
+            Purpose::Fetch,
+        );
+        self.install = Some(Installing::Migration {
+            io,
+            seq,
+            entry: Box::new(entry),
+            lost,
+        });
     }
 
-    /// Fold and apply a non-migration entry; `None` when the machine broke.
-    fn apply(&mut self, seq: Seq, entry: &Entry, at: Millis) -> Option<Vec<Receipt>> {
+    /// Fold and apply a non-migration entry, judging a rebased batch here;
+    /// `None` when the machine broke.
+    fn apply(&mut self, seq: Seq, entry: &Entry, at: Millis) -> Option<Standing> {
         let head = self.replica.head();
-        let Ok(Folded {
-            head,
-            receipts,
-            commits,
-        }) = fold(head, seq, entry, at)
-        else {
+        let Ok(standing) = standing(head, seq, &entry.body) else {
+            self.break_down(Refusal::Corrupt(seq));
+            return None;
+        };
+        let decided = match (&entry.body, standing) {
+            (Body::Commands(batch), Standing::Fresh | Standing::Rebased) => {
+                match self.decided(seq, batch, standing) {
+                    Ok(decided) => decided,
+                    Err(refusal) => {
+                        self.break_down(refusal);
+                        return None;
+                    }
+                }
+            }
+            _ => Vec::new(),
+        };
+        let Ok(folded) = fold(head, seq, entry, at, &decided) else {
             self.break_down(Refusal::Corrupt(seq));
             return None;
         };
         let applied = if seq == Seq::GENESIS {
-            self.replica.create(&head)
+            self.replica.create(&folded.head)
         } else {
             self.replica.apply(Update {
-                head: &head,
-                commits: &commits,
-                receipts: &receipts,
+                head: &folded.head,
+                commits: &folded.commits,
+                receipts: &folded.receipts,
             })
         };
         match applied {
-            Ok(()) => Some(receipts),
+            Ok(()) => Some(standing),
             Err(error) => {
                 self.break_down(Refusal::Cache(error));
                 None
@@ -804,66 +866,97 @@ impl<R: Replica> Machine<R> {
         }
     }
 
-    /// Our own entry landed at its slot.
-    fn landed(&mut self, flight: Box<Flight>, at: Millis) {
-        let seq = flight.slot;
-        if let Cargo::Migration(ticket, image) = &flight.cargo {
-            let Body::Migration(migration) = &flight.entry.body else {
-                unreachable!("migration cargo rides a migration entry")
-            };
-            let head = self.replica.head().expect("a migration follows a head");
-            let expected = migrated_head(head, seq, &migration.migration, migration.schema);
-            let ticket = *ticket;
-            self.settle(ticket, Settled::Migrated(seq));
-            match self
-                .replica
-                .install(&image.path, migration.image, migration.schema)
-            {
-                Ok(()) if self.replica.head() == Some(&expected) => self.after_land(),
-                Ok(()) => self.break_down(Refusal::Corrupt(seq)),
-                Err(error) => self.break_down(Refusal::Cache(error)),
-            }
-            return;
+    /// The commands a batch that is not void at `seq` decides there, with
+    /// the outcomes that hold there. Fresh: as recorded. Rebased: a request
+    /// decided before, in the log or earlier in the batch, is skipped; the
+    /// rest are judged here.
+    fn decided(
+        &self,
+        seq: Seq,
+        batch: &Batch,
+        standing: Standing,
+    ) -> Result<Vec<Proposal>, Refusal> {
+        let head = self.replica.head().expect("a batch follows a head");
+        let step = self
+            .replica
+            .bundle()
+            .by_schema(head.schema)
+            .ok_or(Refusal::Cache(CacheError::UnknownSchema(head.schema)))?;
+        let proposals = batch
+            .proposals(&step.schema)
+            .map_err(|_| Refusal::Corrupt(seq))?;
+        if standing == Standing::Fresh {
+            return Ok(proposals.into_vec());
         }
-        let head_before = self.replica.head().cloned();
-        let receipts = match fold(head_before.as_ref(), seq, &flight.entry, at) {
-            Ok(folded) => folded.receipts,
-            Err(_) => return self.break_down(Refusal::Corrupt(seq)),
-        };
-        match flight.cargo {
-            Cargo::Genesis | Cargo::Migration(..) => {}
-            Cargo::Commands(batch) => {
-                for submission in batch {
-                    let request = submission.command.request();
-                    let receipt = receipts
-                        .iter()
-                        .find(|receipt| receipt.command.request == request)
-                        .expect("every batched command is decided in its entry");
-                    for ticket in submission.tickets {
-                        self.settle(ticket, Settled::Decided(receipt.clone()));
-                    }
-                }
+        let mut seen = BTreeSet::new();
+        let mut undecided = Vec::new();
+        for proposal in &proposals {
+            let request = proposal.command.request();
+            if seen.insert(request)
+                && self
+                    .replica
+                    .receipt(request)
+                    .map_err(Refusal::Cache)?
+                    .is_none()
+            {
+                undecided.push(&proposal.command);
             }
+        }
+        let outcomes = self.replica.judge(&undecided).map_err(Refusal::Cache)?;
+        Ok(undecided
+            .into_iter()
+            .zip(outcomes)
+            .map(|(command, outcome)| Proposal {
+                command: command.clone(),
+                outcome,
+            })
+            .collect())
+    }
+
+    /// Our own entry decided at `seq`.
+    fn landed(&mut self, flight: Flight, seq: Seq, entry: &Entry) {
+        match flight.cargo {
+            Cargo::Genesis => self.opened(),
+            Cargo::Commands(batch) => self.answer_all(batch),
             Cargo::Freeze(ticket) => self.settle(ticket, Settled::Frozen(seq)),
             Cargo::Thaw(ticket) => {
-                if let (Some(ticket), Body::Thaw(Thaw::Rejected(rejection))) =
-                    (ticket, &flight.entry.body)
+                if let (Some(ticket), Body::Thaw(Thaw::Rejected(rejection))) = (ticket, &entry.body)
                 {
                     let refusal = Refusal::MigrationRejected(rejection.clone());
                     self.settle(ticket, Settled::Refused(refusal));
                 }
             }
+            Cargo::Migration(..) => unreachable!("a migration lands through its image"),
         }
-        if self.apply(seq, &flight.entry, at).is_some() {
-            self.after_land();
-            if seq == Seq::GENESIS {
-                self.opened();
+    }
+
+    /// Settle each submission from the receipt the log holds for its request.
+    fn answer_all(&mut self, batch: Vec<Submission>) {
+        let receipts: Result<Vec<_>, _> = batch
+            .iter()
+            .map(|submission| self.replica.receipt(submission.command.request()))
+            .collect();
+        match receipts {
+            Ok(receipts) => {
+                for (submission, receipt) in batch.into_iter().zip(receipts) {
+                    let receipt = receipt.expect("a decided batch leaves every request a receipt");
+                    let settled = answer(receipt, &submission.command);
+                    for ticket in submission.tickets {
+                        self.settle(ticket, settled.clone());
+                    }
+                }
+            }
+            Err(error) => {
+                for ticket in batch.into_iter().flat_map(|submission| submission.tickets) {
+                    self.settle(ticket, Settled::Refused(Refusal::Unknown));
+                }
+                self.break_down(Refusal::Cache(error));
             }
         }
     }
 
-    /// A foreign entry took our slot; nothing of ours landed.
-    fn lost(&mut self, flight: Box<Flight>) {
+    /// The flight's slot resolved without its entry deciding anything there.
+    fn lost(&mut self, flight: Flight) {
         let head = self.replica.head().map(|head| head.seq);
         let stale = Refusal::Stale {
             head: head.expect("a lost slot follows a head"),
@@ -887,18 +980,37 @@ impl<R: Replica> Machine<R> {
         }
     }
 
-    /// Ask for the slot GETs the waiters and the writer need.
+    /// Ask for the slot GETs the flight and the waiters need.
     fn refill(&mut self) {
-        if self.install.is_some() || !matches!(self.life, Life::Opening | Life::Open) {
+        if matches!(self.install, Some(Installing::Migration { .. }))
+            || !matches!(self.life, Life::Opening | Life::Open)
+        {
             return;
         }
-        let verifying = match &self.writer {
+        let next = self.fetch_from();
+        let mut outstanding = BTreeMap::new();
+        for purpose in self.io.values() {
+            if let Purpose::Slot { seq, issued } = purpose {
+                let newest = outstanding.entry(*seq).or_insert(*issued);
+                *newest = (*newest).max(*issued);
+            }
+        }
+        let (first, verifying) = match &self.writer {
             Writer::InFlight(flight) => match flight.state {
-                FlightState::Verifying { need } => Some(need),
-                _ => None,
+                FlightState::Verifying { need } => (flight.slot, Some(need)),
+                _ => (flight.slot, None),
             },
-            Writer::Idle => None,
+            Writer::Idle => (next, None),
         };
+        // The slots below the flight's exist: fetch them all, unprompted.
+        let mut seq = next;
+        while seq < first {
+            if !outstanding.contains_key(&seq) && !self.tail.found.contains_key(&seq) {
+                self.get_slot(seq);
+                outstanding.insert(seq, self.epoch);
+            }
+            seq = seq.next();
+        }
         let need = self
             .waiters
             .iter()
@@ -908,27 +1020,25 @@ impl<R: Replica> Machine<R> {
         let Some(need) = need else {
             return;
         };
-        let next = self.next_slot();
-        let mut outstanding = BTreeMap::new();
-        for purpose in self.io.values() {
-            if let Purpose::Slot { seq, issued } = purpose {
-                let newest = outstanding.entry(*seq).or_insert(*issued);
-                *newest = (*newest).max(*issued);
-            }
+        // A slot seen empty for a GET at least as fresh needs no other.
+        let probed = outstanding
+            .get(&first)
+            .into_iter()
+            .chain(self.tail.missing.get(&first))
+            .max();
+        if !self.tail.found.contains_key(&first) && probed.is_none_or(|issued| *issued < need) {
+            self.get_slot(first);
+            outstanding.insert(first, self.epoch);
         }
-        if outstanding.get(&next).is_none_or(|issued| *issued < need) {
-            self.get_slot(next);
-            outstanding.insert(next, self.epoch);
-        }
-        // `window` GETs in flight, not `window` slots: one slow GET at the
-        // head must not idle the rest. The lookahead bounds buffered entries,
-        // and nothing is probed past a slot already seen empty.
+        // `window` GETs in flight, not `window` slots: one slow GET must not
+        // idle the rest. The lookahead bounds buffered entries, and nothing
+        // is probed past a slot already seen empty.
         let window = self
             .config
             .probe_window
             .min(self.tail.streak.saturating_add(1));
-        let mut in_flight = outstanding.range(next..).count();
-        let mut seq = next;
+        let mut in_flight = outstanding.range(first..).count();
+        let mut seq = first;
         for _ in 1..window.saturating_mul(LOOKAHEAD_WINDOWS) {
             if in_flight >= window as usize {
                 break;
@@ -1068,61 +1178,46 @@ impl<R: Replica> Machine<R> {
         }
     }
 
-    /// Decide the queue against the head and write it as one entry. Nothing
-    /// is settled or taken from the queue unless every judgment succeeded.
+    /// Judge the queue against the head and write it as one batch. Nothing
+    /// is settled or taken from the queue unless the judgment succeeded.
     fn decide(&mut self) -> Result<(), CacheError> {
         enum Fate {
             Answered(Settled),
-            Decided(Verdict),
+            Proposed,
         }
         let head = self.replica.head().expect("an open machine has a head");
-        let (schema, mut revision) = (head.schema, head.revision);
-        let mut accepted = Vec::new();
+        let (base, schema) = (head.seq, head.schema);
         let mut fates = Vec::new();
+        let mut proposed = Vec::new();
         let mut size = 0usize;
         for submission in &self.queue {
             let command = &submission.command;
             if let Some(receipt) = self.replica.receipt(command.request())? {
-                fates.push(Fate::Answered(if receipt.command == command.reference() {
-                    Settled::Decided(receipt)
-                } else {
-                    Settled::Refused(Refusal::RequestReused(receipt.command))
-                }));
+                fates.push(Fate::Answered(answer(receipt, command)));
                 continue;
             }
             if command.changes().schema() != schema {
                 fates.push(Fate::Answered(Settled::Refused(Refusal::ForeignSchema)));
                 continue;
             }
-            let bytes = command.changes().as_bytes().len() + DECIDED_OVERHEAD;
+            let bytes = command.changes().as_bytes().len() + PROPOSAL_OVERHEAD;
             if size + bytes > self.config.max_entry_bytes {
                 break;
             }
             size += bytes;
-            let verdict = match command.precondition() {
-                Precondition::ExactRevision(expected) if expected != revision => {
-                    Verdict::PreconditionFailed {
-                        expected,
-                        observed: revision,
-                    }
-                }
-                _ => match self.replica.judge(&accepted, command.changes())? {
-                    Judgment::Changed(delta) => {
-                        revision = revision.next();
-                        accepted.push(command.changes().clone());
-                        Verdict::Committed {
-                            changes: command.changes().clone(),
-                            delta,
-                        }
-                    }
-                    Judgment::Unchanged => Verdict::NoChange,
-                    Judgment::Rejected(evidence) => Verdict::InvariantRejected(evidence),
-                },
-            };
-            fates.push(Fate::Decided(verdict));
+            fates.push(Fate::Proposed);
+            proposed.push(command);
         }
+        let outcomes = self.replica.judge(&proposed)?;
+        let proposals: Vec<Proposal> = proposed
+            .into_iter()
+            .zip(outcomes)
+            .map(|(command, outcome)| Proposal {
+                command: command.clone(),
+                outcome,
+            })
+            .collect();
         let consumed: Vec<Submission> = self.queue.drain(..fates.len()).collect();
-        let mut decided = Vec::new();
         let mut batch = Vec::new();
         for (submission, fate) in consumed.into_iter().zip(fates) {
             match fate {
@@ -1131,17 +1226,11 @@ impl<R: Replica> Machine<R> {
                         self.settle(ticket, settled.clone());
                     }
                 }
-                Fate::Decided(verdict) => {
-                    decided.push(Decided {
-                        command: submission.command.reference(),
-                        verdict,
-                    });
-                    batch.push(submission);
-                }
+                Fate::Proposed => batch.push(submission),
             }
         }
-        if !decided.is_empty() {
-            self.launch(Body::Commands(decided.into()), Cargo::Commands(batch));
+        if let Some(proposals) = Batch::new(base, schema, &proposals) {
+            self.launch(Body::Commands(proposals), Cargo::Commands(batch));
         }
         Ok(())
     }
@@ -1216,11 +1305,11 @@ impl<R: Replica> Machine<R> {
     }
 
     fn launch(&mut self, body: Body, cargo: Cargo) {
-        let entry = Entry {
+        let bytes = Entry {
             nonce: self.nonce(),
             body,
-        };
-        let bytes = entry.encode();
+        }
+        .encode();
         let slot = self.next_slot();
         let state = match &cargo {
             Cargo::Migration(_, image) => FlightState::Uploading(self.request(
@@ -1239,7 +1328,6 @@ impl<R: Replica> Machine<R> {
         self.writer = Writer::InFlight(Box::new(Flight {
             slot,
             bytes,
-            entry,
             cargo,
             state,
         }));
@@ -1276,7 +1364,10 @@ impl<R: Replica> Machine<R> {
         let Some(head) = self.replica.head() else {
             return;
         };
-        let since = head.seq.get() - self.checkpoints.last.map_or(0, Seq::get);
+        let since = head
+            .seq
+            .get()
+            .saturating_sub(self.checkpoints.last.map_or(0, Seq::get));
         if !self.checkpoints.known
             || self.checkpoints.uploading
             || self.install.is_some()
@@ -1318,7 +1409,7 @@ impl<R: Replica> Machine<R> {
     }
 
     /// Settle every ticket a flight carries with `refusal`.
-    fn abandon(&mut self, flight: Box<Flight>, refusal: &Refusal) {
+    fn abandon(&mut self, flight: Flight, refusal: &Refusal) {
         match flight.cargo {
             Cargo::Genesis | Cargo::Thaw(None) => {}
             Cargo::Commands(batch) => {
@@ -1354,7 +1445,7 @@ impl<R: Replica> Machine<R> {
                 FlightState::Uploading(_) => Refusal::NotSubmitted,
                 FlightState::Putting(_) | FlightState::Verifying { .. } => Refusal::Unknown,
             };
-            self.abandon(flight, &unclear);
+            self.abandon(*flight, &unclear);
         }
         let unwritten = match refusal {
             Refusal::Closed => Refusal::NotSubmitted,
@@ -1381,5 +1472,14 @@ impl<R: Replica> Machine<R> {
         for ticket in std::mem::take(&mut self.opens) {
             self.settle(ticket, Settled::Refused(refusal.clone()));
         }
+    }
+}
+
+/// How the log answers `command` once its request has `receipt`.
+fn answer(receipt: Receipt, command: &Command) -> Settled {
+    if receipt.command == command.reference() {
+        Settled::Decided(receipt)
+    } else {
+        Settled::Refused(Refusal::RequestReused(receipt.command))
     }
 }

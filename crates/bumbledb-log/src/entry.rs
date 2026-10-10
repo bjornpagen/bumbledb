@@ -1,32 +1,46 @@
-//! Log entries: the immutable objects at `log/{seq}`. An entry carries what
-//! was decided, so applying it never re-judges.
+//! Log entries: the immutable objects at `log/{seq}`. A commands entry
+//! carries its writer's judgment against the head it was decided at; every
+//! other entry carries its whole effect.
 
-use bumbledb::{ChangeSet, Schema, SchemaFingerprint, WorkContext};
+use bumbledb::{Schema, SchemaFingerprint};
 
-use crate::command::CommandRef;
+use crate::command::Command;
 use crate::frame::{FrameError, Kind, Reader, Writer};
 use crate::head::Rejection;
-use crate::ids::{DatabaseId, ImageDigest, MigrationHash, Nonce, Revision};
-use crate::receipt::{
-    Delta, Evidence, Outcome, put_command, put_evidence, put_outcome, take_command, take_evidence,
-    take_outcome,
-};
+use crate::ids::{DatabaseId, ImageDigest, MigrationHash, Nonce, Seq};
+use crate::receipt::{Outcome, put_evidence, put_outcome, take_evidence, take_outcome, take_seq};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub nonce: Nonce,
     pub body: Body,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
     Genesis(Genesis),
-    /// Commands decided in order, each against the state the earlier ones
-    /// produced. Never empty.
-    Commands(Box<[Decided]>),
+    Commands(Batch),
     Freeze(Freeze),
     Migration(Migration),
     Thaw(Thaw),
+}
+
+/// Commands judged in order against the head at `base`, whose schema is
+/// `schema`. The recorded outcomes are a memo of that judgment: they hold
+/// where the batch lands right after `base`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Batch {
+    pub base: Seq,
+    pub schema: SchemaFingerprint,
+    /// Never empty; encoded, because only `schema` reads them.
+    proposals: Box<[u8]>,
+}
+
+/// One command and its writer's judgment at the batch's base.
+#[derive(Debug, Clone)]
+pub struct Proposal {
+    pub command: Command,
+    pub outcome: Outcome,
 }
 
 /// Creates an empty database at the schema of its initial migration.
@@ -69,42 +83,6 @@ pub enum Thaw {
     Rejected(Rejection),
 }
 
-#[derive(Debug, Clone)]
-pub struct Decided {
-    pub command: CommandRef,
-    pub verdict: Verdict,
-}
-
-/// A decision as the log records it: a commit carries its changes.
-#[derive(Debug, Clone)]
-pub enum Verdict {
-    Committed {
-        changes: ChangeSet,
-        delta: Delta,
-    },
-    NoChange,
-    PreconditionFailed {
-        expected: Revision,
-        observed: Revision,
-    },
-    InvariantRejected(Evidence),
-}
-
-impl Verdict {
-    #[must_use]
-    pub fn outcome(&self) -> Outcome {
-        match self {
-            Self::Committed { delta, .. } => Outcome::Committed(*delta),
-            Self::NoChange => Outcome::NoChange,
-            Self::PreconditionFailed { expected, observed } => Outcome::PreconditionFailed {
-                expected: *expected,
-                observed: *observed,
-            },
-            Self::InvariantRejected(evidence) => Outcome::InvariantRejected(evidence.clone()),
-        }
-    }
-}
-
 const GENESIS: u8 = 1;
 const COMMANDS: u8 = 2;
 const FREEZE: u8 = 3;
@@ -114,8 +92,51 @@ const THAW: u8 = 5;
 const LIFTED: u8 = 1;
 const REJECTED: u8 = 2;
 
-/// The smallest encoded decided command: ref, outcome tag.
-const MIN_DECIDED: usize = 16 + 32 + 1;
+/// A lower bound on an encoded proposal: the command blob's length, the
+/// command frame's tag, request, precondition tag and changes length, then
+/// the outcome tag.
+const MIN_PROPOSAL: usize = 4 + 15 + 16 + 1 + 4 + 1;
+
+impl Batch {
+    /// `None` when `proposals` is empty.
+    #[must_use]
+    pub fn new(base: Seq, schema: SchemaFingerprint, proposals: &[Proposal]) -> Option<Self> {
+        if proposals.is_empty() {
+            return None;
+        }
+        let mut writer = Writer::untagged();
+        writer.len(proposals.len());
+        for proposal in proposals {
+            writer.blob(&proposal.command.encode());
+            put_outcome(&mut writer, &proposal.outcome);
+        }
+        Some(Self {
+            base,
+            schema,
+            proposals: writer.finish().into(),
+        })
+    }
+
+    /// The proposals, read with the schema the batch was judged at.
+    /// # Errors
+    /// Malformed proposals, none at all, and change bytes `schema` refuses.
+    pub fn proposals(&self, schema: &Schema) -> Result<Box<[Proposal]>, FrameError> {
+        let mut reader = Reader::untagged(&self.proposals);
+        let len = reader.len(MIN_PROPOSAL)?;
+        if len == 0 {
+            return Err(FrameError::Value);
+        }
+        let mut proposals = Vec::with_capacity(len);
+        for _ in 0..len {
+            let command = Command::parse(schema, reader.blob()?)?;
+            let tag = reader.u8()?;
+            let outcome = take_outcome(&mut reader, tag)?;
+            proposals.push(Proposal { command, outcome });
+        }
+        reader.finish()?;
+        Ok(proposals.into())
+    }
+}
 
 impl Entry {
     #[must_use]
@@ -129,16 +150,11 @@ impl Entry {
                 put_migration_id(&mut writer, &genesis.initial);
                 writer.array(&genesis.schema.0);
             }
-            Body::Commands(decided) => {
+            Body::Commands(batch) => {
                 writer.u8(COMMANDS);
-                writer.len(decided.len());
-                for decided in decided {
-                    put_command(&mut writer, decided.command);
-                    put_outcome(&mut writer, &decided.verdict.outcome());
-                    if let Verdict::Committed { changes, .. } = &decided.verdict {
-                        writer.blob(changes.as_bytes());
-                    }
-                }
+                writer.u64(batch.base.get());
+                writer.array(&batch.schema.0);
+                writer.array(&batch.proposals);
             }
             Body::Freeze(freeze) => {
                 writer.u8(FREEZE);
@@ -165,10 +181,10 @@ impl Entry {
         writer.finish()
     }
 
-    /// Parse an entry; committed changes must belong to `schema`.
+    /// Parse an entry; a batch's proposals are read later, at its schema.
     /// # Errors
-    /// Malformed frames and change bytes the schema refuses.
-    pub fn parse(schema: &Schema, bytes: &[u8]) -> Result<Self, FrameError> {
+    /// Malformed frames.
+    pub fn parse(bytes: &[u8]) -> Result<Self, FrameError> {
         let mut reader = Reader::new(bytes, Kind::Entry)?;
         let nonce = Nonce(reader.array()?);
         let body = match reader.u8()? {
@@ -177,33 +193,11 @@ impl Entry {
                 initial: take_migration_id(&mut reader)?,
                 schema: SchemaFingerprint(reader.array()?),
             }),
-            COMMANDS => {
-                let len = reader.len(MIN_DECIDED)?;
-                if len == 0 {
-                    return Err(FrameError::Value);
-                }
-                let work = WorkContext::new();
-                let mut decided = Vec::with_capacity(len);
-                for _ in 0..len {
-                    let command = take_command(&mut reader)?;
-                    let tag = reader.u8()?;
-                    let verdict = match take_outcome(&mut reader, tag)? {
-                        Outcome::Committed(delta) => Verdict::Committed {
-                            changes: ChangeSet::parse(schema, reader.blob()?, &work)?,
-                            delta,
-                        },
-                        Outcome::NoChange => Verdict::NoChange,
-                        Outcome::PreconditionFailed { expected, observed } => {
-                            Verdict::PreconditionFailed { expected, observed }
-                        }
-                        Outcome::InvariantRejected(evidence) => {
-                            Verdict::InvariantRejected(evidence)
-                        }
-                    };
-                    decided.push(Decided { command, verdict });
-                }
-                Body::Commands(decided.into())
-            }
+            COMMANDS => Body::Commands(Batch {
+                base: take_seq(&mut reader)?,
+                schema: SchemaFingerprint(reader.array()?),
+                proposals: reader.rest().into(),
+            }),
             FREEZE => Body::Freeze(Freeze {
                 migration: take_migration_id(&mut reader)?,
                 lease_millis: reader.u64()?,

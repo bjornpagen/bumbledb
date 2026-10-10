@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 
 use bumbledb::{ChangeSet, Schema};
 use bumbledb_log::{
-    Body, Bucket, CheckpointKey, CheckpointPolicy, Command, Config, DatabaseId, Entry, Input,
-    IoBody, IoRequest, IoResponse, IoResult, Machine, Millis, Op, Outcome, Population,
-    Precondition, Receipt, Refusal, Replica as _, RequestId, Revision, Seq, Settled, Target,
-    Ticket, Verdict, image_key,
+    Batch, Body, Bucket, CheckpointKey, CheckpointPolicy, Command, Config, DatabaseId, Entry,
+    Input, IoBody, IoRequest, IoResponse, IoResult, Machine, Millis, Mode, Op, Outcome, Population,
+    Precondition, Proposal, Receipt, Refusal, Replica as _, RequestId, Revision, Seq, Settled,
+    Standing, Target, Ticket, image_key,
 };
 
 use crate::model::{Model, State};
@@ -52,6 +52,8 @@ pub struct Faults {
     pub put_lost: u64,
     /// A PUT lands but its response is lost.
     pub put_unanswered: u64,
+    /// A PUT lands and a retry of it answers that the key is taken.
+    pub put_retried: u64,
     /// A response is held back and delivered later, out of order.
     pub delayed: u64,
     /// A GET or LIST fails.
@@ -62,6 +64,7 @@ impl Faults {
     pub const NONE: Self = Self {
         put_lost: 0,
         put_unanswered: 0,
+        put_retried: 0,
         delayed: 0,
         read_failed: 0,
     };
@@ -69,6 +72,7 @@ impl Faults {
     pub const HOSTILE: Self = Self {
         put_lost: 8,
         put_unanswered: 8,
+        put_retried: 4,
         delayed: 15,
         read_failed: 6,
     };
@@ -81,6 +85,9 @@ pub enum Fate {
     Lost,
     /// Reaches the store; the response is `Failed`.
     Unanswered,
+    /// Reaches the store; the response is `Occupied`, as for a retry of a
+    /// PUT that landed.
+    Retried,
     /// Reaches the store; the response arrives later.
     Delayed,
 }
@@ -153,6 +160,7 @@ pub struct World {
 pub struct Tally {
     pub occupied: u64,
     pub unanswered: u64,
+    pub retried: u64,
     pub lost: u64,
     pub delayed: u64,
     pub kills: u64,
@@ -163,6 +171,7 @@ impl std::ops::AddAssign for Tally {
     fn add_assign(&mut self, other: Self) {
         self.occupied += other.occupied;
         self.unanswered += other.unanswered;
+        self.retried += other.retried;
         self.lost += other.lost;
         self.delayed += other.delayed;
         self.kills += other.kills;
@@ -387,6 +396,8 @@ impl World {
             Fate::Lost
         } else if is_put && self.rng.chance(self.faults.put_unanswered) {
             Fate::Unanswered
+        } else if is_put && self.rng.chance(self.faults.put_retried) {
+            Fate::Retried
         } else if self.rng.chance(self.faults.delayed) {
             Fate::Delayed
         } else {
@@ -415,6 +426,11 @@ impl World {
                 self.tally.unanswered += 1;
                 self.apply(client, incarnation, &request, body);
                 IoResult::Failed
+            }
+            Fate::Retried => {
+                self.tally.retried += 1;
+                self.apply(client, incarnation, &request, body);
+                IoResult::Occupied
             }
             Fate::Answered | Fate::Delayed => self.apply(client, incarnation, &request, body),
         };
@@ -608,25 +624,47 @@ impl World {
 }
 
 /// The world's log replayed through a fresh reference model: the state after
-/// every entry (index 0 is after Genesis). Each decision is re-derived from
-/// the original commands against the state before it.
+/// every entry (index 0 is after Genesis), where every proposed command is
+/// one a client submitted.
 pub fn replay(world: &World) -> Vec<State> {
+    let entries: Vec<(Vec<u8>, Millis)> = world
+        .log_entries()
+        .into_iter()
+        .enumerate()
+        .map(|(index, bytes)| {
+            let seq = Seq::new(index as u64 + 1).expect("nonzero");
+            (bytes, world.log_modified(seq))
+        })
+        .collect();
+    replay_log(world.bundle(), &entries, &world.checkpoints, &|command| {
+        let reference = command.reference();
+        world
+            .commands
+            .get(&reference.request)
+            .into_iter()
+            .chain(world.reused.values())
+            .any(|submitted| submitted.reference() == reference)
+    })
+}
+
+/// A log of `(bytes, last modified)` replayed through a fresh reference
+/// model, with migration images from `images`. A fresh batch's recorded
+/// outcomes are re-derived from its commands against the state before it; a
+/// rebased batch is judged where it landed.
+pub fn replay_log(
+    bundle: &bumbledb_log::Bundle,
+    entries: &[(Vec<u8>, Millis)],
+    images: &BTreeMap<String, (Vec<u8>, u64)>,
+    submitted: &dyn Fn(&Command) -> bool,
+) -> Vec<State> {
     let dir = TempDir::new("replay");
-    let mut model = Model::new(world.bundle().clone(), dir.path());
+    let mut model = Model::new(bundle.clone(), dir.path());
     let mut states = Vec::new();
-    for (index, bytes) in world.log_entries().iter().enumerate() {
+    for (index, (bytes, at)) in entries.iter().enumerate() {
         let seq = Seq::new(index as u64 + 1).expect("nonzero");
-        let bundle = world.bundle();
-        let schema = match model.head() {
-            None => &bundle.initial().schema,
-            Some(head) => &bundle.by_schema(head.schema).expect("bundled").schema,
-        };
-        let entry = Entry::parse(schema, bytes).expect("every log object is an entry");
-        if let Body::Commands(decided) = &entry.body {
-            redecide(world, &model, decided);
-        }
+        let entry = Entry::parse(bytes).expect("every log object is an entry");
         if let Body::Migration(migration) = &entry.body {
-            let (image, _) = &world.checkpoints[&image_key(migration.image)];
+            let (image, _) = &images[&image_key(migration.image)];
             let path = dir.path().join("migration.img");
             std::fs::write(&path, image).expect("image");
             let expected = bumbledb_log::migrated_head(
@@ -644,7 +682,18 @@ pub fn replay(world: &World) -> Vec<State> {
                 "the image head is the folded head"
             );
         } else {
-            let folded = bumbledb_log::fold(model.head(), seq, &entry, world.log_modified(seq))
+            let standing = bumbledb_log::standing(model.head(), seq, &entry.body)
+                .expect("every entry follows its head");
+            let decided = match (&entry.body, standing) {
+                (Body::Commands(batch), Standing::Fresh) => {
+                    redecide(&model, proposals(bundle, &model, batch, submitted))
+                }
+                (Body::Commands(batch), Standing::Rebased) => {
+                    rebase(&model, &proposals(bundle, &model, batch, submitted))
+                }
+                _ => Vec::new(),
+            };
+            let folded = bumbledb_log::fold(model.head(), seq, &entry, *at, &decided)
                 .expect("every entry follows its head");
             if seq == Seq::GENESIS {
                 model.create(&folded.head).expect("create");
@@ -663,55 +712,111 @@ pub fn replay(world: &World) -> Vec<State> {
     states
 }
 
-/// Each decided command's verdict is what deciding the original command
-/// against the state before it gives.
-fn redecide(world: &World, model: &Model, decided: &[bumbledb_log::Decided]) {
+/// A standing batch's proposals, each a submitted command.
+fn proposals(
+    bundle: &bumbledb_log::Bundle,
+    model: &Model,
+    batch: &Batch,
+    submitted: &dyn Fn(&Command) -> bool,
+) -> Vec<Proposal> {
     let head = model.head().expect("commands follow a head");
-    let mut revision = head.revision;
-    let mut accepted: Vec<ChangeSet> = Vec::new();
-    for decided in decided {
-        let request = decided.command.request;
+    let schema = &bundle.by_schema(head.schema).expect("bundled").schema;
+    let proposals = batch
+        .proposals(schema)
+        .expect("a standing batch reads at the head's schema");
+    for proposal in &proposals {
+        assert!(
+            submitted(&proposal.command),
+            "a proposed command was submitted"
+        );
+    }
+    proposals.into_vec()
+}
+
+/// A fresh batch records what judging its commands against the state before
+/// it gives, and decides no request twice. Rejection evidence is spelled by
+/// each replica its own way.
+fn redecide(model: &Model, proposals: Vec<Proposal>) -> Vec<Proposal> {
+    for proposal in &proposals {
+        let request = proposal.command.request();
         assert!(
             model.receipt(request).expect("receipt").is_none(),
             "request {request:?} decided twice"
         );
-        let command = world
-            .commands
-            .get(&request)
-            .filter(|command| command.reference() == decided.command)
-            .or_else(|| {
-                world
-                    .reused
-                    .values()
-                    .find(|command| command.reference() == decided.command)
-            })
-            .expect("a decided command was submitted");
-        let expected = match command.precondition() {
-            Precondition::ExactRevision(expected) if expected != revision => {
-                Outcome::PreconditionFailed {
-                    expected,
-                    observed: revision,
-                }
-            }
-            _ => match model.judge(&accepted, command.changes()).expect("judge") {
-                bumbledb_log::Judgment::Changed(delta) => {
-                    revision = revision.next();
-                    accepted.push(command.changes().clone());
-                    Outcome::Committed(delta)
-                }
-                bumbledb_log::Judgment::Unchanged => Outcome::NoChange,
-                bumbledb_log::Judgment::Rejected(evidence) => Outcome::InvariantRejected(evidence),
-            },
+    }
+    let commands: Vec<&Command> = proposals.iter().map(|proposal| &proposal.command).collect();
+    let judged = model.judge(&commands).expect("judge");
+    for (proposal, judged) in proposals.iter().zip(&judged) {
+        let same = match (&proposal.outcome, judged) {
+            (Outcome::InvariantRejected(_), Outcome::InvariantRejected(_)) => true,
+            (recorded, judged) => recorded == judged,
         };
-        assert_eq!(
-            decided.verdict.outcome(),
-            expected,
-            "decision for {request:?}"
+        assert!(
+            same,
+            "decision for {:?}: recorded {:?}, judged {judged:?}",
+            proposal.command.request(),
+            proposal.outcome
         );
-        if let Verdict::Committed { changes, .. } = &decided.verdict {
-            assert_eq!(changes.as_bytes(), command.changes().as_bytes());
+    }
+    proposals
+}
+
+/// A rebased batch decides each request no earlier entry or proposal
+/// decided, judged against the state where it landed.
+fn rebase(model: &Model, proposals: &[Proposal]) -> Vec<Proposal> {
+    let mut requests = BTreeSet::new();
+    let undecided: Vec<&Command> = proposals
+        .iter()
+        .map(|proposal| &proposal.command)
+        .filter(|command| {
+            model.receipt(command.request()).expect("receipt").is_none()
+                && requests.insert(command.request())
+        })
+        .collect();
+    let outcomes = model.judge(&undecided).expect("judge");
+    undecided
+        .into_iter()
+        .zip(outcomes)
+        .map(|(command, outcome)| Proposal {
+            command: command.clone(),
+            outcome,
+        })
+        .collect()
+}
+
+/// How the log's batches stood where they landed.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Standings {
+    pub fresh: u64,
+    pub rebased: u64,
+    pub void: u64,
+}
+
+impl std::ops::AddAssign for Standings {
+    fn add_assign(&mut self, other: Self) {
+        self.fresh += other.fresh;
+        self.rebased += other.rebased;
+        self.void += other.void;
+    }
+}
+
+/// Count the standings of the log's batches against the replayed `states`.
+pub fn standings(world: &World, states: &[State]) -> Standings {
+    let mut standings = Standings::default();
+    for (index, bytes) in world.log_entries().iter().enumerate().skip(1) {
+        let seq = Seq::new(index as u64 + 1).expect("nonzero");
+        let entry = Entry::parse(bytes).expect("an entry");
+        if !matches!(entry.body, Body::Commands(_)) {
+            continue;
+        }
+        match bumbledb_log::standing(Some(&states[index - 1].head), seq, &entry.body) {
+            Ok(Standing::Fresh) => standings.fresh += 1,
+            Ok(Standing::Rebased) => standings.rebased += 1,
+            Ok(Standing::Void) => standings.void += 1,
+            Err(misplaced) => panic!("{seq:?}: {misplaced:?}"),
         }
     }
+    standings
 }
 
 /// The receipt of `request` in the final state, if any.
@@ -776,13 +881,18 @@ pub fn check(world: &World) -> Vec<State> {
             }
             (Ask::Freeze, Settled::Frozen(seq)) => {
                 assert!(
-                    matches!(entry_at(world, &states, *seq).body, Body::Freeze(_)),
+                    matches!(entry_at(world, *seq).body, Body::Freeze(_)),
                     "a settled freeze is the log's"
+                );
+                let state = &states[usize::try_from(seq.get()).unwrap() - 1];
+                assert!(
+                    matches!(state.head.mode, Mode::Frozen { since, .. } if since == world.log_modified(*seq)),
+                    "a settled freeze took effect"
                 );
             }
             (Ask::Migrate, Settled::Migrated(seq)) => {
                 assert!(
-                    matches!(entry_at(world, &states, *seq).body, Body::Migration(_)),
+                    matches!(entry_at(world, *seq).body, Body::Migration(_)),
                     "a settled migration is the log's"
                 );
             }
@@ -829,20 +939,10 @@ pub fn check(world: &World) -> Vec<State> {
     states
 }
 
-/// The entry at `seq`, parsed at the schema of the head before it.
-fn entry_at(world: &World, states: &[State], seq: Seq) -> Entry {
+/// The entry at `seq`.
+fn entry_at(world: &World, seq: Seq) -> Entry {
     let index = usize::try_from(seq.get()).unwrap() - 1;
-    let bundle = world.bundle();
-    let schema = match index.checked_sub(1) {
-        None => &bundle.initial().schema,
-        Some(before) => {
-            &bundle
-                .by_schema(states[before].head.schema)
-                .expect("bundled")
-                .schema
-        }
-    };
-    Entry::parse(schema, &world.log_entries()[index]).expect("an entry")
+    Entry::parse(&world.log_entries()[index]).expect("an entry")
 }
 
 /// Checkpoint keys in the store, newest first.

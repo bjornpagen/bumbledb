@@ -4,13 +4,14 @@
 
 use bumbledb_log::{Input, Refusal, Settled};
 
-use crate::sim::{Ask, Faults, Tally, World, check};
+use crate::sim::{Ask, Faults, Standings, Tally, World, check, standings};
 use crate::support::{bundle, schema};
 
 /// What the run settled, beside what the world tallied.
 #[derive(Debug, Default)]
 struct Outcomes {
     tally: Tally,
+    standings: Standings,
     decided: u64,
     unknown: u64,
     reused: u64,
@@ -59,7 +60,7 @@ fn run(seed: u64, clients: usize, faults: Faults, steps: usize) -> Outcomes {
             other => panic!("seed {seed}: client {client} failed to sync: {other:?}"),
         }
     }
-    check(&world);
+    let states = check(&world);
     let heads: Vec<_> = (0..clients)
         .map(|client| {
             world
@@ -92,11 +93,15 @@ fn run(seed: u64, clients: usize, faults: Faults, steps: usize) -> Outcomes {
     let batched = world
         .log_entries()
         .iter()
-        .filter_map(|bytes| bumbledb_log::Entry::parse(&schema, bytes).ok())
-        .filter(|entry| matches!(&entry.body, bumbledb_log::Body::Commands(decided) if decided.len() > 1))
+        .filter_map(|bytes| bumbledb_log::Entry::parse(bytes).ok())
+        .filter(|entry| {
+            matches!(&entry.body, bumbledb_log::Body::Commands(batch)
+                if batch.proposals(&schema).is_ok_and(|proposals| proposals.len() > 1))
+        })
         .count() as u64;
     Outcomes {
         tally: world.tally,
+        standings: standings(&world, &states),
         decided: count(|settled| matches!(settled, Settled::Decided(_))),
         unknown: count(|settled| *settled == Settled::Refused(Refusal::Unknown)),
         reused: count(|settled| matches!(settled, Settled::Refused(Refusal::RequestReused(_)))),
@@ -109,6 +114,7 @@ fn sweep(seeds: std::ops::Range<u64>, clients: usize, faults: Faults, steps: usi
     for seed in seeds {
         let outcomes = run(seed, clients, faults, steps);
         total.tally += outcomes.tally;
+        total.standings += outcomes.standings;
         total.decided += outcomes.decided;
         total.unknown += outcomes.unknown;
         total.reused += outcomes.reused;
@@ -123,7 +129,7 @@ fn hostile_store_with_three_writers() {
     let tally = total.tally;
     assert!(total.decided > 1_000, "{total:?}");
     assert!(
-        tally.occupied > 0 && tally.unanswered > 0 && tally.lost > 0,
+        tally.occupied > 0 && tally.unanswered > 0 && tally.retried > 0 && tally.lost > 0,
         "{total:?}"
     );
     assert!(
@@ -134,12 +140,14 @@ fn hostile_store_with_three_writers() {
         total.unknown > 0 && total.reused > 0 && total.batched > 0,
         "{total:?}"
     );
+    assert!(total.standings.rebased > 100, "{total:?}");
 }
 
 #[test]
 fn honest_store_with_five_writers() {
     let total = sweep(100..116, 5, Faults::NONE, 400);
     assert!(total.tally.occupied > 0 && total.batched > 0, "{total:?}");
+    assert!(total.standings.rebased > 0, "{total:?}");
 }
 
 #[test]

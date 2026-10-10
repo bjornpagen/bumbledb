@@ -6,7 +6,7 @@ use bumbledb_log::{
     Bundle, Command, Input, Millis, Mode, Precondition, Refusal, RequestId, Seq, Settled, Ticket,
 };
 
-use crate::sim::{Ask, Faults, World, check, population, receipt_of};
+use crate::sim::{Ask, Faults, World, check, population, receipt_of, standings};
 use crate::support::{
     bundle, bundle2, descriptor, descriptor2, items, migration_id, schema, schema2, tags,
 };
@@ -179,8 +179,8 @@ fn a_freeze_holds_old_writers_until_its_deadline_on_store_time() {
     let decided = submit(&mut world, 1, 2, items(&schema(), &[(1, 1)], &[]));
     assert_eq!(
         receipt_of(&decided).seq,
-        Seq::new(4).unwrap(),
-        "after the thaw at 3"
+        Seq::new(5).unwrap(),
+        "after the held batch, refused at 2, lands void at 3, and the thaw at 4"
     );
 
     let base = head(&world, 0);
@@ -194,13 +194,18 @@ fn a_freeze_holds_old_writers_until_its_deadline_on_store_time() {
     let base = head(&world, 0);
     assert_eq!(
         migrate(&mut world, 0, base, tags(&schema2(), &[])),
-        Settled::Migrated(Seq::new(5).unwrap())
+        Settled::Migrated(Seq::new(6).unwrap())
     );
     assert_eq!(
         submit(&mut world, 1, 3, items(&schema(), &[(2, 2)], &[])),
         Settled::Refused(Refusal::SchemaAdvanced)
     );
-    check(&world);
+    let states = check(&world);
+    assert_eq!(
+        standings(&world, &states).void,
+        2,
+        "the held batch at 3 and the late one past the migration decide nothing"
+    );
 }
 
 #[test]

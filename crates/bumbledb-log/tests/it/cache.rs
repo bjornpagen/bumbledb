@@ -9,12 +9,12 @@ use std::path::Path;
 use bumbledb::WorkContext;
 use bumbledb_log::{
     Body, Bucket, Bundle, Cache, CheckpointPolicy, Command, Config, DatabaseId, Done, Entry, Input,
-    IoBody, IoResponse, IoResult, Machine, Millis, Op, Outcome, Precondition, Receipt, Refusal,
-    Replica as _, RequestId, Revision, Seq, Settled, Target, Ticket,
+    IoBody, IoResponse, IoResult, Machine, Millis, Op, Outcome, Precondition, Proposal, Receipt,
+    Refusal, Replica as _, RequestId, Revision, Seq, Settled, Target, Ticket,
 };
 
-use crate::model::{Model, State};
-use crate::sim::{Faults, TempDir, World, population, replay};
+use crate::model::State;
+use crate::sim::{Faults, TempDir, World, population, replay, replay_log, standings};
 use crate::support::{Rng, bundle, bundle2, items, migration_id, schema, schema2, tags};
 
 type Bucketed = BTreeMap<String, (Vec<u8>, u64)>;
@@ -186,27 +186,14 @@ fn assert_same(cache: &State, model: &State) {
     assert_eq!(kinds(cache), kinds(model));
 }
 
-/// Fold `log` (commands only) through a fresh reference model.
+/// Fold `log` (no migrations) through a fresh reference model.
 fn reference(log: &Bucketed, bundle: &Bundle) -> State {
-    let dir = TempDir::new("reference");
-    let mut model = Model::new(bundle.clone(), dir.path());
-    for (index, (_, (bytes, at))) in log.iter().enumerate() {
-        let seq = Seq::new(index as u64 + 1).unwrap();
-        let entry = Entry::parse(&bundle.initial().schema, bytes).unwrap();
-        let folded = bumbledb_log::fold(model.head(), seq, &entry, Millis(*at)).unwrap();
-        if seq == Seq::GENESIS {
-            model.create(&folded.head).unwrap();
-        } else {
-            model
-                .apply(bumbledb_log::Update {
-                    head: &folded.head,
-                    commits: &folded.commits,
-                    receipts: &folded.receipts,
-                })
-                .unwrap();
-        }
-    }
-    model.state().unwrap().clone()
+    let entries: Vec<(Vec<u8>, Millis)> = log
+        .values()
+        .map(|(bytes, at)| (bytes.clone(), Millis(*at)))
+        .collect();
+    let states = replay_log(bundle, &entries, &Bucketed::new(), &|_| true);
+    states.last().expect("a log").clone()
 }
 
 #[test]
@@ -286,8 +273,8 @@ fn the_cache_decides_and_applies_like_the_reference() {
     }
     assert!(
         store.log.values().any(|(bytes, _)| matches!(
-            Entry::parse(&schema, bytes).unwrap().body,
-            Body::Commands(ref decided) if decided.len() > 1
+            Entry::parse(bytes).unwrap().body,
+            Body::Commands(ref batch) if batch.proposals(&schema).unwrap().len() > 1
         )),
         "some entry decided several commands"
     );
@@ -314,6 +301,10 @@ fn a_cold_cache_replays_a_hostile_log_to_the_reference_fold() {
         }
         world.quiesce();
         let states = replay(&world);
+        assert!(
+            standings(&world, &states).rebased > 0,
+            "seed {seed}: some batch is judged where it landed"
+        );
         let dir = TempDir::new("cache-replay");
         let mut store = Store {
             log: world.log.clone(),
@@ -513,47 +504,115 @@ fn the_cache_migrates_and_records_a_rejected_migration() {
     assert_same(&cache_state(reader.machine.replica()), &migrated);
 }
 
-#[test]
-fn catch_up_applies_what_the_log_decided_without_judging_it_again() {
-    let schema = schema();
+/// A log of a Genesis then `batches`, each stamped at 1.
+fn store_of(batches: Vec<Body>) -> Store {
     let bundle = bundle();
     let step = &bundle.steps()[0];
-    let genesis = Entry {
-        nonce: bumbledb_log::Nonce([1; 16]),
-        body: Body::Genesis(bumbledb_log::Genesis {
-            database: DatabaseId([1; 16]),
-            initial: step.id.clone(),
-            schema: step.fingerprint,
-        }),
-    };
-    // Two rows sharing a key: judging this commit would reject it.
-    let decided = Entry {
-        nonce: bumbledb_log::Nonce([2; 16]),
-        body: Body::Commands(
-            vec![bumbledb_log::Decided {
-                command: bumbledb_log::CommandRef {
-                    request: RequestId([3; 16]),
-                    digest: bumbledb_log::CommandDigest([4; 32]),
-                },
-                verdict: bumbledb_log::Verdict::Committed {
-                    changes: items(&schema, &[(1, 1), (1, 2)], &[]),
-                    delta: bumbledb_log::Delta::new(2, 0).unwrap(),
-                },
-            }]
-            .into(),
-        ),
-    };
+    let genesis = Body::Genesis(bumbledb_log::Genesis {
+        database: DatabaseId([1; 16]),
+        initial: step.id.clone(),
+        schema: step.fingerprint,
+    });
     let mut store = Store::default();
-    for (seq, entry) in [genesis, decided].iter().enumerate() {
-        let key = bumbledb_log::log_key(Seq::new(seq as u64 + 1).unwrap());
+    for (index, body) in std::iter::once(genesis).chain(batches).enumerate() {
+        let entry = Entry {
+            nonce: bumbledb_log::Nonce([u8::try_from(index).unwrap(); 16]),
+            body,
+        };
+        let key = bumbledb_log::log_key(Seq::new(index as u64 + 1).unwrap());
         store.log.insert(key, (entry.encode(), 1));
     }
-    let dir = TempDir::new("cache-decided");
+    store
+}
+
+fn proposal(
+    request: u8,
+    precondition: Precondition,
+    adds: &[(u64, u64)],
+    outcome: Outcome,
+) -> Proposal {
+    Proposal {
+        command: Command::seal(
+            RequestId([request; 16]),
+            precondition,
+            items(&schema(), adds, &[]),
+        ),
+        outcome,
+    }
+}
+
+fn batch(base: u64, proposals: &[Proposal]) -> Body {
+    Body::Commands(
+        bumbledb_log::Batch::new(
+            Seq::new(base).unwrap(),
+            bundle().initial().fingerprint,
+            proposals,
+        )
+        .unwrap(),
+    )
+}
+
+fn cold_open(store: &mut Store, label: &str) -> State {
+    let dir = TempDir::new(label);
     let mut config = config(8, 1_000);
     config.create = None;
-    let (solo, opened) = Solo::open(&mut store, dir.path(), bundle.clone(), config);
+    let (solo, opened) = Solo::open(store, dir.path(), bundle(), config);
     assert_eq!(opened, Settled::Opened { pending: 0 });
-    let state = cache_state(solo.machine.replica());
+    cache_state(solo.machine.replica())
+}
+
+#[test]
+fn catch_up_applies_what_a_fresh_batch_records_without_judging_it_again() {
+    let committed = Outcome::Committed(bumbledb_log::Delta::new(2, 0).unwrap());
+    // Two rows sharing a key: judging this commit would reject it.
+    let mut store = store_of(vec![batch(
+        1,
+        &[proposal(
+            3,
+            Precondition::None,
+            &[(1, 1), (1, 2)],
+            committed,
+        )],
+    )]);
+    let state = cold_open(&mut store, "cache-fresh");
     assert_eq!(state.head.seq, Seq::new(2).unwrap());
     assert_eq!(state.rows.len(), 2);
+}
+
+#[test]
+fn the_cache_judges_a_rebased_batch_where_it_lands() {
+    let one = || Outcome::Committed(bumbledb_log::Delta::new(1, 0).unwrap());
+    let rejected = || Outcome::InvariantRejected(bumbledb_log::Evidence::new([1].into()).unwrap());
+    let exact = Precondition::ExactRevision(Revision(1));
+    let failed = Outcome::PreconditionFailed {
+        expected: Revision(1),
+        observed: Revision(2),
+    };
+    let mut store = store_of(vec![
+        batch(1, &[proposal(1, Precondition::None, &[(1, 1)], one())]),
+        // Judged at the Genesis head and landed after the batch above.
+        batch(
+            1,
+            &[
+                proposal(2, Precondition::None, &[(1, 2)], one()),
+                proposal(3, exact, &[(2, 2)], one()),
+                proposal(4, exact, &[(3, 3)], failed.clone()),
+                proposal(1, Precondition::None, &[(1, 1)], rejected()),
+                proposal(5, Precondition::None, &[(1, 1)], rejected()),
+            ],
+        ),
+    ]);
+    let state = cold_open(&mut store, "cache-rebased");
+    assert_same(&state, &reference(&store.log, &bundle()));
+    let outcome = |request: u8| state.receipts[&RequestId([request; 16])].outcome.clone();
+    assert!(matches!(outcome(2), Outcome::InvariantRejected(_)));
+    assert!(matches!(outcome(3), Outcome::Committed(_)));
+    assert_eq!(outcome(4), failed);
+    assert_eq!(
+        state.receipts[&RequestId([1; 16])].seq,
+        Seq::new(2).unwrap(),
+        "a request decided before is skipped"
+    );
+    assert_eq!(outcome(5), Outcome::NoChange);
+    assert_eq!(state.head.revision, Revision(2));
 }

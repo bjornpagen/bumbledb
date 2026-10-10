@@ -85,6 +85,16 @@ impl Ledger {
         }
     }
 
+    /// Whether `migration` was applied or rejected.
+    #[must_use]
+    pub fn decided(&self, migration: &MigrationId) -> bool {
+        self.applied.contains(migration)
+            || self
+                .rejected
+                .iter()
+                .any(|rejection| rejection.migration == *migration)
+    }
+
     /// The recorded rejection of any bundled migration.
     #[must_use]
     pub fn rejection_of<'a>(&'a self, bundled: &[MigrationId]) -> Option<&'a Rejection> {

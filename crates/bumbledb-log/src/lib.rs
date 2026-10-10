@@ -17,8 +17,8 @@ mod replica;
 
 pub use cache::{Cache, CacheDb};
 pub use command::{Command, CommandRef, Precondition};
-pub use entry::{Body, Decided, Entry, Freeze, Genesis, Migration, MigrationId, Thaw, Verdict};
-pub use fold::{Folded, Misplaced, fold, migrated_head};
+pub use entry::{Batch, Body, Entry, Freeze, Genesis, Migration, MigrationId, Proposal, Thaw};
+pub use fold::{Folded, Misplaced, Standing, fold, migrated_head, standing};
 pub use frame::FrameError;
 pub use head::{Comparison, Head, Ledger, Mode, Rejection};
 pub use ids::{
@@ -31,6 +31,5 @@ pub use io::{
 pub use machine::{CheckpointPolicy, Config, Done, Input, Machine, Refusal, Settled, Step, Ticket};
 pub use receipt::{Delta, Evidence, Outcome, Receipt};
 pub use replica::{
-    Bundle, BundleError, BundledMigration, CacheError, Image, Judgment, Migrated, Population,
-    Replica, Update,
+    Bundle, BundleError, BundledMigration, CacheError, Image, Migrated, Population, Replica, Update,
 };

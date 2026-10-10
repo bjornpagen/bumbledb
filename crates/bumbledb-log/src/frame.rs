@@ -66,6 +66,11 @@ impl Writer {
         Self(bytes)
     }
 
+    /// Fields nested in a frame, after its tag.
+    pub(crate) fn untagged() -> Self {
+        Self(Vec::with_capacity(64))
+    }
+
     pub(crate) fn u8(&mut self, value: u8) {
         self.0.push(value);
     }
@@ -110,6 +115,11 @@ impl<'a> Reader<'a> {
     pub(crate) fn new(bytes: &'a [u8], kind: Kind) -> Result<Self, FrameError> {
         let rest = bytes.strip_prefix(kind.tag()).ok_or(FrameError::Family)?;
         Ok(Self { rest })
+    }
+
+    /// Fields nested in a frame, after its tag.
+    pub(crate) const fn untagged(bytes: &'a [u8]) -> Self {
+        Self { rest: bytes }
     }
 
     fn take(&mut self, len: usize) -> Result<&'a [u8], FrameError> {
@@ -159,6 +169,11 @@ impl<'a> Reader<'a> {
 
     pub(crate) fn text(&mut self) -> Result<&'a str, FrameError> {
         std::str::from_utf8(self.blob()?).map_err(|_| FrameError::Text)
+    }
+
+    /// Every remaining byte.
+    pub(crate) fn rest(&mut self) -> &'a [u8] {
+        std::mem::take(&mut self.rest)
     }
 
     pub(crate) fn finish(self) -> Result<(), FrameError> {

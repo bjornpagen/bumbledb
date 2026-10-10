@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use bumbledb::changes::ChangeKind;
 use bumbledb::{ChangeSet, RelationId, Schema, SchemaFingerprint, Value, WorkContext};
 use bumbledb_log::{
-    Bundle, CacheError, Delta, Evidence, Head, Image, ImageDigest, Judgment, Migrated, Population,
-    Receipt, Replica, RequestId, Update,
+    Bundle, CacheError, Command, Delta, Evidence, Head, Image, ImageDigest, Migrated, Outcome,
+    Population, Precondition, Receipt, Replica, RequestId, Update,
 };
 
 pub type Rows = BTreeSet<(u32, Vec<u8>)>;
@@ -113,22 +113,43 @@ impl Replica for Model {
             .and_then(|state| state.receipts.get(&request).cloned()))
     }
 
-    fn judge(&self, accepted: &[ChangeSet], next: &ChangeSet) -> Result<Judgment, CacheError> {
+    fn judge(&self, commands: &[&Command]) -> Result<Vec<Outcome>, CacheError> {
         let state = self.state.as_ref().expect("a judged state");
+        let schema = self.schema();
         let mut rows = state.rows.clone();
-        apply_all(&mut rows, &accepted.iter().collect::<Vec<_>>());
-        let (added, removed) = apply_all(&mut rows, &[next])[0];
-        let broken = violations(self.schema(), &rows);
-        Ok(if broken.is_empty() {
-            Delta::new(added, removed).map_or(Judgment::Unchanged, Judgment::Changed)
-        } else {
-            Judgment::Rejected(evidence(&broken))
-        })
+        let mut revision = state.head.revision;
+        Ok(commands
+            .iter()
+            .map(|command| match command.precondition() {
+                Precondition::ExactRevision(expected) if expected != revision => {
+                    Outcome::PreconditionFailed {
+                        expected,
+                        observed: revision,
+                    }
+                }
+                _ => {
+                    let mut judged = rows.clone();
+                    let (added, removed) = apply_all(&mut judged, &[command.changes()])[0];
+                    let broken = violations(schema, &judged);
+                    if !broken.is_empty() {
+                        return Outcome::InvariantRejected(evidence(&broken));
+                    }
+                    rows = judged;
+                    match Delta::new(added, removed) {
+                        Some(delta) => {
+                            revision = revision.next();
+                            Outcome::Committed(delta)
+                        }
+                        None => Outcome::NoChange,
+                    }
+                }
+            })
+            .collect())
     }
 
     fn apply(&mut self, update: Update<'_>) -> Result<(), CacheError> {
         let state = self.state.as_mut().expect("an applied state");
-        let changes: Vec<&ChangeSet> = update.commits.iter().map(|(changes, _)| *changes).collect();
+        let changes: Vec<&ChangeSet> = update.commits.iter().map(|(changes, _)| changes).collect();
         let deltas = apply_all(&mut state.rows, &changes);
         for ((_, delta), (added, removed)) in update.commits.iter().zip(deltas) {
             if (delta.added(), delta.removed()) != (added, removed) {

@@ -4,13 +4,13 @@
 
 use bumbledb::{Schema, SchemaFingerprint};
 use bumbledb_log::{
-    Body, CheckpointKey, Command, CommandDigest, CommandRef, Comparison, DatabaseId, Decided,
-    Delta, Entry, Evidence, FrameError, Freeze, Genesis, Head, ImageDigest, Ledger, Migration,
-    Millis, Mode, Nonce, Outcome, Precondition, Receipt, Rejection, RequestId, Revision, Seq, Thaw,
-    Verdict,
+    Batch, Body, CheckpointKey, Command, CommandDigest, CommandRef, Comparison, DatabaseId, Delta,
+    Entry, Evidence, FrameError, Freeze, Genesis, Head, ImageDigest, Ledger, Migration, Millis,
+    Mode, Nonce, Outcome, Precondition, Proposal, Receipt, Rejection, RequestId, Revision, Seq,
+    Thaw,
 };
 
-use crate::support::{Rng, items, migration_id, schema};
+use crate::support::{Rng, bundle, items, migration_id, schema, schema2};
 
 fn rejection() -> Rejection {
     Rejection {
@@ -19,47 +19,53 @@ fn rejection() -> Rejection {
     }
 }
 
+/// A batch of every outcome, judged at the head at seq 41.
+fn batch(schema: &Schema) -> Batch {
+    let command = |request: u8, precondition, adds: &[(u64, u64)], removes: &[(u64, u64)]| {
+        Command::seal(
+            RequestId([request; 16]),
+            precondition,
+            items(schema, adds, removes),
+        )
+    };
+    let proposals = [
+        Proposal {
+            command: command(1, Precondition::None, &[(1, 10), (2, 20)], &[(3, 30)]),
+            outcome: Outcome::Committed(Delta::new(2, 1).unwrap()),
+        },
+        Proposal {
+            command: command(2, Precondition::None, &[(1, 10)], &[]),
+            outcome: Outcome::NoChange,
+        },
+        Proposal {
+            command: command(3, Precondition::ExactRevision(Revision(4)), &[(4, 4)], &[]),
+            outcome: Outcome::PreconditionFailed {
+                expected: Revision(4),
+                observed: Revision(5),
+            },
+        },
+        Proposal {
+            command: command(4, Precondition::None, &[(1, 11)], &[]),
+            outcome: Outcome::InvariantRejected(Evidence::new(vec![1, 2, 3].into()).unwrap()),
+        },
+    ];
+    Batch::new(
+        Seq::new(41).unwrap(),
+        bundle().initial().fingerprint,
+        &proposals,
+    )
+    .unwrap()
+}
+
 fn entries(schema: &Schema) -> Vec<Entry> {
     let nonce = Nonce([9; 16]);
-    let command = |request: u8| CommandRef {
-        request: RequestId([request; 16]),
-        digest: CommandDigest([request.wrapping_mul(3); 32]),
-    };
     let bodies = vec![
         Body::Genesis(Genesis {
             database: DatabaseId([1; 16]),
             initial: migration_id("0000_init"),
             schema: SchemaFingerprint([2; 32]),
         }),
-        Body::Commands(
-            vec![
-                Decided {
-                    command: command(1),
-                    verdict: Verdict::Committed {
-                        changes: items(schema, &[(1, 10), (2, 20)], &[(3, 30)]),
-                        delta: Delta::new(2, 1).unwrap(),
-                    },
-                },
-                Decided {
-                    command: command(2),
-                    verdict: Verdict::NoChange,
-                },
-                Decided {
-                    command: command(3),
-                    verdict: Verdict::PreconditionFailed {
-                        expected: Revision(4),
-                        observed: Revision(5),
-                    },
-                },
-                Decided {
-                    command: command(4),
-                    verdict: Verdict::InvariantRejected(
-                        Evidence::new(vec![1, 2, 3].into()).unwrap(),
-                    ),
-                },
-            ]
-            .into(),
-        ),
+        Body::Commands(batch(schema)),
         Body::Freeze(Freeze {
             migration: migration_id("0001_tags"),
             lease_millis: 60_000,
@@ -152,14 +158,54 @@ fn sweep(valid: &[u8], decode: impl Fn(&[u8]) -> Result<Vec<u8>, FrameError>) {
     assert_eq!(decode(&extended), Err(FrameError::Trailing));
 }
 
+/// Parse an entry and every proposal it carries, then encode it again.
+fn reencode(schema: &Schema, bytes: &[u8]) -> Result<Vec<u8>, FrameError> {
+    let entry = Entry::parse(bytes)?;
+    let body = match entry.body {
+        Body::Commands(batch) => {
+            let proposals = batch.proposals(schema)?;
+            Body::Commands(Batch::new(batch.base, batch.schema, &proposals).unwrap())
+        }
+        body => body,
+    };
+    Ok(Entry {
+        nonce: entry.nonce,
+        body,
+    }
+    .encode())
+}
+
 #[test]
 fn entries_round_trip_and_refuse_hostile_bytes() {
     let schema = schema();
     for entry in entries(&schema) {
-        sweep(&entry.encode(), |bytes| {
-            Entry::parse(&schema, bytes).map(|entry| entry.encode())
-        });
+        let bytes = entry.encode();
+        assert_eq!(Entry::parse(&bytes), Ok(entry));
+        sweep(&bytes, |bytes| reencode(&schema, bytes));
     }
+}
+
+#[test]
+fn a_batch_reads_its_proposals_only_at_its_own_schema() {
+    let batch = batch(&schema());
+    let read = batch.proposals(&schema()).unwrap();
+    let requests: Vec<_> = read
+        .iter()
+        .map(|proposal| proposal.command.request())
+        .collect();
+    assert_eq!(
+        requests,
+        (1..=4).map(|r| RequestId([r; 16])).collect::<Vec<_>>()
+    );
+    assert!(matches!(
+        batch.proposals(&schema2()),
+        Err(FrameError::Changes(_))
+    ));
+    assert_eq!(
+        Batch::new(batch.base, batch.schema, &[]),
+        None,
+        "a batch is never empty"
+    );
 }
 
 #[test]
@@ -211,7 +257,7 @@ fn random_noise_never_decodes_into_a_panic() {
             let header = valid.len().min(30);
             bytes.splice(0..0, valid[..header].iter().copied());
         }
-        let _ = Entry::parse(&schema, &bytes);
+        let _ = reencode(&schema, &bytes);
         let _ = Receipt::decode(&bytes);
         let _ = Head::decode(&bytes);
         let _ = Command::parse(&schema, &bytes);
@@ -222,17 +268,15 @@ fn random_noise_never_decodes_into_a_panic() {
 fn giant_counts_are_refused_before_allocating() {
     let schema = schema();
     let mut bytes = entries(&schema)[1].encode();
-    // The family tag, the nonce and the body tag, then the command count.
-    let count = b"bdb.entry.v1\0".len() + 16 + 1;
+    // The family tag, the nonce, the body tag, the base and the schema, then
+    // the proposal count.
+    let count = b"bdb.entry.v1\0".len() + 16 + 1 + 8 + 32;
     bytes[count..count + 4].copy_from_slice(&u32::MAX.to_be_bytes());
-    assert_eq!(
-        Entry::parse(&schema, &bytes).err(),
-        Some(FrameError::Length)
-    );
+    assert_eq!(reencode(&schema, &bytes).err(), Some(FrameError::Length));
     let mut empty = entries(&schema)[1].encode();
     empty.truncate(count);
     empty.extend_from_slice(&0u32.to_be_bytes());
-    assert_eq!(Entry::parse(&schema, &empty).err(), Some(FrameError::Value));
+    assert_eq!(reencode(&schema, &empty).err(), Some(FrameError::Value));
 }
 
 #[test]
