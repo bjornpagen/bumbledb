@@ -7,15 +7,14 @@ use super::{
     StatementDescriptor, StatementId, StatementKind, StatementView, ValidateDescriptor, Value,
     ValueType, Weight,
 };
-use crate::error::{Direction, Violation, Violations};
+use crate::error::{Violation, Violations};
 
 /// One rejected commit's citation rendered as plain data — everything a
 /// bindings layer needs to show (or prompt with) the rejection: the
 /// statement's fingerprint-pinned id, its form tag, its canonical
 /// spelling (the renderer is a bijection on legal statements, so the
-/// spelling pastes back), the direction/count payloads where the form
-/// carries them, and the offending facts as named decoded values
-/// .
+/// spelling pastes back), the capacity measure, and the offending facts
+/// as named decoded values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RenderedViolation {
     Functionality {
@@ -26,7 +25,6 @@ pub enum RenderedViolation {
     Containment {
         statement: StatementId,
         spelling: String,
-        direction: Direction,
         facts: Vec<RenderedFact>,
     },
     Capacity {
@@ -71,14 +69,6 @@ impl RenderedViolation {
             Self::Functionality { facts, .. }
             | Self::Containment { facts, .. }
             | Self::Capacity { facts, .. } => facts,
-        }
-    }
-
-    #[must_use]
-    pub fn direction(&self) -> Option<Direction> {
-        match self {
-            Self::Containment { direction, .. } => Some(*direction),
-            Self::Functionality { .. } | Self::Capacity { .. } => None,
         }
     }
 
@@ -161,10 +151,9 @@ pub fn render_rejection(
                     spelling,
                     facts,
                 },
-                Violation::Containment { direction, .. } => RenderedViolation::Containment {
+                Violation::Containment { .. } => RenderedViolation::Containment {
                     statement,
                     spelling,
-                    direction: *direction,
                     facts,
                 },
                 Violation::Capacity { measure, .. } => RenderedViolation::Capacity {

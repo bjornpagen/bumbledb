@@ -378,7 +378,6 @@ fn an_fd_rejection_renders_the_key_form() {
     let rendered = render_rejection(&Graph.descriptor(), &violations);
     assert_eq!(rendered[0].kind(), StatementKind::Functionality);
     assert_eq!(rendered[0].spelling(), "Node(id) -> Node");
-    assert_eq!(rendered[0].direction(), None);
     assert_eq!(
         rendered[0].facts()[0].fields[0],
         ("id".into(), Value::U64(ids[0]))

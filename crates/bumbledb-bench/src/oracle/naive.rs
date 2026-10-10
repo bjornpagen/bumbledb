@@ -12,7 +12,7 @@ pub use tuple::Tuple;
 use std::collections::BTreeSet;
 
 use bumbledb::schema::{Bound, SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight};
-use bumbledb::{Direction, RelationId, StatementId, Value};
+use bumbledb::{RelationId, StatementId, Value};
 
 use tuple::{endpoints, overlaps};
 
@@ -37,8 +37,8 @@ pub struct Delta {
 }
 
 /// One citation of a refused write, identified exactly as the engine's commit
-/// errors identify it: a statement the final state fails (with the direction
-/// for a containment), or a delta operation naming a closed relation. A
+/// errors identify it: a statement the final state fails, or a delta operation
+/// naming a closed relation. A
 /// rejection is the complete `Vec<Violation>`: every violated statement, once,
 /// in citation order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -48,7 +48,6 @@ pub enum Violation {
     },
     Containment {
         statement: StatementId,
-        direction: Direction,
     },
 
     /// The independent model carries the witnessed source measure.
@@ -68,27 +67,15 @@ pub enum Violation {
 }
 
 impl Violation {
-    /// The citation order: statement id, then the whole statement (0) before
-    /// source (1) before target (2). `ClosedRelationWrite` sorts after every
-    /// statement citation.
+    /// The citation order: statement id, then the statement before its ray
+    /// measure. `ClosedRelationWrite` sorts after every statement citation.
     fn citation(self) -> (u16, u8, u32) {
         match self {
-            Self::Functionality { statement } | Self::Capacity { statement, .. } => {
-                (statement.0, 0, 0)
-            }
-            Self::Containment {
-                statement,
-                direction,
-            } => (
-                statement.0,
-                match direction {
-                    Direction::SourceUnsatisfied => 1,
-                    Direction::TargetRequired => 2,
-                },
-                0,
-            ),
+            Self::Functionality { statement }
+            | Self::Containment { statement }
+            | Self::Capacity { statement, .. } => (statement.0, 0, 0),
             Self::ClosedRelationWrite { relation } => (u16::MAX, u8::MAX, relation.0),
-            Self::CapacityRayMeasure { statement } => (statement.0, 3, 0),
+            Self::CapacityRayMeasure { statement } => (statement.0, 1, 0),
         }
     }
 }
@@ -234,7 +221,6 @@ impl NaiveDb {
                         {
                             found.push(Violation::Containment {
                                 statement: statement_id(sid),
-                                direction: Direction::SourceUnsatisfied,
                             });
                             break;
                         }

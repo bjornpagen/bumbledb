@@ -3,7 +3,7 @@
 //! semantics beyond the declared cell types.
 use bumbledb::schema::{IntervalElement, StatementDescriptor, ValueType};
 use bumbledb::{
-    AnswerValue, Direction, F64, Interval, RelationId, RenderedViolation, StatementId, Uuid, Value,
+    AnswerValue, F64, Interval, RelationId, RenderedViolation, StatementId, Uuid, Value,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Either, Either6, Env, FromNapiValue, Object, ToNapiValue, Uint8Array,
@@ -687,12 +687,6 @@ pub struct FactOut {
     pub fields: Vec<NamedValueOut>,
 }
 
-#[napi(string_enum)]
-pub enum DirectionOut {
-    SourceUnsatisfied,
-    TargetRequired,
-}
-
 /// One violated statement: its id, canonical spelling and the cited facts.
 #[napi(discriminant = "_tag", object_from_js = false)]
 pub enum ViolationOut {
@@ -704,7 +698,6 @@ pub enum ViolationOut {
     Containment {
         statement: u32,
         spelling: String,
-        direction: DirectionOut,
         facts: Vec<FactOut>,
     },
     /// `measure` is the grouped measure that left the capacity window.
@@ -748,15 +741,10 @@ impl From<RenderedViolation> for ViolationOut {
             RenderedViolation::Containment {
                 statement,
                 spelling,
-                direction,
                 facts,
             } => Self::Containment {
                 statement: u32::from(statement.0),
                 spelling,
-                direction: match direction {
-                    Direction::SourceUnsatisfied => DirectionOut::SourceUnsatisfied,
-                    Direction::TargetRequired => DirectionOut::TargetRequired,
-                },
                 facts: facts_out(facts),
             },
             RenderedViolation::Capacity {

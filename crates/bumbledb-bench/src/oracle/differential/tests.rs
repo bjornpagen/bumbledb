@@ -501,7 +501,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
 
 #[test]
 fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
-    use bumbledb::{Direction, StatementId};
+    use bumbledb::StatementId;
 
     use crate::oracle::naive::Violation;
 
@@ -548,7 +548,6 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
             violations,
             vec![Violation::Containment {
                 statement: StatementId(3),
-                direction: Direction::SourceUnsatisfied,
             }]
         );
     }

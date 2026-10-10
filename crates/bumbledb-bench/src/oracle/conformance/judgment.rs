@@ -1262,30 +1262,28 @@ pub fn replay_judgment_case(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use bumbledb::{Direction, StatementId};
+    use bumbledb::StatementId;
 
     use super::*;
 
     /// Verdicts compare the entire ordered statement-id list.
     #[test]
     fn lane_verdict_orders_and_dedups_the_citation_list() {
-        let both_directions = Verdict::Aborted(vec![
+        let repeated = Verdict::Aborted(vec![
             Violation::Containment {
                 statement: StatementId(1),
-                direction: Direction::SourceUnsatisfied,
             },
             Violation::Containment {
                 statement: StatementId(1),
-                direction: Direction::TargetRequired,
             },
         ]);
-        match lane_verdict("pin-both-directions", &both_directions) {
+        match lane_verdict("pin-repeated", &repeated) {
             JVerdict::Reject {
                 key_phase,
                 violations,
             } => {
                 assert!(!key_phase, "containment is the statement phase");
-                assert_eq!(violations, vec![1], "both directions are one citation");
+                assert_eq!(violations, vec![1], "a repeated statement is one citation");
             }
             JVerdict::Accept => panic!("an aborted verdict never reads accept"),
         }
@@ -1293,7 +1291,6 @@ mod tests {
         let mixed = Verdict::Aborted(vec![
             Violation::Containment {
                 statement: StatementId(1),
-                direction: Direction::SourceUnsatisfied,
             },
             Violation::Capacity {
                 statement: StatementId(2),
@@ -1332,7 +1329,7 @@ mod tests {
     }
 
     #[test]
-    fn the_both_directions_fixture_cites_two_directions() {
+    fn the_both_directions_fixture_cites_one_containment() {
         let fixture = fixtures()
             .into_iter()
             .find(|fixture| fixture.name == "judgment-containment-both-directions")
@@ -1359,22 +1356,11 @@ mod tests {
         };
         match differential::engine_write(&db, &delta) {
             Verdict::Aborted(violations) => {
-                let directions: Vec<Direction> = violations
-                    .iter()
-                    .map(|violation| match violation {
-                        Violation::Containment {
-                            statement,
-                            direction,
-                        } => {
-                            assert_eq!(statement.0, 1, "the one containment statement");
-                            *direction
-                        }
-                        other => panic!("only containment citations expected, got {other:?}"),
-                    })
-                    .collect();
                 assert_eq!(
-                    directions,
-                    [Direction::SourceUnsatisfied],
+                    violations,
+                    [Violation::Containment {
+                        statement: StatementId(1)
+                    }],
                     "one canonical final-state citation, independent of delta routing"
                 );
             }

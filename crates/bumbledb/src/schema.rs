@@ -417,12 +417,6 @@ impl Schema {
     }
 
     #[must_use]
-    #[cfg(test)]
-    pub(crate) fn cite(&self, id: StatementId) -> StatementRef {
-        self.order[usize::from(id.0)]
-    }
-
-    #[must_use]
     pub fn statement_checked(&self, id: StatementId) -> Option<StatementView<'_>> {
         self.order
             .get(usize::from(id.0))

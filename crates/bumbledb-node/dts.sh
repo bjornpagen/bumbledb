@@ -13,7 +13,7 @@ committed="$repo/ts/src/native/binding.d.ts"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-printf '{"name":"bumbledb-native","private":true,"napi":{"binaryName":"bumbledb"}}\n' \
+printf '{"name":"bumbledb-native","private":true,"napi":{"binaryName":"bdb"}}\n' \
 	>"$work/package.json"
 pnpm --silent --package=@napi-rs/cli@3.10.8 dlx napi build \
 	--manifest-path "$crate/Cargo.toml" \

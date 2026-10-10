@@ -6,7 +6,7 @@ use super::{
     encode_judged, encode_violations,
 };
 use crate::Value;
-use crate::error::{CitedFact, Direction, Violation, Violations};
+use crate::error::{CitedFact, Violation, Violations};
 use crate::schema::judge::{JudgeBudget, JudgedViolation, Judgment, MapState, judge_complete};
 use crate::schema::tests::{capacity_weighted, containment, fd, field, id_field, side};
 use crate::schema::{
@@ -117,9 +117,7 @@ fn public_violations(schema: &Schema, judged: &[JudgedViolation]) -> Violations 
             );
             let typed = match violation.kind {
                 StatementKind::Functionality => Violation::functionality(reference, fact),
-                StatementKind::Containment => {
-                    Violation::containment(reference, Direction::SourceUnsatisfied, fact)
-                }
+                StatementKind::Containment => Violation::containment(reference, fact),
                 StatementKind::Capacity => {
                     Violation::capacity(reference, fact, violation.measure.unwrap_or(0))
                 }
@@ -168,10 +166,6 @@ fn judge_output_round_trips_through_the_canonical_evidence_codec() {
         .collect();
     assert_eq!(ids, vec![StatementId(1), StatementId(2), StatementId(3)]);
     assert_eq!(evidence.violations()[2].measure, Some(2));
-    assert_eq!(
-        evidence.violations()[1].direction,
-        Some(Direction::SourceUnsatisfied)
-    );
 }
 
 /// Replay determinism (the log compares recorded evidence byte for byte):
@@ -354,7 +348,7 @@ fn skeleton_overflow_refuses_before_deciding() {
 
     // With exactly the skeleton budget, encoding succeeds with zero
     // examples, every flag labeled truncated where facts existed.
-    let skeleton = H + 7 + (2 + 1 + 1 + 4) /* key */ + (2 + 1 + 1 + 1 + 4) /* containment */
+    let skeleton = H + 7 + (2 + 1 + 1 + 4) /* key */ + (2 + 1 + 1 + 4) /* containment */
         + (2 + 1 + 16 + 1 + 4) /* capacity */;
     let bytes = encode_judged(&schema, &judged, skeleton, &work()).expect("skeleton fits");
     assert_eq!(bytes.len(), skeleton);
@@ -572,32 +566,6 @@ fn interpretation_refuses_foreign_schema_data() {
             relation: RelationId(99)
         })
     ));
-
-    // A target-required direction is representable evidence (the public
-    // Direction has the arm) but is never judge output: to_judged refuses,
-    // to_violations carries it faithfully.
-    let target_required = Violations::from_pairs(Box::from([(
-        Violation::containment(
-            schema.cite(StatementId(2)),
-            Direction::TargetRequired,
-            Box::<[u8]>::from([]),
-        ),
-        Box::<[CitedFact]>::from([]),
-    )]));
-    let bytes = encode_violations(&schema, &target_required, BUDGET, &work()).expect("encodes");
-    let evidence = decode(&bytes, BUDGET).expect("decodes");
-    assert!(matches!(
-        evidence.to_judged(&schema, &work()),
-        Err(EvidenceInterpretError::ForeignDirection {
-            statement: StatementId(2)
-        })
-    ));
-    assert_eq!(
-        evidence
-            .to_violations(&schema, &work())
-            .expect("interprets"),
-        target_required
-    );
 }
 
 /// Total input refusals: an empty verdict, unsorted statements and the

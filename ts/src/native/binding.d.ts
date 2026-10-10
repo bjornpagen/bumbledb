@@ -237,8 +237,6 @@ export type DbOpened =
   | { _tag: 'FingerprintMismatch'; message: string }
   | { _tag: 'DestinationExists'; message: string }
 
-export type DirectionOut = 'SourceUnsatisfied' | 'TargetRequired'
-
 export interface DoneOut {
   ticket: bigint
   settled: SettledOut
@@ -984,7 +982,7 @@ export type ValueTypeOut =
 /** One violated statement: its id, canonical spelling and the cited facts. */
 export type ViolationOut =
   | { _tag: 'Functionality'; statement: number; spelling: string; facts: Array<FactOut> }
-  | { _tag: 'Containment'; statement: number; spelling: string; direction: DirectionOut; facts: Array<FactOut> }
+  | { _tag: 'Containment'; statement: number; spelling: string; facts: Array<FactOut> }
   | { _tag: 'Capacity'; statement: number; spelling: string; measure: bigint; facts: Array<FactOut> }
 
 export type WeightOut =

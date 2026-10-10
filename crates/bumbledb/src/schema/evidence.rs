@@ -5,12 +5,12 @@
 //! decode refuses foreign families, unsorted statements and trailing bytes.
 
 use crate::canonical::{CanonicalRow, RowError};
-use crate::error::{CitedFact, Direction, Violation, Violations};
+use crate::error::{CitedFact, Violation, Violations};
 use crate::work::WorkError;
 use crate::{Value, WorkContext};
 
 #[cfg(test)]
-use super::judge::{CandidateFact, JudgedDirection, JudgedViolation};
+use super::judge::{CandidateFact, JudgedViolation};
 use super::{RelationId, Schema, StatementId, StatementKind, StatementRef, StatementView};
 
 /// The evidence frame's family magic. Unique to this codec — no command,
@@ -26,9 +26,6 @@ const EVIDENCE: u8 = 1;
 const TAG_FUNCTIONALITY: u8 = 0;
 const TAG_CONTAINMENT: u8 = 1;
 const TAG_CAPACITY: u8 = 2;
-
-const DIRECTION_SOURCE: u8 = 0;
-const DIRECTION_TARGET: u8 = 1;
 
 /// `family ‖ layout(u16) ‖ kind(u8) ‖ violation count(u32)`.
 const HEADER_LEN: usize = FAMILY.len() + 2 + 1 + 4;
@@ -147,11 +144,6 @@ pub enum EvidenceInterpretError {
     ForeignRelation {
         relation: RelationId,
     },
-    /// `to_judged` only: the judge never produces a target-required
-    /// direction, so such evidence cannot be judge output.
-    ForeignDirection {
-        statement: StatementId,
-    },
 }
 
 impl From<WorkError> for EvidenceInterpretError {
@@ -176,15 +168,13 @@ pub struct EvidenceFact {
 }
 
 /// One violated statement as decoded evidence: the stable
-/// materialized-order identity, the kind tag, the containment direction,
+/// materialized-order identity, the kind tag,
 /// the exact widened capacity measure, bounded examples and the
 /// truncation label.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidenceViolation {
     pub statement: StatementId,
     pub kind: StatementKind,
-    /// Present exactly for containment violations.
-    pub direction: Option<Direction>,
     /// Present exactly for capacity violations: the exact widened total of
     /// the witnessed violating group, untruncated.
     pub measure: Option<u128>,
@@ -213,8 +203,8 @@ impl ViolationEvidence {
     /// [`encode_judged`] when the byte budget dropped no example.
     ///
     /// # Errors
-    /// Refuses evidence foreign to `schema`, a target-required direction
-    /// (never judge output), malformed example rows, or stopped work.
+    /// Refuses evidence foreign to `schema`, malformed example rows, or
+    /// stopped work.
     #[cfg(test)]
     pub(crate) fn to_judged(
         &self,
@@ -227,19 +217,6 @@ impl ViolationEvidence {
         for violation in &self.violations {
             work.checkpoint()?;
             check_statement(schema, violation)?;
-            let direction = match violation.kind {
-                StatementKind::Containment => match violation.direction {
-                    Some(Direction::SourceUnsatisfied) | None => {
-                        Some(JudgedDirection::SourceUnsatisfied)
-                    }
-                    Some(Direction::TargetRequired) => {
-                        return Err(EvidenceInterpretError::ForeignDirection {
-                            statement: violation.statement,
-                        });
-                    }
-                },
-                StatementKind::Functionality | StatementKind::Capacity => None,
-            };
             let mut examples = Vec::new();
             examples
                 .try_reserve_exact(violation.examples.len())
@@ -254,7 +231,6 @@ impl ViolationEvidence {
             out.push(JudgedViolation {
                 statement: violation.statement,
                 kind: violation.kind,
-                direction,
                 measure: violation.measure,
                 examples: examples.into_boxed_slice(),
                 examples_truncated: violation.examples_truncated,
@@ -305,11 +281,7 @@ impl ViolationEvidence {
                 .map_or_else(|| Box::<[u8]>::from([]), |example| example.fact.clone());
             let typed = match violation.kind {
                 StatementKind::Functionality => Violation::functionality(reference, fact),
-                StatementKind::Containment => Violation::containment(
-                    reference,
-                    violation.direction.unwrap_or(Direction::SourceUnsatisfied),
-                    fact,
-                ),
+                StatementKind::Containment => Violation::containment(reference, fact),
                 StatementKind::Capacity => {
                     Violation::capacity(reference, fact, violation.measure.unwrap_or(0))
                 }
@@ -386,7 +358,6 @@ fn decode_example(
 struct Part {
     statement: StatementId,
     kind: StatementKind,
-    direction: Option<Direction>,
     measure: Option<u128>,
     judge_truncated: bool,
     examples: Vec<(RelationId, CanonicalRow)>,
@@ -396,8 +367,7 @@ impl Part {
     fn fixed_len(&self) -> usize {
         VIOLATION_FIXED_LEN
             + match self.kind {
-                StatementKind::Functionality => 0,
-                StatementKind::Containment => 1,
+                StatementKind::Functionality | StatementKind::Containment => 0,
                 StatementKind::Capacity => 16,
             }
     }
@@ -429,10 +399,9 @@ pub fn encode_violations(
     for (index, (violation, cited)) in violations.citations().enumerate() {
         work.checkpoint()?;
         let (statement, kind) = statement_slot(schema, violation.statement())?;
-        let (direction, measure) = match violation {
-            Violation::Functionality { .. } => (None, None),
-            Violation::Containment { direction, .. } => (Some(*direction), None),
-            Violation::Capacity { measure, .. } => (None, Some(*measure)),
+        let measure = match violation {
+            Violation::Functionality { .. } | Violation::Containment { .. } => None,
+            Violation::Capacity { measure, .. } => Some(*measure),
         };
         let mut examples = Vec::new();
         examples
@@ -449,7 +418,6 @@ pub fn encode_violations(
         parts.push(Part {
             statement,
             kind,
-            direction,
             measure,
             // The judge's own per-statement label, preserved across the
             // public boundary by `api::db`'s rejection bridge.
@@ -479,12 +447,6 @@ pub(crate) fn encode_judged(
         .map_err(|_| EvidenceError::Allocation)?;
     for violation in judged {
         work.checkpoint()?;
-        let direction = match violation.kind {
-            StatementKind::Containment => Some(match violation.direction {
-                Some(JudgedDirection::SourceUnsatisfied) | None => Direction::SourceUnsatisfied,
-            }),
-            StatementKind::Functionality | StatementKind::Capacity => None,
-        };
         let measure = match violation.kind {
             StatementKind::Capacity => Some(violation.measure.unwrap_or(0)),
             StatementKind::Functionality | StatementKind::Containment => None,
@@ -504,7 +466,6 @@ pub(crate) fn encode_judged(
         parts.push(Part {
             statement: violation.statement,
             kind: violation.kind,
-            direction,
             measure,
             judge_truncated: violation.examples_truncated,
             examples,
@@ -623,19 +584,11 @@ fn encode_parts(
         let kept = part.examples.len().min(keep);
         out.extend_from_slice(&part.statement.0.to_be_bytes());
         // The detail slots are kind-driven so the writer and the sizing
-        // arithmetic agree by construction (a containment always carries
-        // its direction byte, a capacity always its measure word).
+        // arithmetic agree by construction (a capacity always carries its
+        // measure word).
         match part.kind {
             StatementKind::Functionality => out.push(TAG_FUNCTIONALITY),
-            StatementKind::Containment => {
-                out.push(TAG_CONTAINMENT);
-                out.push(
-                    match part.direction.unwrap_or(Direction::SourceUnsatisfied) {
-                        Direction::SourceUnsatisfied => DIRECTION_SOURCE,
-                        Direction::TargetRequired => DIRECTION_TARGET,
-                    },
-                );
-            }
+            StatementKind::Containment => out.push(TAG_CONTAINMENT),
             StatementKind::Capacity => {
                 out.push(TAG_CAPACITY);
                 out.extend_from_slice(&part.measure.unwrap_or(0).to_be_bytes());
@@ -732,20 +685,12 @@ pub fn decode(bytes: &[u8], max_bytes: usize) -> Result<ViolationEvidence, Evide
         previous = Some(statement);
         let at = input.at;
         let tag = input.array::<1>()?[0];
-        let (kind, direction, measure) = match tag {
-            TAG_FUNCTIONALITY => (StatementKind::Functionality, None, None),
-            TAG_CONTAINMENT => {
-                let at = input.at;
-                let direction = match input.array::<1>()?[0] {
-                    DIRECTION_SOURCE => Direction::SourceUnsatisfied,
-                    DIRECTION_TARGET => Direction::TargetRequired,
-                    got => return Err(EvidenceDecodeError::Tag { at, got }),
-                };
-                (StatementKind::Containment, Some(direction), None)
-            }
+        let (kind, measure) = match tag {
+            TAG_FUNCTIONALITY => (StatementKind::Functionality, None),
+            TAG_CONTAINMENT => (StatementKind::Containment, None),
             TAG_CAPACITY => {
                 let measure = u128::from_be_bytes(input.array()?);
-                (StatementKind::Capacity, None, Some(measure))
+                (StatementKind::Capacity, Some(measure))
             }
             got => return Err(EvidenceDecodeError::Tag { at, got }),
         };
@@ -779,7 +724,6 @@ pub fn decode(bytes: &[u8], max_bytes: usize) -> Result<ViolationEvidence, Evide
         violations.push(EvidenceViolation {
             statement,
             kind,
-            direction,
             measure,
             examples: examples.into_boxed_slice(),
             examples_truncated: truncated,

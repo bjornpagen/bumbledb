@@ -104,27 +104,11 @@ pub struct Atom {
     pub bindings: Vec<(FieldId, Term)>,
 }
 
-/// Aggregate operators.
-/// The fold domain of every aggregate is the group's set of distinct full
-/// bindings over all query variables; the group key is the values of the
-/// non-aggregated find variables. Across rules the domain splits by
-/// provenance: a DNF-derived rule set keeps the written rule's full binding
-/// set (surface `or` is fold-transparent), while a hand-written multi-rule
-/// query folds the union of the rules' vocabulary, with the fold-free nullary
-/// `Count` refused there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AggOp {
-    Sum,
-    Mean,
-    Min,
-    Max,
-    Count,
-    Pack,
-}
-
 /// A fold over a variable: `Sum`/`Mean`/`Min`/`Max`. Nullary [`FindTerm::Count`]
-/// and coalescing [`FindTerm::Pack`] are sibling constructors — Count-with-
-/// variable and Sum-without are unrepresentable.
+/// and coalescing [`FindTerm::Pack`] are sibling constructors, so Count with a
+/// variable and Sum without one are unrepresentable. A fold's domain is the
+/// group's set of distinct full bindings; the group key is the values of the
+/// non-aggregated find variables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FoldOp {
     Sum,
@@ -190,8 +174,8 @@ impl FindTerm {
     }
 }
 
-/// The aggregate-op kind at a head position: [`AggOp`] with its rule-scoped
-/// variables stripped. Rules supply the variables; validation checks each
+/// The aggregate-op kind at a head position, without the rule-scoped
+/// variables. Rules supply the variables; validation checks each
 /// rule's find term against the head's op kind position by position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadOp {
@@ -201,20 +185,6 @@ pub enum HeadOp {
     Max,
     Count,
     Pack,
-}
-
-impl AggOp {
-    #[must_use]
-    pub fn head_op(self) -> HeadOp {
-        match self {
-            Self::Sum => HeadOp::Sum,
-            Self::Mean => HeadOp::Mean,
-            Self::Min => HeadOp::Min,
-            Self::Max => HeadOp::Max,
-            Self::Count => HeadOp::Count,
-            Self::Pack => HeadOp::Pack,
-        }
-    }
 }
 
 /// One head position: the find shape every rule must project at this

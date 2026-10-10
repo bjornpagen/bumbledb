@@ -2,7 +2,7 @@ use bumbledb::schema::{
     FieldId, IntervalElement, RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor,
     ValueType,
 };
-use bumbledb::{Direction, RelationId, StatementId, Value};
+use bumbledb::{RelationId, StatementId, Value};
 
 use crate::fixture::{field, side};
 use crate::oracle::naive::{Delta, NaiveDb, Violation};
@@ -33,14 +33,12 @@ fn functionality(statement: u16) -> Violation {
 fn source_unsatisfied(statement: u16) -> Violation {
     Violation::Containment {
         statement: StatementId(statement),
-        direction: Direction::SourceUnsatisfied,
     }
 }
 
 fn target_required(statement: u16) -> Violation {
     Violation::Containment {
         statement: StatementId(statement),
-        direction: Direction::SourceUnsatisfied,
     }
 }
 

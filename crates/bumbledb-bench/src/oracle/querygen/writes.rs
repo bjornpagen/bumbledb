@@ -1,4 +1,4 @@
-use bumbledb::{Direction, RelationId, Value};
+use bumbledb::{RelationId, Value};
 
 use crate::oracle::naive::Violation;
 use crate::oracle::querygen::target::{self, ids};
@@ -87,7 +87,6 @@ fn case(kind: ClosedWriteKind, rng: &mut Rng, index: usize) -> ClosedWriteCase {
                 delete: false,
                 expected: Violation::Containment {
                     statement: target::VOCAB_SOURCE,
-                    direction: Direction::SourceUnsatisfied,
                 },
             }
         }
@@ -106,7 +105,6 @@ fn case(kind: ClosedWriteKind, rng: &mut Rng, index: usize) -> ClosedWriteCase {
                 delete: false,
                 expected: Violation::Containment {
                     statement: target::CASH_ROUNDING_SUBSET,
-                    direction: Direction::SourceUnsatisfied,
                 },
             }
         }

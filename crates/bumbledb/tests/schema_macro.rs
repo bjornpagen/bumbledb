@@ -931,7 +931,6 @@ mod discriminated_union {
 }
 
 mod keyed_equality {
-    use bumbledb::error::Direction;
     use bumbledb::schema::StatementId;
     use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::{Db, Theory, Violation};
@@ -953,7 +952,7 @@ mod keyed_equality {
         expected: StatementId,
     ) {
         let violations = crate::common::expect_rejected(result);
-        let [(Violation::Containment { direction, .. }, _)] = violations.as_slice() else {
+        let [(Violation::Containment { .. }, _)] = violations.as_slice() else {
             panic!("expected one containment violation, got {violations:?}");
         };
         let schema = KeyedEquality
@@ -961,7 +960,6 @@ mod keyed_equality {
             .validate()
             .expect("the test schema is valid");
         assert_eq!(violations.get(0).unwrap().statement_id(&schema), expected);
-        assert_eq!(*direction, Direction::SourceUnsatisfied);
     }
 
     #[test]
@@ -1653,7 +1651,6 @@ mod fixed_width_intervals {
 
 mod element_domain_typing {
     //! Interval positions carry an element domain; width is a refinement.
-    use bumbledb::error::Direction;
     use bumbledb::ir::{
         Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, VarId,
     };
@@ -1743,16 +1740,7 @@ mod element_domain_typing {
             Ok(())
         }));
         assert!(
-            matches!(
-                violations.as_slice(),
-                [(
-                    Violation::Containment {
-                        direction: Direction::SourceUnsatisfied,
-                        ..
-                    },
-                    _
-                )]
-            ),
+            matches!(violations.as_slice(), [(Violation::Containment { .. }, _)]),
             "the uncovered span point convicts the coverage direction, got {violations:?}"
         );
     }
@@ -1801,16 +1789,7 @@ mod element_domain_typing {
             }])
         }));
         assert!(
-            matches!(
-                violations.as_slice(),
-                [(
-                    Violation::Containment {
-                        direction: Direction::SourceUnsatisfied,
-                        ..
-                    },
-                    _
-                )]
-            ),
+            matches!(violations.as_slice(), [(Violation::Containment { .. }, _)]),
             "the uncovered slot convicts the slot-side coverage, got {violations:?}"
         );
     }

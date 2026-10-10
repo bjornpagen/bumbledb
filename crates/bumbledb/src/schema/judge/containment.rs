@@ -5,8 +5,8 @@ use std::ops::ControlFlow::{self, Break, Continue};
 
 use super::grouped::GroupedMap;
 use super::{
-    DeltaFacts, Facts, Indexed, Judge, JudgedDirection, PendingViolation, encode_projection,
-    encode_values, interval_order_words, mark_delta_groups, parse_span_key, satisfies, span_key,
+    DeltaFacts, Facts, Indexed, Judge, PendingViolation, encode_projection, encode_values,
+    interval_order_words, mark_delta_groups, parse_span_key, satisfies, span_key,
 };
 use crate::Value;
 use crate::WorkContext;
@@ -28,7 +28,6 @@ fn coverage_position(schema: &Schema, statement: &ContainmentStatement) -> Optio
 impl Judge<'_, '_> {
     fn containment_pending(&self, statement: &ContainmentStatement) -> PendingViolation {
         self.pending(statement.id, StatementKind::Containment)
-            .with_direction(JudgedDirection::SourceUnsatisfied)
     }
 
     pub(super) fn containment<S: Facts>(

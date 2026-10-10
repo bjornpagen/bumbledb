@@ -7,8 +7,8 @@ use std::fmt;
 use crate::schema::{Schema, render};
 
 use super::{
-    CorruptionError, Direction, DynIdError, Error, FactShapeError, IoFailure, LmdbFailure,
-    Violation, Violations,
+    CorruptionError, DynIdError, Error, FactShapeError, IoFailure, LmdbFailure, Violation,
+    Violations,
 };
 
 impl fmt::Display for IoFailure {
@@ -44,32 +44,11 @@ impl Violation {
         }
     }
 
-    fn side(&self) -> &'static str {
-        match self {
-            Self::Containment {
-                direction: Direction::SourceUnsatisfied,
-                ..
-            } => " (source side)",
-            Self::Containment {
-                direction: Direction::TargetRequired,
-                ..
-            } => " (target side)",
-            Self::Functionality { .. } | Self::Capacity { .. } => "",
-        }
-    }
-
     /// The factual tail after the em-dash: what happened.
     fn tail(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Functionality { .. } => write!(f, "two live facts claim one key"),
-            Self::Containment {
-                direction: Direction::SourceUnsatisfied,
-                ..
-            } => write!(f, "an inserted source fact has no target"),
-            Self::Containment {
-                direction: Direction::TargetRequired,
-                ..
-            } => write!(f, "a deleted target key is still required"),
+            Self::Containment { .. } => write!(f, "a source fact has no target"),
             Self::Capacity { measure, .. } => write!(
                 f,
                 "a parent's child-group measure ({measure}) falls outside the window"
@@ -323,12 +302,7 @@ impl fmt::Display for ViolationsDisplayWith<'_> {
                 write!(f, "; ")?;
             }
             let rendered = render::render(self.schema, violation.statement_id(self.schema));
-            write!(
-                f,
-                "{} violated{}: `{rendered}` — ",
-                violation.law(),
-                violation.side()
-            )?;
+            write!(f, "{} violated: `{rendered}` — ", violation.law())?;
             violation.tail(f)?;
         }
         Ok(())

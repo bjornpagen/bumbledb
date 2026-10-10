@@ -8,9 +8,7 @@ use bumbledb::ir::{
 };
 use bumbledb::schema::FieldId;
 use bumbledb::schema::ValidateDescriptor as _;
-use bumbledb::{
-    AnswerValue, Answers, BindValue, Db, Direction, Fact, ParamArg, StatementId, Theory,
-};
+use bumbledb::{AnswerValue, Answers, BindValue, Db, Fact, ParamArg, StatementId, Theory};
 
 mod common;
 
@@ -514,16 +512,7 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
             balance: 5,
         }])
     }));
-    let [
-        (
-            bumbledb::Violation::Containment {
-                direction: Direction::SourceUnsatisfied,
-                ..
-            },
-            _,
-        ),
-    ] = violations.as_slice()
-    else {
+    let [(bumbledb::Violation::Containment { .. }, _)] = violations.as_slice() else {
         panic!("expected one source-unsatisfied citation, got {violations:?}");
     };
     assert_eq!(
@@ -552,21 +541,9 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
             name: "alice",
         }])
     }));
-    let [
-        (
-            bumbledb::Violation::Containment {
-                direction, fact, ..
-            },
-            _,
-        ),
-    ] = violations.as_slice()
-    else {
+    let [(bumbledb::Violation::Containment { fact, .. }, _)] = violations.as_slice() else {
         panic!("expected one containment citation, got {violations:?}");
     };
-    // Final-state semantics: deleting the referenced holder leaves the
-    // account SOURCE-unsatisfied — the one direction the judge speaks
-    // (which command moved is not part of the verdict).
-    assert_eq!(*direction, Direction::SourceUnsatisfied);
     assert!(
         !fact.is_empty(),
         "the requiring source is named by its fact"

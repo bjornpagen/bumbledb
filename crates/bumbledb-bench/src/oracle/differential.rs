@@ -126,9 +126,8 @@ pub fn cited(violations: &bumbledb::Violations, schema: &Schema) -> Vec<Violatio
             bumbledb::Violation::Functionality { .. } => Violation::Functionality {
                 statement: violation.statement_id(schema),
             },
-            bumbledb::Violation::Containment { direction, .. } => Violation::Containment {
+            bumbledb::Violation::Containment { .. } => Violation::Containment {
                 statement: violation.statement_id(schema),
-                direction: *direction,
             },
             bumbledb::Violation::Capacity { measure, .. } => Violation::Capacity {
                 statement: violation.statement_id(schema),

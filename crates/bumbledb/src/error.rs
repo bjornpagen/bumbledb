@@ -124,17 +124,6 @@ impl From<DynIdError> for FactShapeError {
     }
 }
 
-/// Which side of a containment statement the commit-time judgment found
-/// unsatisfied.
-/// `Ord` is citation order: within one statement cited in both
-/// directions, source before target ([`Violations`]' sort key).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Direction {
-    SourceUnsatisfied,
-
-    TargetRequired,
-}
-
 /// Theory rejection inside a successful outer [`Result`]: the candidate
 /// formed correctly and either holds or fails the declared theory.
 /// Infrastructure failure stays `Err(Error)`; an unadmitted value cannot
@@ -184,10 +173,9 @@ pub enum Violation {
         fact: Box<[u8]>,
     },
 
+    /// A source fact with no matching target fact.
     Containment {
         statement: StatementRef,
-        direction: Direction,
-
         fact: Box<[u8]>,
     },
 
@@ -207,16 +195,8 @@ impl Violation {
         Self::Functionality { statement, fact }
     }
 
-    pub(crate) fn containment(
-        statement: StatementRef,
-        direction: Direction,
-        fact: Box<[u8]>,
-    ) -> Self {
-        Self::Containment {
-            statement,
-            direction,
-            fact,
-        }
+    pub(crate) fn containment(statement: StatementRef, fact: Box<[u8]>) -> Self {
+        Self::Containment { statement, fact }
     }
 
     pub(crate) fn capacity(statement: StatementRef, fact: Box<[u8]>, measure: u128) -> Self {
@@ -307,19 +287,6 @@ pub struct Violations {
 }
 
 impl Violations {
-    #[cfg(test)]
-    pub(crate) fn from_pairs(citations: CitedCitations) -> Self {
-        debug_assert!(
-            !citations.is_empty(),
-            "a sealed rejection is nonempty by construction"
-        );
-        let truncated = vec![false; citations.len()].into_boxed_slice();
-        Self {
-            citations,
-            truncated,
-        }
-    }
-
     /// As [`Self::from_pairs`], carrying the judge's per-statement
     /// example-truncation labels (one per citation, same order). The label
     /// says "offending facts exist beyond the cited examples"; the verdict

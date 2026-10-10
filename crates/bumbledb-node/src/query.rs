@@ -63,7 +63,7 @@ pub(crate) fn query_diagnostic(error: &ValidationError) -> QueryDiagnostic {
         | E::NoPositiveAtoms
         | E::Unplannable => {}
         E::Rec(why) => out.refusal = Some(refusal(why)),
-        E::ScalarExpression { find, .. } | E::AggregateInputType { find } => {
+        E::ScalarExpression { find, .. } => {
             out.find = Some(at(find.0));
         }
         E::Aggregate { find, refusal: why } => {
@@ -103,7 +103,6 @@ pub(crate) fn query_diagnostic(error: &ValidationError) -> QueryDiagnostic {
             out.var = Some(u32::from(var.0));
             out.refusal = Some(refusal(why));
         }
-        E::ParamIdGap { param } => out.param = Some(u32::from(param.0)),
         E::Param {
             param,
             refusal: why,

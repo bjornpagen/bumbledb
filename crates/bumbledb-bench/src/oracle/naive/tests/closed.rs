@@ -1,7 +1,7 @@
 use bumbledb::schema::{
     FieldId, RelationDescriptor, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
-use bumbledb::{Direction, RelationId, StatementId, Value};
+use bumbledb::{RelationId, StatementId, Value};
 
 use crate::fixture::{field, side};
 use crate::oracle::naive::{Delta, NaiveDb, Tuple, Violation};
@@ -164,7 +164,6 @@ fn the_psi_subset_judges_from_the_extension() {
                 verdict,
                 Err(vec![Violation::Containment {
                     statement: ESCALATION_SEVERITY,
-                    direction: Direction::SourceUnsatisfied,
                 }]),
                 "escalation {id} is outside ψ"
             );
@@ -176,7 +175,6 @@ fn the_psi_subset_judges_from_the_extension() {
         db.apply(&insert(ESCALATION, vec![Value::U64(300)])),
         Err(vec![Violation::Containment {
             statement: ESCALATION_SEVERITY,
-            direction: Direction::SourceUnsatisfied,
         }]),
     );
 
@@ -193,7 +191,6 @@ fn the_psi_subset_judges_from_the_extension() {
                 violation,
                 vec![Violation::Containment {
                     statement: ALERT_SEVERITY,
-                    direction: Direction::SourceUnsatisfied,
                 }]
             );
         }
@@ -213,7 +210,6 @@ fn domain_quantification_judges_target_side() {
         }),
         Err(vec![Violation::Containment {
             statement: SEVERITY_HANDLED,
-            direction: Direction::SourceUnsatisfied,
         }]),
     );
     assert_eq!(db, before, "the abort must not apply");
@@ -232,7 +228,6 @@ fn complete_admission_rejects_unhandled_closed_source() {
         db.judge_complete(),
         vec![Violation::Containment {
             statement: SEVERITY_HANDLED,
-            direction: Direction::SourceUnsatisfied,
         }],
         "closed Low/Med/High have no handlers — L5 lifts the incremental fence"
     );

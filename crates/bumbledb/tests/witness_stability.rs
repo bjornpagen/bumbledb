@@ -1,7 +1,7 @@
 //! Rejection evidence must retain canonical ordering across insertion and
 //! probe orders. Compare complete verdict values, including witnesses.
 use bumbledb::schema::ValidateDescriptor as _;
-use bumbledb::{Db, Direction, Theory, Violation, Violations};
+use bumbledb::{Db, Theory, Violation, Violations};
 
 fn world_schema() -> bumbledb::Schema {
     WitnessWorld
@@ -157,7 +157,6 @@ fn the_sealed_citation_list_is_call_order_invariant() {
         (
             Violation::Containment {
                 statement: src_stmt,
-                direction: Direction::SourceUnsatisfied,
                 ..
             },
             _,
@@ -239,17 +238,7 @@ fn the_source_witness_is_the_canonical_least_violator() {
     };
     let violations = run("witness-key-least-fwd", false);
     assert_eq!(violations, run("witness-key-least-rev", true));
-    let [
-        (
-            Violation::Containment {
-                direction: Direction::SourceUnsatisfied,
-                fact,
-                ..
-            },
-            _,
-        ),
-    ] = violations.as_slice()
-    else {
+    let [(Violation::Containment { fact, .. }, _)] = violations.as_slice() else {
         panic!("expected one source citation, got {violations:?}");
     };
     let (id, parent) = expected;
@@ -290,17 +279,7 @@ fn citation_examples_are_canonical_least_not_insertion_order() {
     let forward = run("witness-canonical-order-fwd", false);
     let reverse = run("witness-canonical-order-rev", true);
     assert_eq!(forward, reverse, "insertion order must not reach citations");
-    let [
-        (
-            Violation::Containment {
-                direction: Direction::SourceUnsatisfied,
-                fact,
-                ..
-            },
-            _,
-        ),
-    ] = forward.as_slice()
-    else {
+    let [(Violation::Containment { fact, .. }, _)] = forward.as_slice() else {
         panic!("expected one containment citation, got {forward:?}");
     };
     let (least_id, least_parent) = (9100, 800);
@@ -372,17 +351,7 @@ fn the_target_witness_is_the_first_committed_survivor() {
     // Final-state semantics: deleting the target leaves its sources
     // unsatisfied — the one direction the judge speaks. The witness is the
     // canonical-least surviving source (child 600).
-    let [
-        (
-            Violation::Containment {
-                direction: Direction::SourceUnsatisfied,
-                fact,
-                ..
-            },
-            _,
-        ),
-    ] = violations.as_slice()
-    else {
+    let [(Violation::Containment { fact, .. }, _)] = violations.as_slice() else {
         panic!("expected one containment citation, got {violations:?}");
     };
     assert_eq!(

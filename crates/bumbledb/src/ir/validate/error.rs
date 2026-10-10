@@ -60,9 +60,6 @@ pub enum ValidationError {
         var: VarId,
         refusal: VariableRefusal,
     },
-    ParamIdGap {
-        param: ParamId,
-    },
     Param {
         param: ParamId,
         refusal: ParamRefusal,
@@ -76,9 +73,6 @@ pub enum ValidationError {
         index: usize,
     },
     NoPositiveAtoms,
-    AggregateInputType {
-        find: FindIndex,
-    },
     Aggregate {
         find: FindIndex,
         refusal: AggregateRefusal,
@@ -308,9 +302,6 @@ impl fmt::Display for ValidationError {
                     }
                 }
             }
-            Self::ParamIdGap { param } => {
-                write!(f, "parameter ids are not dense: {} is unused", param.0)
-            }
             Self::Param { param, refusal } => {
                 let param = param.0;
                 match refusal {
@@ -380,10 +371,6 @@ impl fmt::Display for ValidationError {
             Self::EmptyFinds => write!(f, "the find list is empty"),
             Self::DuplicateFindTerm { index } => write!(f, "find term {index} is a duplicate"),
             Self::NoPositiveAtoms => write!(f, "the query has no positive atoms"),
-            Self::AggregateInputType { find } => write!(
-                f,
-                "find {find}: aggregate input outside the fold's type roster"
-            ),
             Self::Aggregate { find, refusal } => match refusal {
                 AggregateRefusal::InputType => write!(
                     f,

@@ -147,20 +147,12 @@ pub(crate) struct CandidateFact {
     pub(crate) values: Box<[Value]>,
 }
 
-/// The side of a containment that failed: the judge evaluates each one-way
-/// statement, so it is always the source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum JudgedDirection {
-    SourceUnsatisfied,
-}
-
 /// One violated statement with its bounded examples; `examples_truncated`
 /// says more offending facts exist beyond the budget.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct JudgedViolation {
     pub(crate) statement: StatementId,
     pub(crate) kind: StatementKind,
-    pub(crate) direction: Option<JudgedDirection>,
     /// A capacity violation's exact widened measure: that of the last
     /// violating group in logical target order.
     pub(crate) measure: Option<u128>,
@@ -404,7 +396,6 @@ impl<'s, 'w> Judge<'s, 'w> {
             self.violations.push(JudgedViolation {
                 statement: pending.statement,
                 kind: pending.kind,
-                direction: pending.direction,
                 measure: pending.measure,
                 examples,
                 examples_truncated: truncated,
@@ -416,7 +407,6 @@ impl<'s, 'w> Judge<'s, 'w> {
 struct PendingViolation {
     statement: StatementId,
     kind: StatementKind,
-    direction: Option<JudgedDirection>,
     measure: Option<u128>,
     measure_rank: Option<u64>,
     citations: CitationTopK,
@@ -428,17 +418,11 @@ impl PendingViolation {
         Self {
             statement,
             kind,
-            direction: None,
             measure: None,
             measure_rank: None,
             citations: CitationTopK::new(budget),
             violated: false,
         }
-    }
-
-    fn with_direction(mut self, direction: JudgedDirection) -> Self {
-        self.direction = Some(direction);
-        self
     }
 
     fn record_measure_at(&mut self, rank: u64, measure: u128) {

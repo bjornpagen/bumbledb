@@ -67,8 +67,6 @@ pub(crate) mod plan;
 pub mod scalar;
 pub mod schema;
 pub(crate) mod storage;
-#[cfg(test)]
-use storage::store;
 mod verify_store;
 pub mod work;
 
@@ -89,8 +87,8 @@ pub use bumbledb_theory::interval::SegmentOp;
 pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Uuid};
 pub use changes::{ChangeError, ChangeSet, ChangeSetBuilder};
 pub use error::{
-    Admission, Capacity, CorruptionError, Counter, Direction, Error, ErrorKind, Exceeded,
-    HostKeyFault, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation, Violations,
+    Admission, Capacity, CorruptionError, Counter, Error, ErrorKind, Exceeded, HostKeyFault,
+    IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation, Violations,
 };
 pub use exec::kernel::numeric::{F64Math, FloatCardinalityOverflow, NonDefaultFloatEnvironment};
 pub use interval::{Discrete, Element, FloatMeasureError, Interval};
@@ -111,7 +109,7 @@ pub mod kernels {
 }
 
 pub use ir::{
-    AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, HeadOp, HeadTerm,
+    Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, HeadOp, HeadTerm,
     Interior, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, NonEmpty, OrderCmp, ParamId,
     ProjectionRule, Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId, WordCmp,
 };
@@ -205,7 +203,9 @@ pub(crate) mod testutil {
     use crate::error::{Result, Violations};
 
     #[track_caller]
-    pub(crate) fn expect_rejected<T: std::fmt::Debug>(result: Result<WriteOutcome<T>>) -> Violations {
+    pub(crate) fn expect_rejected<T: std::fmt::Debug>(
+        result: Result<WriteOutcome<T>>,
+    ) -> Violations {
         match result {
             Ok(WriteOutcome::Rejected(violations)) => violations,
             Ok(other) => panic!("expected a rejection, the write said {other:?}"),
