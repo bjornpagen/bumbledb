@@ -4,7 +4,7 @@
 
 use bumbledb_log::{Input, Mode, Replica as _, Settled};
 
-use crate::sim::{Ask, Faults, World, check, population};
+use crate::sim::{Ask, Faults, World, check, population, seeds};
 use crate::support::{bundle, bundle2, migration_id, schema, schema2, tags};
 
 #[derive(Default)]
@@ -101,7 +101,7 @@ fn run(seed: u64, steps: usize) -> Seen {
 #[test]
 fn writers_of_two_code_versions_race_a_migration() {
     let mut total = Seen::default();
-    for seed in 300..340 {
+    for seed in seeds(300..340) {
         let seen = run(seed, 500);
         total.migrations += seen.migrations;
         total.frozen += seen.frozen;

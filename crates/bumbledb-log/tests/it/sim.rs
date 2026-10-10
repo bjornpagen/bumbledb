@@ -670,6 +670,16 @@ pub fn replay(world: &World) -> Vec<State> {
 /// model, with migration images from `images`. A fresh batch's recorded
 /// outcomes are re-derived from its commands against the state before it; a
 /// rebased batch is judged where it landed.
+/// `seeds`, or under `BUMBLEDB_DEEP=1` the 750-fold sweep over the same
+/// sequence, still disjoint from every other sweep's.
+pub fn seeds(seeds: std::ops::Range<u64>) -> std::ops::Range<u64> {
+    if std::env::var_os("BUMBLEDB_DEEP").is_some_and(|deep| deep == "1") {
+        seeds.start * 750..seeds.end * 750
+    } else {
+        seeds
+    }
+}
+
 pub fn replay_log(
     bundle: &bumbledb_log::Bundle,
     entries: &[(Vec<u8>, Millis)],

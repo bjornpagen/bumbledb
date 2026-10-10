@@ -4,7 +4,7 @@
 
 use bumbledb_log::{Input, Refusal, Settled};
 
-use crate::sim::{Ask, Faults, Standings, Tally, World, check, standings};
+use crate::sim::{Ask, Faults, Standings, Tally, World, check, seeds, standings};
 use crate::support::{bundle, schema};
 
 /// What the run settled, beside what the world tallied.
@@ -125,7 +125,7 @@ fn sweep(seeds: std::ops::Range<u64>, clients: usize, faults: Faults, steps: usi
 
 #[test]
 fn hostile_store_with_three_writers() {
-    let total = sweep(0..48, 3, Faults::HOSTILE, 500);
+    let total = sweep(seeds(0..48), 3, Faults::HOSTILE, 500);
     let tally = total.tally;
     assert!(total.decided > 1_000, "{total:?}");
     assert!(
@@ -149,14 +149,14 @@ fn hostile_store_with_three_writers() {
 
 #[test]
 fn honest_store_with_five_writers() {
-    let total = sweep(100..116, 5, Faults::NONE, 400);
+    let total = sweep(seeds(100..116), 5, Faults::NONE, 400);
     assert!(total.tally.occupied > 0 && total.batched > 0, "{total:?}");
     assert!(total.standings.rebased > 0, "{total:?}");
 }
 
 #[test]
 fn lone_writer_through_hostile_store() {
-    let total = sweep(200..232, 1, Faults::HOSTILE, 400);
+    let total = sweep(seeds(200..232), 1, Faults::HOSTILE, 400);
     assert!(
         total.decided > 500 && total.tally.unanswered > 0,
         "{total:?}"
