@@ -1,4 +1,4 @@
-//! Sealing: [`bumbledb_theory::schema::check`] decides a declaration, and
+//! Sealing: [`fn@bumbledb_theory::schema::check`] decides a declaration, and
 //! its checked form becomes the [`Schema`] witness with typed statement
 //! arenas and per-relation statement indexes.
 

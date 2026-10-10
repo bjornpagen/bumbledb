@@ -444,7 +444,7 @@ fn pointwise_keys_require_the_complete_interval_and_scalar_group() {
             );
         }
         // Membership probes do not supply complete interval equality, even
-        // though a pointwise key exists. This change licenses no point probe.
+        // though a pointwise key exists.
         let mut point_var = occurrence(0, 0, &[(0, X)]);
         point_var
             .point_vars
@@ -537,7 +537,7 @@ fn pointwise_law_rejects_distinct_rows_with_equal_complete_keys() {
 
 #[test]
 fn declared_key_cover_still_proves_a_partial_row() {
-    // The pre-existing arm: bound fields ⊇ a declared key's projection.
+    // The declared-key arm: bound fields ⊇ a declared key's projection.
     let schema = keyed_schema(&[&[0]]);
     let query = normalized(vec![occurrence(0, 0, &[(0, X)])], vec![]);
     assert!(provably_distinct(&query, &schema).is_some());

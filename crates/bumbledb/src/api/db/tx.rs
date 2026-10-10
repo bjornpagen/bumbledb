@@ -535,8 +535,7 @@ impl<'a, S> WriteTx<'a, S> {
         }
     }
 
-    /// Keyed point read over the final-state view with explicit cancellation
-    /// (native/E seam).
+    /// Keyed point read over the final-state view with explicit cancellation.
     /// # Errors
     /// Shape refusals or storage failure.
     pub fn get_with_work<'tx, K: Key<'tx, Schema = S>>(

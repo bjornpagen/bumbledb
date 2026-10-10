@@ -146,8 +146,8 @@ fn chunked_lists_round_trip_far_beyond_one_chunk() {
 }
 
 /// A resume token minted under positions iteration is refused after its node is
-/// forced — the release assert fires instead of silently reinterpreting the
-/// token as a dense index (the omission wrong-results class). A fresh token
+/// forced: the release assert fires instead of silently reinterpreting the
+/// token as a dense index. A fresh token
 /// after the force drains the full, correct key set.
 #[test]
 fn a_token_that_outlives_a_force_is_refused() {
@@ -178,10 +178,9 @@ fn a_token_that_outlives_a_force_is_refused() {
     assert_eq!(values, (0..200).collect::<Vec<u64>>());
 }
 
-/// A resume token minted in one generation is refused after a reset — the epoch
-/// field (bits 56–62) closes the second staleness axis the bit-63 tag left
-/// open: silent truncation (Root arm) or cross-node position yields
-/// (Chunks/dense arms) against the re-minted pools.
+/// A resume token minted in one generation is refused after a reset: the epoch
+/// field (bits 56–62) rules out silent truncation (Root arm) and cross-node
+/// position yields (Chunks/dense arms) against the re-minted pools.
 #[test]
 fn a_token_that_outlives_a_reset_is_refused() {
     let schema = schema();

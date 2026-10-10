@@ -77,8 +77,7 @@ fn example() -> SchemaDescriptor {
             },
         ],
         statements: vec![
-            // Declared identity keys sit at the ids the old fresh auto-keys
-            // occupied (0 and 1), so the render goldens keep their ids.
+            // Declared identity keys at materialized ids 0 and 1.
             fd(RelationId(0), &[FieldId(0)]),
             fd(RelationId(1), &[FieldId(0)]),
             containment(

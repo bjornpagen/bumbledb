@@ -1,4 +1,5 @@
-//! consistent committed state — LMDB atomicity exercised, not trusted.
+//! A child killed mid-commit loop leaves a consistent committed state: LMDB
+//! atomicity exercised, not trusted.
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -69,8 +70,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
         child.kill().expect("SIGKILL");
         let _ = child.wait();
 
-        // Reopen: format + fingerprint verify, then sweep consistency
-
+        // Reopen (format and fingerprint checks), then sweep consistency.
         let db = Db::open(dir.path(), Store, common::work()).expect("open after crash");
         let live: Vec<Item> = db
             .read(common::work(), |snap| snap.scan_facts::<Item>()?.collect())

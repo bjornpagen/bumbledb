@@ -4,9 +4,11 @@
 pub(crate) trait Continuation<W, P> {
     type Error;
 
-    /// A consumed segment, in input order, before it extends the
+    /// A consumed segment, in input order, before it extends the frontier.
     fn segment(&mut self, payload: P) -> Result<(), Self::Error>;
 
+    /// One maximal covered run `[start, frontier)`; with a window, the first
+    /// gap ends the sweep.
     fn maximal(&mut self, start: W, frontier: W) -> Result<(), Self::Error>;
 }
 
@@ -209,8 +211,7 @@ mod tests {
 
     #[test]
     fn overlap_and_containment_fold_into_one_run() {
-        // Arbitrary claim sets: a contained segment must not shrink the
-
+        // A contained segment must not shrink the frontier.
         assert_eq!(pack(&[(2, 10), (3, 4), (9, 12)]), vec![(2, 12)]);
         assert!(covered(&[(2, 10), (3, 4), (9, 12)], (2, 12)));
     }
@@ -254,7 +255,7 @@ mod tests {
 
     #[test]
     fn consumed_segments_are_handed_over_in_order_and_gaps_convict_first() {
-        // the verdict fires before its σ re-check would.
+        // The first gap convicts before a later segment is handed over.
         let mut trace = Trace(Vec::new());
         let input = [Ok((1, 4, 0u64)), Ok((6, 9, 1u64))];
         assert_eq!(sweep(input, Some((1, 9)), &mut trace), Err(()));

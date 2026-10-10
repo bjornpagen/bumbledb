@@ -351,6 +351,7 @@ impl Schema {
     }
 
     /// # Panics
+    /// When `id` is not a relation of this schema.
     #[must_use]
     pub fn relation(&self, id: RelationId) -> &Relation {
         &self.relations[id.0 as usize]
@@ -464,7 +465,10 @@ impl Schema {
             .filter(|view| !self.closed_constant(*view))
     }
 
+    /// The containments that target key `id`.
+    ///
     /// # Panics
+    /// When `id` is not a key of this schema.
     #[must_use]
     pub fn dependents(&self, id: KeyId) -> &[ContainmentId] {
         &self.dependents[usize::from(id.0)]

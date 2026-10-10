@@ -13,6 +13,7 @@ pub use bumbledb_theory::allen::{AllenMask, Basic};
 /// by [`Interval`]'s parse — and exactly one basic is returned (JEPD is a
 /// theorem of the match shape, property-tested against the point-set
 /// oracle). Rays need no case: `end == MAX` is an ordinary bound under
+/// the element order.
 #[must_use]
 pub fn classify<T: Ord + Copy>(a: Interval<T>, b: Interval<T>) -> Basic {
     let (a_start, a_end) = a.bounds();

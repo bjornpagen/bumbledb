@@ -2,7 +2,7 @@
 //! word folds, generic over `S: Simd` on fixed-width vectors so chunking, tails and
 //! bitmasks match at every level; each call dispatches once on the cached
 //! [`level`]. aarch64 Allen keeps a hand-tuned NEON specialization. Every kernel
-//! has a scalar twin in [`reference`], held bit-identical at every level.
+//! has a scalar twin in [`mod@reference`], held bit-identical at every level.
 mod allen;
 pub(crate) mod bench;
 mod compact;

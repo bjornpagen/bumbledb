@@ -220,8 +220,10 @@ impl Colt {
         self.dense.truncate(mark.dense);
     }
 
+    /// The execution's start cursor.
+    ///
     /// # Panics
-    /// `select()` would silently drop its selections — wrong results.
+    /// Before `select()`: starting unselected would drop its selections.
     #[must_use]
     pub(crate) fn start(&self) -> Cursor {
         match self.start {

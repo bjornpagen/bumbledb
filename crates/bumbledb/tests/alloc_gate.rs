@@ -901,17 +901,8 @@ fn silent(
     );
 }
 
-/// Mutation demonstration (the gate is not theater; no test-only injection
-/// point lives in the hot path, so the check was done manually during
-/// development): a temporary
-/// `std::hint::black_box(Vec::<u64>::with_capacity(1));` at the top of
-/// `Executor::execute` (`exec/run/execute.rs`) — one heap allocation per
-/// execution — made this variant (run first, ahead of the steady-state
-/// scenarios) fail at its first repeat step: `escalation: repeat of params[1]
-/// right after its high-water run must be allocation-silent` with `(1, 1, 8, 8)
-/// != (0, 0, 0, 0)`; in normal order the steady-state gate caught the same
-/// mutation at its first measured scenario (`join/batch1: a warm execution
-/// allocated: 32 != 0`).
+/// Escalating params may grow pools, but each repeat of a param right after
+/// its high-water run must be allocation-silent.
 fn escalation_gate(
     label: &str,
     prepared: &mut PreparedQuery<SchemaDescriptor>,
@@ -1034,14 +1025,13 @@ fn zero_warm_allocation_gate() {
         let mut marks = db.prepare(&marks_query(), common::work())?;
         gate("marks", &mut marks, snap, &marks_params);
 
-        // aggregate regime) all sit at their high-water after warmup.
+        // Union rules and a union aggregate sit at their high-water after warmup.
         let mut union_rules = db.prepare(&union_rules_query(), common::work())?;
         gate("union-rules", &mut union_rules, snap, &join_params);
         let mut union_aggregate = db.prepare(&union_aggregate_query(), common::work())?;
         gate("union-aggregate", &mut union_aggregate, snap, &join_params);
 
-        // measured rotations must not touch the allocator.
-
+        // Rotating selection literals must not touch the allocator once warm.
         let memo_texts: Vec<String> = (0..4).map(|m| format!("memo-{m}")).collect();
         let selection_params: Vec<Vec<BindValue<'_>>> = memo_texts
             .iter()
@@ -1063,7 +1053,7 @@ fn zero_warm_allocation_gate() {
             &account_params,
         );
 
-        // iteration shape) high-water after warmup.
+        // Recursion sits at its high-water after warmup.
         let recursive_params: Vec<Vec<BindValue<'_>>> = [5u64, 10, 15, 20]
             .iter()
             .map(|cap| vec![BindValue::U64(*cap)])
@@ -1071,8 +1061,7 @@ fn zero_warm_allocation_gate() {
         let mut recursive = db.prepare(&recursive_query(), common::work())?;
         gate("recursive", &mut recursive, snap, &recursive_params);
 
-        // gate protocol): holders 5..10 bind the ladder accounts —
-
+        // Escalation: holders 5..10 bind ever larger account ladders.
         let escalation_params: Vec<Vec<BindValue<'_>>> =
             (5..10u64).map(|h| vec![BindValue::U64(h)]).collect();
         let mut escalation = db.prepare(&escalation_query(), common::work())?;
@@ -1108,8 +1097,8 @@ fn zero_warm_allocation_gate() {
     })
     .expect("gate");
 
-    // to zero after the sanctioned post-commit rebuild (warmup), and the
-
+    // After a commit, the plans return to zero allocations once their
+    // post-commit rebuild has warmed.
     marks_write_family(&db);
     db.read(common::work(), |snap| {
         let marks_params: Vec<Vec<BindValue<'_>>> =
@@ -1129,6 +1118,4 @@ fn zero_warm_allocation_gate() {
         Ok(())
     })
     .expect("marks windows");
-
-    // string is committed (and its scratch warmed) before the measured
 }

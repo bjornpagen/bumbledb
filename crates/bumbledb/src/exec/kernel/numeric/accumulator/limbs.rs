@@ -1,5 +1,4 @@
-//! The 34-limb exact accumulator the superaccumulator replaced, kept as its
-//! differential oracle: every finite binary64 is an exact integer multiple
+//! A 34-limb exact accumulator, the superaccumulator's differential oracle: every finite binary64 is an exact integer multiple
 //! of 2^-1074, and `n <= u64::MAX` values sum below 2^2162 in magnitude, so
 //! 34 signed limbs never overflow.
 

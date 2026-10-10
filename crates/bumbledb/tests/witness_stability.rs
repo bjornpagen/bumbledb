@@ -134,10 +134,10 @@ fn multi_violation_commit(db: &Db<WitnessWorld>, order: &[usize]) -> Violations 
     }))
 }
 
-/// NORMATIVE: the sealed citation list — one citation per violated `(statement,
-/// direction)`, sorted — is invariant under the transaction's call order, and
-/// so (today) is the entire rejection value, witnesses included: the delta
-/// erases call order before any probe runs.
+/// NORMATIVE: the sealed citation list (one citation per violated statement,
+/// sorted) is invariant under the transaction's call order, and so is the
+/// entire rejection value, witnesses included: the delta erases call order
+/// before any probe runs.
 #[test]
 fn the_sealed_citation_list_is_call_order_invariant() {
     let (_keep_a, db_a) = seeded_world("witness-order-a");
@@ -152,7 +152,7 @@ fn the_sealed_citation_list_is_call_order_invariant() {
     // The final-state judge evaluates each one-way statement once: a
     // deleted target and an inserted orphan source are the SAME violated
     // condition (a source without its target), so the containment seals as
-    // ONE SourceUnsatisfied citation — never a who-moved pair.
+    // ONE citation, never a who-moved pair.
     let [
         (
             Violation::Containment {
@@ -349,7 +349,7 @@ fn the_target_witness_is_the_first_committed_survivor() {
         }])
     }));
     // Final-state semantics: deleting the target leaves its sources
-    // unsatisfied — the one direction the judge speaks. The witness is the
+    // unsatisfied. The witness is the
     // canonical-least surviving source (child 600).
     let [(Violation::Containment { fact, .. }, _)] = violations.as_slice() else {
         panic!("expected one containment citation, got {violations:?}");

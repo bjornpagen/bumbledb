@@ -31,9 +31,8 @@ fn write_begin_survives_a_colliding_sysv_semaphore_removal() {
     let ino_low = u32::try_from(meta.ino() & 0xffff).expect("masked to 16 bits");
     let key = (u32::from(b'M') << 24) | (dev_byte << 16) | ino_low;
 
-    // The colliding environment's close, distilled: remove the SysV set
-
-    // key — the fixed (posix-sem) build's expected state.
+    // Remove any SysV semaphore set under the colliding key, as a colliding
+    // environment's close would. With POSIX semaphores LMDB holds none there.
     let removed = std::process::Command::new("/usr/bin/ipcrm")
         .args(["-S", &key.to_string()])
         .output()

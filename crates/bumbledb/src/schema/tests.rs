@@ -11,9 +11,8 @@ pub(crate) fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     }
 }
 
-/// An ordinary u64 identity column. The old fresh generation is deleted:
-/// identity is application-supplied and its uniqueness is a DECLARED key
-/// statement (`fd`), never an automatic materialized one.
+/// An ordinary u64 identity column: identity is application-supplied and its
+/// uniqueness is a declared key statement (`fd`).
 pub(crate) fn id_field(name: &str) -> FieldDescriptor {
     field(name, ValueType::U64)
 }
@@ -133,7 +132,6 @@ fn ledger_slice() -> SchemaDescriptor {
             },
         ],
         statements: vec![
-            // Declared identity keys replace the old fresh auto-keys.
             fd(RelationId(0), &[FieldId(0)]),
             fd(RelationId(1), &[FieldId(0)]),
             StatementDescriptor::Containment {

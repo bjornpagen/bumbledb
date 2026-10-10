@@ -29,8 +29,8 @@ impl ImageCache {
         self.get_or_build_with(source, schema, rel, epoch, &generation)
     }
 
-    /// Build or hit using a caller-held generation. Source review must
-    /// find this handle on every retained token consumer.
+    /// Build or hit using a caller-held generation, which every retained
+    /// token consumer must hold.
     pub(crate) fn get_or_build_with(
         &self,
         source: &QuerySource<'_>,

@@ -9,11 +9,11 @@ use bumbledb_theory::schema::{FieldId, RelationId};
 /// Classifies a normalized query: `Some(KeyProbePlan)` iff it is key-probe
 /// eligible — exactly one atom occurrence (positive, so no negated atoms
 /// exist), no residuals, and the occurrence's by-value constant bindings
-/// cover some key (`Functionality`) statement's projection (fresh
-/// auto-keys included) or bind every field (the full-fact `M` path).
-/// Everything else falls through to Free Join.
-/// Eligibility **consumes validation's term typing** through the lowered
-/// filter kinds and never re-infers it: lowering routes a membership
+/// cover some key (`Functionality`) statement's projection or bind every
+/// field (the full-fact membership path). Everything else falls through to
+/// Free Join. Eligibility consumes validation's term typing through the
+/// lowered filter kinds and never re-infers it.
+///
 /// # Panics
 /// Only on programmer-invariant violations (validated-schema id widths).
 #[must_use]

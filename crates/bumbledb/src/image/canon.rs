@@ -15,9 +15,8 @@ use crate::work::WorkContext;
 
 /// How the walker turns text bytes into a word. The `Intern`/`Lookup`
 /// arms hold the interner open across a whole scan (image builds); the
-/// `Handle*` arms lock per text field (single-row probes and fallback
-/// cursors, where holding a guard across caller-supplied closures would
-/// invite deadlock).
+/// `Handle*` arms lock per text field (single-row probes, where holding a
+/// guard across caller-supplied closures would invite deadlock).
 pub(crate) enum TextWords<'i> {
     /// Mint (or find) the token — image builds and captured probe rows.
     Intern {
@@ -390,7 +389,7 @@ mod string_field_tests {
         assert!(row.has_text());
     }
 
-    /// Probe/fallback `RowWords` must mark String columns so `holds` uses
+    /// Probe `RowWords` must mark String columns so `holds` uses
     /// [`crate::image::TextEq`] instead of raw word identity.
     #[test]
     fn row_words_string_field_marks_string_columns() {

@@ -27,9 +27,9 @@ pub struct LoweredRule {
 
 /// The nesting depth of a rule's condition trees — a leaf is depth 1, a
 /// node one more than its deepest child, the empty combinations depth 1,
-/// no trees depth 0. Computed **iteratively** (an explicit work list):
-/// this is the check for [`crate::ir::MAX_CONDITION_DEPTH`], so it must
-/// *recursive* tree walk ([`disjunct_count`], [`distribute`], the
+/// no trees depth 0. Computed iteratively (an explicit work list): this is
+/// the check for [`crate::ir::MAX_CONDITION_DEPTH`], so it must not recurse;
+/// every recursive tree walk ([`disjunct_count`], [`distribute`], the
 /// renderer) runs only after validation judged this bound.
 #[must_use]
 pub(crate) fn nesting_depth(trees: &[ConditionTree]) -> usize {
@@ -48,8 +48,8 @@ pub(crate) fn nesting_depth(trees: &[ConditionTree]) -> usize {
 }
 
 /// The number of DNF terms [`distribute`] would produce for the rule,
+/// saturating: a count past `usize::MAX` is still past the cap. The cap
 /// (`ValidationError::DnfExceedsRules`) is judged on this count, so the
-/// Saturating: a count past `usize::MAX` is still "past the cap".
 /// exponential case is rejected before a single disjunct is built.
 #[must_use]
 pub(crate) fn disjunct_count(rule: &Rule) -> usize {

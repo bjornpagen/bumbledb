@@ -40,13 +40,10 @@ pub use self::result::{
     CompleteResult, DeliveryTicket, ResultCursor, ResultIdentity, ResultPage, ResultRow,
 };
 
-/// One bound scalar payload: the bind surface's value vocabulary. Variable-width
-/// payloads are **borrowed** — the engine only hashes and probes them
-/// (a per-execution intern lookup), so owned payloads would buy
-/// nothing; `&str` also makes non-UTF-8 string params unrepresentable
-/// rather than checked. [`crate::ir::Value`] stays owned by decision:
-/// IR literals are long-lived query data; only the bind surface
-/// borrows .
+/// One bound scalar payload: the bind surface's value vocabulary.
+/// Variable-width payloads are borrowed, because the engine only hashes and
+/// probes them; `&str` also makes non-UTF-8 string params unrepresentable.
+/// [`crate::ir::Value`] stays owned: IR literals are long-lived query data.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BindValue<'a> {
     Bool(bool),
@@ -69,14 +66,12 @@ pub enum BindValue<'a> {
     IntervalF64(bumbledb_theory::Interval<bumbledb_theory::F64>),
 }
 
-/// One positional execution argument
-/// § facts and results): params are supplied by `ParamId` position —
-/// scalars as [`BindValue`]s, param sets as slices. Bind checks count,
-/// scalar-vs-set usage against what validation recorded, and element
-/// types; set slices deduplicate into the prepared query's pooled
-/// storage (sets are sets — . Set
-/// elements stay [`crate::ir::Value`]: a set is long-lived host data
-/// re-bound by reference, so its elements never re-box per bind.
+/// One positional execution argument: params are supplied by `ParamId`
+/// position, scalars as [`BindValue`]s and param sets as slices. Bind checks
+/// the count, scalar-vs-set usage against what validation recorded, and
+/// element types; set slices deduplicate into the prepared query's pooled
+/// storage. Set elements stay [`crate::ir::Value`]: a set is long-lived host
+/// data re-bound by reference, so its elements never re-box per bind.
 #[derive(Debug, Clone)]
 pub enum ParamArg<'a> {
     Scalar(BindValue<'a>),
@@ -170,9 +165,8 @@ pub enum AnswerValue<'a> {
     FixedBytes(&'a [u8]),
     /// An application-owned 128-bit identity find: sixteen exact bytes.
     Uuid(bumbledb_theory::Uuid),
-    /// An interval find, rematerialized through the checked host type
-    /// (the stored `start < end` invariant makes the re-parse
-    /// infallible — the comment lives at the materialization site).
+    /// An interval find, rematerialized through the checked host type; the
+    /// stored `start < end` invariant makes the re-parse infallible.
     IntervalU64(bumbledb_theory::Interval<u64>),
     IntervalI64(bumbledb_theory::Interval<i64>),
     /// A dense-line interval find: canonical F64 endpoints decoded from
@@ -320,11 +314,9 @@ pub(crate) struct PreparedInterior {
     pub(super) units: usize,
 }
 
-/// One prepared pipeline. Interiors are data in Cq and Reach (the CQ
-/// is the empty prefix). The point fast lane is its own arm, sealed at
-/// build — not re-detected by empty interiors + a find-table `Option`.
-/// Statically-dead main is `Cq { rules: [] }` — Empty is not a
-/// variant; the empty fast path is the zero-iteration loop.
+/// One prepared pipeline. Interiors are data in Cq and Reach (the CQ is
+/// the empty prefix). The point fast lane is its own arm, sealed at build.
+/// Statically dead main is `Cq { rules: [] }`: the zero-iteration loop.
 pub(crate) enum PreparedPipeline {
     /// No-interior CQ whose single main rule is a key probe with
     /// variable finds. The arm stores [`KeyProbeRule`] so a
@@ -605,7 +597,7 @@ enum ParamSpec {
 }
 
 /// One scalar param slot's memoized String resolution
-/// ([`PreparedQuery::param_word_memo`]): the bound text and its word.
+/// ([`Bound::param_word_memo`]): the bound text and its word.
 /// Words are scoped by `PreparedQuery::text_generation`; the memo pins its text.
 #[derive(Debug, Default, Clone)]
 struct ParamWordMemo {
@@ -625,7 +617,7 @@ enum ResolutionState {
 /// occurrence memoizes: the active one plus [`PARKED_SLOTS`] parked.
 /// Four covers the bench rotation and the handful of bindings real
 /// workloads repeat; memory is bounded by four COLT high-waters per
-/// occurrence per prepared query — the explicit trade .
+/// occurrence per prepared query.
 const MEMO_SLOTS: usize = 4;
 const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
 
@@ -641,7 +633,7 @@ struct BoundView {
     last_used: u64,
 }
 
-/// The three proofs a parallel `None` used to conflate.
+/// What an occurrence's view is bound to.
 enum Binding {
     /// Never executed, or vacated after a park (the rebuild lands here).
     Unbound,
@@ -665,15 +657,14 @@ struct OccMemo {
     spare: Vec<u32>,
 }
 
-/// The per-occurrence view memo :
-/// an epoch-stable source makes a memoized view provably valid for
-/// its whole epoch, so repeated residual bindings (range windows, Ne
-/// constants) skip the rebuild scan entirely. Occurrences whose only
-/// conditions are selections never park — their single binding hits on
-/// epoch alone .
+/// The per-occurrence view memo: an epoch-stable source makes a memoized
+/// view provably valid for its whole epoch, so repeated residual bindings
+/// (range windows, Ne constants) skip the rebuild scan entirely.
+/// Occurrences whose only conditions are selections never park: their
+/// single binding hits on epoch alone.
 struct ViewMemo {
     /// The executor-facing COLTs: each occurrence's *active* binding
-    /// (over [`View::Unbound`] until the first execution — prepare pins
+    /// (over [`crate::image::view::View::Unbound`] until the first execution — prepare pins
     /// no image). The kernel takes `&mut [Colt]`; this vector stays.
     colts: Vec<Colt>,
     /// One slot per occurrence: active [`Binding`], parked [`BoundView`]s,
@@ -683,10 +674,8 @@ struct ViewMemo {
     tick: u64,
 }
 
-/// The two sink shapes behind one monomorphized dispatch (an enum, not
-/// `dyn` — the variant is fixed per prepared query). `pub(super)` because
-/// [`PreparedInterior::sink`] is reachable at that visibility; the type
-/// never crosses the `api` boundary.
+/// The sink shapes behind one monomorphized dispatch (an enum, not `dyn`:
+/// the variant is fixed per prepared query).
 #[expect(
     clippy::large_enum_variant,
     reason = "Projection is the hot variant: boxing it would add indirection to every emit"
@@ -694,8 +683,7 @@ struct ViewMemo {
 pub(super) enum EitherSink {
     Computed(Box<computed::ComputedSink>),
     Projection(ProjectionSink),
-    /// Boxed: the batch-fold scratch grew the sink past the
-    /// variant-size lint; one prepared query holds one sink, and the
-    /// indirection is paid once per batch, never per answer.
+    /// Boxed: the batch-fold scratch is large; one prepared query holds one
+    /// sink, and the indirection is paid once per batch, never per answer.
     Aggregate(Box<AggregateSink>),
 }

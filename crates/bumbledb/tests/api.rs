@@ -1,6 +1,6 @@
-//! end to end through the public surface — create → write{insert} →
-//! read{point lookup, join, aggregate} → mutate via delete+insert → read
-//! the export → collection-insert ETL round trip on both lanes (`insert`
+//! The public surface end to end: create, insert, point reads, joins and
+//! aggregates, delete+insert mutation, the export, and the collection-insert
+//! round trip.
 use bumbledb::canonical::DecodedRow;
 use bumbledb::ir::{
     Atom, AtomSource, FindTerm, FoldOp, HeadTerm, InteriorId, NonEmpty, ParamId, Query, Rec,
@@ -42,7 +42,7 @@ bumbledb::schema! {
 }
 
 /// The database issues no identity: tests mint application-owned ids from
-/// one process-wide counter (unique, increasing — the old fresh shape).
+/// one process-wide counter (unique, increasing).
 static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 fn mint() -> u64 {
     NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -629,8 +629,8 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
     db.read(common::work(), |snap| {
         let before = snap.scan_facts::<Holder>()?.count();
         assert_eq!(before, 1);
-        // Two commits land while this snapshot stays open (LMDB readers
-
+        // Two commits land while this snapshot stays open; it keeps reading
+        // its own generation.
         for round in 0..2 {
             db.write(common::work(), |tx| {
                 let id = HolderId(mint());
@@ -973,8 +973,8 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     );
 }
 
-/// Before the environment-instance check, executing A's prepared query against
-/// B (same schema, same generation) returned B's data through A's memo keys.
+/// A's prepared query refuses B's snapshot (same schema, same generation)
+/// instead of answering B's data through A's memo keys.
 #[test]
 fn a_prepared_query_refuses_a_foreign_snapshot() {
     let dir_a = common::TempDir::new("api-foreign-prepared-a");

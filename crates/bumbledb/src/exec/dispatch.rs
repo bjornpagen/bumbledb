@@ -51,7 +51,8 @@ impl KeyProbePart {
     }
 }
 
-/// U vs M access path. Trusted layer: Option-as-tag is accidental.
+/// The probe's access path: a key statement's determinant bucket, or exact
+/// membership of a fully bound row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum KeyProbeKind {
     Uniqueness {
@@ -72,8 +73,8 @@ impl KeyProbeKind {
     }
 }
 
-/// The point-lookup plan: one `U` determinant (or `M`-membership) get, one `F`
-/// fetch, a decode — no images, no COLT, no plan search.
+/// The point-lookup plan: one determinant or membership lookup and a decode,
+/// with no images, no COLT and no plan search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KeyProbePlan {
     pub relation: RelationId,

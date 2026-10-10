@@ -349,8 +349,7 @@ fn fact_structs_carry_host_types() {
 
 #[test]
 fn fact_and_key_structs_are_value_types() {
-    // decoded fact is a value: reusable after insertion, set-member,
-
+    // A fact is a value: reusable after insertion and usable as a set member.
     let holder = Holder {
         id: HolderId(2),
         name: "alice",
@@ -993,8 +992,7 @@ mod keyed_equality {
             StatementId(3),
         );
 
-        // The selected projections correspond; whole facts do not. Their
-
+        // The selected projections correspond; whole facts need not.
         db.write(crate::common::work(), |tx| {
             tx.insert([&Source {
                 a: 7,

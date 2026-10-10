@@ -147,7 +147,7 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
 /// A result collected before close is OWNED: closing (and dropping) the
 /// native store afterwards cannot mutate, truncate or invalidate it — the
 /// retained-result-after-close property the TS `CompleteResult` contract
-/// also promises (Q-LIFETIME/API-07 shape at the core boundary).
+/// also promises.
 #[test]
 fn retained_owned_results_survive_close_byte_for_byte() {
     let dir = common::TempDir::new("adversarial-close-retained");

@@ -1,4 +1,5 @@
-//! (validate → plan → execute → result buffer), including interval finds.
+//! Aggregates through the whole prepared path (validate → plan → execute →
+//! result buffer), including interval finds.
 use super::*;
 use crate::ir::FoldOp;
 use bumbledb_theory::schema::IntervalElement;

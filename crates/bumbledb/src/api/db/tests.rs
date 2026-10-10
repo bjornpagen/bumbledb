@@ -32,8 +32,8 @@ fn content<S>(db: &Db<S>) -> Vec<(RelationId, Vec<u8>)> {
 }
 use super::{Fact, Key};
 
-// --- Test theory: one keyed relation with hand-written Fact and Key impls,
-// the shape schema! generates. ---
+// Test theory: one keyed relation with hand-written Fact and Key impls,
+// the shape schema! generates.
 
 const ENTRY: RelationId = RelationId(0);
 const ENTRY_NAME_KEY: StatementId = StatementId(0);
@@ -260,7 +260,7 @@ fn cancelled_collection_and_seal_release_all_owned_memory() {
     }
 }
 
-// --- The three write lanes produce identical stores. ---
+// The three write lanes produce identical stores.
 
 fn digest(frame: &super::ReadFrame<'_, Ledger>) -> crate::Result<[u8; 32]> {
     frame.content_digest()
@@ -331,7 +331,7 @@ fn accepted_collection_is_send() {
     assert_send::<crate::AcceptedCollection>();
 }
 
-// --- Reports and no-ops. ---
+// Reports and no-ops.
 
 #[test]
 fn a_typo_delete_is_a_counted_noop_and_moves_nothing() {
@@ -415,7 +415,7 @@ fn deleted_text_is_unreachable_after_delete_and_reopen() {
     assert_eq!(rows[0].values(), entry_row("resident", 1));
 }
 
-// --- Point reads: own writes, committed fall-through, typed errors. ---
+// Point reads: own writes, committed fall-through, typed errors.
 
 #[test]
 fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
@@ -826,7 +826,7 @@ fn typed_get_borrows_decoded_text_from_the_lease() {
     .expect("read");
 }
 
-// --- A shared key, through the public path. ---
+// A shared key, through the public path.
 
 #[test]
 fn a_key_conflict_is_rejected_with_both_competing_rows_cited() {
@@ -972,7 +972,7 @@ fn apply_and_owned_snapshot_are_the_public_path() {
     }
 }
 
-// --- Witnesses. ---
+// Witnesses.
 
 #[test]
 fn write_from_borrows_a_cloneable_witness() {
@@ -1032,7 +1032,7 @@ fn write_from_rejects_a_foreign_witness() {
     assert_eq!(a.generation(operation()).expect("generation").value(), 0);
 }
 
-// --- Poisoning and refusal boundaries. ---
+// Poisoning and refusal boundaries.
 
 #[test]
 fn a_shape_failure_does_not_poison_a_clean_write() {
@@ -1238,7 +1238,7 @@ fn a_reentrant_write_is_refused_typed_not_deadlocked() {
     assert!(matches!(err, Error::ReentrantWriter), "{err:?}");
 }
 
-// --- Closed relations. ---
+// Closed relations.
 
 const CURRENCY: RelationId = RelationId(0);
 
@@ -1329,7 +1329,7 @@ fn closed_point_reads_resolve_against_the_extension() {
     .unwrap();
 }
 
-// --- InstanceBuilder / OwnedInstance / publication. ---
+// InstanceBuilder / OwnedInstance / publication.
 
 #[test]
 fn sealing_owned_rows_allocates_the_payload_not_another_row_collection() {
@@ -1466,7 +1466,7 @@ fn builder_deletes_are_set_arithmetic_from_empty() {
     );
 }
 
-// --- AcceptedCollection walls (one shape judgment for every lane). ---
+// AcceptedCollection walls (one shape judgment for every lane).
 
 #[test]
 fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
@@ -1562,7 +1562,7 @@ fn accepted_insert_reports_are_exact_and_delete_never_mints() {
     );
 }
 
-// --- Compaction and the host surface. ---
+// Compaction and the host surface.
 
 #[test]
 fn compact_copies_content_host_records_head_and_generation() {
@@ -1670,7 +1670,7 @@ fn a_rejected_decision_keeps_the_session_for_the_receipt() {
 
 /// Incremental apply on an admitted store: a lawful insert commits, a
 /// key conflict is `InvariantRejected`, and the snapshot still sees only
-/// the admitted row. Verification `NotRun`.
+/// the admitted row.
 #[test]
 fn apply_conflict_is_invariant_rejected_after_accepted_write() {
     let dir = TempDir::new("db-apply-invariant");
@@ -1919,7 +1919,7 @@ fn owned_read_text_queries_refresh_resolvers_without_refreshing_rows_or_work() {
 }
 
 /// After apply, the owned pin's frame reads the row, collects the scan,
-/// and close stays Incomplete until the pin drops. Verification `NotRun`.
+/// and close stays Incomplete until the pin drops.
 #[test]
 fn owned_read_frame_reads_applied_row_and_close_waits() {
     let dir = TempDir::new("db-owned-frame");

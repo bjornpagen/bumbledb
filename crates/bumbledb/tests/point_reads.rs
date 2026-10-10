@@ -133,12 +133,10 @@ fn point_reads_fall_through_to_committed_state() {
     .unwrap();
 }
 
-/// Regression: a compensating delete that *cancels* a pending insert nets to
-/// nothing — the shared key tuple must keep answering with its committed owner,
-/// typed and dynamic alike, and the blessed upsert idiom composed after the
-/// cancelled pair takes the seen arm and commits cleanly (the poisoned overlay
-/// used to deny the committed row and steer the idiom into a spurious
-/// `Admission::Rejected`).
+/// A compensating delete that cancels a pending insert nets to nothing: the
+/// shared key tuple keeps answering with its committed owner, typed and
+/// dynamic alike, and the upsert idiom composed after the cancelled pair
+/// takes the seen arm and commits cleanly.
 #[test]
 fn a_cancelled_insert_never_shadows_the_committed_row() {
     let dir = common::TempDir::new("points-cancelled-insert");

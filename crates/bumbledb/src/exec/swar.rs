@@ -3,9 +3,9 @@
 //! behind independent probing and growth. Forced inlining keeps these pure-ALU
 //! leaves inside their probe loops.
 #![allow(clippy::inline_always)]
-/// Tail-zero big-endian `bytes<N>` code words (encoding.rs pads at the tail;
-/// `fact_word.rs` reads big-endian) put ALL their entropy up there — whole code
-/// families collapsed into one home bucket before this.
+/// Mixes high bits down: tail-zero big-endian `bytes<N>` code words keep all
+/// their entropy in the high bits, and without this whole code families would
+/// share one home bucket.
 #[inline(always)]
 fn avalanche(h: u64) -> u64 {
     let h = h.wrapping_mul(0x94D0_49BB_1331_11EB);

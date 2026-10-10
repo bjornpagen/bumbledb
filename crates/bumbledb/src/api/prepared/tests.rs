@@ -179,8 +179,7 @@ fn descriptor() -> SchemaDescriptor {
             ],
         }],
         // The declared id key: fixture ids are unique, and the key-probe
-        // suite needs a Functionality statement to classify against (the
-        // old fresh auto-key is deleted with the mechanism).
+        // suite needs a Functionality statement to classify against.
         statements: vec![
             bumbledb_theory::schema::StatementDescriptor::Functionality {
                 relation: RelationId(0),

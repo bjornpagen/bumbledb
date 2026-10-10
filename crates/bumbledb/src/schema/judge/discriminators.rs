@@ -425,8 +425,8 @@ fn permuted_closed_source_target_deletion_agrees() {
     );
 }
 
-/// Opposite insertion order, reminted identities and resident versus
-/// forced-scratch citation keep the same evidence bytes. Selection is by
+/// Opposite insertion order and reminted identities keep the same evidence
+/// bytes. Selection is by
 /// logical fact bytes before the budget, not by row id.
 #[test]
 fn rejection_evidence_is_portable() {
@@ -537,8 +537,8 @@ fn complete_judgment_cannot_borrow_a_lawful_parent() {
     );
 }
 
-/// a nonempty-required law rejects the empty final
-/// state and admits once the required ordinary witness is present.
+/// A nonempty-required law rejects the empty final state and admits once
+/// the required ordinary witness is present.
 #[test]
 fn valid_nonempty_required_state_admits() {
     let schema = SchemaDescriptor {

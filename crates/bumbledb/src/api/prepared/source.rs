@@ -25,9 +25,8 @@ pub(crate) fn heap_default_work() -> WorkContext {
     WorkContext::new()
 }
 
-/// Heap row access, type-erased over the instance's schema typestate.
-/// Implemented for [`crate::api::db::OwnedInstance`] here (the query lane
-/// owns its consumption; the instance's file is not edited).
+/// Heap row access, type-erased over the instance's schema typestate;
+/// implemented for [`crate::api::db::OwnedInstance`].
 pub(crate) trait HeapRows {
     /// Cached canonical identity includes physical fields and admitted laws.
     fn schema_identity(&self) -> SchemaFingerprint;

@@ -184,7 +184,7 @@ fn uuid_keyed_join_with_negative_guard_preserves_order_across_sink_tiers() {
     };
     let fix = StoreFix::store("unique-uuid-join", schema);
     // Two IDs share the high word; two share the low word. Neither half
-    // alone is a valid key, and both words must survive append and spill.
+    // alone is a valid key, and both words must survive append.
     let ids = [
         crate::Uuid::from_bytes([0; 16]),
         crate::Uuid::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),

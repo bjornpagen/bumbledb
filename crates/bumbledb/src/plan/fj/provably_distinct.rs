@@ -37,10 +37,8 @@ use std::collections::BTreeSet;
 /// binding their interval field: a point inside the interval does not
 /// determine the interval.
 ///
-/// Derived occurrences (`Finished`/`RecDelta`) are never proven
-/// here: their column vocabulary is not a schema relation, so these arms
-/// do not apply (a sound extension for fully-bound sealed interiors would need
-/// the interior arity threaded in — not required by any consumer today).
+/// Derived occurrences (`Finished`/`RecDelta`) are never proven here: their
+/// column vocabulary is not a schema relation, so these arms do not apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DistinctWitness(());
 

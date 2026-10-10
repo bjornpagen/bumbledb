@@ -159,7 +159,7 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
             continue;
         }
         if let Const::WordSet(words) = value {
-            // Rule (d), the set alone: empty after sentinel-trim.
+            // A membership set alone: empty after sentinel-trim.
             if set_refutes_eq(&words.words, None) {
                 return Some(format!(
                     "{}: {} ∈ {{}}",

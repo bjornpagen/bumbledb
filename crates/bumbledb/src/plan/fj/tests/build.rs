@@ -55,7 +55,7 @@ fn gj_split_lowers_the_triangle_to_the_gj_plan() {
     );
     let mut plan = binary2fj(&query, &order(&[0, 1, 2]));
     factor(&mut plan);
-    // factor cannot hoist T(z, x): z is unavailable before node 1.
+    // `factor` cannot hoist T(z, x): z is unavailable before node 1.
     assert_eq!(
         plan.nodes,
         vec![

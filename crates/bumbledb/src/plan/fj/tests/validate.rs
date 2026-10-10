@@ -241,10 +241,10 @@ fn residuals_attach_to_the_first_node_binding_both_sides() {
     assert!(validated.nodes()[2].residuals.is_empty());
 }
 
-/// The bug this pins: consuming one variables iterator across the node scan
-/// leaves it exhausted after the first failing node, so the NEXT node passes
-/// vacuously — a < c (bound at nodes 0 and 2) attached to node 1, where c is
-/// unbound, and the executor compared against a zero slot.
+/// Placement re-walks the variables at every node: a single iterator consumed
+/// across the node scan would be exhausted after the first failing node, so
+/// `a < c` (bound at nodes 0 and 2) would attach to node 1, where c is
+/// unbound.
 #[test]
 fn placement_rechecks_every_variable_at_every_node() {
     let query = normalized(

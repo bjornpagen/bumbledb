@@ -229,11 +229,10 @@ fn prepare_witnessed<S>(
             )
         },
     );
-    // The initial experiment licenses only a store-pinned singleton head,
-    // evaluated once. Heap execution deliberately remains outside this
-    // initial scope, even though its runtime schema identity is checked.
-    // Union/DNF, interiors, reach and computed sinks keep ordinary sets.
-    // A main singleton never retargets its sink with aim.
+    // Only a store-pinned singleton main rule, evaluated once, takes the
+    // sole-main sink; heap execution, union/DNF, interiors, reach and
+    // computed sinks keep ordinary sets. A main singleton never retargets
+    // its sink with aim.
     if rules.len() == 1
         && matches!(pinned_source, PinnedSource::Store(_))
         && interiors.is_empty()

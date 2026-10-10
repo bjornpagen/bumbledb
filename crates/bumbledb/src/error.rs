@@ -137,6 +137,7 @@ pub enum Admission<T> {
 
 impl<T> Admission<T> {
     /// # Panics
+    /// When the candidate was rejected.
     #[track_caller]
     pub fn unwrap(self) -> T {
         match self {
@@ -146,6 +147,7 @@ impl<T> Admission<T> {
     }
 
     /// # Panics
+    /// When the candidate was rejected, with `msg`.
     #[track_caller]
     pub fn expect(self, msg: &str) -> T {
         match self {
@@ -231,14 +233,11 @@ impl Violation {
     }
 }
 
-/// One cited fact of a violation, decoded to owned field values — the
-/// bindings-consumable twin of the violation's canonical fact bytes
-/// .
-/// Decoding happens AT rejection time, inside the commit boundary,
-/// because that is the only time it is possible: an inserted fact's
-/// nowhere, so a post-hoc decode helper would misread genuine rejections
-/// as corruption. `values` are in sealed field order (a closed
-/// relation's synthetic id first), `str` fields resolved to owned
+/// One cited fact of a violation, decoded to owned field values: the
+/// bindings-consumable twin of the violation's canonical fact bytes.
+/// Decoding happens at rejection time, inside the commit boundary, because
+/// a rejected inserted fact is stored nowhere afterwards. `values` are in
+/// sealed field order (a closed relation's synthetic id first).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CitedFact {
     relation: RelationId,
@@ -280,21 +279,16 @@ pub(crate) type CitedCitations = Box<[(Violation, Box<[CitedFact]>)]>;
 pub struct Violations {
     citations: CitedCitations,
     /// One flag per citation: true when offending facts exist beyond the
-    /// cited examples (the judge's own per-statement example budget
-    /// truncated). Parallel to `citations`; all-false by default so every
-    /// pre-existing constructor keeps its meaning.
+    /// cited examples (the judge's per-statement example budget truncated).
+    /// Parallel to `citations`.
     truncated: Box<[bool]>,
 }
 
 impl Violations {
-    /// As [`Self::from_pairs`], carrying the judge's per-statement
-    /// example-truncation labels (one per citation, same order). The label
-    /// says "offending facts exist beyond the cited examples"; the verdict
-    /// (the statement set) is never truncated.
-    pub(crate) fn from_pairs_with_truncation(
-        citations: CitedCitations,
-        truncated: Box<[bool]>,
-    ) -> Self {
+    /// A nonempty rejection with the judge's per-statement example-truncation
+    /// labels (one per citation, same order). The verdict (the statement
+    /// set) is never truncated.
+    pub(crate) fn from_citations(citations: CitedCitations, truncated: Box<[bool]>) -> Self {
         debug_assert!(
             !citations.is_empty(),
             "a sealed rejection is nonempty by construction"

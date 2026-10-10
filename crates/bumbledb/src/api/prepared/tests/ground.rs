@@ -7,8 +7,7 @@ use bumbledb_theory::schema::{RelationDescriptor, Side, StatementDescriptor};
 
 /// Posting(id, account, amount) with the declared id key; Account(id, name)
 /// with the declared id key; Posting(account) <= Account(id) — statement 2
-/// after the two declared keys (the deleted fresh auto-keys' positions,
-/// preserved as declared statements).
+/// after the two declared keys.
 fn ground_descriptor() -> SchemaDescriptor {
     let key = |relation: u32| StatementDescriptor::Functionality {
         relation: RelationId(relation),
@@ -130,8 +129,8 @@ fn answers(buffer: &Answers) -> Vec<Vec<AnswerValue<'_>>> {
     answers
 }
 
-/// Grading(id, kind — 0 = Det) with the declared id key (statement 0, the
-/// deleted auto-key's position); Det(grading u64, rate i64) with the
+/// Grading(id, kind — 0 = Det) with the declared id key (statement 0);
+/// Det(grading u64, rate i64) with the
 /// declared key Det(grading) -> Det (statement 1) and the discriminated-
 /// union pair `Grading(id | kind == 0) == Det(grading)` written as its two
 /// containments (statements 2 and 3).
@@ -302,9 +301,9 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
     }
 }
 
-/// `A(id fresh, b_ref u64)`; `B(id fresh, c_ref u64)`; `C(id fresh)`; `A(b_ref)
-/// <= B(id)` (statement 3 after the three fresh auto-keys), `B(c_ref) <= C(id)`
-/// (statement 4) — the `A<=B<=C` chain fixture (the plan-level twin lives in
+/// `A(id, b_ref)`, `B(id, c_ref)` and `C(id)` keyed on id; `A(b_ref) <= B(id)`
+/// (statement 3 after the three keys) and `B(c_ref) <= C(id)` (statement 4):
+/// the `A<=B<=C` chain fixture (the plan-level twin is
 /// `plan/ground/tests.rs: chain_schema`).
 fn chain_descriptor() -> SchemaDescriptor {
     let containment = |source: u32, target: u32| StatementDescriptor::Containment {

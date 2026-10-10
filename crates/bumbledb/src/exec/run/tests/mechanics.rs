@@ -331,8 +331,8 @@ fn dynamic_cover_prefers_the_forced_small_side() {
     assert!(!sink.rows.is_empty());
 }
 
-/// Regression for the cover-soundness deviation: a subatom carrying an
-/// already-bound variable must never be a runtime-eligible cover.
+/// A subatom carrying an already-bound variable is never a runtime-eligible
+/// cover.
 #[test]
 fn covers_never_rebind_an_already_bound_variable() {
     let schema = schema(3);

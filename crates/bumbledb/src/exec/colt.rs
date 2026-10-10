@@ -13,9 +13,8 @@ const FIRST_CHUNK_CAP: usize = 8;
 /// `Exact` counts a forced map's distinct keys; `Estimate` counts an
 /// unforced vector's positions, an **upper bound** on its distinct keys
 /// (duplicate-inflated) and simultaneously the exact cost of iterating
-/// it unforced. Both are admissible iteration-cost bounds, so cover
-/// ties — label-first preference is exactly the bug that
-/// iterated a 500-key forced map instead of a 7-row view.
+/// it unforced. Both are admissible iteration-cost bounds, so covers compare
+/// magnitudes, never labels: a 7-row view beats a 500-key forced map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyCount {
     Exact(u64),
@@ -89,9 +88,9 @@ pub(crate) struct NodeRef(u32);
 /// Opaque resume token for [`Colt::iter_batch`]; start at `default`.
 /// Bit 63 tags every nonzero token with the node state that minted it
 /// (clear = positions iteration, set = forced-map iteration), and bits
-/// 56–62 carry the minting [`Colt::reset`] epoch — so a token that
-/// changed state — the silent-omission wrong-results class, closed on
-/// both staleness axes.
+/// 56–62 carry the minting [`Colt::reset`] epoch, so a token presented after
+/// its node was forced or its trie was reset is refused instead of silently
+/// omitting keys.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct BatchToken(u64);
 

@@ -116,9 +116,9 @@ impl ResolvedWords {
     }
 }
 
-/// View-evaluator point word: a resolved literal or a bind-time param.
-/// Plan/exec membership probes keep [`ResolvedWordSource::Var`] on the
-/// shared enum; a view-level [`FilterPredicate::PointIn`] cannot spell it.
+/// View-evaluator point word: a resolved literal or a bind-time param. A
+/// variable point never reaches a view filter: plan validation routes it into
+/// the executor's membership probes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ViewWordSource {
     Word(u64),
@@ -142,37 +142,17 @@ pub(crate) enum IntervalConst {
     Param(crate::ir::ParamId),
 }
 
-/// Where a lowered point word comes from, per execution: an encoded
-/// literal word (resolved at lowering), a bound param's word (resolved at
-/// bind), or a bound variable's slot word. A `Var` source never reaches the
-/// view evaluator: plan validation routes occurrence `point_vars` into
-/// the executor's membership probes (`PlanNode::point_probes` for
-/// positive occurrences, the anti-probe's point checks for negated ones),
-/// row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "plan/exec membership probes keep Var; view filters use ViewWordSource"
-)]
-pub(crate) enum ResolvedWordSource {
-    Word(u64),
-    Param(crate::ir::ParamId),
-    Var(crate::ir::VarId),
-}
-
 /// The mask side of a lowered `Allen` shape: a resolved 13-bit mask,
 /// with the mirrored form pre-encoded (`Allen(a, b, m) ≡ Allen(b, a,
 /// converse(m))`, `crate::allen`). A comparison written constant-first
 /// lowers with the field kept on the left and the mask already conversed.
 pub(crate) type MaskConst = bumbledb_theory::allen::AllenMask;
 
-/// One lowered per-atom filter (produced by the 20-query-ir doc's normalization).
-/// The membership kinds are **fixed word-comparison compositions** over
-/// the interval field's two encoded column words; the `Allen` kinds carry
-/// the mask with the four endpoint operands — the configuration kernel's
-/// operand shape (`exec/kernel/allen.rs`; classify-then-test scalar on
-/// the refine path). No expression tree exists: shapes as kinds is
-/// the representation-over-control-flow answer.
+/// One lowered per-atom filter. The membership kinds are fixed
+/// word-comparison compositions over the interval field's two encoded
+/// column words; the `Allen` kinds carry the mask with the four endpoint
+/// operands, the configuration kernel's operand shape. There is no
+/// expression tree: each shape is a kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FilterPredicate {
     Compare {

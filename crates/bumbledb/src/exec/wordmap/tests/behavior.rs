@@ -118,7 +118,7 @@ fn growth_layout_refuses_unrepresentable_slots_and_words_before_allocation() {
     for (capacity, arity) in [(final_capacity, 1), (usize::MAX, 1), (8, usize::MAX)] {
         assert!(std::panic::catch_unwind(|| growth_layout(capacity, arity)).is_err());
     }
-    // In an optimized build this product used to wrap to zero and construct
+    // In an optimized build an unchecked product would wrap to zero and construct
     // a map whose key backing could not hold even one declared-width key.
     assert!(
         std::panic::catch_unwind(|| {
@@ -157,9 +157,10 @@ fn panicking_constructor_never_publishes_a_fresh_or_stale_slot() {
             }));
             assert!(failure.is_err());
 
-            // Check raw structure BEFORE lookup/iteration: on the broken
-            // implementation an occupied slot can contain uninitialized V.
-            // These assertions make that version fail without reading V.
+            // Check raw structure BEFORE lookup/iteration: publishing a slot
+            // before its value is constructed would leave an occupied slot
+            // with an uninitialized V; these assertions catch that without
+            // reading V.
             assert_eq!(map.len, before_len);
             assert_eq!(map.dense, before_dense);
             assert_eq!(map.ctrl, before_ctrl);

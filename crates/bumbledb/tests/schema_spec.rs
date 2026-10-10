@@ -313,7 +313,7 @@ fn everything_spec() -> SchemaSpec {
     }
 }
 
-// The seam roster: every literal construct the token→`Value` seam can
+// Every literal construct the macro's token→`Value` lowering accepts.
 bumbledb::schema! {
     pub Seam;
 
@@ -614,8 +614,7 @@ fn a_row_with_extra_values_is_rejected_not_silently_truncated() {
         .rows;
 
     rows[0].values.push(LiteralSpec::Value(Value::Bool(false)));
-    // The lowering must not silently drop the third literal: the column
-
+    // The lowering must not silently drop the extra literal.
     let error = spec
         .descriptor()
         .expect_err("an over-wide row never lowers");
@@ -851,9 +850,9 @@ fn a_psi_selected_target_never_bypasses_the_coherence_check() {
     );
 }
 
-/// The old spelling ban table is deleted: alternate window spellings
-/// lower canonically through the spec normalization. Only genuinely
-/// different semantics still refuse — inverted literal bounds here
+/// Alternate window spellings lower canonically through the spec
+/// normalization. Only genuinely different semantics refuse: inverted
+/// literal bounds here
 /// (dependent floors and path weights keep their own tests below).
 #[test]
 fn inverted_bounds_refuse_and_the_old_ban_table_spellings_lower_canonically() {

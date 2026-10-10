@@ -33,12 +33,7 @@ pub(crate) fn violations_from_judged(
             None => Box::<[u8]>::from([]),
         };
         let typed = match statement_ref {
-            crate::schema::StatementRef::Key(_) => {
-                // The judge's evidence lists every competing proposal; the
-                // physical scalar/pointwise split of the old engine is not
-                // part of the verdict — the cited facts are.
-                Violation::functionality(statement_ref, fact)
-            }
+            crate::schema::StatementRef::Key(_) => Violation::functionality(statement_ref, fact),
             crate::schema::StatementRef::Containment(_) => {
                 Violation::containment(statement_ref, fact)
             }
@@ -58,7 +53,7 @@ pub(crate) fn violations_from_judged(
         truncated.push(violation.examples_truncated);
     }
     assert!(!citations.is_empty(), "a judge rejection cites a violation");
-    Ok(Violations::from_pairs_with_truncation(
+    Ok(Violations::from_citations(
         citations.into_boxed_slice(),
         truncated.into_boxed_slice(),
     ))

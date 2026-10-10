@@ -35,7 +35,7 @@ fn account_schema() -> Schema {
                 },
             ],
         }],
-        // The declared id key (the deleted fresh auto-key's position).
+        // The declared id key.
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
             projection: Box::new([FieldId(0)]),
@@ -118,8 +118,7 @@ fn shift_schema() -> Schema {
                 },
             ],
         }],
-        // The declared id key the uniqueness probe classifies against —
-        // there are no implicit keys (the fresh auto-key era is deleted).
+        // The declared id key the uniqueness probe classifies against.
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),
             projection: Box::from([FieldId(0)]),

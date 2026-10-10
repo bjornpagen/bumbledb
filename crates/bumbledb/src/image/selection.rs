@@ -10,10 +10,10 @@ use crate::plan::fj::Selection;
 use crate::schema::{DistinctnessWitness, Schema, ValueType, VisitControl};
 use bumbledb_theory::schema::RelationId;
 
-// Candidate77's hot bucket spent ~90% of execution in random row lookup:
-// two indexed passes cost ~29ms versus ~8ms for a sequential image. Count
-// only index entries and conservatively admit buckets <=1/8 of the relation.
-// This is an access-cost crossover to measure, never a correctness bound.
+// Indexed passes pay random row lookups: a hot bucket measured ~29 ms for two
+// indexed passes against ~8 ms for a sequential image. Count only index
+// entries and admit buckets of at most 1/8 of the relation. This is an
+// access-cost crossover, never a correctness bound.
 const INDEXED_ROW_COST: u64 = 8;
 
 pub(super) fn build(

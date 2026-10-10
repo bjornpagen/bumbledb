@@ -178,8 +178,8 @@ impl<S> ReadFrame<'_, S> {
         prepared.execute_collect(self, params)
     }
 
-    /// Collect against this frame. L12 also calls
-    /// [`PreparedQuery::execute_collect_owned`] on the owning pin.
+    /// Collect against this frame; [`PreparedQuery::execute_collect_owned`]
+    /// is the same on the owning pin.
     ///
     /// # Errors
     /// As [`Self::execute_collect`].

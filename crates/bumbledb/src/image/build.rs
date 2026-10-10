@@ -24,8 +24,7 @@ fn slab_lengths(row_count: usize, word_cols: usize, byte_cols: usize) -> Result<
         // Alignment adds less than LINE bytes. If even this upper bound
         // stays below PAD_MIN_STRIDE, the padder cannot add a pitch gap.
         // Small images therefore need alignment headroom only, not 16 KiB
-        // per column. Large-column placement and its conservative capacity
-        // stay unchanged, including experimental padding tolerances.
+        // per column.
         let aligned_bound = row_count.checked_add(LINE / element_size)?;
         let per_column = if aligned_bound >= PAD_MIN_STRIDE / element_size {
             aligned_bound.checked_add(SET_STRIDE / element_size)?
@@ -304,10 +303,7 @@ impl TransientImage {
     /// # Panics
     /// Only on programmer-invariant violations: a row narrower than the
     /// layout, or more rows than promised.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "infallible test twin of `refill_drained`")
-    )]
+    #[cfg(test)]
     pub(crate) fn refill<'r>(
         &mut self,
         field_types: &[ValueType],
@@ -331,14 +327,13 @@ impl TransientImage {
         .expect("valid in-memory rows have live text owners")
     }
 
-    /// Refill from a fallible drain (the spill-aware seen-set path):
-    /// `drain(0, write)` must feed all `row_count` rows in order.
+    /// Refill from a fallible drain: `drain(0, write)` must feed all `row_count` rows in order.
     /// The optional context provides cooperative cancellation; column
     /// capacity is allocated or reused before the drain begins.
     /// # Errors
     /// The drain's failure, invalid text ownership, or allocation failure.
     /// # Panics
-    /// As [`Self::refill`]: programmer-invariant violations only.
+    /// Only on programmer-invariant violations, as `refill`.
     pub(crate) fn refill_drained(
         &mut self,
         work: Option<&crate::work::WorkContext>,

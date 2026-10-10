@@ -136,16 +136,13 @@ fn public_violations(schema: &Schema, judged: &[JudgedViolation]) -> Violations 
             (typed, cited)
         })
         .collect();
-    Violations::from_pairs_with_truncation(
-        citations.into_boxed_slice(),
-        truncated.into_boxed_slice(),
-    )
+    Violations::from_citations(citations.into_boxed_slice(), truncated.into_boxed_slice())
 }
 
 const BUDGET: usize = 64 * 1024;
 
 /// Round trip: `encode_judged` → decode → `to_judged` reproduces the
-/// judge's complete verdict exactly — statement set, kinds, direction,
+/// judge's complete verdict exactly — statement set, kinds,
 /// exact widened measure, every labeled example and the truncation flags.
 #[test]
 fn judge_output_round_trips_through_the_canonical_evidence_codec() {
@@ -433,13 +430,9 @@ fn strict_decode_refuses_foreign_and_malformed_frames() {
         Err(EvidenceDecodeError::InvalidCount)
     );
 
-    // Unsorted statement ids: duplicate the first violation's id into the
-    // second slot by rewriting the second statement id to the first's.
-    // The header, then violation 0's statement u16.
+    // Unsorted statement ids: a hand-built frame repeating the first
+    // violation's statement id (after the header) in both slots.
     let first_id = [bytes[H + 7], bytes[H + 8]];
-    // Find the second violation's statement offset by re-walking: the
-    // first violation is a key with 4 examples? Walk structurally instead:
-    // decode and re-encode a hand-built unsorted frame.
     let mut unsorted = Vec::new();
     unsorted.extend_from_slice(FAMILY);
     unsorted.extend_from_slice(&LAYOUT.to_be_bytes());
@@ -568,10 +561,10 @@ fn interpretation_refuses_foreign_schema_data() {
     ));
 }
 
-/// Total input refusals: an empty verdict, unsorted statements and the
-/// old engine's pointwise conflict detail are typed encode errors.
+/// Total input refusals: an empty verdict and unsorted statements are typed
+/// encode errors.
 #[test]
-fn empty_unordered_and_pointwise_inputs_refuse() {
+fn empty_and_unordered_inputs_refuse() {
     let schema = theory();
     assert_eq!(
         encode_judged(&schema, &[], BUDGET, &work()),

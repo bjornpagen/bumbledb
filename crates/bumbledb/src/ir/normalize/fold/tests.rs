@@ -124,7 +124,7 @@ fn an_eq_constant_on_the_range_edge_survives() {
     assert!(!eq_outside_range(19, &summary));
 }
 
-// Rule (d) — the membership set after sentinel-trim.
+// A membership set after sentinel-trim.
 
 #[test]
 fn an_eq_constant_missing_from_the_set_is_statically_empty() {

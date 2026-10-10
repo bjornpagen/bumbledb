@@ -190,8 +190,7 @@ fn example_schema_resolves_exactly() {
             },
         ],
         statements: vec![
-            // Declared identity keys replace the old fresh auto-keys, in the
-            // same materialized positions (0 and 1).
+            // Declared identity keys at materialized ids 0 and 1.
             fd(RelationId(0), &[FieldId(0)]),
             fd(RelationId(1), &[FieldId(0)]),
             containment(

@@ -366,7 +366,7 @@ fn resident_string_param_rebinds_after_shared_cache_generation_rotates() {
         vec![10],
     );
 
-    // Trim drops alpha's views and retires its resolver. A sibling query
+    // Trim drops alpha's views and its resolver. A sibling query
     // then deliberately reuses token zero for beta in the shared cache.
     alpha.release_memory();
     fix.db.clear_cache();

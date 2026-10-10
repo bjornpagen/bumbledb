@@ -293,10 +293,10 @@ fn empty_parent_zero_totals_and_missing_parent_vacuity_are_distinct() {
     assert_eq!(violations[0].measure, Some(0));
     assert_eq!(violations[0].examples[0].relation, RelationId(0));
 
-    // No parent at all: no group, no window, admitted even under the floor.
+    // No parent at all: no group, no window, admitted even under the floor
+    // (the fixture has no containment from attempts to students).
     let mut orphans = MapState::new();
     orphans.insert(RelationId(1), attempt(1, 7, 1, (0, 10)));
-    // (The attempt's student has no containment law in this fixture.)
     assert_eq!(judge(&floor, &orphans), Judgment::Admitted);
 }
 
@@ -325,9 +325,9 @@ fn zero_weight_children_are_membership_not_absence() {
     state.insert(RelationId(0), vec![Value::U64(7), Value::U64(10)]);
     state.insert(RelationId(1), attempt(1, 7, 0, (0, 10)));
     state.insert(RelationId(1), attempt(2, 7, 0, (10, 20)));
-    // Weighted total is zero: the weighted ceiling admits…
+    // Weighted total is zero: the weighted ceiling admits,
     assert_eq!(judge(&weighted, &state), Judgment::Admitted);
-    // …while the unit count of the same group is two.
+    // while the unit count of the same group is two.
     let counted = capacity_schema(Weight::Unit, 0, Some(Bound::Lit(1)));
     let violations = rejected(&counted, &state);
     assert_eq!(violations[0].measure, Some(2));

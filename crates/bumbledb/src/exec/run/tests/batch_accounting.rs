@@ -180,10 +180,8 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
 
 /// An entry whose cover holds an exact multiple of the batch size drains at one
 /// full batch plus one empty resume draw (the token must be re-presented to
-/// learn the entry is exhausted), and `pump` used to count that empty draw —
-/// its `run_node` twin breaks before counting — skewing the
-/// `batches/batch_entries` observable ("batching engaged" means batches ≪
-/// entries) low on exact-fit fanouts.
+/// learn the entry is exhausted); neither `pump` nor `run_node` counts the
+/// empty draw as a batch.
 #[test]
 fn zero_yield_draws_are_not_batches() {
     #[derive(Default)]

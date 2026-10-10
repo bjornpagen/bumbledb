@@ -1,14 +1,15 @@
+//! Collection writes: no-ops, shape refusals, and transaction poisoning.
 mod common;
 
 use bumbledb::{Error, Fact as _, Value};
 
 bumbledb::schema! {
-    pub CutoverNamed;
+    pub ShapeNamed;
     relation Label { name: str }
 }
 
 bumbledb::schema! {
-    pub CutoverIds;
+    pub ShapeIds;
     relation Cell {
         id: u64 as CellId,
         v: u64,
@@ -18,7 +19,7 @@ bumbledb::schema! {
 #[test]
 fn a_noop_insert_does_not_mark_applied_so_shape_fail_stays_clean() {
     let dir = common::TempDir::new("mutation-noop-not-applied");
-    let db = bumbledb::Db::create(dir.path(), CutoverNamed, common::work())
+    let db = bumbledb::Db::create(dir.path(), ShapeNamed, common::work())
         .expect("create")
         .expect("accepted");
     let row = [Value::String("keep".into())];
@@ -51,7 +52,7 @@ fn a_noop_insert_does_not_mark_applied_so_shape_fail_stays_clean() {
 #[test]
 fn poison_preserves_the_original_error_and_empty_insert_is_no_engine_request() {
     let dir = common::TempDir::new("mutation-poison-kind");
-    let db = bumbledb::Db::create(dir.path(), CutoverIds, common::work())
+    let db = bumbledb::Db::create(dir.path(), ShapeIds, common::work())
         .expect("create")
         .expect("accepted");
     let outcome = db.write(common::work(), |tx| {

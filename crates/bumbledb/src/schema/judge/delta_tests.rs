@@ -1211,7 +1211,7 @@ fn grouped_family_fixture(
     let mut added = Vec::new();
     let mut removed = Vec::new();
     // Logical partition order and canonical source row order disagree.
-    // Target rank is also independent of spilled fingerprint key order.
+    // Target rank is also independent of fingerprint key order.
     for group in (0..groups).rev() {
         let text = Value::String(format!("g-{group:03}-{}", "x".repeat(text_bytes)).into());
         let partition = Value::String(format!("p-{:03}", groups - group).into());
@@ -1803,7 +1803,7 @@ fn capacity_measure_uses_global_rank_without_full_scans_for_equal_or_differing_t
                 assert!(indexed.group_visits() > 0);
                 assert_eq!(indexed.row_visits(), 0);
             }
-            // A provider may implement the older exact group capability
+            // A provider may implement the exact group capability
             // without relation-wide ranks. Its source index still runs,
             // but the target must decline to the complete affected walk.
             let mut unranked = DeltaState::new(&parent, &added, &[]);

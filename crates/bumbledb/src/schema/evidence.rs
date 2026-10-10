@@ -55,8 +55,8 @@ pub enum EvidenceError {
         relation: RelationId,
     },
     /// The complete example-free statement skeleton alone exceeds the
-    /// budget. The caller must refuse before deciding
-    /// (`IncompleteRejectionEvidence`), never truncate the statement set.
+    /// budget. The caller must refuse before deciding, never truncate the
+    /// statement set.
     Budget {
         needed: usize,
         budget: usize,
@@ -302,7 +302,7 @@ impl ViolationEvidence {
             citations.push((typed, cited.into_boxed_slice()));
             truncated.push(violation.examples_truncated);
         }
-        Ok(Violations::from_pairs_with_truncation(
+        Ok(Violations::from_citations(
             citations.into_boxed_slice(),
             truncated.into_boxed_slice(),
         ))
@@ -432,8 +432,7 @@ pub fn encode_violations(
 /// it, truncation labels included, when the byte budget dropped nothing.
 ///
 /// # Errors
-/// As [`encode_violations`], minus the pointwise arm (judge output has no
-/// conflict detail).
+/// As [`encode_violations`].
 #[cfg(test)]
 pub(crate) fn encode_judged(
     schema: &Schema,
@@ -646,7 +645,7 @@ impl<'a> Reader<'a> {
 }
 
 /// Strict, schema-free frame decode. `max_bytes` is the caller's evidence
-/// cap (the log passes `Limits.evidence_bytes`). Example facts stay opaque
+/// cap. Example facts stay opaque
 /// canonical row bytes; interpret them with
 /// [`ViolationEvidence::to_violations`].
 ///

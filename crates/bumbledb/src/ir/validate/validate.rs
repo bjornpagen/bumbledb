@@ -23,11 +23,9 @@ use std::collections::{BTreeMap, BTreeSet};
 /// structural roster; then query-global param unification. First
 /// failure wins.
 /// # Errors
-/// A distinct [`ValidationError`] per roster item; see the module docs.
-/// Rule-local payloads name positions inside the first failing
-/// **lowered** rule of the first failing rule-list.
-/// # Panics
-/// Never: interior ids are `u32`-checked above before the `expect`.
+/// A distinct [`ValidationError`] per roster item. Rule-local payloads name
+/// positions inside the first failing lowered rule of the first failing
+/// rule list.
 pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, ValidationError> {
     match &query.rec {
         None => validate_cq(schema, &query.interiors, &query.head, &query.rules),

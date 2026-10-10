@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 /// nodes — the group variables first as their own prefix level, the
 /// fold-domain remainder (with the node's lookups) after — so the
 /// leaf's scan runs are group-constant and the aggregate sink's
-/// scan-fold pushdown can fire (`exec/sink/aggregate/sink.rs`
-/// `begin_scan` declines any group word among the scan's key slots;
+/// scan-fold pushdown can fire (its `begin_scan` declines any group word
+/// among the scan's key slots).
 pub(crate) fn fold_split(plan: &mut FjPlan, group: &BTreeSet<VarId>) {
     let mut i = 0;
     while i < plan.nodes.len() {

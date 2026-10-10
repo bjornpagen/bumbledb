@@ -1,4 +1,4 @@
-//! One immutable schema-bound final-state change, shared by core and history.
+//! One immutable schema-bound final-state change, shared by the engine and the log.
 use std::cmp::Ordering;
 use std::ops::Range;
 use std::sync::Arc;

@@ -191,7 +191,7 @@ fn deterministic_random_merge_trees_match_unpartitioned_exact_states() {
 }
 
 mod oracle {
-    //! The superaccumulator against the 34-limb accumulator it replaced:
+    //! The superaccumulator against the 34-limb oracle accumulator:
     //! identical exact totals, counts and sum/mean bits.
     use super::super::limbs::LimbAccumulator;
     use super::*;

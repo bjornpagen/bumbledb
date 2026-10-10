@@ -273,12 +273,9 @@ fn compare_wide(
     op.compare(&order, &std::cmp::Ordering::Equal)
 }
 
-/// Grow-only scratch sizing (the pooled high-water contract): the buffer
-/// zero-fills only above its high-water mark, never per pass — `clear` +
-/// `resize(n, 0)` re-memset the full window every pass (`_platform_memset`,
-/// 3.7% of `meets_chain`) though every element of `[..n]` is written before it
-/// is read. Shared by both line-parallel passes and the anti-probe;
-/// each caller writes its active window before reading it.
+/// Grow-only scratch sizing: the buffer zero-fills only above its high-water
+/// mark, never per pass, because every caller writes its active window
+/// `[..n]` before reading it (a per-pass `resize(n, 0)` memset is measurable).
 fn grow_scratch<T: Copy + Default>(v: &mut Vec<T>, n: usize) {
     if v.len() < n {
         v.resize(n, T::default());

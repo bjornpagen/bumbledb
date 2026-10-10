@@ -53,10 +53,10 @@ fn fold_positive(
         .iter()
         .all(crate::image::view::is_prepare_resolvable)
     {
-        return false; // condition 2 refusal (params, measures)
+        return false; // params and measures resolve only at bind
     }
     if payload_escapes(normalized, c_idx, output_vars) {
-        return false; // condition 1 refusal: the payload projection keeps its join
+        return false; // the payload projection keeps its join
     }
     let binders = if let Some(k) = join_id_var(normalized, c_idx, output_vars) {
         let binders = membership_binders(normalized, c_idx, k);
@@ -179,7 +179,7 @@ fn folded_negated(relation: RelationId, survivors: Vec<u64>) -> FoldedMark {
     }
 }
 
-/// **Condition 1 (refusal half)** — whether any non-id variable of `c_idx` is
+/// Whether any non-id variable of `c_idx` is
 /// live outside it: a payload variable escaping to the head, another
 /// occurrence, or a residual/anti-probe/membership-point read.
 pub(super) fn payload_escapes(

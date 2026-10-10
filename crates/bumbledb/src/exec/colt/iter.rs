@@ -63,6 +63,7 @@ impl Colt {
         )
     }
 
+    /// This trie's epoch in token position: a token that outlives a
     /// [`Colt::reset`] is refused loudly on every arm.
     fn epoch_bits(&self) -> u64 {
         u64::from(self.epoch) << 56
@@ -86,8 +87,7 @@ impl Colt {
         max: usize,
     ) -> Result<(usize, BatchToken), crate::work::WorkError> {
         let arity = self.arity_at(level);
-        // Caller-buffer contract — a plan-shape invariant, never data:
-
+        // Caller-buffer contract: a plan-shape invariant, never data.
         let key_words = max.checked_mul(arity).expect("iteration key buffer extent");
         assert!(keys_out.len() >= key_words);
         assert!(!CHILDREN || children_out.len() >= max);

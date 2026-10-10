@@ -1,7 +1,7 @@
 //! Shared canonical field parsing — one interval law for strict value decode
 //! and column-word decode. Every trusted reader applies the same
 //! `value_matches` checks, including fixed-interval width and F64 endpoint
-//! validity; the image walker never uses a text sentinel as float validity.
+//! validity.
 
 use bumbledb_theory::schema::FieldDescriptor;
 

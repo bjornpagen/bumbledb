@@ -132,7 +132,7 @@ pub(crate) fn validate(
     validate_with_signatures(plan, normalized, schema, &[], sink_vars)
 }
 
-/// As [`validate`], with the signatures of the query's derived tables.
+/// As `validate`, with the signatures of the query's derived tables.
 /// # Panics
 /// If a node holds more than 256 subatoms (impossible under the planner's
 /// occurrence cap) or the slot-width map misses a variable.

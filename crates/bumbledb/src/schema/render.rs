@@ -89,18 +89,16 @@ pub struct RenderedFact {
     pub fields: Vec<(Box<str>, Value)>,
 }
 
-/// Renders a rejection's complete violation set as plain data — the
-/// bindings-consumable form of a rejected [`crate::error::Admission`]:
-/// per citation, the statement id, kind tag, canonical spelling, and the
-/// offending facts as `(relation name, [(field name, value)])` rows,
-/// ([`Violations::cited_facts`]). Pure over the descriptor: a foreign
-/// host renders with its cached [`crate::Theory`] descriptor and no
-/// database handle.
-/// Total on plain data: unknown ids render as `relation#N` / `field#N`
+/// Renders a rejection's complete violation set as plain data: per
+/// citation, the statement id, kind tag, canonical spelling, and the
+/// offending facts ([`Violations::cited_facts`]) as
+/// `(relation name, [(field name, value)])` rows. Pure over the descriptor,
+/// so a foreign host renders with its cached [`crate::Theory`] descriptor
+/// and no database handle; unknown ids render as `relation#N` / `field#N`.
+///
 /// # Panics
-/// When a cited fact's field ordinal exceeds the id space (`u16`) —
-/// admitted ([`crate::error::SchemaError::RelationTooManyColumns`] is
-/// the typed rejection for such counts).
+/// When a cited fact's field ordinal exceeds the `u16` id space, which a
+/// checked schema refuses ([`crate::error::SchemaError::RelationTooManyColumns`]).
 #[must_use]
 pub fn render_rejection(
     descriptor: &SchemaDescriptor,
@@ -173,8 +171,9 @@ pub fn render_rejection(
 /// (`Account(id | kind == Savings)`), and a bidirectional pair — read off
 /// the sealed [`super::ContainmentStatement::pairing`] link — as
 /// `==` once, in the pair's written orientation (both ids render the same
-/// string), and a capacity statement B-family, target-left, in its one
-/// canonical spelling (`Parent(id) <={1..3} Task(parent)`;
+/// string), and a capacity statement target-left, in its one canonical
+/// spelling (`Parent(id) <={1..3} Task(parent)`).
+///
 /// # Panics
 /// On an out-of-range id — statement ids are validated, internal data.
 #[must_use]
@@ -265,7 +264,10 @@ pub fn render_expanded(descriptor: &SchemaDescriptor, id: StatementId) -> String
     )
 }
 
+/// One materialized statement; a mirrored pair renders once as `==`.
+///
 /// # Panics
+/// If `id` is absent from `materialized`.
 pub(super) fn render_materialized(
     descriptor: &SchemaDescriptor,
     materialized: &[StatementDescriptor],

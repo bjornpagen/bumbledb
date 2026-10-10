@@ -4,14 +4,11 @@
 use super::{FieldId, RelationId, SchemaDescriptor, StatementId, StatementKind, ValueType};
 use bumbledb_theory::Value;
 
-/// Every name → id pairing of one theory, in declaration order — named
-/// data, not ergonomics. A closed relation's handles ride as its
-/// [`RowManifest`] list: the row id is the index, by the
-/// declaration-order law. Closed relations carry their extension — the
-/// vocabulary as data, so a foreign surface (render, future bindings)
-/// sees every ground axiom without touching Rust. Statements ride in
-/// materialized order with their canonical spellings, so a foreign host
-/// can cite any statement id — a rejection's, a diagnostic's — without a
+/// Every name → id pairing of one theory, in declaration order. A closed
+/// relation's handles ride as its [`RowManifest`] list (the row id is the
+/// index), so a foreign surface sees every ground axiom without touching
+/// Rust. Statements ride in materialized order with their canonical
+/// spellings, so a foreign host can cite any statement id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     pub relations: Vec<RelationManifest>,
@@ -66,7 +63,6 @@ pub trait ManifestDescriptor {
 }
 
 impl ManifestDescriptor for SchemaDescriptor {
-    /// # Panics
     fn manifest(&self) -> Manifest {
         let materialized = self.materialized_statements();
         let mirrors = bumbledb_theory::schema::mirror_links(&materialized);

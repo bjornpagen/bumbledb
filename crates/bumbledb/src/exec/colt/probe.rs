@@ -174,9 +174,9 @@ impl Colt {
         }
     }
 
-    /// Tag-gated scalar probing: a tag miss never loads the key block.
-    /// The unconditional NEON sweep won in isolation but lost under the
-    /// actual executor's cache displacement (bumblebench's in-situ record).
+    /// Tag-gated scalar probing: a tag miss never loads the key block. An
+    /// unconditional NEON sweep is faster in isolation but slower under the
+    /// executor's cache displacement.
     #[inline(always)]
     fn probe_walk<const A: usize>(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
         debug_assert_eq!(key.len(), A);

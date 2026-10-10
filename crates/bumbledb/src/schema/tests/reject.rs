@@ -148,8 +148,7 @@ fn the_column_cap_fires_before_any_u16_field_id_is_minted() {
 
 #[test]
 fn rejects_a_statement_roster_past_the_u16_id_space() {
-    // count gate must fire before any per-statement validation walks
-
+    // The count gate fires before any per-statement validation walks.
     let statement = StatementDescriptor::Containment {
         source: Side {
             relation: RelationId(0),
@@ -217,8 +216,8 @@ fn two_relations(
 
 #[test]
 fn equality_rejects_a_singleton_reverse_projection_without_a_left_key() {
-    // `S(a) == T(x)` lowers to statements 1 and 2 after T's key. The
-
+    // `S(a) == T(x)` lowers to statements 1 and 2, after T's key; the
+    // reverse half targets S(a), which has no key.
     let decl = two_relations(
         vec![field("a", ValueType::U64)],
         vec![field("x", ValueType::U64)],
@@ -783,7 +782,6 @@ fn rejects_an_extension_arity_mismatch() {
 
 #[test]
 fn rejects_an_extension_value_type_mismatch() {
-    // after the synthetic id.
     assert_eq!(
         closed_currency(vec![row("Usd", vec![Value::Bool(true)])])
             .validate()
@@ -894,7 +892,6 @@ fn closed_window() -> RelationDescriptor {
 
 #[test]
 fn rejects_an_interval_position_into_a_closed_target() {
-    // walk with virtual storage — refused v0, trigger recorded.
     let decl = SchemaDescriptor {
         relations: vec![
             closed_window(),
@@ -925,7 +922,6 @@ fn rejects_an_interval_position_into_a_closed_target() {
 
 #[test]
 fn rejects_an_interval_position_from_a_closed_source() {
-    // — the same v0 refusal, source arm.
     let decl = SchemaDescriptor {
         relations: vec![
             closed_window(),
@@ -959,8 +955,6 @@ fn rejects_an_interval_position_from_a_closed_source() {
 
 #[test]
 fn rejects_a_closed_target_projection_that_is_not_the_id() {
-    // a payload-column target is refused by the closedness rule itself —
-
     let decl = SchemaDescriptor {
         relations: vec![
             closed(
@@ -993,9 +987,8 @@ fn rejects_a_closed_target_projection_that_is_not_the_id() {
 
 #[test]
 fn a_declared_key_on_the_closed_target_does_not_soften_the_handle_rule() {
-    // point-read-served key whose field set equals the refused
-
-    // available. The refusal names closedness, the actual rule.
+    // A declared key whose field set equals the refused projection does not
+    // make a payload column targetable; the refusal names closedness.
     let decl = SchemaDescriptor {
         relations: vec![
             closed(
@@ -1282,10 +1275,8 @@ fn rejects_a_set_literal_of_the_wrong_type() {
 
 #[test]
 fn rejects_a_capacity_with_an_interval_position() {
-    // The v0 refusal: a window counts FACTS per parent; an interval
-
-    // Capacity projections identify groups with scalar keys.
-
+    // A window counts facts per parent: capacity projections identify
+    // groups with scalar keys.
     let mut decl = extension_tree();
     // A pointwise key on Task(span) so only the interval refusal fires.
     decl.relations[0].fields.push(field(
@@ -1315,8 +1306,7 @@ fn rejects_a_capacity_with_an_interval_position() {
 
 #[test]
 fn rejects_a_signed_weight() {
-    // the illegal weight is a typed refusal, never a checked runtime
-
+    // The illegal weight is a typed refusal at validation.
     let mut decl = extension_tree();
     decl.relations[1]
         .fields

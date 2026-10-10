@@ -412,9 +412,8 @@ impl CompiledTheory {
             .and_then(|id| self.projection(id))
     }
 
-    /// Logical group scalars for one bound side. One coordinate system
-    /// whether or not that side has a physical index. L02 replaces local
-    /// `group_key` / closed-vs-indexed order splits with this.
+    /// Logical group scalars for one bound side: one coordinate system
+    /// whether or not that side has a physical index.
     #[must_use]
     pub fn group_key(binding: &ProjectionBinding, row: &[Value]) -> Vec<Value> {
         binding.logical_group(row)

@@ -94,7 +94,7 @@ pub enum Term {
 /// the wildcard. An atom with zero bindings is legal and means a
 /// nonemptiness gate on the source.
 /// The source position is [`AtomSource`]: an `Edb` atom reads a stored
-/// relation exactly as ever; an `Interior` atom reads a derived table
+/// relation; an `Interior` atom reads a derived table
 /// of the same [`Query`] (an earlier interior, or the rec from main),
 /// its `FieldId`s addressing the target's head positions.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -429,11 +429,10 @@ impl<T> std::ops::Index<usize> for NonEmpty<T> {
     }
 }
 
-/// One projection-only stage rule: bound-variable finds only. Retained
-/// as the convenient constructor for the projection case (and the shape
-/// the RECURSIVE cycle still requires); a full [`Interior`] stage rule is
-/// an ordinary [`Rule`] via [`ProjectionRule::to_rule`] /
-/// [`Interior::from_projections`].
+/// One projection-only stage rule: bound-variable finds only. It is the
+/// shape a recursive cycle requires and the convenient constructor for a
+/// projection stage; a full [`Interior`] stage rule is an ordinary [`Rule`]
+/// via [`ProjectionRule::to_rule`] / [`Interior::from_projections`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectionRule {
     pub finds: Vec<VarId>,
@@ -480,8 +479,7 @@ impl Interior {
         self.rules.first().map_or_default(Rule::head)
     }
 
-    /// The projection-only convenience: lift stage rules written in the
-    /// old bound-variable shape.
+    /// The projection-only convenience: lift bound-variable stage rules.
     #[must_use]
     pub fn from_projections(rules: &[ProjectionRule]) -> Self {
         Self {

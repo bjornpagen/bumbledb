@@ -87,7 +87,7 @@ impl ProjectionSink {
     /// Insertion-ordered drain from `since`. Fallible and early-stoppable
     /// (`Ok(false)`); stage refills propagate `Err` immediately.
     /// # Errors
-    /// As [`Self::for_each_answer`].
+    /// A sticky sink failure or the visitor's failure.
     pub(crate) fn drain_since(&mut self, since: usize, visit: StageRowVisit<'_>) -> Result<()> {
         self.seen.for_each_since(since, visit)
     }
@@ -111,15 +111,6 @@ impl ProjectionSink {
     #[must_use]
     pub(crate) fn len(&self) -> usize {
         self.seen.len()
-    }
-
-    #[must_use]
-    #[expect(
-        dead_code,
-        reason = "the companion API documents and preserves the type contract"
-    )]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 
     pub(crate) fn reset(&mut self) {

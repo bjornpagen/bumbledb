@@ -159,7 +159,7 @@ pub(super) enum KeyedRowHit<'a> {
 }
 
 /// Keyed lookup with the caller's cancellation context — the native runtime
-/// threads each wire operation's bounded [`WorkContext`] through here so
+/// threads each wire operation's bounded [`crate::WorkContext`] through here so
 /// determinant projection, bucket walks and row decode observe the
 /// operation's policy, not a long-lived session lease's embedded ledger.
 pub(super) fn get_with_work<'a>(

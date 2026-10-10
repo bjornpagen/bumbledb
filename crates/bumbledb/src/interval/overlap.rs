@@ -142,7 +142,8 @@ impl OverlapCache {
         Probe::Ready(found)
     }
 
-    /// (a group must not grow between build and query).
+    /// The position count of a built directory; a group must not grow between
+    /// build and query.
     pub(crate) fn len_of(&self, dir: u32) -> usize {
         match self.dirs[dir as usize] {
             Dir::Built { len, .. } => len as usize,
@@ -380,7 +381,8 @@ mod tests {
         }
     }
 
-    /// stays reachable and correct after the rehash.
+    /// Growing the directory table rehashes it; every built directory stays
+    /// reachable and correct after the rehash.
     #[test]
     fn directory_growth_preserves_every_index() {
         let mut cache = OverlapCache::default();

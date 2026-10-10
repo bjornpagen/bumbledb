@@ -1,5 +1,5 @@
-//! The stride-padding placement mechanism for [`StridePadder`]
-//! (measured).
+//! [`StridePadder`]: column slabs placed so large columns avoid the stream
+//! tracker's harmful pitch band.
 use super::{LINE, PAD_MIN_STRIDE, PAD_TOLERANCE, SET_STRIDE, StridePadder};
 
 impl StridePadder {

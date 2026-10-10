@@ -132,10 +132,9 @@ pub(crate) struct Selection {
 }
 
 /// One placed membership probe: a positive occurrence's var-sourced
-/// membership filters, evaluated inside the join once (a) every point
-/// variable is bound and (b) the occurrence's trie is fully descended —
-/// the current binding, and the binding survives iff **one fact
-/// satisfies every filter**. Grouped per
+/// membership filters, evaluated inside the join once every point variable
+/// is bound and the occurrence's trie is fully descended. The binding
+/// survives iff one fact satisfies every filter; filters group per
 /// occurrence because the conjunction quantifies over one fact:
 /// `∃f (P₁(f) ∧ P₂(f))`, never `∃f P₁(f) ∧ ∃f P₂(f)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -222,7 +221,7 @@ pub(crate) enum SuffixSkip {
 }
 
 /// The sealed plan witness execution trusts; validated once at
-/// construction, nothing downstream re-checks (post-mortem §38).
+/// construction, nothing downstream re-checks.
 #[derive(Debug)]
 pub(crate) struct ValidatedPlan {
     occurrences: Vec<PlanOccurrence>,
@@ -345,8 +344,8 @@ impl ValidatedPlan {
 }
 
 /// Valid only while the resident executor forces distinct cover iteration.
-/// Unlike `DistinctWitness`, this cannot license raw source multiplicities,
-/// fallback execution, or unioning multiple rule traversals.
+/// Unlike `DistinctWitness`, this cannot license raw source multiplicities
+/// or unioning multiple rule traversals.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ScalarSetTraversal(());
 

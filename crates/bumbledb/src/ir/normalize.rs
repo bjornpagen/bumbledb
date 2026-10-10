@@ -37,10 +37,9 @@ pub(crate) struct OccId(pub u16);
 /// flag plus an `eliminated: Option<StatementId>` would admit
 /// negated ∧ eliminated, a state the grounding's conditions forbid
 /// (`plan/ground.rs`), and index-shifting removal would move every
-/// [`OccId`] downstream. One occurrence table holds all four states;
-/// occurrence ids never move.
-/// - `Positive`: joins the plan — the only role
-///   [`Role::participates`] admits.
+/// [`OccId`] downstream. One occurrence table holds all four states, and
+/// occurrence ids never move. Only `Positive` joins the plan
+/// ([`Role::participates`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Role {
     Positive,
