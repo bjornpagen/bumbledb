@@ -51,8 +51,7 @@ pub struct ClosedSpec {
 /// `uuid`, `str` ([`ValueType::String`]), `bytes<N>`
 /// ([`ValueType::FixedBytes`]), and the interval family
 /// ([`ValueType::Interval`] / [`ValueType::FixedInterval`]) — so the spec can
-/// state every type the grammar can. There is no `fresh` mark: the
-/// database issues no identity, and key laws are declared statements.
+/// state every type the grammar can.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldSpec {
     pub name: Box<str>,
@@ -140,8 +139,8 @@ pub enum BoundSpec {
 /// equivalent spellings normalize to one canonical `(lo, hi)` law —
 /// `{n..n}` is the exact window, `{0..0}` the exclusion, and unit floors
 /// (`{1..*}` existence, `{N..*}` at-least-N) are ordinary grouped-measure
-/// windows. There is no ban table: genuinely different semantics
-/// (inverted literal bounds, dependent floors, path weights) still refuse.
+/// windows. Genuinely different semantics (inverted literal bounds,
+/// dependent floors, path weights) refuse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapacityWindowSpec {
     Exact(BoundSpec),
@@ -177,16 +176,17 @@ pub enum StatementSpec {
     },
 }
 
-/// half of [`LiteralAt::Selection`]'s address. FDs carry no selection
-/// (the shape is unrepresentable), so two sides name every binding site.
+/// The side of a containment or capacity statement a selection binding sits
+/// on: the statement half of [`LiteralAt::Selection`]'s address. FDs carry no
+/// selection, so two sides name every binding site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StatementSide {
     Source,
     Target,
 }
 
-/// provenances a literal can have (a statement side's σ binding, a
-/// closed relation's extension row), with no third. Carried by the
+/// A literal's structural address in a spec, one variant per provenance (a
+/// statement side's σ binding, a closed relation's extension row). Carried by the
 /// handle-shaped issues so a holder of the spec's source tokens (the
 /// `schema!` macro's span table) can mark the offending token itself,
 /// never the whole invocation. `Ord` because it is a map key there.
@@ -233,8 +233,6 @@ impl FaceNewtype {
 /// [`SchemaSpec::statements`] (the spec's own order, before `==`
 /// lowering); handle-shaped payloads carry [`LiteralAt`], the literal's
 /// structural address, alongside the names `Display` speaks.
-/// Every capacity-window and literal-set variant's `Display` names the
-/// — an
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecIssue {
     UnknownRelation {
@@ -261,7 +259,9 @@ pub enum SpecIssue {
         handle: Box<str>,
     },
 
+    /// A relation whose sealed shape exceeds the `u16` field-id space: no
     /// [`FieldId`] past it can be minted, so the cap runs before any
+    /// statement resolves a field.
     RelationTooManyFields {
         relation: usize,
         name: Box<str>,
@@ -448,9 +448,8 @@ impl std::fmt::Display for SpecIssue {
 
 /// [`SchemaSpec::descriptor`]'s typed failure: the COMPLETE issue list —
 /// every unresolvable name and every banned spelling, in spec order —
-/// never the first offender alone (the engine `Violations` precedent: a
-/// foreign host repairs its whole spec in one round trip). Sealed
-/// nonempty by the one construction site.
+/// never the first offender alone, so a foreign host repairs its whole spec
+/// in one round trip. Nonempty by construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaSpecError(Box<[SpecIssue]>);
 
@@ -761,23 +760,21 @@ impl<'spec> Resolver<'spec> {
 }
 
 impl SchemaSpec {
-    /// # Errors
+    /// Resolves names to ids exactly as `schema!` does.
     ///
+    /// # Errors
     /// [`SchemaSpecError`] carrying every unresolvable name, banned spelling,
     /// over-wide extension row, and past-u16 field roster, in spec order.
     ///
     /// # Panics
-    ///
-    /// Only on one programmer-invariant violation: more than 2³²
-    /// relations — unreachable (the spec's own relations vector exceeds
-    /// memory first; the engine's `validate` states the same bound).
+    /// On more than 2³² relations, which memory cannot hold.
     pub fn descriptor(&self) -> Result<SchemaDescriptor, SchemaSpecError> {
         let mut resolver = Resolver {
             spec: self,
             handles: BTreeMap::new(),
             issues: Vec::new(),
         };
-        // The sealed-field cap runs FIRST — before any statement
+        // The sealed-field cap runs before any statement resolves a field id.
 
         for (idx, relation) in self.relations.iter().enumerate() {
             let sealed = relation.fields.len() + usize::from(relation.closed.is_some());

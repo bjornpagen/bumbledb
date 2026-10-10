@@ -139,10 +139,9 @@ impl ValueType {
     }
 }
 
-/// One field: name + structural type. There is no generation attribute:
-/// the database issues no identity; application-owned [`crate::Uuid`]
-/// values (or any declared key domain) arrive as ordinary input, and key
-/// laws are declared statements.
+/// One field: name + structural type. Identity values (a [`crate::Uuid`] or
+/// any declared key domain) arrive as ordinary input; key laws are declared
+/// statements.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldDescriptor {
     pub name: Box<str>,
@@ -399,10 +398,12 @@ pub struct SchemaDescriptor {
 }
 
 impl SchemaDescriptor {
-    /// # Panics
+    /// The statements in materialized order: each closed relation's handle
+    /// key first, then the declared statements.
     ///
-    /// When a relation or field ordinal exceeds the id space (`u32`/`u16`)
-    /// — impossible for a descriptor the acceptance gate admitted.
+    /// # Panics
+    /// When a relation or field ordinal exceeds the id space (`u32`/`u16`),
+    /// which a descriptor that checks never does.
     #[must_use]
     pub fn materialized_statements(&self) -> Vec<StatementDescriptor> {
         let mut statements: Vec<StatementDescriptor> = Vec::new();

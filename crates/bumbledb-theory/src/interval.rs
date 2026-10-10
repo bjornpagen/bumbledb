@@ -267,7 +267,7 @@ macro_rules! const_constructor {
 const_constructor!(u64, i64);
 
 impl<T: Copy> Interval<T> {
-    /// beyond the parse invariant `start < end`.
+    /// The `(start, end)` bounds, which satisfy `start < end`.
     #[must_use]
     pub const fn bounds(self) -> (T, T) {
         (self.start, self.end)
@@ -441,7 +441,7 @@ mod tests {
         assert_eq!(crate::Value::IntervalF64(dense), dense.into());
     }
 
-    // ---- The dense float line. ----
+    // The dense float line.
 
     fn dense(start: f64, end: f64) -> Option<Interval<F64>> {
         Interval::<F64>::new(F64::from(start), F64::from(end))
@@ -485,7 +485,7 @@ mod tests {
     #[test]
     fn adjacent_representable_endpoints_form_a_valid_positive_interval() {
         // [a, nextUp(a)) with finite ordered bounds is nonempty on the
-        // dense line — no successor arithmetic enters the algebra.
+        // dense line; no next-representable arithmetic enters the algebra.
         let a = F64::from(1.0);
         let next_up = F64::from_bits(a.to_bits() + 1);
         let iv = Interval::<F64>::new(a, next_up).expect("positive width");

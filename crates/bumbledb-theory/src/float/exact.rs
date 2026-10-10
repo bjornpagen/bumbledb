@@ -159,7 +159,7 @@ fn add_magnitudes(a: Unpacked, b: Unpacked) -> F64 {
         if sticky {
             // The discarded tail is strictly positive: borrow one guard unit
             // and keep the sticky bit — the true value lies strictly between
-            // the borrowed integer and its successor, so no exact tie exists.
+            // the borrowed integer and the next one, so no exact tie exists.
             (acc_high - acc_low - 1, true)
         } else {
             (acc_high - acc_low, false)

@@ -78,11 +78,11 @@ impl Basic {
 /// A set of Allen basic relations: a 13-bit mask, bit *i* = [`Basic`] *i*
 /// in the palindromic order (module doc). A mask **is** an interval-pair
 /// predicate — `Allen(a, b, m)` holds iff `classify(a, b) ∈ m` — and every
-/// interval-pair predicate is a mask.
-/// (`converse` and `complement` are total); *as predicates* they are
+/// interval-pair predicate is a mask. The empty and full masks are legal
+/// values (`converse` and `complement` are total); *as predicates* they are
 /// vacuous, and the query boundary rejects both with distinct typed
-/// errors. Bits above the low 13 are
-/// unrepresentable: [`AllenMask::new`] parses, the constants and the
+/// errors. Bits above the low 13 are unrepresentable: [`AllenMask::new`]
+/// parses, and every constant and operation stays within them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AllenMask(u16);
 

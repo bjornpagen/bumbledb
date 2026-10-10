@@ -18,7 +18,7 @@ fn field(name: &str, newtype: Option<&str>) -> FieldSpec {
     }
 }
 
-/// The fused closedness sum (ruled 2026-07-23, R7): a closed relation
+/// The fused closedness sum: a closed relation
 /// carries its handle newtype by construction, so the handle namespace
 /// is entered by plain iteration — a `Handle` literal resolves through
 /// the referencing field's newtype to the declaration-order row id, and
@@ -92,7 +92,7 @@ fn closed_spec_carries_the_handle_newtype_by_construction() {
     assert_eq!(&*target.projection, [FieldId(0)]);
 }
 
-/// The one sealed-slot lookup (finding 126): the synthetic `id` carries
+/// The one sealed-slot lookup: the synthetic `id` carries
 /// its relation's handle newtype into the coherence check, so pairing it
 /// with a bare column is the mismatch — the same judgment handle
 /// resolution reads, never a second scan's opinion.
@@ -147,7 +147,7 @@ fn synthetic_id_newtype_rides_the_sealed_slot() {
     assert_eq!(target.newtype.as_deref(), Some("StatusId"));
 }
 
-/// One round trip (finding 127): the issue list is COMPLETE in one pass
+/// One round trip: the issue list is COMPLETE in one pass
 /// — an earlier broken row or statement never suppresses a later one's
 /// diagnosis. Side lowering is total (placeholder-bearing, per the
 /// `literal` law); the one final gate alone judges validity.
@@ -215,7 +215,7 @@ fn the_issue_list_is_complete_in_one_pass() {
 }
 
 /// Harmless equivalent capacity spellings normalize to one canonical law
-/// instead of refusing (the ban tables are deleted): `{n..n}` is the
+/// instead of refusing: `{n..n}` is the
 /// exact window, `{0..0}` the exclusion, and unit floors — including the
 /// `{1..*}` existence window — are ordinary grouped-measure windows.
 /// Inverted literal bounds and dependent floors still refuse.
@@ -325,7 +325,7 @@ fn equivalent_capacity_spellings_normalize_and_real_errors_still_refuse() {
     );
 }
 
-/// The sealed-field cap (finding 059): a relation past the u16 field-id
+/// The sealed-field cap: a relation past the u16 field-id
 /// space is a typed issue at lowering — never a panic on the wire-facing
 /// path, even when a statement addresses a field past the id space.
 #[test]
