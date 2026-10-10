@@ -1,4 +1,3 @@
-# cargo deny check --config .config/deny.toml
 
 [graph]
 all-features = true

@@ -107,7 +107,7 @@ lane_lint() {
 	cargo fmt --all --check
 	clippy
 	RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
-	cargo deny check --config .config/deny.toml
+	cargo deny check
 	cargo shear
 	cargo bench --locked --workspace --no-run --profile ci
 	python3 -m unittest discover -s scripts -p 'test_*.py'

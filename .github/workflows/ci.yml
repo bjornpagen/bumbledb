@@ -76,19 +76,34 @@ jobs:
       - name: Install the Amazon Linux build tools
         if: startsWith(matrix.platform, 'linux-')
         run: |
-          dnf -y install --allowerasing gcc gcc-c++ make git tar gzip xz findutils diffutils curl
+          dnf -y install --allowerasing gcc gcc-c++ make git tar gzip xz findutils diffutils curl libatomic
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: actions/checkout@v7
       - name: Trust the checkout inside the container
         if: startsWith(matrix.platform, 'linux-')
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # The setup actions expect npm and glibc libraries the Amazon Linux image lacks,
+      # so the container installs Node from nodejs.org and pnpm from ts/package.json.
+      - name: Install Node and pnpm inside the container
+        if: startsWith(matrix.platform, 'linux-')
+        env:
+          NODE_VERSION: 26.11.1
+        run: |
+          arch=$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${arch}.tar.xz" \
+            | tar -xJ --strip-components=1 -C /usr/local
+          node --version
+          npm install --global "$(node -p 'require("./ts/package.json").packageManager')"
+          pnpm --version
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2.9.2
-      - uses: pnpm/action-setup@v6.1.0
+      - if: matrix.platform == 'darwin-arm64'
+        uses: pnpm/action-setup@v6.1.0
         with:
           package_json_file: ts/package.json
-      - uses: actions/setup-node@v7
+      - if: matrix.platform == 'darwin-arm64'
+        uses: actions/setup-node@v7
         with:
           node-version: 26
           cache: pnpm
