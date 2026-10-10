@@ -34,6 +34,13 @@ The new capability, the reason to port rather than polish, is §4: a prepared
 query compiled into its own fused native kernel by specializing the executor,
 with no query compiler written.
 
+The second reason is §4.5. bumbledb's engine, without storage and laws, is a
+relational core: typed relations, tries, worst-case optimal joins, folds,
+fixpoints. Extracted as its own library and shipped with idris-mlir, the same
+engine also serves idris-mlir's type checker and analyses. A faster join or a
+better planner then lands once and speeds up the database, the compiler and
+every program that queries relations.
+
 ## 2. What idris-mlir is
 
 idris-mlir is a compiler for Idris 2. It goes from checked TT to an MLIR dialect
@@ -148,6 +155,81 @@ A plan fixed at compile time can be wrong for the data it meets. Decided:
 - Free Join's robustness to bad estimates bounds the cost of a wrong choice;
 - a query whose statistics leave every variant's range falls back to the JIT.
 
+### 4.5 The relational core is its own library, shared with the compiler
+
+What bumbledb's engine is, without persistence, laws and the log, is a general
+relational core. It becomes a library of its own, `mlir-relational`, shipped
+in idris-mlir's `libs/` beside `mlir-linear`. Decided there, not in bumbledb,
+because the compiler is one of its consumers and the compiler builds only from
+its own tree. bumbledb depends on it as a package.
+
+**Its layers, each built on the one below:**
+
+1. **Relations and joins.**
+   - typed relations as sets, held as columnar arrays (the images);
+   - lazy tries (COLT);
+   - Free Join and the generic-join end of its spectrum;
+   - selections, anti-probes, folds and exact aggregates;
+   - the planner (`plan/fj/*`, `plan/selectivity`);
+   - the executor as an interpreter, specialized per prepared query (§4.1).
+
+   No storage and no IO: the library is the functional core and the array
+   core, and the shell belongs to its consumers.
+2. **Fixpoints.** Semi-naive Datalog evaluation over layer 1: recursive
+   queries, with delta relations so each round joins only what is new.
+   Transitive closure, reachability and strongly connected components are
+   queries in it.
+3. **Equality saturation.**
+   - egglog-style e-graphs over layers 1 and 2: union-find, congruence
+     rebuilding;
+   - e-matching as worst-case optimal joins (Zhang et al., "Relational
+     E-Matching", POPL 2022), which is the join engine of layer 1 used
+     again;
+   - binders in terms through slotted e-graphs (Wu et al. 2026, stored in
+     idris-mlir's `sources/papers/wu-2026-slotted-egraphs`).
+
+**Its consumers:**
+
+- **bumbledb**, which becomes the relational core plus storage (LMDB through
+  Rust), the laws and judge (§4.3), the log, transactions and the
+  shard partitioning (§5). Its own code shrinks to what is genuinely about
+  being a database.
+- **idris-mlir's type checker.** The fork of Idris's elaborator is idris-mlir's
+  own code, which makes this possible:
+  - unification constraints as relations, solved by union-find (connected
+    components in batch);
+  - dependent rewrite and shape equalities as e-graph saturation. For
+    example `n * m = m * n` and `n + 0 = n` in idris-mlir proposal 0004's
+    shape types are rewrites the e-graph closes over, so they never block a
+    user;
+  - size-change termination's closure as a recursive query over call-graph
+    relations.
+- **idris-mlir's frontend analyses written in Idris:**
+  - reachability from `main` (the profile's work queue is a fixpoint);
+  - the recursion and polymorphism checks over size-change graphs;
+  - instance and dictionary resolution;
+  - later, the type-graph cycle check and label flow, once these are written
+    on the Idris side.
+- **User programs.** Graph queries, rule engines and program analyses get a
+  Datalog and e-graph engine compiled into them, specialized and fused like
+  any prepared query.
+
+**What it gains:**
+- **One representation across projects.** There is one join engine, one
+  planner, one fixpoint loop and one e-graph, instead of a database engine
+  in bumbledb, a unifier and rewrite machinery in the elaborator, and ad hoc
+  worklists in the analyses.
+- **Every improvement lands once.** A faster join, a better plan, a new array
+  kernel or a GPU offload on unified memory speeds up all of them.
+
+**Gates, beside bumbledb's own (§9):**
+- semi-naive Datalog within 1.5× of Soufflé in compiled mode on Soufflé's
+  standard programs (transitive closure, points-to, same generation);
+- e-matching and saturation within 1.5× of egglog on egglog's benchmarks;
+- joins at the ≥ 80% of the Rust engine already required by §9's P4.
+
+A consumer may not keep its own copy of a mechanism the library provides.
+
 ## 5. Concurrency: shards own partitions
 
 idris-mlir's runtime is thread-per-core shards with no shared heap (its
@@ -210,6 +292,8 @@ the design.
 | shards, the reactor, fork/join (proposal 0005) | proposed |
 | Rust interop: heed/LMDB, S3, blake3 (proposal 0001) | proposed, not started |
 | IORef, growable arrays, Integer shifts, record boxing | written and merged, unbuilt |
+| `mlir-relational` in `libs/` (§4.5): relations, joins, fixpoints, e-graphs | proposed here; nothing written |
+| the fork's elaborator on flat, hash-consed terms, with constraints and rewrite on `mlir-relational` | discussed, not proposed in idris-mlir yet |
 | aarch64 Linux and wasm32 target entries | not proposed yet; each is a new target entry, not a rewrite |
 
 ## 9. Staged plan
@@ -226,7 +310,9 @@ suite.
 | P1 | `bumbledb-theory`: Allen relations, intervals, canonical floats, as types | its tests ported, all passing |
 | P2 | schema, laws, judge (§3, §4.3) | the oracle's admission cases |
 | P3 | images and kernels as array programs (§4.2) | kernel benches at ≥ 90% of Rust on both targets |
-| P4 | planner (Free Join) and executor as an interpreter | read families and scenarios at ≥ 80% of the Rust engine |
+| P4 | `mlir-relational` layer 1: relations, tries, Free Join, the planner, the executor as an interpreter (§4.5) | read families and scenarios at ≥ 80% of the Rust engine |
+| P4b | `mlir-relational` layers 2 and 3: semi-naive fixpoints, e-graphs (§4.5) | within 1.5× of Soufflé (compiled) and of egglog on their benchmarks |
+| P4c | idris-mlir's elaborator on the library: unification and shape-equality rewriting (§4.5) | a shape-equality corpus from idris-mlir proposal 0004 never blocks; elaboration of base no slower than before |
 | P5 | prepared-query specialization and plan variants (§4.1, §4.4) | the 34 scenario queries at ≥ 1.5× the Rust engine, prepared |
 | P6 | storage and log (LMDB, S3) through Rust | the storage, CRUD and lifecycle lanes |
 | P7 | shards (§5) | the multi-core lanes at ≥ the Rust engine |
@@ -245,3 +331,9 @@ suite.
 - **A server for TypeScript.** It breaks the in-process promise (§6).
 - **Sharing images across shards from the start.** It needs a shared heap that
   idris-mlir's runtime deliberately does not have; it waits for "lend" (§5).
+- **Keeping the engine inside bumbledb.** The compiler would then need a second
+  join engine, unifier and rewrite system of its own: two copies of one
+  mechanism, which drift (§4.5).
+- **The relational core in bumbledb's repository.** The compiler builds only
+  from its own tree, and it consumes the library. So the library lives in
+  idris-mlir's `libs/`, and bumbledb depends on it.
