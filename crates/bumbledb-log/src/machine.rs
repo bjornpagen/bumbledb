@@ -842,11 +842,12 @@ impl<R: Replica> Machine<R> {
             }
             // A hole is at most one slot deep: the tail ends at `next` only
             // when the slot after it reads empty too.
+            // The records stay until the head passes them: a need fresher
+            // than both reads them again.
             if let (Some(&issued), Some(&after)) = (
                 self.tail.missing.get(&next),
                 self.tail.missing.get(&next.next()),
             ) {
-                self.tail.missing.remove(&next);
                 self.tail.streak = 0;
                 self.empty(issued.min(after));
             }
