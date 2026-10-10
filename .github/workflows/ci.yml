@@ -4,7 +4,6 @@ on:
   pull_request:
   push:
     branches: [main]
-  workflow_call:
 
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.ref }}
@@ -54,8 +53,8 @@ jobs:
           tool: nextest@0.9.148
       - run: scripts/ci.sh test
 
-  # Pull requests build linux-x64 with addon-ci; main and releases build every
-  # platform with fat LTO and keep the binaries for release.yml.
+  # Pull requests build linux-x64 with addon-ci; main builds every platform with
+  # fat LTO and keeps the binaries as artifacts for a hand-published release.
   addon:
     name: addon (${{ matrix.platform }})
     strategy:

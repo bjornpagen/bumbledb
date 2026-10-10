@@ -15,16 +15,31 @@ published.
 
 ## Cut a release
 
-1. Set one version in the root `Cargo.toml` `[workspace.package]`, `ts/package.json` and every
-   `ts/npm/*/package.json`.
-2. Commit on `main`, tag the commit `v<version>`, and push the tag.
+Releases are published by hand; CI never publishes. Every push to `main` builds the three addons
+with fat LTO in CI and keeps them as the `bdb.<platform>.node` artifacts of that `ci` run.
 
-`.github/workflows/release.yml` then runs `ci`, `musl` and the AWS S3 lane on the tagged commit.
-After the `release` environment approves, it checks that the tag is on `main` and equals every
-manifest version, packs the three CI-built `bdb.<platform>.node` addons with
-`node scripts/family.mjs pack`, smoke-tests the host family with `node scripts/family.mjs smoke`,
-publishes the platform packages and then the core with npm trusted publishing, and creates the
-GitHub Release.
+1. Set one version in the root `Cargo.toml` `[workspace.package]`, `ts/package.json` and every
+   `ts/npm/*/package.json`. Commit and push to `main`, and wait for its `ci` run to pass.
+2. From a clean checkout of that commit, with Node 26, pnpm, `gh` and an npm login that can
+   publish the four packages:
+
+```sh
+version=$(node -p 'require("./ts/package.json").version')
+run=$(gh run list --workflow ci --branch main --commit "$(git rev-parse HEAD)" --status success \
+  --json databaseId --jq '.[0].databaseId')
+gh run download "$run" --pattern 'bdb.*.node' --dir artifacts
+mkdir natives && cp artifacts/*/bdb.*.node natives/
+pnpm --dir ts install --frozen-lockfile
+node scripts/family.mjs pack natives family
+node scripts/family.mjs smoke family
+for p in darwin-arm64 linux-arm64 linux-x64; do npm publish "family/bjornpagen-bumbledb-$p-$version.tgz"; done
+npm publish "family/bjornpagen-bumbledb-$version.tgz"
+git tag "v$version" && git push origin "v$version"
+gh release create "v$version" family/*.tgz family/SHA256SUMS --verify-tag --title "v$version" --generate-notes
+```
+
+`pack` refuses an addon for an unknown platform; check that `natives/` holds all three, because the
+core pins every platform package at its own version. Publish the platform packages before the core.
 
 ## Build a family locally
 
