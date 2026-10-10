@@ -3,3 +3,7 @@ patchedDependencies:
 
 allowBuilds:
   workerd: false
+
+# Alchemy declares MongoDB as an optional peer; this app never uses it.
+overrides:
+  mongodb: "-"

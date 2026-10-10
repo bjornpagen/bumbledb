@@ -417,7 +417,7 @@ Order:
    - `progress_handler` returns `Result` (curves.rs:270/282).
    - `execute` rejects statement tails.
 5. **TS batch:** pnpm 12.10 (strict workspace keys; Corepack gone), effect 4.0.2, biome 2.5.15, @types/node 26.6, arkregex 0.0.13.
-6. **notes example:** next 16.4, react 19.3, alchemy beta.81 (regenerate its patch), mongodb **6.21** (7.x breaks alchemy's peer range), client-s3 3.1148.
+6. **notes example:** next 16.4, react 19.3, alchemy beta.81 (regenerate its patch), client-s3 3.1148.
 7. **CI:**
 
    | Item | From | To |
