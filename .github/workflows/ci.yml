@@ -18,7 +18,7 @@ env:
 
 jobs:
   lint:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -80,8 +80,9 @@ jobs:
       - name: Trust the checkout inside the container
         if: startsWith(matrix.platform, 'linux-')
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      # The setup actions expect npm and glibc libraries the Amazon Linux image lacks,
-      # so the container installs Node from nodejs.org and pnpm from ts/package.json.
+      # The setup actions expect glibc libraries the Amazon Linux image lacks, so the
+      # container installs Node from nodejs.org and the pnpm binary that
+      # ts/package.json pins from pnpm's GitHub release.
       - name: Install Node and pnpm inside the container
         if: startsWith(matrix.platform, 'linux-')
         env:
@@ -91,7 +92,11 @@ jobs:
           curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${arch}.tar.xz" \
             | tar -xJ --strip-components=1 -C /usr/local
           node --version
-          npm install --global "$(node -p 'require("./ts/package.json").packageManager')"
+          pnpm_version=$(node -p 'require("./ts/package.json").packageManager.split("@")[1]')
+          mkdir -p /opt/pnpm
+          curl -fsSL "https://github.com/pnpm/pnpm/releases/download/v${pnpm_version}/pnpm-linux-${arch}.tar.gz" \
+            | tar -xz -C /opt/pnpm
+          ln -s /opt/pnpm/pnpm /usr/local/bin/pnpm
           pnpm --version
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2.9.2
@@ -119,7 +124,7 @@ jobs:
   release:
     needs: [lint, test, addon]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     concurrency:
       group: release
@@ -134,10 +139,10 @@ jobs:
       - uses: pnpm/action-setup@v6.1.0
         with:
           package_json_file: ts/package.json
+      # No registry-url: its placeholder auth token would shadow trusted publishing.
       - uses: actions/setup-node@v7
         with:
           node-version: 26
-          registry-url: https://registry.npmjs.org
           cache: pnpm
           cache-dependency-path: ts/pnpm-lock.yaml
       - uses: actions/download-artifact@v8

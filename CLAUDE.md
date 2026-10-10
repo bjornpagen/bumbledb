@@ -27,6 +27,10 @@ differences. The bumbledb-specific rules are at the end of that document.
   - TS brands and symbols are `bdb.*`.
 
   Crate names, npm package names, the `bumbledb` CLI, and env var names stay `bumbledb`.
+- **pnpm only.** Every JS command, local and in CI, goes through pnpm (`pnpm view`, `pnpm dist-tag`,
+  `pnpm publish`, `pnpm dlx`); never npm, npx or a Homebrew npm.
+- **CI builds on ARM** except where x86 is the target under test: the linux-x64 addon, the
+  x86 test job and the x86 Miri shards.
 - **Nightly Rust is mandatory.** Never move to stable. Bump the nightly pin and every
   dependency all the way to the latest versions.
 - **Work directly on `main`.** No worktrees, no feature branches. Do not run adversarial

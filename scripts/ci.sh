@@ -133,15 +133,16 @@ lane_release() {
 }
 
 on_npm() {
-	npm view "$1" version > /dev/null 2>&1
+	pnpm view "$1" version > /dev/null 2>&1
 }
 
-# Publishes tarball $2 as $1 under dist-tag $3, unless npm already has $1.
+# Publishes tarball $2 as $1 under dist-tag $3, unless npm already has $1. CI
+# checks out a detached commit, which pnpm's branch check would refuse.
 publish() {
 	if on_npm "$1"; then
 		echo "release: $1 is on npm"
 	else
-		npm publish "$2" --tag "$3"
+		pnpm publish "$2" --tag "$3" --no-git-checks
 	fi
 }
 

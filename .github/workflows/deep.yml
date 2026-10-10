@@ -37,7 +37,7 @@ jobs:
     uses: ./.github/workflows/musl.yml
 
   deep:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
@@ -58,7 +58,7 @@ jobs:
       - run: scripts/ci.sh clippy
 
   udeps:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -81,7 +81,7 @@ jobs:
   report:
     needs: [miri, musl, deep, clippy-macos, udeps, asm]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     permissions:
       issues: write
     env:

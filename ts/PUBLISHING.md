@@ -26,7 +26,7 @@ packages and then the core, and creates the `v<version>` GitHub Release with the
 GitHub prerelease. Every step skips what already exists, so re-running a failed job finishes the
 release. While `ts/package.json` says `"private": true`, nothing is released.
 
-npm trusted publishing authorizes the job; no token is stored. Each of the four packages names
+`pnpm publish` authorizes the job through npm trusted publishing; no token is stored. Each of the four packages names
 `bjornpagen/bumbledb` and the workflow `ci.yml` as its trusted publisher on npmjs.com (Settings,
 Trusted Publisher, GitHub Actions, no environment).
 
