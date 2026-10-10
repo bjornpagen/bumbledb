@@ -267,8 +267,8 @@ fn seed_delete_rows(
     Ok((recorded, mirrored))
 }
 
-/// Delete-bearing BY CONTRACT (the [`crate::worlds::writebench::posting_swap`]
-/// precedent): a no-op delete returns `Err` INSIDE the closure — the in-closure
+/// Delete-bearing BY CONTRACT, as [`crate::worlds::writebench::posting_swap`]:
+/// a no-op delete returns `Err` INSIDE the closure — the in-closure
 /// sentinel abort drops the delta whole, so a refused delete never commits the
 /// batch's earlier deletes, and the lane can never silently degrade into an
 /// insert-only (or partial) measurement.

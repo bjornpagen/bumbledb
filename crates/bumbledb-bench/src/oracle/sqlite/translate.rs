@@ -1,4 +1,5 @@
-//! No CTE after the rec.
+//! The IR's SQLite twin: one `SELECT DISTINCT` per rule, interiors and the
+//! recursive component as CTEs in order, and no CTE after the rec.
 use std::collections::BTreeMap;
 
 use bumbledb::schema::{KeyStatement, StatementDescriptor};
@@ -128,7 +129,7 @@ pub enum Inexpressible {
 
     PackAggregate,
 
-    /// (a `SUM` is a query, not a typed refusal citing a statement).
+    /// A `SUM` is a query, not a typed refusal citing a statement.
     CapacityJudgment,
 
     IntervalDerivedColumn,

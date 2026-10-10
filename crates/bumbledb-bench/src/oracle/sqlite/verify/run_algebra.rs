@@ -1,5 +1,6 @@
-//! - **DNF**: seeded random predicate trees to depth 3 — the naive
-//!   representation, judged before anything is timed.
+//! The algebra slice of the naive differential: multi-rule unions, seeded DNF
+//! predicate trees to depth 3, `Pack`, and error parity, judged before
+//! anything is timed.
 use bumbledb::{
     AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, Error, FindTerm, FoldOp, Query, Rule,
     Term, Value, VarId,

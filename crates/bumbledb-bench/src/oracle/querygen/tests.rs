@@ -282,9 +282,8 @@ fn generated_string_literals_are_nul_free() {
     }
 }
 
-/// Same seed ⇒ identical query stream AND identical param draws — the
-/// reproducibility property the oracle protocol depends on (pinned on #500's
-/// rendering).
+/// Same seed ⇒ identical query stream AND identical param draws: the
+/// reproducibility property the oracle protocol depends on.
 #[test]
 fn generation_is_deterministic() {
     let stream_500 = |seed| {

@@ -8,12 +8,12 @@ use super::binary64::{Class, INF, NEG_INF, SIGN, canonical, classify, order_key}
 
 /// A point on the dense line: a representable canonical non-NaN finite
 /// payload, or the open gap point strictly between a representable payload
-/// and its successor in the canonical order.
+/// and the next one in the canonical order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dense {
     /// The representable finite value with these canonical payload bits.
     At(u64),
-    /// A point strictly between `At(bits)` and its representable successor.
+    /// A point strictly between `At(bits)` and the next representable value.
     JustAbove(u64),
 }
 
@@ -146,7 +146,7 @@ pub fn measure(interval: FInterval) -> Measure {
 
 /// Coalesce two intervals when they overlap or touch (half-open adjacency);
 /// a strict gap — one interval ending strictly below where the next begins,
-/// representable-successor gaps included — refuses.
+/// gaps between adjacent representable values included — refuses.
 #[must_use]
 pub fn coalesce(a: FInterval, b: FInterval) -> Option<FInterval> {
     // Order by start.
@@ -171,7 +171,7 @@ pub fn coalesce(a: FInterval, b: FInterval) -> Option<FInterval> {
     }
 }
 
-/// The representable successor of a finite canonical payload in the total
+/// The next representable value after a finite canonical payload in the total
 /// order — test plumbing for adjacency fixtures (pure integer stepping on
 /// the order key, no float arithmetic).
 #[must_use]
@@ -241,7 +241,7 @@ mod tests {
         assert!(!ray.contains_probe(NEG_MAX));
         assert!(!ray.contains_probe(NEG_INF), "nonfinite probes are false");
         assert!(!ray.contains_probe(ONE));
-        // The dense point strictly between -MAX and its successor is above
+        // The dense point strictly between -MAX and the next value is above
         // -MAX, so it is not in the ray either.
         assert!(!ray.contains_dense(Dense::JustAbove(NEG_MAX)));
         // [-infinity, -MAX) has no representable binary64 member but denotes
@@ -335,7 +335,7 @@ mod tests {
         let c = FInterval::new(next_up(TWO), three).expect("valid");
         assert_eq!(coalesce(a, c), None, "representable-neighbor gap");
         // The dense witness in the gap: strictly between TWO and its
-        // successor, in neither interval.
+        // next value, in neither interval.
         let witness = Dense::JustAbove(TWO);
         assert!(!a.contains_dense(witness));
         assert!(!c.contains_dense(witness));

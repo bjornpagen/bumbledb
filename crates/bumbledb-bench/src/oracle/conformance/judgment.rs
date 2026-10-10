@@ -1083,7 +1083,7 @@ fn grouped(facts: &Facts) -> Vec<(RelationId, Vec<Vec<Value>>)> {
 }
 
 /// Record every violation and derive the descriptive phase from its kinds.
-/// A containment cited in both directions contributes one statement id.
+/// A statement cited twice contributes one statement id.
 pub(super) fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
     match verdict {
         Verdict::Committed => JVerdict::Accept,

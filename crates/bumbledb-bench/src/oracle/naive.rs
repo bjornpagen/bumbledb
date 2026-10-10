@@ -671,9 +671,8 @@ fn statement_id(index: usize) -> StatementId {
     StatementId(u16::try_from(index).expect("statement count fits u16"))
 }
 
-/// Seals a raw citation list: sorted by the explicit citation key (materialized
-/// statement order, source before target within one statement —
-/// [`Violation::citation`], the engine's own sort key) and deduplicated.
+/// Seals a raw citation list: sorted by the explicit citation key
+/// ([`Violation::citation`], materialized statement order) and deduplicated.
 fn sealed(mut found: Vec<Violation>) -> Vec<Violation> {
     found.sort_unstable_by_key(|violation| violation.citation());
     found.dedup();

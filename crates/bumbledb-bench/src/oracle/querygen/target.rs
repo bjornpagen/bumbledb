@@ -414,7 +414,7 @@ pub fn descriptor() -> SchemaDescriptor {
                 // id (open and closed alike) is byte-stable in the
                 // checked-in conformance corpus. Statement-free payload:
                 // its job is the mixed-width Allen query surface beside
-                // Mandate's general `interval<i64>` (Q1's element-domain
+                // Mandate's general `interval<i64>` (the element-domain
                 // rule).
                 RelationDescriptor {
                     extension: None,

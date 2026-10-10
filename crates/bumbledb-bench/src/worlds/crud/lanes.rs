@@ -61,7 +61,7 @@ fn invocations(proto: Protocol) -> usize {
     usize::try_from(proto.warmups + proto.samples).expect("protocol counts are small")
 }
 
-/// The in-closure refusal sentinel (the `posting_swap` precedent): returning
+/// The in-closure refusal sentinel, as in `posting_swap`: returning
 /// this from a write closure drops the delta whole, so a refused sample commits
 /// nothing.
 fn refuse(what: &str) -> bumbledb::Error {

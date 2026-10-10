@@ -215,7 +215,7 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
 }
 
 /// The tiny per-family protocol: 1 warmup + 2 measured samples = 3 closure
-/// invocations (the crud test-protocol precedent).
+/// invocations, as in the crud tests.
 const TINY_PROTO: Protocol = Protocol {
     warmups: 1,
     samples: 2,

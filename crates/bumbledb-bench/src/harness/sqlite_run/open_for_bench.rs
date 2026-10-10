@@ -4,10 +4,11 @@ use rusqlite::Connection;
 
 use crate::worlds::corpus;
 
+/// A connection under the fairness protocol.
+///
 /// # Errors
-/// `SQLite` errors verbatim; the mmap coverage refusal as a
-/// `SQLITE_MISUSE`-free string wrapped into `rusqlite::Error` is avoided by
-/// panicking instead — see Panics.
+/// `SQLite` errors verbatim.
+///
 /// # Panics
 /// If WAL refuses to engage, or the effective mmap cannot cover the file — the
 /// fairness protocol is unconditional.

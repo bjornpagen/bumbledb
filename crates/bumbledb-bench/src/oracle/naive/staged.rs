@@ -321,7 +321,7 @@ mod tests {
         let computed: BTreeSet<Row> = (0u64..10).map(|n| vec![n * 2]).collect();
         let domain = computed.clone();
         let base: BTreeSet<Row> = [vec![0u64]].into_iter().collect();
-        // Step: follow the "successor even number" edge — pure selection
+        // Step: follow the "next even number" edge — pure selection
         // from the frozen domain.
         let reached = recurse_within(&domain, &base, |seen| {
             seen.iter()

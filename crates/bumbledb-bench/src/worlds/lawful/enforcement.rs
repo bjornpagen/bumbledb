@@ -134,8 +134,8 @@ fn constrained_table(notation: &'static str) -> &'static str {
         .expect("a statement notation opens with its relation")
 }
 
-/// Nothing here is written by totality test before this assembly could silently
-/// omit it.
+/// The twin DDL assembled from [`MAP`]: one table per relation with its
+/// constraint rows, then the standalone `CREATE` rows.
 #[must_use]
 pub fn ddl() -> Vec<String> {
     let schema = schema();

@@ -353,7 +353,7 @@ mod tests {
         drop(db);
     }
 
-    /// REVIEW-001: rejected admission must not produce a successful measurement.
+    /// A rejected admission must not produce a successful measurement.
     #[test]
     fn commit_single_rejected_admission_is_not_a_measured_success() {
         let dir = crate::fixture::TempDir::new("commit-single-refusal");

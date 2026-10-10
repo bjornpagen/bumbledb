@@ -1,6 +1,7 @@
-//! (`Pack` — [`crate::oracle::sqlite::translate::Inexpressible::PackAggregate`]): it is
-//! **reported translator-unpaired, never dropped** — its `SQLite` side is the
-//! engine and the naive model before any timing.
+//! The calendar read families. `free_busy` uses `Pack`, which has no SQLite
+//! translation ([`crate::oracle::sqlite::translate::Inexpressible::PackAggregate`]);
+//! it is reported translator-unpaired against a hand-written coalesce, never
+//! dropped.
 use bumbledb::{
     AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value,
     VarId,
@@ -126,9 +127,8 @@ fn meets_chain_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// The distinct `rsvp` selections still prove the arms disjoint and
-/// introspection reports that knowledge, but execution deliberately keeps the
-/// spanning set after the measured refutation in.
+/// A union over disjoint `rsvp` arms: the distinct selections prove the arms
+/// disjoint, and execution still deduplicates through the spanning set.
 fn rsvp_union_query() -> Query {
     let arm = |ordinal: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],

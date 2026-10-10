@@ -245,7 +245,7 @@ fn ties_round_to_even_at_binade_boundaries() {
 
 #[test]
 fn reference_arithmetic_matches_host_on_goldens() {
-    // F-ARITH differential: the oracle is the expected side; host f64 is
+    // Differential: the oracle is the expected side; host f64 is
     // the qualified-hardware subject. Bitwise, never epsilon.
     let cases: &[(u64, u64)] = &[
         (ONE, TWO),

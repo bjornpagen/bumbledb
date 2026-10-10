@@ -1,4 +1,5 @@
-//! The thing a human reads before making (or refusing)
+//! The timing report: provenance, per-family statistics, and their Markdown and
+//! JSON renderings.
 use crate::harness::Stats;
 
 #[derive(Debug, Clone, PartialEq)]

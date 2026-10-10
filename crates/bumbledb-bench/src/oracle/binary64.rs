@@ -72,9 +72,6 @@ pub fn classify(bits: u64) -> Class {
 
 /// A finite payload's (significand, binade) decomposition: the magnitude in
 /// 2^-1074 scaled units is `sig << shift`, with `sig < 2^53`.
-///
-/// # Panics
-/// Never: the 11-bit exponent field always fits `u32`.
 #[must_use]
 pub fn decompose(bits: u64) -> (bool, u64, u32) {
     debug_assert_eq!(classify(canonical(bits)), Class::Finite);
@@ -142,9 +139,6 @@ impl Wide {
     }
 
     /// The bit length (0 for zero).
-    ///
-    /// # Panics
-    /// Never: a limb's leading-zero count fits `usize`.
     #[must_use]
     pub fn bit_len(&self) -> usize {
         match self.limbs.last() {
