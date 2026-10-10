@@ -52,6 +52,7 @@ fn wide_state(rows: u64, conflict: bool) -> MapState {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn cancelled_grouped_judgment_does_not_publish_a_verdict() {
     let schema = text_keyed_schema();
     let state = wide_state(4000, false);

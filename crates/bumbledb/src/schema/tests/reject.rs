@@ -147,6 +147,7 @@ fn the_column_cap_fires_before_any_u16_field_id_is_minted() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn rejects_a_statement_roster_past_the_u16_id_space() {
     // The count gate fires before any per-statement validation walks.
     let statement = StatementDescriptor::Containment {
@@ -1743,6 +1744,7 @@ fn rejects_interval_positions_across_element_domains_whatever_the_widths() {
 /// `RelationTooManyColumns` bounds field positions. Oversized input must not
 /// truncate an id or panic.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_id_width_caps_refuse_typed_rather_than_panicking() {
     let count = u32::from(u16::MAX) + 1;
     let relations: Vec<RelationDescriptor> = (0..=count)
