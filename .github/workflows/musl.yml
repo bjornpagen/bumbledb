@@ -43,8 +43,7 @@ jobs:
             --mount "type=bind,src=$CACHE/registry,dst=/root/.cargo/registry" \
             --mount "type=bind,src=$CACHE/git,dst=/root/.cargo/git" \
             --mount "type=bind,src=$OUTPUT,dst=/out" \
-            -e "BUMBLEDB_STATIC_REVISION=$GITHUB_SHA" \
-            bumbledb-musl:ci bash scripts/static-linux-arm64/check.sh /out
+            bumbledb-musl:ci bash scripts/static-linux-arm64/check.sh /out "$GITHUB_SHA"
       - if: always()
         uses: actions/upload-artifact@v7
         with:

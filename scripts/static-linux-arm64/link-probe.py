@@ -34,6 +34,8 @@ def main():
     core_files = [Path(p) for p in core[0]["filenames"]]
     archive = next(p for p in core_files if p.suffix == ".a")
     rlib = next(p for p in core_files if p.suffix == ".rlib")
+    # Cargo keeps the full metadata in a separate .rmeta; the rlib holds a stub.
+    rmeta = next(p for p in core_files if p.suffix == ".rmeta")
     # Use Cargo's actual dependency outputs, including nightly build-dir v2
     # and host proc-macros. Never guess the target/.../deps layout.
     directories = sorted({str(Path(p).parent) for a in artifacts for p in a["filenames"]})
@@ -58,7 +60,7 @@ def main():
                     "-C", "target-feature=+crt-static", "-C", "opt-level=3", "-C", "codegen-units=1"]
     for directory in directories:
         compile_args.extend(["-L", "dependency=" + directory])
-    compile_args.extend(["--extern", "bumbledb=" + str(rlib), str(ROOT / "scripts/static-linux-arm64/smoke.rs"), "-o", str(obj)])
+    compile_args.extend(["--extern", "bumbledb=" + str(rlib), "--extern", "bumbledb=" + str(rmeta), str(ROOT / "scripts/static-linux-arm64/smoke.rs"), "-o", str(obj)])
     run(compile_args)
     driver = str(ROOT / "scripts/static-linux-arm64/smoke.c")
     # Use the matching startup objects, not a second libc implicitly supplied

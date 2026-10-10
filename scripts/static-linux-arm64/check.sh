@@ -20,6 +20,7 @@ export AR_aarch64_unknown_linux_musl=ar
 export PYTHONDONTWRITEBYTECODE=1
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo/target}"
 output="${1:-$CARGO_TARGET_DIR/static-linux-arm64}"
+revision="${2:-working-tree}"
 mkdir -p "$output"
 output="$(cd "$output" && pwd)"
 # A failed rerun must not leave an earlier success seal looking current.
@@ -59,10 +60,9 @@ cargo nextest run --locked -p bumbledb --target "$target" --cargo-profile gate -
 
 python3 scripts/static-linux-arm64/notices.py "$output"
 
-python3 - "$output" <<'PY'
+python3 - "$output" "$revision" <<'PY'
 import datetime
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -70,7 +70,7 @@ import tomllib
 out = Path(sys.argv[1])
 report = {
     "verifiedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-    "sourceRevision": os.environ.get("BUMBLEDB_STATIC_REVISION", "working-tree"),
+    "sourceRevision": sys.argv[2],
     "version": tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"],
     "target": "aarch64-unknown-linux-musl",
     "rustc": subprocess.check_output(["rustc", "--version"], text=True).strip(),
