@@ -53,6 +53,12 @@ pnpm add @bjornpagen/bumbledb effect
 
 `@aws-sdk/client-s3` is an optional peer dependency, needed only for `S3Store`.
 
+The package has two entry points and one binary. `@bjornpagen/bumbledb`
+holds authoring (relations, schemas, queries, change sets), the `Bumble`
+runtime layer and the durable `Database`. `@bjornpagen/bumbledb/engine` is
+the embedded `Db` for single-process use, tests and benchmarks. The
+`bumbledb` binary generates, checks and applies migrations.
+
 ## Quick start
 
 Declare relations, connect their fields with keys and references, build a

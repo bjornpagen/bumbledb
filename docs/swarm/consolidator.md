@@ -14,7 +14,7 @@ Resume from the first step that is not `done`.
 | 5a | README.md + docs/cookbook.md rewrite, cookbook doctests | done (ReadmeDoctests + CookbookDoctests, 33 doctests; recipes 20, 24, 25, 27, 28, 30 run a store; root README ts fence type-checked by ts/test/readme.test.ts) |
 | 5b | Delete docs/release-1.*, stale docs/perf/runs; write docs/release-2.0.md | done (runs/1.1.0 and the 1.3.1 SDK measurement deleted; results.md labeled as the last full run, 1.3.0) |
 | 5c | Versions to 2.0.0 (Cargo, npm) | done (workspace, Cargo.lock, ts and the three platform packages) |
-| 5d | ts/README.md, ts/COOKBOOK.md | pending |
+| 5d | ts/README.md, ts/COOKBOOK.md | done (entry points described; cookbook recipes 19 and 20 cover Database.layer, submit, resolve, read consistency and Database.pool, type-checked) |
 | 6a | Delete scripts/swarm/ and docs/swarm/ | pending |
 | 6b | Merge origin/main | pending |
 | 6c | cutover-plan status done + outcome | pending |

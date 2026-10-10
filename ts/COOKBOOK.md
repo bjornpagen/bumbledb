@@ -3,7 +3,9 @@
 Worked recipes for the Effect-native surface: typed schema values,
 declared keys and laws, application-owned `Uuid` identity, one bounded
 native runtime, scoped resources, immutable final-state changes, `Option`
-reads, sealed complete results, and one-shot page streams.
+reads, sealed complete results, one-shot page streams, and durable
+`Database`s over an object store. Recipes 1 to 18 use the embedded `Db` from
+`@bjornpagen/bumbledb/engine`; recipes 19 and 20 use `Database`.
 
 Every `ts` fence below is extracted and type-checked against the real
 package surface by `test/cookbook-doc.test.ts`; the imports fence here is
@@ -11,7 +13,7 @@ prepended to every recipe. The examples are lazy Effect programs — nothing
 below runs a database at import time.
 
 ```ts
-import { Effect, Option, Result, Schema as EffectSchema, Stream } from "effect"
+import { Effect, Layer, Option, Result, Schema as EffectSchema, Stream } from "effect"
 import {
 	alternatives,
 	bool,
@@ -21,11 +23,13 @@ import {
 	closedId,
 	Compute,
 	contained,
+	Database,
 	decodeBoundaryField,
 	duration,
 	encodeBoundaryField,
 	f64,
 	fieldSchema,
+	FsStore,
 	i64,
 	uuid,
 	Uuid,
@@ -37,6 +41,7 @@ import {
 	query,
 	ref,
 	relation,
+	S3Store,
 	schema,
 	select,
 	str,
@@ -46,7 +51,14 @@ import {
 	within
 } from "@bjornpagen/bumbledb"
 import { Db } from "@bjornpagen/bumbledb/engine"
-import type { CompleteResult, Fact, FloatIntervalValue, IntervalValue } from "@bjornpagen/bumbledb"
+import type {
+	CompleteResult,
+	Fact,
+	FloatIntervalValue,
+	IntervalValue,
+	Migrations,
+	S3Sender
+} from "@bjornpagen/bumbledb"
 import type { ApplyOutcome, QueryReader } from "@bjornpagen/bumbledb/engine"
 
 declare const localPath: string
@@ -723,3 +735,114 @@ agree across arms and cannot share a column with a projection.
 Each expression retains its original failure boundary. Moving filters across
 an imported stage can change which arithmetic executes; a later filter cannot
 erase an upstream overflow.
+
+## 19. A durable database: idempotent submits and fresh reads
+
+A `Database` is a log in an object store read through a disposable local
+cache. Provide it once with `Database.layer` under a service key; in a Lambda,
+build the layer during init. Production opens with `onOpen: "verify"` after
+`bumbledb migrate` ran in the deploy pipeline.
+
+Mint one request id per intent and reuse it for every retry of that intent: a
+command is decided at most once. `Decided` carries the receipt (`Committed`,
+`NoChange`, `PreconditionFailed` or `InvariantRejected`). Every refusal except
+`Unknown` proves the command is not in the log; after `Unknown`, `resolve`
+answers from the log. `precondition: reader.revision` decides the command only
+if nothing committed since that read, which makes read-modify-write exact.
+
+```ts
+const Task = relation("Task", { id: uuid, title: str, done: bool })
+const Tasks = schema("Tasks", { Task }, [key(Task, ["id"])])
+const openTasks = query(Tasks).rule((r) => {
+	const { id, title } = v(Task)
+	return r.match(Task, { id, title, done: false }).find({ id, title })
+})
+
+declare const migrations: Migrations
+declare const s3: S3Sender
+
+const TasksDb = Database.tag<typeof Tasks>("app/TasksDb")
+const TasksLive = Database.layer(TasksDb, {
+	schema: Tasks,
+	migrations,
+	store: S3Store.make({
+		client: s3,
+		log: { bucket: "tasks--use1-az4--x-s3" },
+		checkpoints: { bucket: "tasks-checkpoints" },
+		prefix: "prod/"
+	}),
+	cache: { directory: "/tmp/tasks" },
+	onOpen: "verify"
+}).pipe(Layer.provide(Bumble.layer()))
+
+const completeFirst = Effect.scoped(
+	Effect.gen(function* () {
+		const db = yield* TasksDb
+		const reader = yield* db.read("latest")
+		const [first] = yield* (yield* reader.execute(openTasks, {})).collect()
+		if (first === undefined) {
+			return "nothing open"
+		}
+		const draft = yield* ChangeSet.builder(Tasks)
+		yield* draft.delete(Task, [{ ...first, done: false }])
+		yield* draft.insert(Task, [{ ...first, done: true }])
+		const requestId = Database.requestId()
+		const outcome = yield* db.submit(yield* draft.finish(), { requestId, precondition: reader.revision })
+		if (outcome._tag === "Decided") {
+			return outcome.receipt.outcome._tag
+		}
+		if (outcome.refusal._tag === "Unknown") {
+			const receipt = yield* db.resolve(requestId)
+			return Option.isSome(receipt) ? receipt.value.outcome._tag : "not decided"
+		}
+		return outcome.refusal._tag
+	})
+)
+
+void completeFirst.pipe(Effect.provide(TasksLive))
+```
+
+`read` takes `"cached"` (the cache as it is), `"latest"` (one request to find
+the log's tip) or `{ atLeast: seq }` (read-your-writes after a receipt's `seq`).
+
+## 20. One database per tenant
+
+`Database.pool` opens a database per tenant on first use and closes it after
+it has been idle for `idleTimeToLive`. Each tenant has its own log and cache;
+`FsStore` runs the same protocol on a local directory, and `MemStore` is the
+in-memory store for tests.
+
+```ts
+const Note = relation("Note", { id: uuid, text: str })
+const Notes = schema("Notes", { Note }, [key(Note, ["id"])])
+const allNotes = query(Notes).rule((r) => {
+	const { id, text } = v(Note)
+	return r.match(Note, { id, text }).find({ id, text })
+})
+
+declare const noteMigrations: Migrations
+
+const perTenant = Effect.scoped(
+	Effect.gen(function* () {
+		const pool = yield* Database.pool({
+			schema: Notes,
+			migrations: noteMigrations,
+			store: (tenant) => FsStore.make(`data/${tenant}/log`),
+			cache: (tenant) => ({ directory: `data/${tenant}/cache` }),
+			onOpen: "migrate",
+			idleTimeToLive: "10 minutes"
+		})
+		const count = (tenant: string) =>
+			Effect.scoped(
+				Effect.gen(function* () {
+					const db = yield* pool.get(tenant)
+					const reader = yield* db.read("cached")
+					return (yield* (yield* reader.execute(allNotes, {})).collect()).length
+				})
+			)
+		return yield* Effect.all([count("acme"), count("globex")])
+	})
+)
+
+void perTenant.pipe(Effect.provide(Bumble.layer()))
+```
