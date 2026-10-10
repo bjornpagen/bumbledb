@@ -299,8 +299,8 @@ the design.
 ## 9. Staged plan
 
 Each stage has a gate. The correctness gate for every stage is bumbledb's own
-oracle (2,879 cases in the 1.3.0 suite) and its tests. The performance gate is
-bumbledb's benchmark suite (`docs/perf/results.md`: 13 lanes, 32 read families,
+oracle (2,879 cases in the 2.0 suite) and its tests. The performance gate is
+bumbledb's benchmark suite (`docs/perf/results.md`: 12 lanes, 32 read families,
 34 scenario queries), run against the Rust engine at the same commit of the
 suite.
 

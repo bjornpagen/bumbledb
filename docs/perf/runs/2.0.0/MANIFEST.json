@@ -1,0 +1,309 @@
+{
+  "format": 1,
+  "started": "2026-10-10T18:24:14.649304+00:00",
+  "binary": "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+  "binary_sha256": "2b7a606251c79936cb9fd00f411ca73402c29089d728692868888b3927cc542c",
+  "source_revision": "7135a9a18f091eabc3f4d345b6e87fb6c9bbcbb9",
+  "runner_sha256": "6e1b135ec450d00da894091a4e6f54c3eb661ad193436d097b50e74c0b4a9531",
+  "workers": 1,
+  "scheduler_sha256": "5b0b107e9dc6d812b0252ddaa1264896c3c2cdcc507283971e408ac5d8393814",
+  "scheduler": {
+    "worker_limit": 8,
+    "cpu_ids": null,
+    "placement": "P-core-count cap; QoS steering, NOT CPU affinity",
+    "priority": "qos-user-interactive (relative priority 0)",
+    "hard_affinity": false
+  },
+  "shared_machine": true,
+  "full": true,
+  "corpus": "/Users/bjorn/Documents/bumbledb/bench-data",
+  "status": "INCOMPLETE",
+  "lanes": {
+    "verify": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "verify",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/reads"
+      ],
+      "started": "2026-10-10T18:24:14.665981+00:00",
+      "pid": 31478,
+      "exit_code": 0,
+      "finished": "2026-10-10T18:25:02.007104+00:00"
+    },
+    "curves": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "curves",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/curves",
+        "--scales",
+        "S,M,L",
+        "--warmth",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/curves"
+      ],
+      "started": "2026-10-10T18:25:02.009875+00:00",
+      "pid": 31488,
+      "exit_code": 0,
+      "finished": "2026-10-10T18:51:04.726109+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/curves/curves-report.json",
+      "sha256": "c477d12d7cdffb88affef5772ae22c342a347f0909ba91fc9cd9b402e3314a53"
+    },
+    "reads": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "bench",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/reads",
+        "--read-batch",
+        "1",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/reads"
+      ],
+      "started": "2026-10-10T18:51:04.731182+00:00",
+      "pid": 32669,
+      "exit_code": 0,
+      "finished": "2026-10-10T18:54:55.837088+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/reads/report.json",
+      "sha256": "872ec7d695a4d494ce744461dff20e40240c5f558075a6d46128cfe980e38fe6"
+    },
+    "scenarios": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "scenarios",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/scenarios",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/scenarios"
+      ],
+      "started": "2026-10-10T18:54:55.840272+00:00",
+      "pid": 32751,
+      "exit_code": 0,
+      "finished": "2026-10-10T19:01:34.816047+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/scenarios/scenarios.json",
+      "sha256": "43bb098d360fdb1a0050a42eb90ee6addce8b09c36d2dfcaf6fae102693f75b8"
+    },
+    "writes": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "writes",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/writes",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/writes"
+      ],
+      "started": "2026-10-10T19:01:34.819049+00:00",
+      "pid": 33106,
+      "exit_code": 0,
+      "finished": "2026-10-10T19:02:02.480259+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/writes/writes-report.json",
+      "sha256": "783f8246bcb30720c9bc084164026660d1f251575aebac9087b5f3c106271153"
+    },
+    "storage": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "storage",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/storage",
+        "--scales",
+        "S,M",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/storage"
+      ],
+      "started": "2026-10-10T19:02:02.483251+00:00",
+      "pid": 33131,
+      "exit_code": 0,
+      "finished": "2026-10-10T19:03:11.113041+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/storage/storage-report.json",
+      "sha256": "b32b8183dfc5266230d88c7b58e639137fca09e4fccb3ea6ad47a1412da9c1a1"
+    },
+    "app-perf-warm": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "app-perf",
+        "--regimes",
+        "warm",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/app-perf-warm"
+      ],
+      "started": "2026-10-10T19:03:11.116389+00:00",
+      "pid": 33155,
+      "exit_code": 0,
+      "finished": "2026-10-10T19:03:11.846788+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/app-perf-warm/app-perf.json",
+      "sha256": "7d1f8fb0dfcaec1c65e32f61d8913d8f3e68800a2cde39ee641e58fdd1a1e6a9"
+    },
+    "app-perf-cold": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "app-perf",
+        "--regimes",
+        "cold-open,post-write",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/app-perf-cold"
+      ],
+      "started": "2026-10-10T19:03:11.849556+00:00",
+      "pid": 33168,
+      "exit_code": 0,
+      "finished": "2026-10-10T19:03:13.297503+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/app-perf-cold/app-perf.json",
+      "sha256": "148cc844158c1c8f16b4544c998969ba52451ea0fbbc65772752ed3d3b9ec1c5"
+    },
+    "app-perf-large-result": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "app-perf",
+        "--regimes",
+        "large-result",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/app-perf-large-result"
+      ],
+      "started": "2026-10-10T19:03:13.301542+00:00",
+      "pid": 33186,
+      "exit_code": 0,
+      "finished": "2026-10-10T19:03:14.127967+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/app-perf-large-result/app-perf.json",
+      "sha256": "1781871ae9fc41da138eba9ab230a12c81f374b3b40925d15e0456903d2c847c"
+    },
+    "app-perf-tenants": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "app-perf",
+        "--regimes",
+        "tenant-churn",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/app-perf-tenants"
+      ],
+      "started": "2026-10-10T19:03:14.130984+00:00",
+      "pid": 33199,
+      "exit_code": 0,
+      "finished": "2026-10-10T19:03:15.566232+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/app-perf-tenants/app-perf.json",
+      "sha256": "ba3fab9b63825971f9bfce2deb0883dc8933e9f26788ee56800712d763df93ca"
+    },
+    "crud": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "crud",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/crud",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/crud"
+      ],
+      "started": "2026-10-10T19:03:15.569404+00:00",
+      "pid": 33213,
+      "exit_code": 0,
+      "finished": "2026-10-10T19:03:22.559928+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/crud/crud.json",
+      "sha256": "1149a1ff082b60c05d430e408f113324f57e3f917abf67d6f54a52cc599c5d1e"
+    },
+    "lawful": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "lawful",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/lawful",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/lawful"
+      ],
+      "started": "2026-10-10T19:03:22.563466+00:00",
+      "pid": 33226,
+      "exit_code": 0,
+      "finished": "2026-10-10T19:03:24.207078+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/lawful/lawful.json",
+      "sha256": "997ff471bd06485a8ac0fe5d76191d8e27e6d172e55e20698e02c59798e8c3c3"
+    },
+    "heap": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/target/release/bumbledb-bench",
+        "--boost",
+        "--jobs",
+        "1",
+        "heap",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/heap",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/heap"
+      ],
+      "started": "2026-10-10T19:03:24.210333+00:00",
+      "pid": 33239,
+      "exit_code": 0,
+      "finished": "2026-10-10T19:03:25.036484+00:00",
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full/heap/heap-report.json",
+      "sha256": "c4cbfe379da35974670137e930e8b2cd24cb219ebce515be4f030d42566d3802"
+    },
+    "charts": {
+      "status": "RUN-FAIL",
+      "command": [
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "/Users/bjorn/Documents/bumbledb/scripts/bench_viz.py",
+        "--night",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/2.0-rc1-full",
+        "--note",
+        "1 lane workers; P-core-count cap; QoS steering, NOT CPU affinity; qos-user-interactive (relative priority 0); shared CPU/I/O"
+      ],
+      "started": "2026-10-10T19:03:25.040233+00:00",
+      "pid": 33252,
+      "exit_code": 1,
+      "finished": "2026-10-10T19:03:25.144161+00:00"
+    }
+  },
+  "not_run_prerequisites": {
+    "large-populated": ">40 GiB allocated blocks + cgroup memory.max required",
+    "graviton-arm64": "real Graviton Linux ARM64 performance host required",
+    "x86-node": "Linux x64 Node application timing required"
+  },
+  "finished": "2026-10-10T19:03:25.144896+00:00"
+}

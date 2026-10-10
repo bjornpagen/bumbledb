@@ -267,12 +267,12 @@ with per-tenant databases, migrations and an outbox.
 
 ## Performance
 
-The last full benchmark suite ran on the 1.3.0 engine (Apple M2 Max,
-2026-09-11): a 0.46 µs median point lookup, a 4.96 µs range query, and lower
-medians than indexed SQLite in all 32 read families.
-
-**2.0 has not been benchmarked yet.** See the [1.3.0 results and their
-limits](docs/perf/results.md).
+The full benchmark suite ran on the 2.0 engine (Apple M2 Max, 2026-10-10): a
+1.2 µs median point lookup, a 5.8 µs range query, and lower medians than indexed
+SQLite in all 32 read families. Durable commits are fsync-bound: SQLite is faster
+on all 11 CRUD rows and on most batch commits, and declared-law refusals cost more
+than SQLite's constraint errors. The run was on a shared machine; see the
+[results and their limits](docs/perf/results.md).
 
 ![Read latency against indexed SQLite](assets/bench-vs-sqlite.svg)
 

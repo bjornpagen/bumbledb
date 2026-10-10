@@ -183,9 +183,9 @@ log.
   addon builds; Miri (eight shards), the static musl build, the deep sweeps,
   udeps and the NEON assembly check run nightly.
 
-## Not yet measured
+## Measurement limits
 
-2.0 has not been benchmarked. The [last full results](perf/results.md) are for
-the 1.3.0 engine. The S3 store passed the conformance suite against real S3
+The [2.0 benchmark results](perf/results.md) were measured on a shared machine,
+not an isolated one. The S3 store passed the conformance suite against real S3
 Express and Standard buckets by hand; no CI lane runs against S3, and
 cross-zone Express latency has not been measured.

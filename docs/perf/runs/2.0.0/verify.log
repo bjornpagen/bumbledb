@@ -1,4 +1,4 @@
-gen: loading corpus (seed 1, scale S) into /Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/reads/fa73e680324f9b26
+gen: loading corpus (seed 1, scale S) into /Users/bjorn/Documents/bumbledb/bench-data/reads/566f1634fba41c37
 verify: 100/2594 cases
 verify: loading the randomized lane's target corpus
 verify: 200/2594 cases
@@ -31,5 +31,5 @@ verify: 3 naive-only cases (Pack — SQLite-inexpressible by `Inexpressible::Pac
 verify: naive differential slice (125 ops)
 verify: calendar translator-unpaired families (hand-SQL + naive-checked, never dropped): free_busy
 verify: calendar naive differential slice (54 ops)
-verify: OK — 2879 cases, stamp 9474ff415887ee689f50b8f42b15ebd8dbc2fa6b292fa6572f29dde1d4fc5f94
-verify OK: 2879 cases, stamp 9474ff415887ee689f50b8f42b15ebd8dbc2fa6b292fa6572f29dde1d4fc5f94
+verify: OK — 2879 cases, stamp d3e895e26643e0c56684acb9afd19e16fa0cd4d46131a7a7a06a4c15732eec3b
+verify OK: 2879 cases, stamp d3e895e26643e0c56684acb9afd19e16fa0cd4d46131a7a7a06a4c15732eec3b
