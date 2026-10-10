@@ -38,29 +38,34 @@ function dist(): void {
 	if (fs.existsSync(binding)) fs.copyFileSync(binding, path.join(root, "dist", "native", "binding.d.ts"))
 }
 
-function stage(out: string): void {
-	fs.mkdirSync(out, { recursive: true })
-	const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
+/** Packs `files` from `dir` into `out`, with `manifest` as the packed package.json. */
+function packAs(dir: string, files: readonly string[], manifest: object, out: string): void {
 	const scratch = fs.mkdtempSync(path.join(out, ".stage-"))
 	try {
-		for (const entry of [...manifest.files, "README.md", "LICENSE"]) {
-			fs.cpSync(path.join(root, entry), path.join(scratch, entry), { recursive: true })
-		}
-		const optionalDependencies = Object.fromEntries(
-			SHIPPED_PLATFORMS.map((platform) => [`@bjornpagen/bumbledb-${platform}`, manifest.version])
-		)
-		const { devDependencies: _, scripts: __, ...published } = manifest
-		fs.writeFileSync(
-			path.join(scratch, "package.json"),
-			`${JSON.stringify({ ...published, optionalDependencies }, null, "\t")}\n`
-		)
+		for (const entry of files) fs.cpSync(path.join(dir, entry), path.join(scratch, entry), { recursive: true })
+		fs.writeFileSync(path.join(scratch, "package.json"), `${JSON.stringify(manifest, null, "\t")}\n`)
 		run("pnpm", ["pack", "--pack-destination", path.resolve(out)], scratch)
 	} finally {
 		fs.rmSync(scratch, { recursive: true, force: true })
 	}
+}
+
+const readManifest = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"))
+
+/** The main package's version is the only version; every platform package is stamped with it. */
+function stage(out: string): void {
+	fs.mkdirSync(out, { recursive: true })
+	const manifest = readManifest(root)
+	const optionalDependencies = Object.fromEntries(
+		SHIPPED_PLATFORMS.map((platform) => [`@bjornpagen/bumbledb-${platform}`, manifest.version])
+	)
+	const { devDependencies: _, scripts: __, ...published } = manifest
+	packAs(root, [...manifest.files, "README.md", "LICENSE"], { ...published, optionalDependencies }, out)
 	for (const platform of SHIPPED_PLATFORMS) {
 		const dir = path.join(root, "npm", platform)
-		if (fs.existsSync(path.join(dir, "bdb.node"))) run("pnpm", ["pack", "--pack-destination", path.resolve(out)], dir)
+		if (!fs.existsSync(path.join(dir, "bdb.node"))) continue
+		const { name, ...rest } = readManifest(dir)
+		packAs(dir, [...rest.files, "LICENSE"], { name, version: manifest.version, ...rest }, out)
 	}
 }
 

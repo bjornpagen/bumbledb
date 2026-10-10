@@ -54,7 +54,7 @@ jobs:
       - run: scripts/ci.sh test
 
   # Pull requests build linux-x64 with addon-ci; main builds every platform with
-  # fat LTO and keeps the binaries as artifacts for a hand-published release.
+  # fat LTO and keeps the binaries for the release job.
   addon:
     name: addon (${{ matrix.platform }})
     strategy:
@@ -112,3 +112,37 @@ jobs:
           name: bdb.${{ matrix.platform }}.node
           path: target/addon/bdb.${{ matrix.platform }}.node
           if-no-files-found: error
+
+  # Releases ts/package.json's version once npm lacks it (see scripts/ci.sh
+  # lane_release). npm trusts this workflow file through trusted publishing,
+  # so no token is stored anywhere.
+  release:
+    needs: [lint, test, addon]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          package_json_file: ts/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+          cache-dependency-path: ts/pnpm-lock.yaml
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: bdb.*.node
+          path: target/natives
+          merge-multiple: true
+      - run: scripts/ci.sh release

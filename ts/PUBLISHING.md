@@ -15,31 +15,20 @@ published.
 
 ## Cut a release
 
-Releases are published by hand; CI never publishes. Every push to `main` builds the three addons
-with fat LTO in CI and keeps them as the `bdb.<platform>.node` artifacts of that `ci` run.
+The version in `ts/package.json` is the only version; packing stamps it into every platform
+package. To release, change it and push to `main`.
 
-1. Set one version in the root `Cargo.toml` `[workspace.package]`, `ts/package.json` and every
-   `ts/npm/*/package.json`. Commit and push to `main`, and wait for its `ci` run to pass.
-2. From a clean checkout of that commit, with Node 26, pnpm, `gh` and an npm login that can
-   publish the four packages:
+The `release` job in `.github/workflows/ci.yml` runs after `lint`, `test` and every `addon` build
+pass on that push (`scripts/ci.sh release`). When npm lacks `@bjornpagen/bumbledb@<version>`, it packs
+the three fat-LTO addons that run built, smoke-tests the packed family, publishes the platform
+packages and then the core, and creates the `v<version>` GitHub Release with the tarballs and
+`SHA256SUMS`. A version with a prerelease suffix (`2.1.0-rc.1`) goes to the `next` dist-tag and a
+GitHub prerelease. Every step skips what already exists, so re-running a failed job finishes the
+release. While `ts/package.json` says `"private": true`, nothing is released.
 
-```sh
-version=$(node -p 'require("./ts/package.json").version')
-run=$(gh run list --workflow ci --branch main --commit "$(git rev-parse HEAD)" --status success \
-  --json databaseId --jq '.[0].databaseId')
-gh run download "$run" --pattern 'bdb.*.node' --dir artifacts
-mkdir natives && cp artifacts/*/bdb.*.node natives/
-pnpm --dir ts install --frozen-lockfile
-node scripts/family.mjs pack natives family
-node scripts/family.mjs smoke family
-for p in darwin-arm64 linux-arm64 linux-x64; do npm publish "family/bjornpagen-bumbledb-$p-$version.tgz"; done
-npm publish "family/bjornpagen-bumbledb-$version.tgz"
-git tag "v$version" && git push origin "v$version"
-gh release create "v$version" family/*.tgz family/SHA256SUMS --verify-tag --title "v$version" --generate-notes
-```
-
-`pack` refuses an addon for an unknown platform; check that `natives/` holds all three, because the
-core pins every platform package at its own version. Publish the platform packages before the core.
+npm trusted publishing authorizes the job; no token is stored. Each of the four packages names
+`bjornpagen/bumbledb` and the workflow `ci.yml` as its trusted publisher on npmjs.com (Settings,
+Trusted Publisher, GitHub Actions, no environment).
 
 ## Build a family locally
 

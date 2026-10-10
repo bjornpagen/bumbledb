@@ -95,6 +95,56 @@ lane_addon_release() {
 	addon release
 }
 
+# Publishes ts/package.json's version unless npm already has it: every platform
+# package, then the core, then the v<version> GitHub release. Each step skips
+# what already exists, so a rerun finishes a partial release. A private package
+# is not released, and a prerelease version goes to the "next" dist-tag.
+# Expects the three CI-built addons in $target_dir/natives.
+lane_release() {
+	local version tag dist_tag platform family=$target_dir/family prerelease=()
+	if [ "$(node -p 'require("./ts/package.json").private === true')" = true ]; then
+		echo "release: ts/package.json is private"
+		return
+	fi
+	version=$(node -p 'require("./ts/package.json").version')
+	tag=v$version
+	if on_npm "@bjornpagen/bumbledb@$version" && gh release view "$tag" > /dev/null 2>&1; then
+		echo "release: $tag is published"
+		return
+	fi
+	case $version in
+	*-*) dist_tag=next prerelease=(--prerelease) ;;
+	*) dist_tag=latest ;;
+	esac
+	for platform in $(ls ts/npm); do
+		[ -f "$target_dir/natives/bdb.$platform.node" ] || { echo "release: no addon for $platform" >&2; return 1; }
+	done
+	ts_install
+	rm -rf "$family"
+	node scripts/family.mjs pack "$target_dir/natives" "$family"
+	node scripts/family.mjs smoke "$family"
+	for platform in $(ls ts/npm); do
+		publish "@bjornpagen/bumbledb-$platform@$version" "$family/bjornpagen-bumbledb-$platform-$version.tgz" "$dist_tag"
+	done
+	publish "@bjornpagen/bumbledb@$version" "$family/bjornpagen-bumbledb-$version.tgz" "$dist_tag"
+	gh release view "$tag" > /dev/null 2>&1 ||
+		gh release create "$tag" "$family"/*.tgz "$family/SHA256SUMS" --target "$(git rev-parse HEAD)" \
+			--title "$tag" --generate-notes "${prerelease[@]}"
+}
+
+on_npm() {
+	npm view "$1" version > /dev/null 2>&1
+}
+
+# Publishes tarball $2 as $1 under dist-tag $3, unless npm already has $1.
+publish() {
+	if on_npm "$1"; then
+		echo "release: $1 is on npm"
+	else
+		npm publish "$2" --tag "$3"
+	fi
+}
+
 # Miri runs the engine's unit tests; tests that reach LMDB or are too slow
 # under the interpreter carry #[cfg_attr(miri, ignore)]. CI runs one lane per
 # shard, miri_1 through miri_4.
