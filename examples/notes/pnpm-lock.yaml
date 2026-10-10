@@ -177,7 +177,7 @@ importers:
         version: file:../../ts(@aws-sdk/client-s3@3.1148.0)(effect@4.0.2)
       alchemy:
         specifier: 2.0.0-beta.81
-        version: 2.0.0-beta.81(patch_hash=8840ad11bd5e08ffe8433e637e132e2d14ffe6cfbe054b7e4897da074078d31d)(@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.3.0))(@types/node@26.6.4)(@types/react@19.3.0)(effect@4.0.2)(hono@4.11.4)(mongodb@6.21.0)(typescript@7.0.2)(ws@8.22.0)
+        version: 2.0.0-beta.81(patch_hash=8840ad11bd5e08ffe8433e637e132e2d14ffe6cfbe054b7e4897da074078d31d)(@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.3.0))(@types/node@26.6.4)(@types/react@19.3.0)(effect@4.0.2)(hono@4.11.4)(mongodb@7.7.0)(typescript@7.0.2)(ws@8.22.0)
       effect:
         specifier: 4.0.2
         version: 4.0.2
@@ -204,8 +204,8 @@ importers:
         specifier: 19.3.0
         version: 19.3.0(@types/react@19.3.0)
       mongodb:
-        specifier: 6.21.0
-        version: 6.21.0
+        specifier: 7.7.0
+        version: 7.7.0
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -1117,8 +1117,8 @@ packages:
   '@types/webidl-conversions@7.0.3':
     resolution: {integrity: sha512-CiJJvcRtIgzadHCYXw7dqEnMNRjhGZlYK05Mj9OyktqV8uVT8fD2BFOB7S1uwBE3Kj2Z+4UyPmFw/Ixgw/LAlA==}
 
-  '@types/whatwg-url@11.0.5':
-    resolution: {integrity: sha512-coYR071JRaHa+xoEvvYqvnIHaVqaYrLPbsufM9BF63HkwI5Lgmy2QR8Q5K/lYDYo5AK82wOvSOS0UsLTpTG7uQ==}
+  '@types/whatwg-url@13.0.0':
+    resolution: {integrity: sha512-N8WXpbE6Wgri7KUSvrmQcqrMllKZ9uxkYWMt+mCSGwNc0Hsw9VQTW7ApqI4XNrx6/SaM2QQJCzMPDEXE058s+Q==}
 
   '@types/ws@8.18.2':
     resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
@@ -1323,9 +1323,9 @@ packages:
   bowser@2.14.1:
     resolution: {integrity: sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg==}
 
-  bson@6.10.4:
-    resolution: {integrity: sha512-WIsKqkSC0ABoBJuT1LEX+2HEvNmNKKgnTAyd0fL8qzK4SH2i9NXg+t08YtdZp/V9IZ33cxe3iV4yM0qg8lMQng==}
-    engines: {node: '>=16.20.1'}
+  bson@7.3.3:
+    resolution: {integrity: sha512-oz3LwE3qGEhTCSyhzQRLY3Bj1NLOsjFMf6tcmY5J8M+3R7EVcmoBfSHWvjUK3yXCLDUsGpIuB3aQL4nDZ1EV/g==}
+    engines: {node: '>=20.19.0'}
 
   caniuse-lite@1.0.30001815:
     resolution: {integrity: sha512-uDybUEyfgbyJJ93J1vikTylBX31AkdVYeVPeffMQpf8XN7hSfr0oZOn4VFOIMNvtU5+rHvC5Udg2TgtJKHm23Q==}
@@ -1474,20 +1474,21 @@ packages:
     resolution: {integrity: sha512-snEhs+6G5Tjd4I7tLCDOaoln2RgE0bD19RzEKgvgK2hZ5VKy3MpLhLTZ2fWpXSTg4K2cyPwp+VHATFJhxfnOeA==}
     engines: {node: '>=18.0.0'}
 
-  mongodb-connection-string-url@3.0.2:
-    resolution: {integrity: sha512-rMO7CGo/9BFwyZABcKAWL8UJwH/Kc2x0g72uhDWzG48URRax5TCIcJ7Rc3RZqffZzO/Gwff/jyKwCU9TN8gehA==}
+  mongodb-connection-string-url@7.0.2:
+    resolution: {integrity: sha512-ZoS07RoFqpKYQwAk59qmrx8+jJHNHU30UjlU96QktiGn1ltvDr+vCznLX5DiUBLEpMAHatHNWV1nM/74ul66kA==}
+    engines: {node: '>=20.19.0'}
 
-  mongodb@6.21.0:
-    resolution: {integrity: sha512-URyb/VXMjJ4da46OeSXg+puO39XH9DeQpWCslifrRn9JWugy0D+DvvBvkm2WxmHe61O/H19JM66p1z7RHVkZ6A==}
-    engines: {node: '>=16.20.1'}
+  mongodb@7.7.0:
+    resolution: {integrity: sha512-XG1xXEqyouAV8GCb3PuRaujofeXKpAJAPvXYWZgHl6Dz4QHSJ1nRLl0+GpqaLTwKvC0RFE9truOur34RNFY1nw==}
+    engines: {node: '>=20.19.0'}
     peerDependencies:
-      '@aws-sdk/credential-providers': ^3.188.0
-      '@mongodb-js/zstd': ^1.1.0 || ^2.0.0
-      gcp-metadata: ^5.2.0
-      kerberos: ^2.0.1
-      mongodb-client-encryption: '>=6.0.0 <7'
+      '@aws-sdk/credential-providers': ^3.806.0
+      '@mongodb-js/zstd': ^7.0.0
+      gcp-metadata: ^7.0.1
+      kerberos: ^7.0.0
+      mongodb-client-encryption: ^7.2.0
       snappy: ^7.3.2
-      socks: ^2.7.1
+      socks: ^2.8.6
     peerDependenciesMeta:
       '@aws-sdk/credential-providers':
         optional: true
@@ -2594,7 +2595,7 @@ snapshots:
 
   '@types/webidl-conversions@7.0.3': {}
 
-  '@types/whatwg-url@11.0.5':
+  '@types/whatwg-url@13.0.0':
     dependencies:
       '@types/webidl-conversions': 7.0.3
 
@@ -2662,7 +2663,7 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  alchemy@2.0.0-beta.81(patch_hash=8840ad11bd5e08ffe8433e637e132e2d14ffe6cfbe054b7e4897da074078d31d)(@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.3.0))(@types/node@26.6.4)(@types/react@19.3.0)(effect@4.0.2)(hono@4.11.4)(mongodb@6.21.0)(typescript@7.0.2)(ws@8.22.0):
+  alchemy@2.0.0-beta.81(patch_hash=8840ad11bd5e08ffe8433e637e132e2d14ffe6cfbe054b7e4897da074078d31d)(@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.3.0))(@types/node@26.6.4)(@types/react@19.3.0)(effect@4.0.2)(hono@4.11.4)(mongodb@7.7.0)(typescript@7.0.2)(ws@8.22.0):
     dependencies:
       '@alchemy.run/cloudflare-runtime': 2.0.0-beta.81(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.2))(@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.3.0))(@types/node@26.6.4)(effect@4.0.2)(rolldown@1.2.5)(typescript@7.0.2)
       '@alchemy.run/floci': 2.0.0-beta.81(effect@4.0.2)
@@ -2703,7 +2704,7 @@ snapshots:
       yaml: 2.9.1
     optionalDependencies:
       '@effect/platform-node': 4.0.2(effect@4.0.2)(redis@6.3.0)
-      mongodb: 6.21.0
+      mongodb: 7.7.0
       ws: 8.22.0
     transitivePeerDependencies:
       - '@types/node'
@@ -2729,7 +2730,7 @@ snapshots:
 
   bowser@2.14.1: {}
 
-  bson@6.10.4: {}
+  bson@7.3.3: {}
 
   caniuse-lite@1.0.30001815: {}
 
@@ -2850,16 +2851,16 @@ snapshots:
 
   modern-tar@0.8.5: {}
 
-  mongodb-connection-string-url@3.0.2:
+  mongodb-connection-string-url@7.0.2:
     dependencies:
-      '@types/whatwg-url': 11.0.5
+      '@types/whatwg-url': 13.0.0
       whatwg-url: 14.2.0
 
-  mongodb@6.21.0:
+  mongodb@7.7.0:
     dependencies:
       '@mongodb-js/saslprep': 1.6.0
-      bson: 6.10.4
-      mongodb-connection-string-url: 3.0.2
+      bson: 7.3.3
+      mongodb-connection-string-url: 7.0.2
 
   nanoid@3.3.20: {}
 
