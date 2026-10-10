@@ -32,7 +32,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb"
-version = "1.3.1"
+version = "2.0.0"
 dependencies = [
  "blake3",
  "bumbledb-macros",
@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-bench"
-version = "1.3.1"
+version = "2.0.0"
 dependencies = [
  "blake3",
  "bumbledb",
@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-log"
-version = "1.3.1"
+version = "2.0.0"
 dependencies = [
  "blake3",
  "bumbledb",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-macros"
-version = "1.3.1"
+version = "2.0.0"
 dependencies = [
  "bumbledb-theory",
  "proc-macro2",
@@ -69,7 +69,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-node"
-version = "1.3.1"
+version = "2.0.0"
 dependencies = [
  "bumbledb",
  "bumbledb-log",
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-theory"
-version = "1.3.1"
+version = "2.0.0"
 dependencies = [
  "uuid",
 ]
