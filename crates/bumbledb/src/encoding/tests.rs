@@ -105,6 +105,7 @@ fn exhaustive_bool_encoding_preserves_order() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn exhaustive_i64_encoding_preserves_order_across_the_sign_boundary() {
     let domain = i64_byte_granularity_domain();
     assert_eq!(domain.len(), 677, "the derived byte-granularity domain");
@@ -116,6 +117,7 @@ fn exhaustive_i64_encoding_preserves_order_across_the_sign_boundary() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn exhaustive_u64_encoding_preserves_order_at_byte_boundaries() {
     let mut set = std::collections::BTreeSet::new();
     set.extend(0..=520u64);

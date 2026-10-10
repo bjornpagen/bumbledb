@@ -589,6 +589,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn small_signed_quotients_match_nearest_integer_distance_oracle() {
         // Select among integers by distance to the rational; no production
         // quotient/remainder rounding logic participates in this oracle.

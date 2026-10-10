@@ -1265,6 +1265,7 @@ fn grouped_family_fixture(
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn indexed_grouped_verdicts_and_canonical_citations_match_complete() {
     for family in [
         GroupedFamily::ScalarContainment,
@@ -1379,6 +1380,7 @@ fn scalar_key_late_unindexed_group_discards_provisional_citations() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn scalar_key_bad_group_state_releases_memory_on_success_and_mid_probe_cancellation() {
     let schema = theory();
     schema.compiled_theory().unwrap();

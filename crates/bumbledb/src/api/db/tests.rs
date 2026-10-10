@@ -1363,7 +1363,13 @@ fn closed_point_reads_resolve_against_the_extension() {
 #[test]
 fn sealing_owned_rows_allocates_the_payload_not_another_row_collection() {
     let mut observations = Vec::new();
-    for rows in [1usize, 128, 8192] {
+    // Under Miri the two small sizes already show the payload is the only growth.
+    let sizes: &[usize] = if cfg!(miri) {
+        &[1, 128]
+    } else {
+        &[1, 128, 8192]
+    };
+    for &rows in sizes {
         let mut builder = InstanceBuilder::new(Ledger, operation()).unwrap();
         builder
             .load_dyn(ENTRY, (0..rows).map(|i| entry_row(&format!("row-{i}"), -7)))

@@ -143,21 +143,23 @@ mod tests {
     use std::sync::Mutex;
 
     static EXCLUSIVE: Mutex<()> = Mutex::new(());
-    const MIB: u64 = 1 << 20;
-    const MIB_USIZE: usize = 1 << 20;
+    // Miri interprets every byte a probe writes; 64 KiB blocks keep the same
+    // accounting checks well above background noise there.
+    const BLOCK_USIZE: usize = if cfg!(miri) { 1 << 16 } else { 1 << 20 };
+    const BLOCK: u64 = BLOCK_USIZE as u64;
 
     #[test]
     fn bytes_track_a_known_allocation_and_its_free() {
         let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
         let before = snapshot();
-        let v: Vec<u8> = Vec::with_capacity(8 * MIB_USIZE);
+        let v: Vec<u8> = Vec::with_capacity(8 * BLOCK_USIZE);
         let mid = snapshot();
         assert!(
-            mid.window.alloc_bytes - before.window.alloc_bytes >= 8 * MIB,
-            "allocating 8 MiB must move alloc_bytes by at least that"
+            mid.window.alloc_bytes - before.window.alloc_bytes >= 8 * BLOCK,
+            "allocating 8 blocks must move alloc_bytes by at least that"
         );
         assert!(
-            mid.absolute.live_bytes >= before.absolute.live_bytes + 4 * MIB,
+            mid.absolute.live_bytes >= before.absolute.live_bytes + 4 * BLOCK,
             "live rises by roughly the probe (background noise is KiBs)"
         );
         assert!(
@@ -171,10 +173,10 @@ mod tests {
                 .window
                 .dealloc_bytes
                 .saturating_sub(mid.window.dealloc_bytes)
-                >= 8 * MIB
+                >= 8 * BLOCK
         );
         assert!(
-            after.absolute.live_bytes <= mid.absolute.live_bytes.saturating_sub(4 * MIB),
+            after.absolute.live_bytes <= mid.absolute.live_bytes.saturating_sub(4 * BLOCK),
             "live falls back after the free"
         );
         assert!(
@@ -186,14 +188,17 @@ mod tests {
     #[test]
     fn reset_zeroes_windows_but_not_absolutes() {
         let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
-        let keep: Vec<u8> = Vec::with_capacity(8 * MIB_USIZE);
+        let keep: Vec<u8> = Vec::with_capacity(8 * BLOCK_USIZE);
         reset();
         let snap = snapshot();
 
-        assert!(snap.window.alloc_bytes < MIB, "windows rebased: {snap:?}");
-        assert!(snap.window.dealloc_bytes < MIB, "windows rebased: {snap:?}");
+        assert!(snap.window.alloc_bytes < BLOCK, "windows rebased: {snap:?}");
         assert!(
-            snap.absolute.live_bytes >= 8 * MIB,
+            snap.window.dealloc_bytes < BLOCK,
+            "windows rebased: {snap:?}"
+        );
+        assert!(
+            snap.absolute.live_bytes >= 8 * BLOCK,
             "live is absolute and survives reset"
         );
         assert!(
@@ -207,14 +212,14 @@ mod tests {
     fn zeroed_allocations_count_once_like_plain_ones() {
         let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
         let before = snapshot();
-        let v = vec![0u8; 8 * MIB_USIZE];
+        let v = vec![0u8; 8 * BLOCK_USIZE];
         let mid = snapshot();
         assert!(
-            mid.window.alloc_bytes - before.window.alloc_bytes >= 8 * MIB,
-            "a zeroed 8 MiB allocation moves alloc_bytes by at least that"
+            mid.window.alloc_bytes - before.window.alloc_bytes >= 8 * BLOCK,
+            "a zeroed 8-block allocation moves alloc_bytes by at least that"
         );
         assert!(
-            mid.absolute.live_bytes >= before.absolute.live_bytes + 4 * MIB,
+            mid.absolute.live_bytes >= before.absolute.live_bytes + 4 * BLOCK,
             "live rises by roughly the probe"
         );
         drop(v);
@@ -224,25 +229,25 @@ mod tests {
                 .window
                 .dealloc_bytes
                 .saturating_sub(mid.window.dealloc_bytes)
-                >= 8 * MIB
+                >= 8 * BLOCK
         );
     }
 
     #[test]
     fn realloc_accounts_both_byte_sides() {
         let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
-        let mut v: Vec<u8> = Vec::with_capacity(2 * MIB_USIZE);
-        v.extend(std::iter::repeat_n(0u8, 2 * MIB_USIZE));
+        let mut v: Vec<u8> = Vec::with_capacity(2 * BLOCK_USIZE);
+        v.extend(std::iter::repeat_n(0u8, 2 * BLOCK_USIZE));
         let before = snapshot();
 
-        v.reserve_exact(14 * MIB_USIZE);
+        v.reserve_exact(14 * BLOCK_USIZE);
         let after = snapshot();
         assert!(
-            after.window.alloc_bytes - before.window.alloc_bytes >= 16 * MIB,
+            after.window.alloc_bytes - before.window.alloc_bytes >= 16 * BLOCK,
             "growth allocates the new footprint"
         );
         assert!(
-            after.window.dealloc_bytes - before.window.dealloc_bytes >= 2 * MIB,
+            after.window.dealloc_bytes - before.window.dealloc_bytes >= 2 * BLOCK,
             "growth accounts the old footprint as freed bytes"
         );
         let live_delta = after
@@ -250,7 +255,7 @@ mod tests {
             .live_bytes
             .saturating_sub(before.absolute.live_bytes);
         assert!(
-            (13 * MIB..=17 * MIB).contains(&live_delta),
+            (13 * BLOCK..=17 * BLOCK).contains(&live_delta),
             "live moves by roughly the delta: {live_delta}"
         );
         drop(v);

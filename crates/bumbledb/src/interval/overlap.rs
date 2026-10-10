@@ -295,6 +295,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn queries_match_the_naive_filter_across_random_groups() {
         let mut rng = Lcg(0x0BEE);
         let mut cache = OverlapCache::default();

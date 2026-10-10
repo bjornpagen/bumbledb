@@ -221,6 +221,7 @@ fn command(schema: &Schema, actions: &[(bool, u64)]) -> ChangeSet {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn composition_matches_one_command_and_is_commutative_associative_idempotent() {
     let schema = schema();
     let actions = [
