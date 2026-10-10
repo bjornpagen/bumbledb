@@ -9,8 +9,8 @@ Resume from the first step that is not `done`.
 | 1c | Integration gate: fmt, clippy x2, rustdoc, nextest, doctests | done (1918 tests, cargo-deny/shear not installed locally) |
 | 1d | Integration gate: TS (addon, biome, tsc, node --test), notes | done (ts 283/283, family pack+smoke, notes typecheck/test/migrations:check/build, Rust consumer) |
 | 2 | Comment purge (Rust, TS, TOML, YAML, shell, Python) | done |
-| 3 | Legacy cull grep gate | pending |
-| 4 | D20 bdb grep gate | pending |
+| 3 | Legacy cull grep gate | done for code, tests, scripts, examples; docs/ handled in 5 |
+| 4 | D20 bdb grep gate | done (libbumbledb.a is the crate artifact name) |
 | 5a | README.md + docs/cookbook.md rewrite, cookbook doctests | pending |
 | 5b | Delete docs/release-1.*, stale docs/perf/runs; write docs/release-2.0.md | pending |
 | 5c | Versions to 2.0.0 (Cargo, npm) | pending |
