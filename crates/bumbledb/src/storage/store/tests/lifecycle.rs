@@ -6,6 +6,7 @@ use crate::storage::store::format::{FORMAT, K_FORMAT, K_NEXT_ROW_ID};
 use crate::storage::store::store_env::{CloseReport, Durability};
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn create_then_reopen_round_trips_identity_and_rows() {
     let (_dir, path) = store_dir("store-create-reopen");
     let database = DatabaseId::mint();
@@ -26,6 +27,7 @@ fn create_then_reopen_round_trips_identity_and_rows() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn environment_identity_differs_per_open() {
     let (_dir, path) = store_dir("store-env-identity");
     let first = create_default(&path).identity();
@@ -35,6 +37,7 @@ fn environment_identity_differs_per_open() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn create_refuses_an_existing_destination() {
     let (_dir, path) = store_dir("store-create-exists");
     drop(create_default(&path));
@@ -45,6 +48,7 @@ fn create_refuses_an_existing_destination() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_second_open_refuses_while_the_owner_lives_and_succeeds_after_drop() {
     let (_dir, path) = store_dir("store-lock");
     let owner = create_default(&path);
@@ -57,6 +61,7 @@ fn a_second_open_refuses_while_the_owner_lives_and_succeeds_after_drop() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn duplicated_lock_description_does_not_outlive_the_final_environment_owner() {
     for retain_snapshot in [false, true] {
         let (_dir, path) = store_dir("store-inherited-lock-description");
@@ -85,6 +90,7 @@ fn duplicated_lock_description_does_not_outlive_the_final_environment_owner() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_directory_without_this_format_refuses_and_is_left_untouched() {
     let (_dir, path) = store_dir("store-not-bumbledb");
     std::fs::create_dir_all(&path).expect("dir");
@@ -100,6 +106,7 @@ fn a_directory_without_this_format_refuses_and_is_left_untouched() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn any_other_format_entry_refuses() {
     for format in [&FORMAT[..11], b"bdb.store.v2".as_slice(), b"".as_slice()] {
         let (_dir, path) = store_dir("store-format");
@@ -115,6 +122,7 @@ fn any_other_format_entry_refuses() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_foreign_schema_refuses_to_open() {
     let (_dir, path) = store_dir("store-schema-mismatch");
     drop(create_default(&path));
@@ -126,6 +134,7 @@ fn a_foreign_schema_refuses_to_open() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn durability_selects_exactly_the_no_sync_flag() {
     let weakening = heed::EnvFlags::NO_SYNC.bits()
         | heed::EnvFlags::MAP_ASYNC.bits()
@@ -150,6 +159,7 @@ fn durability_selects_exactly_the_no_sync_flag() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn close_reports_live_snapshots_and_refuses_new_admission() {
     let (_dir, path) = store_dir("store-close");
     let store = create_default(&path);
@@ -170,6 +180,7 @@ fn close_reports_live_snapshots_and_refuses_new_admission() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_lock_releases_after_the_owner_and_all_snapshots_drop() {
     let (_dir, path) = store_dir("store-lock-release-order");
     let snapshot = {
@@ -185,6 +196,7 @@ fn the_lock_releases_after_the_owner_and_all_snapshots_drop() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn row_id_exhaustion_aborts_the_batch_without_advancing_the_high_water_mark() {
     let (_dir, path) = store_dir("store-rowid-exhaustion");
     let store = create_default(&path);
@@ -208,6 +220,7 @@ fn row_id_exhaustion_aborts_the_batch_without_advancing_the_high_water_mark() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_writer_is_exclusive_and_reentrancy_refuses() {
     let (_dir, path) = store_dir("store-writer-reentrancy");
     let store = create_default(&path);
@@ -228,6 +241,7 @@ fn the_writer_is_exclusive_and_reentrancy_refuses() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn install_populated_leaves_no_destination_on_population_failure() {
     let (_dir, path) = store_dir("store-install-populated");
     let error = Store::install_populated(
@@ -249,6 +263,7 @@ fn install_populated_leaves_no_destination_on_population_failure() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn install_populated_publishes_a_complete_store() {
     let (_dir, path) = store_dir("store-install-complete");
     let changes = change_set(&schema(), &[(NOTE, note(1, "published"))], &[]);

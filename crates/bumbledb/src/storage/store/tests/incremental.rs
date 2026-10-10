@@ -179,6 +179,7 @@ fn forced(path: &std::path::Path, schema: &Schema, fp: [u8; FP_LEN]) -> Store {
 /// Exercise physical buckets through the existing complete/incremental
 /// differential judge, including byte-for-byte canonical rejection evidence.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn interval_prefix_order_coverage_collisions_and_cleanup() {
     use crate::schema::{FixedIntervalElement, IntervalElement};
     for target_type in [
@@ -445,6 +446,7 @@ fn run_differential(store: &Store, schema: &Schema, seed: u64, iterations: u32) 
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn incremental_judgment_matches_complete_judgment_on_randomized_mutations() {
     let (_dir, path) = store_dir("incremental-differential");
     let schema = delta_schema();
@@ -453,6 +455,7 @@ fn incremental_judgment_matches_complete_judgment_on_randomized_mutations() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn incremental_judgment_matches_complete_judgment_under_forced_collisions() {
     let (_dir, path) = store_dir("incremental-collision");
     let schema = delta_schema();
@@ -461,6 +464,7 @@ fn incremental_judgment_matches_complete_judgment_under_forced_collisions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn capacity_measure_follows_target_row_order_not_delta_group_order() {
     for forced_collision in [false, true] {
         let (_dir, path) = store_dir("capacity-measure-order");
@@ -499,6 +503,7 @@ fn capacity_measure_follows_target_row_order_not_delta_group_order() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
     let (_dir, path) = store_dir("incremental-multi");
     let schema = delta_schema();
@@ -546,6 +551,7 @@ fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_unlawful_parent_hides_from_incremental_judgment_and_the_sweeper_convicts() {
     let (_dir, path) = store_dir("incremental-unlawful");
     let schema = delta_schema();
@@ -614,6 +620,7 @@ fn measured_one_row_candidate(store: &Store, schema: &Schema, id: u64) -> u64 {
 /// Allocation requests of a one-row candidate stay flat as the relation
 /// grows: incremental judgment never builds relation-sized state.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn one_row_candidates_allocate_independently_of_relation_size() {
     let (_dir, path) = store_dir("incremental-workcount");
     let schema = delta_schema();
@@ -645,6 +652,7 @@ fn one_row_candidates_allocate_independently_of_relation_size() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn home_preservation_does_not_hide_alternate_or_interval_keys() {
     let schema = delta_schema();
     let (_dir, path) = store_dir("home-preservation-other-laws");

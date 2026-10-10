@@ -8,6 +8,7 @@ fn small_store(path: &std::path::Path) -> Store {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_candidate_past_the_ceiling_is_full_and_commits_nothing() {
     let (_dir, path) = store_dir("ceiling-candidate");
     let store = small_store(&path);
@@ -31,6 +32,7 @@ fn a_candidate_past_the_ceiling_is_full_and_commits_nothing() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_host_record_past_the_ceiling_drops_the_whole_sealed_candidate() {
     let (_dir, path) = store_dir("ceiling-seal");
     let store = small_store(&path);
@@ -58,6 +60,7 @@ fn a_host_record_past_the_ceiling_drops_the_whole_sealed_candidate() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn reopening_keeps_the_rows_under_a_different_ceiling() {
     let (_dir, path) = store_dir("ceiling-reopen");
     let store = small_store(&path);

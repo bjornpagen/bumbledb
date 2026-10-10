@@ -72,6 +72,7 @@ fn sweep_is_clean(store: &Store, schema: &Schema) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn every_non_home_key_keeps_one_entry_per_row_through_replacement() {
     let schema = user_schema();
     let (_dir, path) = store_dir("indexed-entries");
@@ -117,6 +118,7 @@ fn every_non_home_key_keeps_one_entry_per_row_through_replacement() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn groups_resolve_through_buckets_and_long_text_never_enters_a_key() {
     let schema = user_schema();
     let (_dir, path) = store_dir("indexed-groups");
@@ -162,6 +164,7 @@ fn groups_resolve_through_buckets_and_long_text_never_enters_a_key() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn randomized_mutations_keep_the_store_coherent() {
     let schema = user_schema();
     let (_dir, path) = store_dir("indexed-random");

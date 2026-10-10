@@ -14,6 +14,7 @@ fn digest(store: &Store) -> [u8; 32] {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_pinned_snapshot_keeps_its_rows_generation_and_host_bytes() {
     let (_dir, path) = store_dir("coherence-pinned");
     let store = create_default(&path);
@@ -69,6 +70,7 @@ fn a_pinned_snapshot_keeps_its_rows_generation_and_host_bytes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_generation_starts_at_zero_and_moves_only_on_change() {
     let (_dir, path) = store_dir("coherence-generation");
     let store = create_default(&path);
@@ -89,6 +91,7 @@ fn the_generation_starts_at_zero_and_moves_only_on_change() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn deleted_text_leaves_no_byte_behind_after_reopen() {
     let (_dir, path) = store_dir("coherence-no-dictionary");
     let secret = "a-secret-body-that-must-vanish";
@@ -116,6 +119,7 @@ fn deleted_text_leaves_no_byte_behind_after_reopen() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn export_orders_relations_then_homes_then_bytes() {
     let (_dir, path) = store_dir("coherence-export-order");
     let store = create_default(&path);
@@ -159,6 +163,7 @@ fn export_orders_relations_then_homes_then_bytes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn content_digests_ignore_history_and_see_every_row() {
     let (_dir, first_path) = store_dir("coherence-digest-a");
     let (_dir2, second_path) = store_dir("coherence-digest-b");

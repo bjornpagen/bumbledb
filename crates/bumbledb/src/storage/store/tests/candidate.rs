@@ -13,6 +13,7 @@ fn note_row(id: u64, body: &str) -> Vec<u8> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_prepared_candidate_is_invisible_to_committed_readers() {
     let (_dir, path) = store_dir("cand-invisible");
     let store = create_default(&path);
@@ -49,6 +50,7 @@ fn a_prepared_candidate_is_invisible_to_committed_readers() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_rejection_names_every_competitor_and_keeps_the_session_for_a_receipt() {
     let (_dir, path) = store_dir("cand-rejected-receipt");
     let store = create_default(&path);
@@ -97,6 +99,7 @@ fn a_rejection_names_every_competitor_and_keeps_the_session_for_a_receipt() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_replacement_under_one_key_judges_the_final_state() {
     let (_dir, path) = store_dir("cand-replacement");
     let store = create_default(&path);
@@ -120,6 +123,7 @@ fn a_replacement_under_one_key_judges_the_final_state() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_failed_seal_drops_facts_and_the_host_prefix() {
     let (_dir, path) = store_dir("cand-failed-seal");
     let store = create_default(&path);
@@ -161,6 +165,7 @@ fn a_failed_seal_drops_facts_and_the_host_prefix() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn host_key_grammar_is_checked_before_any_write() {
     let (_dir, path) = store_dir("cand-seal-grammar");
     let store = create_default(&path);
@@ -198,6 +203,7 @@ fn host_key_grammar_is_checked_before_any_write() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn unchanged_host_bytes_and_noop_deltas_do_not_move_the_generation() {
     let (_dir, path) = store_dir("cand-noops");
     let store = create_default(&path);
@@ -238,6 +244,7 @@ fn unchanged_host_bytes_and_noop_deltas_do_not_move_the_generation() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_foreign_schema_change_set_refuses() {
     let (_dir, path) = store_dir("cand-foreign-schema");
     let store = create_default(&path);
@@ -253,6 +260,7 @@ fn a_foreign_schema_change_set_refuses() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_decider_sees_earlier_admissions_and_rolls_back_rejections_alone() {
     let (_dir, path) = store_dir("cand-decide-all");
     let store = create_default(&path);

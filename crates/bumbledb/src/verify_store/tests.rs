@@ -75,6 +75,7 @@ fn forge(
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_lawful_store_sweeps_coherent_after_mixed_commits() {
     let dir = TempDir::new("verify-coherent");
     let db = create(&dir);
@@ -91,6 +92,7 @@ fn a_lawful_store_sweeps_coherent_after_mixed_commits() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_moved_row_is_a_foreign_home() {
     let dir = TempDir::new("verify-foreign-home");
     let db = create(&dir);
@@ -121,6 +123,7 @@ fn a_moved_row_is_a_foreign_home() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn stale_counts_a_behind_ratchet_and_a_dangling_entry_are_distinct_findings() {
     let dir = TempDir::new("verify-counters");
     let db = create(&dir);
@@ -174,6 +177,7 @@ fn stale_counts_a_behind_ratchet_and_a_dangling_entry_are_distinct_findings() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_complete_judgment_convicts_a_state_no_writer_judged() {
     let dir = TempDir::new("verify-judgment");
     let db = create(&dir);

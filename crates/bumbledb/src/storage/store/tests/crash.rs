@@ -79,6 +79,7 @@ fn wait_for_marker(child: &mut std::process::Child, marker: &str) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn rows_survive_process_death_after_durable_commit() {
     let (_dir, path) = store_dir("crash-after-commit");
     let mut child = spawn_child("commit-then-abort", &path);
@@ -115,6 +116,7 @@ fn rows_survive_process_death_after_durable_commit() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_sealed_uncommitted_candidate_dies_with_its_process() {
     let (_dir, path) = store_dir("crash-before-commit");
     // Seed one committed row so the child opens an existing store.
@@ -143,6 +145,7 @@ fn a_sealed_uncommitted_candidate_dies_with_its_process() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_paused_owner_keeps_the_lock_and_death_releases_it() {
     let (_dir, path) = store_dir("crash-lock-lifetime");
     {

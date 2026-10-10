@@ -5,6 +5,7 @@ use super::*;
 use crate::storage::store::host::Head;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_image_installs_with_the_same_identity_head_and_content() {
     let (dir, path) = store_dir("image-source");
     let store = create_default(&path);
@@ -66,6 +67,7 @@ fn an_image_installs_with_the_same_identity_head_and_content() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_image_of_another_schema_or_format_refuses_and_leaves_no_destination() {
     let (dir, path) = store_dir("image-refusal");
     let store = create_default(&path);

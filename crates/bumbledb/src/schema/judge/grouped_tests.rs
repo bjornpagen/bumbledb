@@ -65,6 +65,7 @@ fn cancelled_grouped_judgment_does_not_publish_a_verdict() {
 
 /// Wide grouped state reports both competitors and exact truncation labels.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn wide_rejection_diagnostics_are_complete() {
     let schema = text_keyed_schema();
     let state = wide_state(4000, true);

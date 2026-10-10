@@ -23,6 +23,7 @@ fn exported(store: &Store) -> Vec<(RelationId, Vec<u8>)> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn colliding_rows_stay_distinct_through_insert_contains_delete() {
     let (_dir, path) = store_dir("collision-crud");
     let store = forced_store(&path);
@@ -63,6 +64,7 @@ fn colliding_rows_stay_distinct_through_insert_contains_delete() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn export_orders_collision_buckets_by_bytes_whatever_the_insertion_order() {
     for relation in [NOTE, TAG] {
         let make = |letter: &str| {
@@ -99,6 +101,7 @@ fn export_orders_collision_buckets_by_bytes_whatever_the_insertion_order() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn judgment_sees_every_competing_proposal_in_one_bucket() {
     let (_dir, path) = store_dir("collision-judgment");
     let store = forced_store(&path);

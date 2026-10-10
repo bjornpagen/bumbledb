@@ -120,6 +120,7 @@ fn create(dir: &TempDir) -> Db<Ledger> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn pending_owners_release_duplicates_and_opposite_mutations_and_transfer_into_seal() {
     let dir = TempDir::new("pending-owner-seal");
     let db = create(&dir);
@@ -171,6 +172,7 @@ fn pending_owners_release_duplicates_and_opposite_mutations_and_transfer_into_se
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn pending_tree_growth_and_removal_release_all_payloads_and_empty_nodes() {
     let dir = TempDir::new("pending-occupancy");
     let db = create(&dir);
@@ -201,6 +203,7 @@ fn pending_tree_growth_and_removal_release_all_payloads_and_empty_nodes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn cancelled_pending_write_keeps_its_prefix_but_cannot_publish() {
     let dir = TempDir::new("pending-cancel");
     let db = create(&dir);
@@ -227,6 +230,7 @@ fn cancelled_pending_write_keeps_its_prefix_but_cannot_publish() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn cancelled_collection_and_seal_release_all_owned_memory() {
     let dir = TempDir::new("pending-refusals");
     let db = create(&dir);
@@ -267,6 +271,7 @@ fn digest(frame: &super::ReadFrame<'_, Ledger>) -> crate::Result<[u8; 32]> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_three_write_lanes_produce_identical_stores() {
     let typed_dir = TempDir::new("db-lane-typed");
     let dyn_dir = TempDir::new("db-lane-dyn");
@@ -334,6 +339,7 @@ fn accepted_collection_is_send() {
 // Reports and no-ops.
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_typo_delete_is_a_counted_noop_and_moves_nothing() {
     let dir = TempDir::new("db-typo-delete");
     let db = create(&dir);
@@ -369,6 +375,7 @@ fn a_typo_delete_is_a_counted_noop_and_moves_nothing() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn deleted_text_is_unreachable_after_delete_and_reopen() {
     let dir = TempDir::new("db-text-gone");
     {
@@ -418,6 +425,7 @@ fn deleted_text_is_unreachable_after_delete_and_reopen() {
 // Point reads: own writes, committed fall-through, typed errors.
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
     let dir = TempDir::new("db-own-writes");
     let db = create(&dir);
@@ -451,6 +459,7 @@ fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn keyed_reads_retain_snapshot_bytes_across_collisions_repeated_reads_and_replacement() {
     use crate::Theory as _;
     use crate::schema::FieldId;
@@ -559,6 +568,7 @@ fn keyed_reads_retain_snapshot_bytes_across_collisions_repeated_reads_and_replac
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn selected_free_join_images_confirm_composite_fingerprint_collisions() {
     use crate::ir::{Atom, AtomSource, FindTerm, ParamId, Query, Rule, Term, VarId};
     use crate::schema::{FieldId, RelationDescriptor, Side, StatementDescriptor};
@@ -657,6 +667,7 @@ fn selected_free_join_images_confirm_composite_fingerprint_collisions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn get_with_work_observes_the_supplied_cancellation_context() {
     let dir = TempDir::new("db-get-with-work");
     let db = create(&dir);
@@ -690,6 +701,7 @@ fn get_with_work_observes_the_supplied_cancellation_context() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn get_dyn_falls_through_to_committed_state() {
     let dir = TempDir::new("db-fall-through");
     let db = create(&dir);
@@ -723,6 +735,7 @@ fn get_dyn_falls_through_to_committed_state() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn repeated_pending_removal_uses_known_parent_presence() {
     let dir = TempDir::new("db-pending-parent-presence");
     let db = create(&dir);
@@ -748,6 +761,7 @@ fn repeated_pending_removal_uses_known_parent_presence() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
     let dir = TempDir::new("db-mis-shaped");
     let db = create(&dir);
@@ -791,6 +805,7 @@ fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn typed_get_borrows_decoded_text_from_the_lease() {
     let dir = TempDir::new("db-typed-get");
     let db = create(&dir);
@@ -829,6 +844,7 @@ fn typed_get_borrows_decoded_text_from_the_lease() {
 // A shared key, through the public path.
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_key_conflict_is_rejected_with_both_competing_rows_cited() {
     let dir = TempDir::new("db-key-conflict");
     let db = create(&dir);
@@ -870,6 +886,7 @@ fn a_key_conflict_is_rejected_with_both_competing_rows_cited() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_conflict_with_a_committed_row_rejects_and_preserves_it() {
     let dir = TempDir::new("db-committed-conflict");
     let db = create(&dir);
@@ -900,6 +917,7 @@ fn a_conflict_with_a_committed_row_rejects_and_preserves_it() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn replacement_in_one_command_is_judged_as_final_state() {
     let dir = TempDir::new("db-replacement");
     let db = create(&dir);
@@ -937,6 +955,7 @@ fn replacement_in_one_command_is_judged_as_final_state() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn apply_and_owned_snapshot_are_the_public_path() {
     let dir = TempDir::new("db-apply-snap");
     let db = create(&dir);
@@ -975,6 +994,7 @@ fn apply_and_owned_snapshot_are_the_public_path() {
 // Witnesses.
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn write_from_borrows_a_cloneable_witness() {
     let dir = TempDir::new("db-witness");
     let db = create(&dir);
@@ -1011,6 +1031,7 @@ fn write_from_borrows_a_cloneable_witness() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn write_from_rejects_a_foreign_witness() {
     let a_dir = TempDir::new("db-foreign-witness-a");
     let b_dir = TempDir::new("db-foreign-witness-b");
@@ -1035,6 +1056,7 @@ fn write_from_rejects_a_foreign_witness() {
 // Poisoning and refusal boundaries.
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_shape_failure_does_not_poison_a_clean_write() {
     let dir = TempDir::new("db-clean-shape-fail");
     let db = create(&dir);
@@ -1085,6 +1107,7 @@ fn a_shape_failure_does_not_poison_a_clean_write() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn dynamic_ingestion_stops_at_cancellation_before_later_bad_rows() {
     let dir = TempDir::new("dynamic-input-refusal");
     let db = create(&dir);
@@ -1124,6 +1147,7 @@ fn dynamic_ingestion_stops_at_cancellation_before_later_bad_rows() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn poison_preserves_the_original_error_after_an_applied_prefix() {
     let dir = TempDir::new("db-poison");
     let db = create(&dir);
@@ -1158,6 +1182,7 @@ fn poison_preserves_the_original_error_after_an_applied_prefix() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_empty_write_commits_without_moving_the_generation() {
     let dir = TempDir::new("db-empty-write");
     let db = create(&dir);
@@ -1176,6 +1201,7 @@ fn an_empty_write_commits_without_moving_the_generation() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn dynamic_empty_collections_bypass_guards_and_nullary_rows_remain_facts() {
     let dir = TempDir::new("dynamic-nullary");
     let descriptor = SchemaDescriptor {
@@ -1223,6 +1249,7 @@ fn dynamic_empty_collections_bypass_guards_and_nullary_rows_remain_facts() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_reentrant_write_is_refused_typed_not_deadlocked() {
     let dir = TempDir::new("db-reentrant");
     let db = create(&dir);
@@ -1271,6 +1298,7 @@ impl crate::Theory for Currencies {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn writes_to_a_closed_relation_are_refused_before_the_delta() {
     let dir = TempDir::new("db-closed-write");
     let db = Db::create(dir.path(), Currencies, operation())
@@ -1295,6 +1323,7 @@ fn writes_to_a_closed_relation_are_refused_before_the_delta() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn closed_point_reads_resolve_against_the_extension() {
     let dir = TempDir::new("db-closed-read");
     let db = Db::create(dir.path(), Currencies, operation())
@@ -1364,6 +1393,7 @@ fn sealing_owned_rows_allocates_the_payload_not_another_row_collection() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_builder_admits_judged_content_and_publishes_it() {
     let mut builder = InstanceBuilder::new(Ledger, operation()).expect("builder");
     builder
@@ -1469,6 +1499,7 @@ fn builder_deletes_are_set_arithmetic_from_empty() {
 // AcceptedCollection walls (one shape judgment for every lane).
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
     let dir = TempDir::new("db-accepted-walls");
     let db = create(&dir);
@@ -1528,6 +1559,7 @@ fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn accepted_insert_reports_are_exact_and_delete_never_mints() {
     let dir = TempDir::new("db-accepted-reports");
     let db = create(&dir);
@@ -1565,6 +1597,7 @@ fn accepted_insert_reports_are_exact_and_delete_never_mints() {
 // Compaction and the host surface.
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn compact_copies_content_host_records_head_and_generation() {
     let dir = TempDir::new("db-compact");
     let db = create(&dir);
@@ -1618,6 +1651,7 @@ fn compact_copies_content_host_records_head_and_generation() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_rejected_decision_keeps_the_session_for_the_receipt() {
     let dir = TempDir::new("db-session-retained");
     let db = create(&dir);
@@ -1669,6 +1703,7 @@ fn a_rejected_decision_keeps_the_session_for_the_receipt() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_decider_judges_each_set_against_the_accepted_ones_and_commits_nothing() {
     let dir = TempDir::new("db-decider");
     let db = create(&dir);
@@ -1727,6 +1762,7 @@ fn a_decider_judges_each_set_against_the_accepted_ones_and_commits_nothing() {
 /// key conflict is `InvariantRejected`, and the snapshot still sees only
 /// the admitted row.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn apply_conflict_is_invariant_rejected_after_accepted_write() {
     let dir = TempDir::new("db-apply-invariant");
     let db = create(&dir);
@@ -1765,6 +1801,7 @@ fn apply_conflict_is_invariant_rejected_after_accepted_write() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn scoped_read_borrows_metadata_while_owned_read_retains_it() {
     let dir = TempDir::new("db-read-metadata-ownership");
     let db = create(&dir);
@@ -1833,6 +1870,7 @@ fn scoped_read_borrows_metadata_while_owned_read_retains_it() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn owned_read_keeps_rows_but_does_not_retain_rotated_resolvers() {
     let dir = TempDir::new("db-owned-read-resolver-retirement");
     let db = create(&dir);
@@ -1882,6 +1920,7 @@ fn entry_scan_query() -> crate::ir::Query {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn owned_read_text_queries_refresh_resolvers_without_refreshing_rows_or_work() {
     let dir = TempDir::new("db-owned-text-snapshot");
     let db = create(&dir);
@@ -1976,6 +2015,7 @@ fn owned_read_text_queries_refresh_resolvers_without_refreshing_rows_or_work() {
 /// After apply, the owned pin's frame reads the row, collects the scan,
 /// and close stays Incomplete until the pin drops.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn owned_read_frame_reads_applied_row_and_close_waits() {
     let dir = TempDir::new("db-owned-frame");
     let db = create(&dir);

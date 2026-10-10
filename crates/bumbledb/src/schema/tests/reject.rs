@@ -173,6 +173,7 @@ fn rejects_a_statement_roster_past_the_u16_id_space() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_column_count_boundary_is_exact() {
     let mut fields: Vec<FieldDescriptor> = (0..8_191)
         .map(|i| field(&format!("hash{i}"), ValueType::FixedBytes { len: 64 }))
