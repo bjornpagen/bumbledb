@@ -6,7 +6,7 @@ import * as path from "node:path"
 import { test } from "node:test"
 
 const packageRoot = path.join(import.meta.dirname, "..")
-const readmePath = path.join(packageRoot, "README.md")
+const readmePaths = [path.join(packageRoot, "README.md"), path.join(packageRoot, "..", "README.md")]
 
 function tsFences(markdown: string): string[] {
 	const fences: string[] = []
@@ -19,10 +19,12 @@ function tsFences(markdown: string): string[] {
 	return fences
 }
 
-test("every ts fence in README.md type-checks against src/index.ts at HEAD", function readmePin() {
-	const markdown = fs.readFileSync(readmePath, "utf8")
-	const fences = tsFences(markdown)
-	assert.ok(fences.length > 0, "the README carries at least one ts fence — the pin has something to hold")
+test("every ts fence in the package and repository READMEs type-checks against src/index.ts", function readmePin() {
+	const fences = readmePaths.flatMap(function readmeFences(readmePath) {
+		const found = tsFences(fs.readFileSync(readmePath, "utf8"))
+		assert.ok(found.length > 0, `${readmePath} carries at least one ts fence`)
+		return found
+	})
 
 	const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-readme-"))
 	try {

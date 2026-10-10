@@ -186,6 +186,14 @@ pub use schema::{
 /// ```
 pub use bumbledb_macros::{params, query, schema};
 
+#[cfg(doctest)]
+#[doc = include_str!("../../../README.md")]
+pub struct ReadmeDoctests;
+
+#[cfg(doctest)]
+#[doc = include_str!("../../../docs/cookbook.md")]
+pub struct CookbookDoctests;
+
 /// `schema!` expansion plumbing. Not API: no stability promises, nothing
 /// here is part of the documented surface — the macro is the only caller.
 #[doc(hidden)]
