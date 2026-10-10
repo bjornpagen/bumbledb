@@ -1,7 +1,8 @@
 //! The bumbledb log: a database is the create-only sequence of objects
-//! `log/{seq}`, each one entry deciding a batch of commands or a migration
-//! step. [`Machine`] runs the protocol without doing I/O; a [`Replica`]
-//! holds the decided state; checkpoint images bound replay.
+//! `log/{seq}`, each one entry: a batch of commands or a migration step. A
+//! batch names the head it was judged at; its [`standing`] where it lands says
+//! whether that judgment holds. [`Machine`] runs the protocol without doing
+//! I/O; a [`Replica`] holds the decided state; checkpoint images bound replay.
 
 mod cache;
 mod command;

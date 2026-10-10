@@ -103,7 +103,7 @@ pub struct ReceiptOut {
 }
 
 /// Why a ticket settled without its effect. Every refusal of a submit except
-/// `Unknown` proves the command is not in the log.
+/// `Unknown` proves the log does not decide the command.
 #[napi(discriminant = "_tag", object_from_js = false)]
 pub enum RefusalOut {
     NotOpen,

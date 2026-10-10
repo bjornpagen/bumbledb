@@ -36,7 +36,7 @@ type RequestId = typeof RequestId.Type
 /** How fresh a read must be: the cache as it is, the log's tip, or at least a submitted `seq`. */
 type Consistency = "cached" | "latest" | { readonly atLeast: bigint }
 
-/** A decided submission (its receipt), or a refusal. Every refusal but `Unknown` proves it is not in the log. */
+/** A decided submission (its receipt), or a refusal. Every refusal but `Unknown` proves the log does not decide it. */
 type SubmitOutcome = Extract<SettledOut, { readonly _tag: "Decided" | "Refused" }>
 
 interface SubmitOptions {

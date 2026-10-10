@@ -206,7 +206,7 @@ void Effect.runPromise(program.pipe(Effect.provide(Bumble.layer())))
 ```
 
 **Submits and reads:**
-- **`submit` outcomes.** It returns `Decided` with a receipt (`Committed`, `NoChange`, `PreconditionFailed` or `InvariantRejected`), or `Refused`. Every refusal except `Unknown` proves the command is not in the log.
+- **`submit` outcomes.** It returns `Decided` with a receipt (`Committed`, `NoChange`, `PreconditionFailed` or `InvariantRejected`), or `Refused`. Every refusal except `Unknown` proves the log does not decide the command.
 - **Optimistic writes.** A `precondition: reader.revision` makes a submit conditional on nothing having committed since that read.
 - **Read consistency.** Reads take `"cached"`, `"latest"` or `{ atLeast: seq }`.
 - **Per-tenant databases.** `Database.pool` opens one database per tenant on demand and closes idle ones.
@@ -215,9 +215,10 @@ void Effect.runPromise(program.pipe(Effect.provide(Bumble.layer())))
 
 1. **The log is the database.** A database is the sequence of objects `log/{seq}` in an S3 Express directory bucket, each created with `If-None-Match: *`. Nothing under `log/` is ever overwritten or deleted.
 2. **One `PUT` per commit.** A warm submit decides against a read snapshot and creates the next entry. Commands that arrive while a write is in flight commit together in the next entry, with no batching timer.
-3. **Safe retries.** Each entry carries a per-submission nonce and the decided change set. After an ambiguous `PUT`, the writer reads the object back and compares bytes. Catching up applies effects without judging them again.
-4. **Bounded cold starts.** Checkpoints are automatic, immutable images on an S3 Standard bucket, verified by a digest of their contents. A cold open downloads the newest image and replays only the tail.
-5. **Sans-IO core.** The protocol is a Rust state machine (`crates/bumbledb-log`) tested with deterministic fault-injection simulations. The TypeScript package runs its requests through your own `S3Client`. `FsStore` runs the same protocol on a local directory, and `MemStore` runs it in memory.
+3. **Fair under contention.** An entry names the head its writer judged against and carries each command whole with its outcome there. A writer that finds its slot taken writes its batch at the next slot at once, joined by the commands queued behind it, while it reads the winner, so every writer races for every slot. Catching up applies an entry that landed right after its head as recorded and judges a later one again where it landed.
+4. **Safe retries.** Each entry carries a per-submission nonce. After an ambiguous `PUT`, the writer reads the object back and compares bytes. A request is decided once, even when two copies of its batch land.
+5. **Bounded cold starts.** Checkpoints are automatic, immutable images on an S3 Standard bucket, verified by a digest of their contents. A cold open lists checkpoints and reads the log in the same round trip, fetches the tail while the newest image downloads, and replays only that tail.
+6. **Sans-IO core.** The protocol is a Rust state machine (`crates/bumbledb-log`) tested with deterministic fault-injection simulations. The TypeScript package runs its requests through your own `S3Client`. `FsStore` runs the same protocol on a local directory, and `MemStore` runs it in memory.
 
 ### Migrations ship with your code
 

@@ -229,9 +229,10 @@ void Effect.runPromise(program.pipe(Effect.provide(Bumble.layer())))
 
 `submit` returns `Decided` with a receipt (`Committed`, `NoChange`,
 `PreconditionFailed` or `InvariantRejected`) or `Refused` with the reason;
-every refusal but `Unknown` proves the command is not in the log. A submit
-with `precondition: reader.revision` is decided only if nothing committed after
-that read. `read` takes `"cached"`, `"latest"` or `{ atLeast: seq }`.
+every refusal but `Unknown` proves the log does not decide the command. A
+submit with `precondition: reader.revision` is decided only if nothing
+committed after that read. `read` takes `"cached"`, `"latest"` or
+`{ atLeast: seq }`.
 `Database.layer(Database.tag<typeof App>("App/Database"), options)` provides
 one database to an app graph, and `Database.pool({ ...options, store:
 (tenant) => ..., cache: (tenant) => ... })` opens one per tenant on demand and

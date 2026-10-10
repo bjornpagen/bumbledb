@@ -32,10 +32,16 @@ that load).
   `If-None-Match: *` on an S3 Express directory bucket. There is no mutable
   head, hash chain, epoch or garbage-collection barrier, and nothing under
   `log/` is ever deleted.
-- Every entry carries a per-submission nonce and the decided change set.
-  Catching up applies effects without judging them again. An ambiguous create
-  is resolved by reading the object back and comparing bytes, so retries are
-  safe and every refusal except `Unknown` proves the command is not in the log.
+- A commands entry names the head its writer judged against and carries each
+  command whole with its outcome there. Catching up applies an entry that
+  landed right after that head as recorded and judges a later one again where
+  it landed. A writer that finds its slot taken writes its batch at the next
+  slot at once, joined by the commands queued behind it, so contending writers
+  share the log fairly.
+- Every entry carries a per-submission nonce. An ambiguous create is resolved
+  by reading the object back and comparing bytes, so retries are safe, a
+  request is decided once even when two copies of its batch land, and every
+  refusal except `Unknown` proves the log does not decide the command.
 - A warm submit decides on a read snapshot and takes one round trip. Commands
   that arrive while a write is in flight are committed together, with no timer.
 - Checkpoints are automatic, immutable images under `ckpt/` on an S3 Standard

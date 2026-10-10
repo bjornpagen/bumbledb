@@ -549,7 +549,7 @@ export interface RecStepIn {
 
 /**
  * Why a ticket settled without its effect. Every refusal of a submit except
- * `Unknown` proves the command is not in the log.
+ * `Unknown` proves the log does not decide the command.
  */
 export type RefusalOut =
   | { _tag: 'NotOpen' }
