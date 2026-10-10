@@ -2,12 +2,11 @@
 
 An embedded relational database for Rust and TypeScript.
 
-Schemas and queries are typed values in your code, not SQL strings. Relations
-are sets. Every write is judged against the schema's laws in its final state
-before it commits. Joins run on Free Join over in-memory column images, with
-SIMD kernels underneath and LMDB for storage. The same database can also run
-serverless: the log of commands lives in S3, and every process reads through
-a disposable local cache.
+Schemas and queries are typed values, not SQL strings. Relations are sets, and
+every write is checked against the schema's laws in its final state before it
+commits. Joins run on Free Join over in-memory column images with SIMD kernels,
+on top of LMDB. The same database can run serverless, as a log of commands in
+S3 read through a disposable local cache.
 
 [Release notes](docs/release-2.0.md)
 · [TypeScript guide](ts/README.md)
@@ -17,27 +16,22 @@ a disposable local cache.
 
 ## Why bumbledb
 
-- **Laws, not checks scattered through your code.** Keys, containments,
-  interval keys, coverage and capacity windows are declared once in the
-  schema. The engine enforces them on the final state of every write. A
-  rejection names every violated law and cites the offending facts.
-- **Time is a first-class shape.** Half-open intervals are a value type.
-  Allen's 13 interval relations are a single query predicate taking a 13-bit
-  mask, and "no two bookings overlap" is a one-line key.
-- **Exact values.** Integer arithmetic is checked. An `f64` has exactly one
-  NaN and one zero, so set identity is well defined. `Sum` and `Avg` are
-  exact and round once.
-- **In-process speed.** Point reads take microseconds, not network round
-  trips. Prepared queries reuse their buffers. Filters, folds and Allen
-  classification are SIMD kernels, dispatched at runtime on x86, with
-  hand-tuned NEON on ARM.
-- **Serverless without a database server.** A hosted database is an immutable
-  log in S3: one conditional `PUT` per commit, automatic checkpoints, and
-  migrations that ship with your code.
-- **Small enough for a Raspberry Pi.** The hardware target is a Pi Zero 2
-  with 512 MB of RAM.
+- **Laws instead of scattered checks.** Keys, containments, interval keys,
+  coverage and capacity windows are declared once. A rejected write names
+  every violated law and cites the offending facts.
+- **Time is a value type.** Half-open intervals are built in, Allen's 13
+  interval relations are one predicate with a bitmask, and "no two bookings
+  overlap" is a one-line key.
+- **Exact values.** Integer arithmetic is checked, `f64` has one NaN and one
+  zero, and `Sum` and `Avg` are exact and round once.
+- **In-process speed.** Point reads take microseconds. Filters, folds and
+  Allen classification are SIMD kernels.
+- **Serverless without a server.** A hosted database is an immutable log in
+  S3: one conditional `PUT` per commit, automatic checkpoints, and migrations
+  that ship with your code.
+- **Small.** The hardware target is a Raspberry Pi Zero 2 with 512 MB of RAM.
 
-## A first look in Rust
+## Rust
 
 A schema, a committed write, a rejected write, a typed query and a keyed read:
 
@@ -101,18 +95,15 @@ std::fs::remove_dir_all(&dir)?;
 Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`schema!` checks the declaration while it compiles. A duplicate field, a key
-arrow that names another relation, or a containment whose target matches no
-declared key is a compile error at the offending token. `query!` resolves
-relations, fields and closed handles through the types `schema!` generates.
+`schema!` checks the schema at compile time and reports each error at the
+offending token. `query!` resolves relations and fields through the types
+`schema!` generates.
 
-## Intervals and Allen masks
+### Intervals
 
-A key whose last field is an interval is a *pointwise* key: it forbids
-overlaps, not just duplicates. A query compares intervals with one `Allen`
-predicate and a mask over the 13 basic relations. Named masks include
-`INTERSECTS`, `COVERS`, `DISJOINT` and `MEETS`, and any union of relations
-works:
+A key whose last field is an interval forbids overlaps, not just duplicates.
+Queries compare intervals with one `Allen` predicate and a mask over the 13
+basic relations (`INTERSECTS`, `COVERS`, `DISJOINT`, `MEETS` or any union):
 
 ```rust
 use bumbledb::Theory as _;
@@ -129,13 +120,12 @@ bumbledb::schema! {
     Outage(service, window) -> Outage;
 }
 
-// The Rust query notation constructs an AST directly. Down at instant `t` — point membership
-// (`in`) is a typing rule.
+// Services down at instant `t`.
 let down_at = bumbledb::query!(Uptime {
     (service) | Outage(service, window: w), ?t in w;
 });
 
-// Overlapping an incident window — one Allen mask, no operator zoo.
+// Services whose outage overlaps an incident window: one Allen mask.
 let overlapping = bumbledb::query!(Uptime {
     (service, w) | Outage(service, window: w), Allen(w, INTERSECTS, ?incident);
 });
@@ -146,22 +136,18 @@ for query in [&*down_at, &*overlapping] {
 }
 ```
 
-**Intervals:**
-- **Endpoints** can be `u64`, `i64` or `f64`; fixed-width intervals store only their start.
-- **Coverage** (`S(x, span) <= T(x, span)`) holds when the union of the target intervals covers each source interval.
-- **Capacity** can sum durations.
-
-The [cookbook](docs/cookbook.md) builds calendars, effective-dated
-configuration, disjoint covers, tax brackets and free-time coalescing from
-these pieces.
+Interval endpoints are `u64`, `i64` or `f64`. Coverage (`S(x, span) <= T(x,
+span)`) requires the target intervals to cover each source interval, and
+capacity laws can sum durations. The [cookbook](docs/cookbook.md) builds
+calendars, effective dating, tax brackets and free-time search from these.
 
 ## TypeScript and serverless
 
-The TypeScript SDK is Effect-native. Every operation is a lazy, scoped
-`Effect`, and the engine validates schemas and queries as they are defined. A
-`Database` keeps its data as an immutable log in an object store and reads it
-through a local cache. The same code runs against a local directory, against
-S3 on AWS Lambda, or in memory in tests:
+The TypeScript SDK is Effect-native: every operation is a lazy, scoped
+`Effect`, and the engine validates schemas and queries as you define them. A
+`Database` stores its data as an immutable log and reads it through a local
+cache. The same code runs on a local directory, on S3 from AWS Lambda, or in
+memory in tests:
 
 ```ts
 import { Effect, Option } from "effect"
@@ -205,25 +191,38 @@ const program = Effect.scoped(
 void Effect.runPromise(program.pipe(Effect.provide(Bumble.layer())))
 ```
 
-**Submits and reads:**
-- **`submit` outcomes.** It returns `Decided` with a receipt (`Committed`, `NoChange`, `PreconditionFailed` or `InvariantRejected`), or `Refused`. Every refusal except `Unknown` proves the log does not decide the command.
-- **Optimistic writes.** A `precondition: reader.revision` makes a submit conditional on nothing having committed since that read.
-- **Read consistency.** Reads take `"cached"`, `"latest"` or `{ atLeast: seq }`.
-- **Per-tenant databases.** `Database.pool` opens one database per tenant on demand and closes idle ones.
+- `submit` returns `Decided` with a receipt (`Committed`, `NoChange`,
+  `PreconditionFailed` or `InvariantRejected`), or `Refused`. Every refusal
+  except `Unknown` proves the command was not decided.
+- `precondition: reader.revision` makes a submit conditional on nothing having
+  committed since that read.
+- Reads take `"cached"`, `"latest"` or `{ atLeast: seq }`.
+- `Database.pool` opens one database per tenant on demand and closes idle ones.
 
 ### How the hosted log works
 
-1. **The log is the database.** A database is the sequence of objects `log/{seq}` in an S3 Express directory bucket, each created with `If-None-Match: *`. Nothing under `log/` is ever overwritten or deleted.
-2. **One `PUT` per commit.** A warm submit decides against a read snapshot and creates the next entry. Commands that arrive while a write is in flight commit together in the next entry, with no batching timer.
-3. **Contended writers retry at once.** An entry names the head its writer judged against and carries each command whole with its outcome there. A writer that finds its slot taken writes its batch at the next slot at once, joined by the commands queued behind it, while it reads the winner, so every writer races for every slot. Catching up applies an entry that landed right after its head as recorded and judges a later one again where it landed.
-4. **Safe retries.** Each entry carries a per-submission nonce. After an ambiguous `PUT`, the writer reads the object back and compares bytes. A request is decided once, even when two copies of its batch land.
-5. **Bounded cold starts.** Checkpoints are automatic, immutable images on an S3 Standard bucket, verified by a digest of their contents. A cold open lists checkpoints and reads the log in the same round trip, fetches the tail while the newest image downloads, and replays only that tail.
-6. **Sans-IO core.** The protocol is a Rust state machine (`crates/bumbledb-log`) tested with deterministic fault-injection simulations. The TypeScript package runs its requests through your own `S3Client`. `FsStore` runs the same protocol on a local directory, and `MemStore` runs it in memory.
+- **The log is the database.** Entries are objects `log/{seq}` in an S3
+  Express bucket, each created with `If-None-Match: *` and never overwritten
+  or deleted.
+- **One `PUT` per commit.** Commands that arrive while a write is in flight
+  commit together in the next entry; there is no batching timer.
+- **Contention.** A writer that loses a slot rewrites its batch, judged again,
+  at the next free slot. Every command is decided exactly once, but writers
+  are not guaranteed an equal share of commits.
+- **Safe retries.** Each entry carries a nonce; after an ambiguous `PUT` the
+  writer reads the object back and compares bytes.
+- **Fast cold starts.** Checkpoints are immutable, digest-verified images in
+  an S3 Standard bucket. A cold open downloads the newest one and replays
+  only the tail.
+- **Tested as a state machine.** The protocol core (`crates/bumbledb-log`)
+  does no I/O and runs under deterministic fault-injection simulations. The
+  TypeScript package sends its requests through your `S3Client`; `FsStore`
+  and `MemStore` run the same protocol locally and in memory.
 
-### Migrations ship with your code
+### Migrations
 
-Migrations work the way they do with Drizzle on Expo: they are generated next
-to the schema, bundled with the application, and recorded in the log.
+Migrations are generated next to the schema, bundled with the application and
+recorded in the log:
 
 ```sh
 bumbledb generate --schema src/schema.ts#App --name add_tags   # writes migrations/NNNN_add_tags/
@@ -231,76 +230,77 @@ bumbledb check --schema src/schema.ts#App                      # fails on an ung
 bumbledb migrate --config bumbledb.config.ts                   # run from the deploy pipeline
 ```
 
-**Migration rules:**
-- **Additive changes need no code.** Relations that keep their name and fields are copied, and a `populate` step computes anything new.
-- **Development:** `onOpen: "migrate"` applies pending migrations when the database opens.
-- **Production:** run `bumbledb migrate` from the deploy pipeline and open with `onOpen: "verify"`, which refuses while a migration is pending.
-- **Old code:** code built for an older schema is refused with `SchemaAdvanced`.
+Relations that keep their name and fields are copied, so additive changes need
+no code. Development opens with `onOpen: "migrate"`. Production runs
+`bumbledb migrate` from the deploy pipeline and opens with `onOpen: "verify"`,
+which refuses while a migration is pending. Code built for an older schema is
+refused with `SchemaAdvanced`.
 
-The [Notes example](examples/notes/README.md) is a server-side Next.js
-application with per-tenant databases, migrations and an outbox.
+The [Notes example](examples/notes/README.md) is a server-side Next.js app
+with per-tenant databases, migrations and an outbox.
 
 ## The model
 
-- **Relations are sets.** Inserting a fact that exists and deleting one that does not are no-ops. There are no nulls: an optional attribute is an absent fact in a child relation.
-- **Identity belongs to the application.** The database issues no ids; use `uuid` fields or any declared key.
-- **Laws are statements:**
+- **Relations are sets.** Inserting an existing fact or deleting a missing one
+  is a no-op. There are no nulls: an optional attribute is a fact in a child
+  relation.
+- **Identity belongs to the application.** The database issues no ids; use
+  `uuid` fields or any declared key.
+- **Laws:**
 
   | Law | Notation | Means |
   |---|---|---|
   | Key | `R(x) -> R` | `x` identifies one fact |
-  | Containment | `S(y) <= T(x)` | every `y` appears as some `x`; `==` holds both ways; selections narrow either side |
+  | Containment | `S(y) <= T(x)` | every `y` appears as some `x`; `==` holds both ways |
   | Pointwise key | `R(x, span) -> R` | facts sharing `x` never overlap in time |
-  | Coverage | `S(x, span) <= T(x, span)` | target intervals jointly cover each source interval |
+  | Coverage | `S(x, span) <= T(x, span)` | target intervals cover each source interval |
   | Capacity | `T(x) <=[w]{lo..hi} S(y)` | the weighted count per target stays in the window |
 
   Closed relations are fixed vocabularies whose rows are part of the schema.
-- **Writes are judged once, on the final state.** A delete and an insert in the same write never pass through an invalid intermediate state. Every write returns one `WriteOutcome`: `Committed`, `Rejected(violations)` or `Moved` (when the write was conditioned on a snapshot that has since changed).
-- **Queries are data.** Rules join atoms, filter with comparisons and Allen masks, negate, aggregate exactly, compose named stages and recurse linearly.
-- **Floats follow IEEE order.** Comparisons never match NaN, and `Min` and `Max` propagate it. Comparing an integer column with a float literal is rewritten exactly at planning time.
+- **Writes are judged on their final state.** Every write returns
+  `Committed`, `Rejected(violations)` or `Moved` (its snapshot changed).
+- **Queries are data.** Rules join, filter with comparisons and Allen masks,
+  negate, aggregate exactly, compose named stages and recurse linearly.
+- **Floats follow IEEE order.** Comparisons never match NaN, `Min` and `Max`
+  propagate it, and an integer column compared with a float literal is
+  rewritten exactly.
 
 ## Performance
 
-The last full benchmark suite ran on the 1.3.0 engine (Apple M2 Max, 2026-09-11):
-- a 0.46 µs median point lookup;
-- a 4.96 µs range query;
-- lower medians than indexed SQLite in all 32 read families.
+The last full benchmark suite ran on the 1.3.0 engine (Apple M2 Max,
+2026-09-11): a 0.46 µs median point lookup, a 4.96 µs range query, and lower
+medians than indexed SQLite in all 32 read families.
 
-**2.0 has not been benchmarked yet.** It rebuilds the hosted log and much of the engine. See the [full 1.3.0 results and their limits](docs/perf/results.md).
+**2.0 has not been benchmarked yet.** See the [1.3.0 results and their
+limits](docs/perf/results.md).
 
 ![Read latency against indexed SQLite](assets/bench-vs-sqlite.svg)
 
-**Memory:**
-- The query image cache is capped at 128 MiB by default (`Options::image_cache_bytes`).
-- The memory map has a fixed 1 TiB virtual ceiling (`Options::map_ceiling`) that costs nothing until pages are written.
-- A query that exceeds an in-memory limit fails with `Error::Capacity`; nothing spills to disk.
+The query image cache is capped at 128 MiB (`Options::image_cache_bytes`), and
+the memory map has a fixed 1 TiB virtual ceiling (`Options::map_ceiling`) that
+costs nothing until pages are written. A query over an in-memory limit fails
+with `Error::Capacity`; nothing spills to disk.
 
-## When to use it
+## Fit
 
-**It fits:**
-- embedded and edge applications;
-- tools and services where microsecond reads matter;
-- per-tenant or personal databases with one writer each;
-- serverless backends that should cost pennies when idle;
-- domains whose rules are worth stating as laws.
-
-**It doesn't fit:**
-- many concurrent writers on one database;
-- working sets much larger than memory;
-- ad-hoc SQL or BI access. Use a server database for those.
+Good for embedded and edge apps, per-tenant or personal databases with one
+writer each, serverless backends that should cost nothing idle, and domains
+whose rules are worth stating as laws. Not for many concurrent writers on one
+database, working sets much larger than memory, or ad-hoc SQL.
 
 ## Status
 
-bumbledb has no stability guarantees yet.
+No stability guarantees yet, and not qualified for production.
 
-- **No upgrade path from 1.x.** 2.0 is a hard cutover: every format is new, and a 1.x store is refused as `NotABumbleDb`.
-- **S3 has been checked by hand, not in CI.** The store conformance suite passed against a real S3 Express log bucket and an S3 Standard checkpoint bucket. CI runs the protocol against the in-memory and filesystem stores and through deterministic fault-injection simulations; no CI lane talks to S3.
-- **Contention is correct, not tuned.** Under many concurrent writers every command is still decided exactly once, but throughput is not evenly shared between writers.
-- **Not qualified for production.** Treat the hosted mode accordingly.
+- 2.0 is a hard cutover: every format is new, and a 1.x store is refused as
+  `NotABumbleDb`.
+- The S3 store passed the conformance suite against real S3 Express and
+  Standard buckets, run by hand. CI covers the protocol with the in-memory and
+  filesystem stores and fault-injection simulations, not S3.
 
 ## Install
 
-Rust consumers build from Git with the nightly toolchain pinned in
+Rust builds from Git with the nightly toolchain in
 [`rust-toolchain.toml`](rust-toolchain.toml):
 
 ```toml
@@ -308,44 +308,42 @@ Rust consumers build from Git with the nightly toolchain pinned in
 bumbledb = { git = "https://github.com/bjornpagen/bumbledb" }
 ```
 
-TypeScript requires Node 26 and Effect 4:
+TypeScript needs Node 26 and Effect 4. The package ships native addons for
+darwin-arm64, linux-arm64 and linux-x64:
 
 ```sh
 pnpm add @bjornpagen/bumbledb effect
 ```
 
-The npm package ships native addons for darwin-arm64, linux-arm64 and
-linux-x64, and the matching platform package installs automatically.
-
 ## Development
 
-`scripts/ci.sh <lane>` is the body of every CI job, so a local run matches CI:
+`scripts/ci.sh <lane>` is the body of every CI job:
 
 ```sh
-scripts/ci.sh lint    # fmt, clippy, rustdoc, TypeScript lint and typecheck
-scripts/ci.sh test    # nextest over the workspace, doctests
+scripts/ci.sh lint    # fmt, clippy, rustdoc, cargo-deny, TypeScript lint and typecheck
+scripts/ci.sh test    # nextest and doctests
 scripts/ci.sh addon   # native addon, TypeScript tests, packed-package smoke
-scripts/ci.sh deep    # adds the wide sweeps in `deep` test modules (nightly)
-scripts/ci.sh miri_1  # one of four Miri shards over the engine's unit tests (nightly)
+scripts/ci.sh deep    # nightly: adds the wide sweeps in `deep` test modules
+scripts/ci.sh miri_1  # nightly: one of four Miri shards
 ```
 
-**Rules for contributors:**
-- **Toolchain:** Rust nightly, kept current by `scripts/bump-toolchain.sh` and a weekly canary.
-- **Tests:** deterministic. Timings are reports, never test gates.
-- **Design:** every change follows the [representation-first design principles](docs/design/representation-first.md). Change the data so a special case disappears, rather than adding a branch to handle it.
-
-The [static Linux ARM64 guide](docs/static-linux-arm64.md) covers the fully static musl build.
+Rust is nightly, kept current by `scripts/bump-toolchain.sh` and a weekly
+canary. Tests are deterministic; timings are reports, never gates. Changes
+follow the [representation-first design principles](docs/design/representation-first.md).
+A release is a version bump in `ts/package.json` pushed to `main`
+([ts/PUBLISHING.md](ts/PUBLISHING.md)). The [static Linux ARM64
+guide](docs/static-linux-arm64.md) covers the static musl build.
 
 ## Repository
 
 - `crates/bumbledb`: the engine.
 - `crates/bumbledb-theory`: values, intervals, Allen masks and the schema checker.
 - `crates/bumbledb-macros`: `schema!`, `query!` and `params!`.
-- `crates/bumbledb-log`: the hosted log's sans-IO core and its LMDB cache.
+- `crates/bumbledb-log`: the hosted log's protocol core and its LMDB cache.
 - `crates/bumbledb-node`: the Node bridge.
-- `crates/bumbledb-bench`: independent oracles (a naive evaluator and SQLite differential tests) and benchmarks.
+- `crates/bumbledb-bench`: independent oracles (a naive evaluator, SQLite differentials) and benchmarks.
 - `ts/`: the TypeScript SDK and the `bumbledb` CLI.
-- `examples/`: consumers and the Notes application.
+- `examples/`: consumers and the Notes app.
 - `proposals/`: research proposals.
 
 ## License
