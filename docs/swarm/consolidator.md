@@ -8,7 +8,7 @@ Resume from the first step that is not `done`.
 | 1b | Integration: lane leftovers (ValidationError variants, AggOp, store alias, Direction, float_aggregates Miri, schema diagnostic names, bench_night/bench_viz, image cache option, probe buffer) | done |
 | 1c | Integration gate: fmt, clippy x2, rustdoc, nextest, doctests | done (1918 tests, cargo-deny/shear not installed locally) |
 | 1d | Integration gate: TS (addon, biome, tsc, node --test), notes | done (ts 283/283, family pack+smoke, notes typecheck/test/migrations:check/build, Rust consumer) |
-| 2 | Comment purge (Rust, TS, TOML, YAML, shell, Python) | pending |
+| 2 | Comment purge (Rust, TS, TOML, YAML, shell, Python) | in progress: theory, macros, log, node, bumbledb done; bench, ts, examples, scripts, ci next |
 | 3 | Legacy cull grep gate | pending |
 | 4 | D20 bdb grep gate | pending |
 | 5a | README.md + docs/cookbook.md rewrite, cookbook doctests | pending |
