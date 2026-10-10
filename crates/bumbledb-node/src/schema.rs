@@ -130,7 +130,7 @@ pub(crate) fn schema_diagnostic(
     match error {
         SchemaError::Statement { statement, kind } => SchemaDiagnostic::Schema {
             code: code(kind),
-            message: error.to_string(),
+            message: error.named(descriptor).to_string(),
             statement: Some(cite(*statement)),
             conflict: match kind {
                 StatementErrorKind::DuplicateStatement { earlier }
@@ -140,7 +140,7 @@ pub(crate) fn schema_diagnostic(
         },
         other => SchemaDiagnostic::Schema {
             code: code(other),
-            message: other.to_string(),
+            message: other.named(descriptor).to_string(),
             statement: None,
             conflict: None,
         },

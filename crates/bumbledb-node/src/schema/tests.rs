@@ -98,7 +98,10 @@ fn closed_relations_cite_their_synthetic_identity_key() {
         (statement.id, statement.spelling.as_str()),
         (2, "Item(a) <= Kind(code)")
     );
-    assert!(message.contains("synthetic"), "{message}");
+    assert!(
+        message.contains("Kind (1) is addressed by its handle id only"),
+        "{message}"
+    );
 }
 
 const SPEC: &str = r#"{"relations":[
