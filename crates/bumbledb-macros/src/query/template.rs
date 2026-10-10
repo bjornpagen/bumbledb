@@ -1,10 +1,8 @@
-//! The typed template `query!` evaluates to, and `params!`.
-//!
-//! The template derefs to `Query`, carries the param and column names, and
-//! for named params offers `bind(params! { name: value, … })`: a typestate
-//! builder where an unknown name is a missing method and a missing or
-//! repeated name is a type error. Value-to-slot type agreement stays the
-//! engine's bind error at execution.
+//! The typed template `query!` evaluates to, and `params!`. The template derefs
+//! to `Query`, carries the param and column names, and for named params offers
+//! `bind(params! { name: value, … })`: a typestate builder where an unknown name
+//! is a missing method and a missing or repeated name is a type error. Value-to-
+//! slot type agreement stays the engine's bind error at execution.
 use proc_macro2::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream};
 use quote::{format_ident, quote};
 

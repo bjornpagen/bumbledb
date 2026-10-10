@@ -94,9 +94,6 @@ pub struct ManagedDb {
 
 /// Field order matters: the last transient Engine Arc drops before the
 /// operation disappears from the registry and directory teardown can run.
-///
-/// Crate-internal: it hands out `crate::DbInner` (itself `pub(crate)`), so
-/// it is not a public type and never escapes the addon boundary.
 pub(crate) struct DbLease {
     inner: Arc<crate::DbInner>,
     operation: ExternalLease,
@@ -212,7 +209,7 @@ impl State {
             if owner.opening || owner.cleaning || owner.failed {
                 continue;
             }
-            // A host workflow spans its awaited transport/sidecar operations.
+            // A host workflow spans its awaited transport operations.
             // Its native lease prevents runtime close from unlocking mid-await.
             let owner_busy = self
                 .operations

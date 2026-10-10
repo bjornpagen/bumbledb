@@ -1115,7 +1115,7 @@ mod tests {
             CloseReport::Closed
         );
         assert_eq!(runtime.inspect().natives, 0);
-        // Reachable wrappers no longer own payloads after database drain.
+        // Reachable wrappers own no payloads after database drain.
         for reader in [&snapshot, &first, &second] {
             assert_eq!(drain_session(reader), CloseReport::Closed);
         }
@@ -1158,12 +1158,12 @@ mod tests {
 
     #[test]
     fn one_worker_open_read_close_and_idle_snapshots_share_the_pool() {
-        // workers=1, open/read/close; more idle snapshots than workers;
+        // Workers=1, open/read/close; more idle snapshots than workers;
         // sleeping worker then an opening job on that same worker. Ready
         // after reactor-exit / missing inbox wakeup must fail this schedule.
         let runtime = Runtime::start(options()).unwrap();
         assert_eq!(runtime.inspect().active, 0, "pool starts asleep");
-        let base = unique_dir("d24-one-worker");
+        let base = unique_dir("one-worker");
         std::fs::create_dir_all(&base).unwrap();
         let owner = acquire(&runtime, &base.join("tenant"));
         let descriptor = Mini.descriptor();
@@ -1217,10 +1217,10 @@ mod tests {
 
     #[test]
     fn close_drains_while_js_tokens_stay_reachable_and_queue_is_full() {
-        // keep wrappers reachable; fill the ordinary queue; close still
+        // Keep wrappers reachable; fill the ordinary queue; close still
         // drains. QueueFull must not strand teardown. Counters match release.
         let runtime = Runtime::start(options()).unwrap();
-        let base = unique_dir("d18-close");
+        let base = unique_dir("close");
         std::fs::create_dir_all(&base).unwrap();
         let owner = acquire(&runtime, &base.join("tenant"));
         let descriptor = Mini.descriptor();
@@ -1341,7 +1341,7 @@ mod tests {
 
     #[test]
     fn close_of_uninstalled_route_does_not_leave_a_row() {
-        // reserve + async install, then close before the worker
+        // Reserve + async install, then close before the worker
         // inserts. The route must drain; QueueFull cannot apply; no leftover
         // row or handle slot.
         let runtime = Runtime::start(options()).unwrap();
@@ -1408,7 +1408,7 @@ mod tests {
 
     #[test]
     fn idle_shutdown_wakes_sleeping_pool_without_reentering_state() {
-        // idle pool (active==0) then runtime drain. Re-locking
+        // Idle pool (active==0) then runtime drain. Re-locking
         // runtime.state from lane_send during begin_close/drain hangs.
         let runtime = Runtime::start(options()).unwrap();
         assert_eq!(runtime.inspect().active, 0, "pool starts asleep");
@@ -1421,10 +1421,10 @@ mod tests {
 
     #[test]
     fn close_during_busy_snapshot_drains_after_job() {
-        // close while a snapshot job holds the table entry. Destruction
+        // Close while a snapshot job holds the table entry. Destruction
         // after WorkerContext::with returns; a nested with() panics.
         let runtime = Runtime::start(options()).unwrap();
-        let base = unique_dir("d18-busy-snapshot");
+        let base = unique_dir("busy-snapshot");
         std::fs::create_dir_all(&base).unwrap();
         let owner = acquire(&runtime, &base.join("tenant"));
         let descriptor = Mini.descriptor();
@@ -1479,7 +1479,7 @@ mod tests {
 
     #[test]
     fn arm_publication_cancel_drops_unregistered_page() {
-        // arm, then work returns a page. The one-shot must fail
+        // Arm, then work returns a page. The one-shot must fail
         // before operation.output; retry on the same cap delivers the page.
         let runtime = Runtime::start(options()).unwrap();
         let admission = super::super::registry::RegistryAdmission::admit(
@@ -1616,7 +1616,7 @@ mod tests {
 
     #[test]
     fn publication_boundary_cancel_does_not_skip_or_duplicate_rows() {
-        // native publication-boundary cancel cannot skip or duplicate
+        // Native publication-boundary cancel cannot skip or duplicate
         // rows. The armed reject drops the local page before accept; retry
         // delivers the same two rows, not a later page or a doubled page.
         let runtime = Runtime::start(options()).unwrap();
@@ -1699,7 +1699,7 @@ mod tests {
 
     #[test]
     fn abandoned_publication_reclaims_on_cancel_close_without_js_take() {
-        // pause after native publication, before the JS callback.
+        // Pause after native publication, before the JS callback.
         // Interrupt, retain wrappers, cancel+close must finish and release
         // native resources without a JavaScript take.
         let runtime = Runtime::start(options()).unwrap();
@@ -1818,7 +1818,7 @@ mod tests {
 
     #[test]
     fn close_during_busy_payload_drains_after_job() {
-        // close while a payload job holds the table entry. Same
+        // Close while a payload job holds the table entry. Same
         // nested-borrow failure as the snapshot schedule.
         let runtime = Runtime::start(options()).unwrap();
         let admission = super::super::registry::RegistryAdmission::admit(
@@ -1946,14 +1946,14 @@ mod tests {
 
     #[test]
     fn failed_admission_rolls_back_and_history_does_not_accumulate() {
-        // failed admission before insertion leaves no payload/row/slot.
-        // Long create/revoke returns to the admitted baseline. No tombstones.
+        // Failed admission before insertion leaves no payload/row/slot.
+        // Long create/revoke returns to the admitted baseline, leaving no rows.
         let runtime = Runtime::start(options()).unwrap();
         let baseline = runtime.inspect();
         assert_eq!(baseline.natives, 0);
         assert_eq!(runtime.registry.route_count(), 0);
 
-        let base = unique_dir("d29-history");
+        let base = unique_dir("history");
         std::fs::create_dir_all(&base).unwrap();
         let owner = acquire(&runtime, &base.join("tenant"));
         let descriptor = Mini.descriptor();

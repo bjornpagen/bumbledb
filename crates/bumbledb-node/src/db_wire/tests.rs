@@ -838,7 +838,7 @@ fn queued_output_close_drains_without_wrapper_authority() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-// ---- apply / codec (unchanged public verbs) --------------------------------
+// Apply and the row codec.
 
 fn witness(lease: &crate::runtime::owners::DbLease) -> Expected {
     let read = lease.db().snapshot(&work()).unwrap();

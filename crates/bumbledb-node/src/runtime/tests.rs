@@ -387,7 +387,7 @@ fn suspended_owner_fences_a_second_acquire() {
 
 #[test]
 fn worker_inbox_wakeup_reaches_a_sleeping_pool() {
-    // a sleeping worker must observe an admitted inbox
+    // A sleeping worker must observe an admitted inbox
     // item (lane_send holds the bookkeeping lock across notify; the wait
     // path try_recv's before Condvar::wait). One ready job after idle
     // proves wakeup. Failed admission must not leave a route.

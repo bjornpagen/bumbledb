@@ -161,7 +161,7 @@ impl NativeRegistry {
         })
     }
 
-    /// Drops a route that was reserved but never installed. No tombstone.
+    /// Drops a route that was reserved but never installed, leaving no row.
     pub(crate) fn rollback_route(&self, cap: Capability) -> Option<()> {
         let mut routes = self.routes();
         let route = routes.remove(&(cap.kind, cap.id))?;
@@ -238,7 +238,7 @@ impl NativeRegistry {
         Ok(())
     }
 
-    /// Removes a drained route. No tombstone remains.
+    /// Removes a drained route, leaving no row.
     pub(crate) fn release(&self, cap: Capability) -> Option<()> {
         let mut routes = self.routes();
         let route = routes.remove(&(cap.kind, cap.id))?;
@@ -266,8 +266,8 @@ impl NativeRegistry {
         self.routes().len()
     }
 
-    /// Marks every live route closing. Workers drain their tables; rows
-    /// disappear as payloads are released — they are not left as tombstones.
+    /// Marks every live route closing. Workers drain their tables; each row
+    /// disappears as its payload is released.
     pub(crate) fn close_all(&self) -> Vec<Capability> {
         let mut routes = self.routes();
         let mut caps = Vec::new();

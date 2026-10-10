@@ -338,9 +338,7 @@ impl Operation {
     }
 
     /// Whether this is an externally driven lease (a persistent
-    /// owner/session hold), rather than a queued one-shot job. The
-    /// `runtime_wire` sibling module cannot read the private field, so this
-    /// accessor is the one authorized crossing.
+    /// owner/session hold), rather than a queued one-shot job.
     pub(crate) fn is_external(&self) -> bool {
         self.external
     }

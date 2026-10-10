@@ -526,7 +526,7 @@ fn catch_up_applies_what_the_log_decided_without_judging_it_again() {
             schema: step.fingerprint,
         }),
     };
-    // Two rows sharing a key: today's judgment would reject this commit.
+    // Two rows sharing a key: judging this commit would reject it.
     let decided = Entry {
         nonce: bumbledb_log::Nonce([2; 16]),
         body: Body::Commands(
