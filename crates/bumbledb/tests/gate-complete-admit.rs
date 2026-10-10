@@ -49,7 +49,7 @@ fn schema() -> bumbledb::schema::Schema {
 #[test]
 fn admission_rejects_a_conflicting_population() {
     let dir = common::TempDir::new("gate-admit-conflict");
-    let dest = dir.path().join("store");
+    let dest = dir.path().join("store.bdb");
     let schema = schema();
     let mut population = begin(&dest);
     population
@@ -70,7 +70,7 @@ fn admission_rejects_a_conflicting_population() {
 #[test]
 fn a_second_population_never_overwrites() {
     let dir = common::TempDir::new("gate-admit-two");
-    let dest = dir.path().join("store");
+    let dest = dir.path().join("store.bdb");
     let schema = schema();
     let mut first = begin(&dest);
     let mut second = begin(&dest);
@@ -107,7 +107,7 @@ fn a_second_population_never_overwrites() {
 #[test]
 fn writes_after_admission_are_judged() {
     let dir = common::TempDir::new("gate-admit-after");
-    let dest = dir.path().join("store");
+    let dest = dir.path().join("store.bdb");
     let schema = schema();
     let mut population = begin(&dest);
     population.apply(&user(&schema, 1, "a@ex")).expect("apply");

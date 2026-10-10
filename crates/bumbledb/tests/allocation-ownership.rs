@@ -36,7 +36,7 @@ fn fixture(rows: usize, text_bytes: usize) -> Fixture {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let serial = NEXT.fetch_add(1, Ordering::Relaxed);
     let directory = Directory(std::env::temp_dir().join(format!(
-        "bumbledb-allocation-ownership-{}-{serial}",
+        "bumbledb-allocation-ownership-{}-{serial}.bdb",
         std::process::id(),
     )));
     let db = Db::create(&directory.0, AllocationFixture, WorkContext::new())

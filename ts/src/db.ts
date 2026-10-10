@@ -335,7 +335,7 @@ class DbLive<S extends AnySchema> implements Db<S> {
 }
 
 /** The database's child directory inside the owned directory. */
-const CHILD = "store"
+const CHILD = "store.bdb"
 
 const closeDirectory = (directory: DirectoryRef) => (done: Parameters<typeof addon.runtimeDirectoryClose>[2]) =>
 	addon.runtimeDirectoryClose(directory, false, done)

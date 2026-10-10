@@ -50,8 +50,10 @@ impl TempDir {
     pub fn new(tag: &str) -> Self {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path =
-            std::env::temp_dir().join(format!("bumbledb-it-{tag}-{}-{serial}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "bumbledb-it-{tag}-{}-{serial}.bdb",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&path);
         Self(path)
     }

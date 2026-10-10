@@ -781,7 +781,7 @@ mod tests {
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "bumbledb-l12-session-{tag}-{}-{seq}",
+            "bumbledb-node-session-{tag}-{}-{seq}",
             std::process::id()
         ))
     }
@@ -806,7 +806,7 @@ mod tests {
     }
 
     fn attach(owner: &DirectoryOwner, descriptor: &SchemaDescriptor) -> ManagedDb {
-        let path = owner.child_path("db").expect("child path");
+        let path = owner.child_path("db.bdb").expect("child path");
         #[rustfmt::skip]
         let Ok(bumbledb::Admission::Accepted(db)) =
             crate::Engine::create(&path, descriptor.clone(), policy())

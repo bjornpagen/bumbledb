@@ -41,7 +41,7 @@ mod common {
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(&root).expect("create the test directory");
             Self {
-                path: root.join("store"),
+                path: root.join("store.bdb"),
                 root,
             }
         }
@@ -1883,7 +1883,7 @@ mod newtype_coherence_pass {
 
     #[test]
     fn bare_pairs_with_bare_and_the_theory_seals() {
-        let dir = crate::common::TempDir::new("m5-bare-faces");
+        let dir = crate::common::TempDir::new("bare-faces");
         bumbledb::Db::create(dir.path(), BareFaces, crate::common::work())
             .expect("bare faces pair with bare faces — the coherence check passes")
             .expect("accepted");

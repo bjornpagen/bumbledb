@@ -32,15 +32,15 @@ const appLayer = Databases.layer.pipe(Layer.provideMerge(Bumble.layer(runtimePol
 const makeRuntime = () => ManagedRuntime.make(appLayer)
 
 const state = globalThis as typeof globalThis & {
-	__bumbledb?: { policy: typeof runtimePolicy; runtime: ReturnType<typeof makeRuntime> }
+	__bdb?: { policy: typeof runtimePolicy; runtime: ReturnType<typeof makeRuntime> }
 }
-if (state.__bumbledb && state.__bumbledb.policy !== runtimePolicy) {
+if (state.__bdb && state.__bdb.policy !== runtimePolicy) {
 	throw new Error("Database runtime settings changed; restart the development server")
 }
-state.__bumbledb ??= { policy: runtimePolicy, runtime: makeRuntime() }
+state.__bdb ??= { policy: runtimePolicy, runtime: makeRuntime() }
 
 /**
  * The app's one runtime. Handlers call `appRuntime.runPromiseExit(effect, { signal: request.signal })`;
  * the request signal becomes fiber interruption only at this boundary.
  */
-export const appRuntime = state.__bumbledb.runtime
+export const appRuntime = state.__bdb.runtime

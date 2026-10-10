@@ -29,7 +29,7 @@
 //!     relation Item { id: uuid as ItemId }
 //!     Item(id) -> Item;
 //! }
-//! # let dir = std::env::temp_dir().join("bumbledb-doc-cross-schema");
+//! # let dir = std::env::temp_dir().join("cross-schema.bdb");
 //! # let work = bumbledb::WorkContext::new();
 //! # let _ = std::fs::remove_dir_all(&dir);
 //! let db = bumbledb::Db::create(&dir, Ledger, work).unwrap().unwrap();
@@ -230,7 +230,7 @@ pub(crate) mod testutil {
                 match std::fs::create_dir(&root) {
                     Ok(()) => {
                         return Self {
-                            path: root.join("store"),
+                            path: root.join("store.bdb"),
                             root,
                         };
                     }

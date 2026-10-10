@@ -160,7 +160,7 @@ pub(super) fn host_put<'a>(key: &'a [u8], value: &'a [u8]) -> [HostRecord<'a>; 1
 
 pub(super) fn store_dir(tag: &str) -> (TempDir, std::path::PathBuf) {
     let dir = TempDir::new(tag);
-    let path = dir.path().join("store");
+    let path = dir.path().join("store.bdb");
     std::fs::create_dir_all(dir.path()).expect("test parent dir");
     (dir, path)
 }

@@ -43,7 +43,7 @@ fn unique_dir(tag: &str) -> std::path::PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "bumbledb-l13-db-{tag}-{}-{seq}",
+        "bumbledb-node-db-{tag}-{}-{seq}",
         std::process::id()
     ))
 }
@@ -68,7 +68,7 @@ fn acquire(runtime: &Arc<Runtime>, path: &std::path::Path) -> DirectoryOwner {
 }
 
 fn attach(owner: &DirectoryOwner, descriptor: &bumbledb::SchemaDescriptor) -> ManagedDb {
-    attach_named(owner, descriptor, "db")
+    attach_named(owner, descriptor, "db.bdb")
 }
 
 fn attach_named(
@@ -1210,12 +1210,13 @@ fn database_open_refusals_are_domain_outcomes() {
     let reference = owner.reference();
     let mini = crate::schema::sealed(&Mini.descriptor());
     let ctx = work();
-    let Ok(ManagedDbOutcome::Opened(db)) = open_db(&reference, "db", Arc::clone(&mini), true, &ctx)
+    let Ok(ManagedDbOutcome::Opened(db)) =
+        open_db(&reference, "db.bdb", Arc::clone(&mini), true, &ctx)
     else {
         panic!("a fresh directory creates")
     };
     assert!(matches!(
-        open_db(&reference, "db", Arc::clone(&mini), true, &ctx),
+        open_db(&reference, "db.bdb", Arc::clone(&mini), true, &ctx),
         Ok(ManagedDbOutcome::DestinationExists { .. })
     ));
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -1226,10 +1227,10 @@ fn database_open_refusals_are_domain_outcomes() {
     );
     let other = crate::schema::sealed(&Other.descriptor());
     assert!(matches!(
-        open_db(&reference, "db", other, false, &ctx),
+        open_db(&reference, "db.bdb", other, false, &ctx),
         Ok(ManagedDbOutcome::FingerprintMismatch { .. })
     ));
-    let Ok(ManagedDbOutcome::Opened(reopened)) = open_db(&reference, "db", mini, false, &ctx)
+    let Ok(ManagedDbOutcome::Opened(reopened)) = open_db(&reference, "db.bdb", mini, false, &ctx)
     else {
         panic!("the matching schema reopens")
     };

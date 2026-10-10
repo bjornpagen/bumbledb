@@ -50,7 +50,7 @@ async function openDb(runtime: RuntimeRef, dir: string, create: boolean) {
 	const acquire = started((callback) => addon.runtimeDirectoryAcquire(runtime, dir, callback))
 	await acquire.done
 	const owner = addon.runtimeDirectoryTake(acquire.lease)
-	const open = started((callback) => addon.runtimeDirectoryDbOpen(owner, "store", compiled, create, callback))
+	const open = started((callback) => addon.runtimeDirectoryDbOpen(owner, "store.bdb", compiled, create, callback))
 	await open.done
 	const opened = addon.runtimeDbTake(open.lease)
 	assert.equal(opened._tag, "Opened")

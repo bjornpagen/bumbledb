@@ -256,7 +256,10 @@ fn unique_base(tag: &str) -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("bumbledb-p06-{tag}-{}-{seq}", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "bumbledb-node-runtime-{tag}-{}-{seq}",
+        std::process::id()
+    ))
 }
 
 fn drain_owner(owner: &super::owners::DirectoryOwner) -> CloseReport {

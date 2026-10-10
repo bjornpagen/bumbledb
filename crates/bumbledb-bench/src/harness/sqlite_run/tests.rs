@@ -31,7 +31,7 @@ fn fairness_and_the_prepared_sample_contract() {
     let translated =
         translate(&(family.query)(), crate::worlds::ledger::schema(), &[]).expect("translate");
     let types: Vec<ValueType> = {
-        let db_dir = dir.join("types-db");
+        let db_dir = dir.join("types.bdb");
         let db = bumbledb::Db::create(
             &db_dir,
             crate::worlds::ledger::Ledger,
@@ -79,7 +79,7 @@ fn fairness_and_the_prepared_sample_contract() {
         translate(&(point.query)(), crate::worlds::ledger::schema(), &[]).expect("translate");
     let point_types: Vec<ValueType> = {
         let db = bumbledb::Db::open(
-            &dir.join("types-db"),
+            &dir.join("types.bdb"),
             crate::worlds::ledger::Ledger,
             crate::harness::bench_work(),
         )

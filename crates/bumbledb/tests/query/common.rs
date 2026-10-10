@@ -25,7 +25,7 @@ impl TempDir {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("create the test directory");
         Self {
-            path: root.join("store"),
+            path: root.join("store.bdb"),
             root,
         }
     }

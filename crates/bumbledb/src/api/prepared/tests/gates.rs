@@ -17,7 +17,7 @@ use bumbledb_theory::schema::{
 #[cfg_attr(miri, ignore)]
 fn cancelled_execution_context_refuses_execute() {
     let rows = &[(1, 3, "a", 10), (2, 3, "b", 25), (3, 7, "c", 40)];
-    let store = posting_store("d07-tiny-units", rows);
+    let store = posting_store("tiny-units", rows);
     let mut prepared = store.prepare(&by_account_query()).expect("prepare");
     let work = WorkContext::new();
     work.cancel();
@@ -78,7 +78,7 @@ fn completed_execution_keeps_query_pools_until_explicit_release() {
         }],
         statements: vec![],
     };
-    let store = StoreFix::store("d08-retain-capacity", descriptor);
+    let store = StoreFix::store("retain-capacity", descriptor);
     let facts: Vec<Vec<Value>> = (0..256u64)
         .map(|i| {
             vec![
@@ -169,7 +169,7 @@ fn derived_pipeline_joins_and_negates_resident_stages() {
         .iter()
         .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
         .collect();
-    let store = posting_store("d09-derived-pipeline", &borrowed);
+    let store = posting_store("derived-pipeline", &borrowed);
     let query = Query {
         interiors: vec![Interior {
             rules: vec![Rule {
@@ -291,7 +291,7 @@ fn key_bound_query_visits_are_bounded() {
         .iter()
         .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
         .collect();
-    let store = posting_store("d10-key-visits", &borrowed);
+    let store = posting_store("key-visits", &borrowed);
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {

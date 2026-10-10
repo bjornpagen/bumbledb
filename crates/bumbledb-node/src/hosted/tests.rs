@@ -210,7 +210,7 @@ fn a_hosted_database_creates_decides_and_reads_through_the_bridge() {
     let _ = std::fs::remove_dir_all(&base);
     let owner = acquire(&runtime, &base.join("cache"));
     let reference = owner.reference();
-    let root = reference.child_path("db").unwrap();
+    let root = reference.child_path("cache").unwrap();
     let opened = open_hosted(
         reference.clone(),
         &root,
@@ -364,7 +364,7 @@ fn a_migration_carries_unchanged_relations_and_reads_switch_to_the_new_schema() 
     let _ = std::fs::remove_dir_all(&base);
     let owner = acquire(&runtime, &base.join("cache"));
     let reference = owner.reference();
-    let root = reference.child_path("db").unwrap();
+    let root = reference.child_path("cache").unwrap();
     let mut store = Store::default();
 
     let first = open_hosted(
