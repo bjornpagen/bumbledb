@@ -65,11 +65,11 @@ async function run<A>(body: Effect.Effect<A, DbError, Scope.Scope | Bumble>): Pr
 
 /**
  * `store`, recording the checkpoint images a cache asked to upload, the first one that was created,
- * and the ones it served to a cache. Log reads wait for the first checkpoint listing to answer, so a
- * cold open always sees the checkpoint before it could replay past it.
+ * and the ones it served to a cache. After `reopen()`, log reads wait for the next checkpoint listing
+ * to answer, so that open sees the checkpoint before it could replay past it.
  */
 function watched(store: ObjectStore) {
-	const listed = Promise.withResolvers<void>()
+	let listed = Promise.withResolvers<void>()
 	const created = Promise.withResolvers<void>()
 	const offered = new Set<string>()
 	const served: string[] = []
@@ -99,7 +99,10 @@ function watched(store: ObjectStore) {
 				)
 			)
 	}
-	return { store: watchedStore, created: created.promise, offered, served }
+	const reopen = () => {
+		listed = Promise.withResolvers<void>()
+	}
+	return { store: watchedStore, created: created.promise, offered, served, reopen }
 }
 
 /**
@@ -136,6 +139,7 @@ export function hostedConformance(name: string, store: () => ObjectStore): void 
 					yield* Effect.promise(() => log.created)
 				})
 			)
+			log.reopen()
 			await run(
 				Effect.gen(function* () {
 					const db = yield* Database.make({
