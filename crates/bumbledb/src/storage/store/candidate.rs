@@ -31,8 +31,7 @@ impl Applied {
     }
 }
 
-/// One change set of a batch decision: its own net changes and its
-/// judgment.
+/// One change set's decision: its own net changes and its judgment.
 #[derive(Debug)]
 pub(crate) struct Decided {
     pub(crate) applied: Applied,
@@ -188,39 +187,11 @@ impl<'store> WriteOwner<'store> {
         })
     }
 
-    /// Judge each change set in order against the parent plus the earlier
-    /// admitted sets; a rejected set rolls back alone. Nothing commits.
-    pub(crate) fn decide_all(
-        &mut self,
-        schema: &Schema,
-        changes: &[ChangeSet],
-    ) -> Result<Vec<Decided>> {
+    /// A transaction that judges change sets one at a time.
+    pub(crate) fn decider<'owner>(&'owner mut self) -> Result<Decider<'owner, 'store>> {
         self.work.checkpoint()?;
-        let inner = &self.store.inner;
-        let mut txn = self.store.gated_write_txn(&self.work)?;
-        let mut decided = Vec::with_capacity(changes.len());
-        for changes in changes {
-            let mut nested = inner
-                .env
-                .nested_write_txn(&mut txn.txn)
-                .map_err(|error| inner.txn_error(error))?;
-            let rows = apply_rows(inner, &mut nested, changes, &self.work)?;
-            let state = CandidateState {
-                inner,
-                txn: &nested,
-                changes,
-                home_keys_preserved: rows.home_keys_preserved,
-            };
-            let judgment = super::judge_bridge::judge_candidate(schema, &state, &self.work)?;
-            if judgment == Judgment::Admitted {
-                nested.commit().map_err(|error| inner.txn_error(error))?;
-            }
-            decided.push(Decided {
-                applied: rows.applied,
-                judgment,
-            });
-        }
-        Ok(decided)
+        let txn = self.store.gated_write_txn(&self.work)?;
+        Ok(Decider { owner: self, txn })
     }
 
     /// A transaction against the unchanged parent for host records only.
@@ -234,6 +205,41 @@ impl<'store> WriteOwner<'store> {
             txn,
             parent,
             applied: Vec::new(),
+        })
+    }
+}
+
+/// Judges change sets in order inside one write transaction: an admitted
+/// set stays applied for the later ones, a rejected set rolls back alone.
+/// Dropping it commits nothing.
+pub(crate) struct Decider<'owner, 'store> {
+    owner: &'owner mut WriteOwner<'store>,
+    txn: GatedRwTxn<'store>,
+}
+
+impl Decider<'_, '_> {
+    /// Judge `changes` against the parent plus the sets admitted so far.
+    pub(crate) fn decide(&mut self, schema: &Schema, changes: &ChangeSet) -> Result<Decided> {
+        let inner = &self.owner.store.inner;
+        let work = &self.owner.work;
+        let mut nested = inner
+            .env
+            .nested_write_txn(&mut self.txn.txn)
+            .map_err(|error| inner.txn_error(error))?;
+        let rows = apply_rows(inner, &mut nested, changes, work)?;
+        let state = CandidateState {
+            inner,
+            txn: &nested,
+            changes,
+            home_keys_preserved: rows.home_keys_preserved,
+        };
+        let judgment = super::judge_bridge::judge_candidate(schema, &state, work)?;
+        if judgment == Judgment::Admitted {
+            nested.commit().map_err(|error| inner.txn_error(error))?;
+        }
+        Ok(Decided {
+            applied: rows.applied,
+            judgment,
         })
     }
 }

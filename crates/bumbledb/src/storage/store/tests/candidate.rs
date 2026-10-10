@@ -253,7 +253,7 @@ fn a_foreign_schema_change_set_refuses() {
 }
 
 #[test]
-fn batch_decisions_see_earlier_admissions_and_roll_back_rejections_alone() {
+fn a_decider_sees_earlier_admissions_and_rolls_back_rejections_alone() {
     let (_dir, path) = store_dir("cand-decide-all");
     let store = create_default(&path);
     let sets = [
@@ -264,11 +264,15 @@ fn batch_decisions_see_earlier_admissions_and_roll_back_rejections_alone() {
     ];
     let context = work();
     let mut owner = store.writer(&context).expect("writer");
-    let decided = owner.decide_all(&schema(), &sets).expect("decide");
-    let verdicts: Vec<_> = decided
+    let mut judge = owner.decider().expect("decider");
+    let verdicts: Vec<_> = sets
         .iter()
-        .map(|decided| (decided.applied, decided.judgment != Judgment::Admitted))
+        .map(|changes| {
+            let decided = judge.decide(&schema(), changes).expect("decide");
+            (decided.applied, decided.judgment != Judgment::Admitted)
+        })
         .collect();
+    drop(judge);
     assert_eq!(
         verdicts,
         [

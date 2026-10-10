@@ -1668,6 +1668,61 @@ fn a_rejected_decision_keeps_the_session_for_the_receipt() {
     .expect("read");
 }
 
+#[test]
+fn a_decider_judges_each_set_against_the_accepted_ones_and_commits_nothing() {
+    let dir = TempDir::new("db-decider");
+    let db = create(&dir);
+    let work: WorkContext = super::test_operation();
+    let set = |adds: &[(&str, i64)], removes: &[(&str, i64)]| {
+        let mut builder = ChangeSet::builder(db.schema(), work.clone());
+        for (name, amount) in removes {
+            builder
+                .delete(ENTRY, &entry_row(name, *amount))
+                .expect("draft row");
+        }
+        for (name, amount) in adds {
+            builder
+                .insert(ENTRY, &entry_row(name, *amount))
+                .expect("draft row");
+        }
+        builder.finish().expect("sealed delta")
+    };
+    let sets = [
+        set(&[("a", 1)], &[]),
+        set(&[("a", 2)], &[]),
+        set(&[("a", 2)], &[("a", 1)]),
+        set(&[("a", 2)], &[]),
+        set(&[("b", 1), ("b", 2)], &[]),
+    ];
+    let mut session = db.host_writer(&work).expect("session");
+    let mut decider = session.decider().expect("decider");
+    let judged: Vec<_> = sets
+        .iter()
+        .map(|changes| match decider.decide(changes).expect("decide") {
+            crate::host::Judged::Accepted(applied) => Some((applied.added, applied.removed)),
+            crate::host::Judged::Rejected(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        judged,
+        [Some((1, 0)), None, Some((1, 1)), Some((0, 0)), None],
+        "each set meets the state the accepted ones before it produced"
+    );
+    drop(decider);
+    assert_eq!(
+        session.decide_all(&sets[1..2]).expect("decide again").len(),
+        1,
+        "the session outlives its decider"
+    );
+    drop(session);
+    assert_eq!(
+        db.read(operation(), |snap| snap.count(ENTRY))
+            .expect("count"),
+        0,
+        "a decider commits nothing"
+    );
+}
+
 /// Incremental apply on an admitted store: a lawful insert commits, a
 /// key conflict is `InvariantRejected`, and the snapshot still sees only
 /// the admitted row.

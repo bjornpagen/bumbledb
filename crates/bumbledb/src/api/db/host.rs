@@ -15,7 +15,7 @@ use crate::error::{Admission, Error, FactShapeError, Mismatch, Result, Violation
 use crate::schema::judge::Judgment;
 use crate::schema::{Schema, Theory, ValidateDescriptor as _};
 use crate::storage::GenerationId;
-use crate::storage::store::candidate::{PreparedWrite, SealedWrite, WriteOwner};
+use crate::storage::store::candidate::{self, PreparedWrite, SealedWrite, WriteOwner};
 use crate::storage::store::staging::Staging;
 use crate::storage::store::{self, Store};
 use crate::{ChangeSet, WorkContext};
@@ -35,7 +35,7 @@ pub const MAX_KEY: usize = store::keys::HOST_KEY_MAX;
 /// A visitor of host records: key, then value.
 pub type HostVisitor<'v> = dyn FnMut(&[u8], &[u8]) -> Result<()> + 'v;
 
-/// One change set's verdict in a batch decision.
+/// One change set's verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Judged {
     Accepted(Applied),
@@ -47,6 +47,15 @@ pub struct WriterSession<'db, S> {
     db: &'db Db<S>,
     owner: WriteOwner<'db>,
     work: WorkContext,
+}
+
+/// Judges change sets in order inside one write transaction: an accepted
+/// set stays applied for the later ones, a rejected set rolls back alone.
+/// Dropping it commits nothing.
+pub struct Decider<'session, 'db, S> {
+    inner: candidate::Decider<'session, 'db>,
+    db: &'db Db<S>,
+    work: &'session WorkContext,
 }
 
 /// Applied change sets in an open transaction: seal or abort.
@@ -121,22 +130,27 @@ impl<'db, S> WriterSession<'db, S> {
         self.owner.parent_generation()
     }
 
+    /// A decider over the committed state.
+    /// # Errors
+    /// Storage failure or cancellation.
+    pub fn decider<'session>(&'session mut self) -> Result<Decider<'session, 'db, S>> {
+        Ok(Decider {
+            inner: self.owner.decider()?,
+            db: self.db,
+            work: &self.work,
+        })
+    }
+
     /// Judge each change set in order against the committed state plus the
     /// earlier accepted sets; a rejected set rolls back alone. Nothing
     /// commits.
     /// # Errors
     /// A foreign-schema change set, storage failure or cancellation.
     pub fn decide_all(&mut self, changes: &[ChangeSet]) -> Result<Vec<Judged>> {
-        let schema = self.db.schema.as_ref();
-        self.owner
-            .decide_all(schema, changes)?
-            .into_iter()
-            .map(|decided| match decided.judgment {
-                Judgment::Admitted => Ok(Judged::Accepted(decided.applied)),
-                Judgment::Rejected(judged) => Ok(Judged::Rejected(
-                    super::violations::violations_from_judged(schema, judged, &self.work)?,
-                )),
-            })
+        let mut decider = self.decider()?;
+        changes
+            .iter()
+            .map(|changes| decider.decide(changes))
             .collect()
     }
 
@@ -160,6 +174,23 @@ impl<'db, S> WriterSession<'db, S> {
         Ok(Prepared {
             inner: self.owner.prepare_unchanged()?,
             marker: PhantomData,
+        })
+    }
+}
+
+impl<S> Decider<'_, '_, S> {
+    /// Judge `changes` against the committed state plus the sets accepted so
+    /// far.
+    /// # Errors
+    /// A foreign-schema change set, storage failure or cancellation.
+    pub fn decide(&mut self, changes: &ChangeSet) -> Result<Judged> {
+        let schema = self.db.schema.as_ref();
+        let decided = self.inner.decide(schema, changes)?;
+        Ok(match decided.judgment {
+            Judgment::Admitted => Judged::Accepted(decided.applied),
+            Judgment::Rejected(judged) => Judged::Rejected(
+                super::violations::violations_from_judged(schema, judged, self.work)?,
+            ),
         })
     }
 }
