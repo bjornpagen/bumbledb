@@ -19,7 +19,7 @@ be quoted as a claim.
 Dry-run against them into a temp dir:
 
 ```sh
-python3 scripts/bench_viz.py \
+uv run --no-project --with matplotlib python scripts/bench_viz.py \
     --storage-report scripts/fixtures/fixture-storage-report.json \
     --writes-report scripts/fixtures/fixture-writes-report.json \
     --curves-report scripts/fixtures/fixture-curves-report.json \

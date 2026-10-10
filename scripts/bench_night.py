@@ -229,7 +229,8 @@ def main():
         good = run_jobs(jobs, workers, out, env, records, persist, scheduler["cpu_ids"])
         if good:
             note = f"{workers} lane workers; {scheduler['placement']}; {scheduler['priority']}; shared CPU/I/O"
-            good = run_jobs([Job("charts", [sys.executable, str(REPO / "scripts/bench_viz.py"),
+            good = run_jobs([Job("charts", ["uv", "run", "--no-project", "--with", "matplotlib", "python",
+                str(REPO / "scripts/bench_viz.py"),
                 "--night", str(out), "--out", str(out), "--note", note])],
                 1, out, env, records, persist)
         manifest["status"] = "LOCAL-LANES-COMPLETE" if good else "INCOMPLETE"

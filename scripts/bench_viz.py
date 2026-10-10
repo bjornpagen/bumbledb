@@ -11,11 +11,10 @@ lane" is unrepresentable: render is never called without its inputs.
 The lane discriminant: a report.json whose top level carries a string
 "lane" key is a lane payload, stored under inputs[payload["lane"]] (the
 first occurrence of a lane wins; later duplicates print a note). A
-report.json WITHOUT that key is a suite RunReport, classified by
-config.store into the durable / ephemeral run pools. The preferred pool
-(durable when non-empty, else ephemeral) merges min-of-N per percentile
-(p50/p90/p95/p99) into inputs["reads"] / inputs["writes"]; the pool's
-kind and size ride along as inputs["store_kind"] / inputs["rep_count"].
+report.json WITHOUT that key is a suite RunReport (it carries "reads"
+and "writes" tables). Every RunReport joins one run pool, which merges
+min-of-N per percentile (p50/p90/p95/p99) into inputs["reads"] /
+inputs["writes"]; the pool's size rides along as inputs["rep_count"].
 
   bench-vs-sqlite.svg     ours vs SQLite p50 per read family (log scale)   [reads]
   bench-speedup.svg       the same data as multipliers, big and readable   [reads]
@@ -35,8 +34,8 @@ kind and size ride along as inputs["store_kind"] / inputs["rep_count"].
   adversarial-dnf.svg     ours vs SQLite, capped twins drawn as capped     [adversarial]
 
 Usage:
-  python3 scripts/bench_viz.py <run-dir> ... [--scenarios <scenarios.md|scenarios.json>] [--out <dir>]
-  python3 scripts/bench_viz.py --night <night-dir> [--out <dir>]
+  uv run --no-project --with matplotlib python scripts/bench_viz.py <run-dir> ... [--scenarios <scenarios.md|scenarios.json>] [--out <dir>]
+  uv run --no-project --with matplotlib python scripts/bench_viz.py --night <night-dir> [--out <dir>]
 
 --scenarios dispatches on extension: `.json` is the scenario runner's
 machine artifact (scenarios.json), whose lanes are a tagged union —
@@ -90,7 +89,7 @@ payload shapes). Capped SQLite cells contain no measured stats.
 `--out` (alias `--out-dir`) defaults to assets/ (the owner's ceremony
 path); every other invocation should point it elsewhere. Charts render
 ONLY from committed report pins — never from live runs.
-Needs: matplotlib (`python3 -m pip install matplotlib`).
+Needs: matplotlib, supplied by `uv run --with matplotlib`.
 """
 
 import argparse
@@ -212,49 +211,28 @@ def load_adversarial(payload):
                              'yet "theirs" carries stats — a capped twin has no number')
     return payload
 
-def world_report_rows(report):
-    """The two home-turf report shapes as ONE row stream of
-    (lane_label, row): crud nests its rows under durability-lane
-    objects; lawful's "lanes" entries ARE the rows (each carries its
-    own "lane" label). Yields defensively — the contract loader is the
-    validator; charts consume only validated payloads."""
-    for entry in report.get("lanes", []):
-        if not isinstance(entry, dict):
-            continue
-        if isinstance(entry.get("rows"), list):
-            for row in entry["rows"]:
-                if isinstance(row, dict):
-                    yield entry.get("lane"), row
-        else:
-            yield entry.get("lane"), entry
-
 def load_world_report(world):
     """The home-turf world contract (crud / lawful): "world" names the
-    payload, "lanes" is non-empty, and every row carries a "family"
-    string, a durability-lane label, and BOTH engines' stats with a
-    numeric "p50" — these worlds have no DNF arm (a lane that cannot
-    complete fails the whole run instead of rendering), so a missing
-    twin number is a shape error, never a censoring."""
+    payload, "rows" is non-empty, and every row carries a "family"
+    string and BOTH engines' stats with a numeric "p50" — these worlds
+    have no DNF arm (a run that cannot complete fails instead of
+    rendering), so a missing twin number is a shape error, never a
+    censoring."""
     def load(payload):
         if payload.get("world") != world:
             raise ValueError(f'{world} report: "world" must be "{world}"')
-        lanes = payload.get("lanes")
-        if not isinstance(lanes, list) or not lanes:
-            raise ValueError(f'{world} report: "lanes" must be a non-empty list')
-        count = 0
-        for lane_label, row in world_report_rows(payload):
-            if not isinstance(lane_label, str) or not lane_label \
-                    or not isinstance(row.get("family"), str) or not row["family"]:
-                raise ValueError(f'{world} report: every row needs "family" '
-                                 'and lane label strings')
-            where = f'{world} report row "{row["family"]}" [{lane_label}]'
+        rows = payload.get("rows")
+        if not isinstance(rows, list) or not rows:
+            raise ValueError(f'{world} report: "rows" must be a non-empty list')
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("family"), str) \
+                    or not row["family"]:
+                raise ValueError(f'{world} report: every row needs a "family" string')
+            where = f'{world} report row "{row["family"]}"'
             for side in ("ours", "theirs"):
                 if _stats_p50(row, side, where) is None:
                     raise ValueError(f'{where}: "{side}" stats are required — '
                                      'this world has no DNF arm')
-            count += 1
-        if count == 0:
-            raise ValueError(f'{world} report: "lanes" carries no rows')
         return payload
     return load
 
@@ -269,7 +247,7 @@ LANE_LOADERS = {
 def ingest_report(inputs, path):
     """One report.json into the inputs dict, dispatched on the lane
     discriminant: a top-level "lane" string names a lane payload; its
-    absence means a suite RunReport, classified by config.store."""
+    absence means a suite RunReport."""
     payload = json.loads(Path(path).read_text())
     lane = payload.get("lane")
     if isinstance(lane, str):
@@ -284,11 +262,8 @@ def ingest_report(inputs, path):
                 raise SystemExit(f"{path}: {e}")
         inputs[lane] = payload
         return
-    config = payload.get("config")
-    store = config.get("store") if isinstance(config, dict) else None
-    if store in ("durable", "ephemeral", "nosync"):
-        pool = "ephemeral" if store in ("ephemeral", "nosync") else "durable"
-        inputs[f"{pool}_runs"].append(payload)
+    if "reads" in payload and "writes" in payload:
+        inputs["runs"].append(payload)
     else:
         print(f"note: {path} is neither a lane payload nor a RunReport — skipped")
 
@@ -325,7 +300,7 @@ def discover(night_dir):
     representation), else the first scenarios.md (its rendering) — and
     the real lane reports from their canonical night paths
     (NIGHT_LANE_REPORTS; the flags override)."""
-    inputs = {"durable_runs": [], "ephemeral_runs": [], "contaminated_runs": 0}
+    inputs = {"runs": [], "contaminated_runs": 0}
     night = Path(night_dir)
     for report_path in sorted(night.glob("*/report.json")):
         if not contaminated(inputs, report_path):
@@ -352,7 +327,7 @@ def gather(run_dirs):
     """Positional run dirs -> the same inputs dict: each run dir's
     report.json, classified exactly like discovery (the contamination
     marker honored identically)."""
-    inputs = {"durable_runs": [], "ephemeral_runs": [], "contaminated_runs": 0}
+    inputs = {"runs": [], "contaminated_runs": 0}
     for d in run_dirs:
         report_path = Path(d) / "report.json"
         if not contaminated(inputs, report_path):
@@ -383,24 +358,20 @@ def merge_runs(runs):
     return merge(reads), merge(writes)
 
 def derive_pools(inputs):
-    """The merged reads/writes tables ride on the preferred pool —
-    durable when non-empty, else ephemeral — with the pool's kind,
-    size, corpus scale, host, and shared-machine flag recorded for
-    captions (a boosted number never rides a chart without its flag)."""
-    for kind in ("durable", "ephemeral"):
-        pool = inputs[f"{kind}_runs"]
-        if pool:
-            inputs["reads"], inputs["writes"] = merge_runs(pool)
-            inputs["store_kind"] = kind
-            inputs["rep_count"] = len(pool)
-            provenance = pool[0].get("provenance") or {}
-            inputs["host"] = provenance.get("host", "unknown host")
-            inputs["shared_machine"] = any(
-                (r.get("provenance") or {}).get("shared_machine") for r in pool)
-            inputs["parallel_jobs"] = max(
-                ((r.get("provenance") or {}).get("parallel_jobs", 1) for r in pool), default=1)
-            inputs["scale"] = (pool[0].get("config") or {}).get("scale", "?")
-            return
+    """The merged reads/writes tables from the run pool, with its size,
+    corpus scale, host, and shared-machine flag recorded for captions
+    (a boosted number never rides a chart without its flag)."""
+    pool = inputs["runs"]
+    if pool:
+        inputs["reads"], inputs["writes"] = merge_runs(pool)
+        inputs["rep_count"] = len(pool)
+        provenance = pool[0].get("provenance") or {}
+        inputs["host"] = provenance.get("host", "unknown host")
+        inputs["shared_machine"] = any(
+            (r.get("provenance") or {}).get("shared_machine") for r in pool)
+        inputs["parallel_jobs"] = max(
+            ((r.get("provenance") or {}).get("parallel_jobs", 1) for r in pool), default=1)
+        inputs["scale"] = (pool[0].get("config") or {}).get("scale", "?")
 
 def prov_note(payload):
     """The shared-machine caveat from the payload's OWN provenance
@@ -415,10 +386,10 @@ def prov_note(payload):
     return note
 
 def pool_note(inputs):
-    """The merged-pool caption tail: min-of-N, store kind, exclusions,
-    and the shared-machine caveat."""
+    """The merged-pool caption tail: min-of-N, exclusions, and the
+    shared-machine caveat."""
     count = inputs['rep_count']
-    note = f"{'single run' if count == 1 else f'min-of-{count}'}, {inputs['store_kind']} store"
+    note = f"{'single run' if count == 1 else f'min-of-{count}'}, fsync-durable store"
     if inputs.get("contaminated_runs"):
         n = inputs["contaminated_runs"]
         note += f" · {n} contaminated run{'s' if n != 1 else ''} excluded and counted"
@@ -432,22 +403,22 @@ def derive_write_throughput(inputs):
     """writes-report.json's commit/delete batch ladders -> the
     write_throughput lane payload, THROUGH the lane's contract loader
     (the contract is the adapter's output shape). One derived
-    durability lane per (report lane × ladder): the batch ladder is the
-    x-axis, rows/sec both engines the y. insert_stream is a single point,
+    lane per ladder: the batch ladder is the x-axis, rows/sec both
+    engines the y. insert_stream is a single point,
     not a ladder — it stays fully drawn in bench-writes-rates.svg. A
     real write_throughput lane payload, once an emitter writes one,
     wins over this derivation."""
     if inputs.get("write_throughput") or not inputs.get("writes_rates"):
         return
     lanes = []
-    for lane in inputs["writes_rates"].get("lanes", []):
-        for prefix, label in (("commit_b", "commits"), ("delete_b", "deletes")):
-            batches = [{"batch": row["batch"],
-                        "ours_facts_per_sec": row["rows_per_sec_ours"],
-                        "theirs_facts_per_sec": row["rows_per_sec_theirs"]}
-                       for row in lane["rows"] if row["name"].startswith(prefix)]
-            if batches:
-                lanes.append({"name": f"{lane['lane']} {label}", "batches": batches})
+    for prefix, label in (("commit_b", "commits"), ("delete_b", "deletes")):
+        batches = [{"batch": row["batch"],
+                    "ours_facts_per_sec": row["rows_per_sec_ours"],
+                    "theirs_facts_per_sec": row["rows_per_sec_theirs"]}
+                   for row in inputs["writes_rates"]["rows"]
+                   if row["name"].startswith(prefix)]
+        if batches:
+            lanes.append({"name": label, "batches": batches})
     if lanes:
         payload = {"lane": "write_throughput", "lanes": lanes,
                    "provenance": inputs["writes_rates"].get("provenance")}
@@ -1054,43 +1025,35 @@ def chart_storage(inputs, out):
 
 def chart_writes_rates(inputs, out):
     """bench-writes-rates.svg: rows/sec per (family, batch) row, ours vs
-    theirs paired, one panel per durability lane — the lane + sqlite_sync
-    labels ride in the panel title, so the number never appears without
-    its durability context."""
+    theirs paired — the sqlite_sync label rides in the title, so the
+    number never appears without its durability context."""
     report = inputs["writes_rates"]
-    lanes = report["lanes"]
-    heights = [0.5 * len(lane["rows"]) + 1.2 for lane in lanes]
-    fig, axes = plt.subplots(len(lanes), 1, facecolor=BG,
-                             figsize=(9.6, sum(heights) + 0.6),
-                             gridspec_kw={"height_ratios": heights})
-    axes = [axes] if len(lanes) == 1 else list(axes)
-    for ax, lane in zip(axes, lanes):
-        dark(ax)
-        rows = lane["rows"]
-        names = [r["name"] for r in rows]
-        ys = range(len(rows))
-        ours = [r["rows_per_sec_ours"] for r in rows]
-        theirs = [r["rows_per_sec_theirs"] for r in rows]
-        ax.barh([y + 0.19 for y in ys], theirs, height=0.34, color=THEIRS,
-                label="SQLite", zorder=3)
-        ax.barh([y - 0.19 for y in ys], ours, height=0.34, color=OURS,
-                label="bumbledb", zorder=3)
-        for y, (o, t) in enumerate(zip(ours, theirs)):
-            ax.text(o * 1.12, y - 0.19, fmt_rate(o), va="center", fontsize=9,
-                    color=OURS, fontweight="bold", family="monospace")
-            ax.text(t * 1.12, y + 0.19, fmt_rate(t), va="center", fontsize=8,
-                    color=DIM, family="monospace")
-        ax.set_yticks(list(ys), names, fontsize=10, family="monospace", color=FG)
-        ax.invert_yaxis()
-        ax.set_xscale("log")
-        ax.set_xlim(min(ours + theirs) * 0.5, max(ours + theirs) * 12)
-        ax.xaxis.set_major_formatter(FuncFormatter(fmt_rate))
-        ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-        ax.set_title(f"{lane['lane']} · SQLite {lane['sqlite_sync']} · "
-                     "rows/sec — longer is more throughput",
-                     fontsize=11, loc="left", pad=10, family="monospace")
-        ax.legend(loc="lower right", facecolor=BG, edgecolor=GRID,
-                  labelcolor=FG, fontsize=8)
+    rows = report["rows"]
+    fig, ax = plt.subplots(figsize=(9.6, 0.5 * len(rows) + 1.8), facecolor=BG)
+    dark(ax)
+    names = [r["name"] for r in rows]
+    ys = range(len(rows))
+    ours = [r["rows_per_sec_ours"] for r in rows]
+    theirs = [r["rows_per_sec_theirs"] for r in rows]
+    ax.barh([y + 0.19 for y in ys], theirs, height=0.34, color=THEIRS,
+            label="SQLite", zorder=3)
+    ax.barh([y - 0.19 for y in ys], ours, height=0.34, color=OURS,
+            label="bumbledb", zorder=3)
+    for y, (o, t) in enumerate(zip(ours, theirs)):
+        ax.text(o * 1.12, y - 0.19, fmt_rate(o), va="center", fontsize=9,
+                color=OURS, fontweight="bold", family="monospace")
+        ax.text(t * 1.12, y + 0.19, fmt_rate(t), va="center", fontsize=8,
+                color=DIM, family="monospace")
+    ax.set_yticks(list(ys), names, fontsize=10, family="monospace", color=FG)
+    ax.invert_yaxis()
+    ax.set_xscale("log")
+    ax.set_xlim(min(ours + theirs) * 0.5, max(ours + theirs) * 12)
+    ax.xaxis.set_major_formatter(FuncFormatter(fmt_rate))
+    ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
+    ax.set_title(f"SQLite {report['sqlite_sync']} · rows/sec — longer is more throughput",
+                 fontsize=11, loc="left", pad=10, family="monospace")
+    ax.legend(loc="lower right", facecolor=BG, edgecolor=GRID,
+              labelcolor=FG, fontsize=8)
     fig.text(0.01, 0.005,
              "final rows verified after every operation · log scale"
              f"{prov_note(report)}",
@@ -1320,29 +1283,23 @@ def chart_adversarial_dnf(inputs, out):
 def home_turf_render(key, world, regime, oracle_note):
     """world-crud.svg / world-lawful.svg: the home-turf worlds where
     SQLite is expected to be strong, benched to lose honestly (the
-    owner's standing order). One bar per (family, durability lane) —
-    speedup = SQLite p50 ÷ ours p50 from the raw stats, grouped under a
-    lane header carrying the lane's parity config in the row label. A
+    owner's standing order). One bar per family — speedup = SQLite p50
+    ÷ ours p50 from the raw stats. A
     below-parity bar (SQLite faster) draws red and the title COUNTS the
     losses — the caption never spins a loss into a footnote. No DNF arm
     exists in these worlds (the loader enforced both numbers), so every
     row draws a real bar."""
     def render(inputs, out):
         report = inputs[key]
-        rows = [(lane, row["family"], row["ours"]["p50"], row["theirs"]["p50"])
-                for lane, row in world_report_rows(report)]
-        speeds = [t / o for _, _, o, t in rows if o > 0]
+        rows = [(row["family"], row["ours"]["p50"], row["theirs"]["p50"])
+                for row in report["rows"]]
+        speeds = [t / o for _, o, t in rows if o > 0]
         losses = sum(1 for s in speeds if s < 1)
         fig, ax = plt.subplots(figsize=(9.6, 0.34 * (len(rows) + 2) + 1.9),
                                facecolor=BG)
         dark(ax)
-        y, yticks, ylabels, seen = 0, [], [], None
-        for lane, family, ours_ns, theirs_ns in rows:
-            if lane != seen:
-                seen = lane
-                ax.text(0.28, y - 0.15, lane, fontsize=11, color=FG,
-                        fontweight="bold", family="monospace")
-                y += 1
+        y, yticks, ylabels = 0, [], []
+        for family, ours_ns, theirs_ns in rows:
             yticks.append(y)
             ylabels.append(family)
             speed = theirs_ns / ours_ns if ours_ns > 0 else 0
@@ -1367,7 +1324,7 @@ def home_turf_render(key, world, regime, oracle_note):
         ax.set_xticks(ticks, [f"{t:g}×" for t in ticks])
         ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
         title = (f"{world} — {regime} · speedup over SQLite "
-                 "per operation and durability setting")
+                 "per operation")
         if losses:
             title += (f"\nSQLite wins {losses} of {len(rows)} rows — "
                       "drawn red, below parity, as measured")
