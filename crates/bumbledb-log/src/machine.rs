@@ -510,12 +510,41 @@ impl<R: Replica> Machine<R> {
             IoResult::Occupied if matches!(flight.cargo, Cargo::Commands(_) | Cargo::Freeze(_)) => {
                 self.tail.missing.remove(&flight.slot);
                 flight.slot = flight.slot.next();
-                self.put_entry();
+                let grows = matches!(flight.cargo, Cargo::Commands(_)) && !self.queue.is_empty();
+                if grows && self.takes_commands() {
+                    self.regrow();
+                } else {
+                    self.put_entry();
+                }
             }
             _ => {
                 self.epoch += 1;
                 flight.state = FlightState::Verifying { need: self.epoch };
             }
+        }
+    }
+
+    /// Decide the refused batch again at the head with the queue behind it,
+    /// and write the result at the flight's next slot. Its commands may have
+    /// landed in an earlier copy, so they are `Unknown` if judging fails.
+    fn regrow(&mut self) {
+        let Writer::InFlight(flight) = std::mem::replace(&mut self.writer, Writer::Idle) else {
+            return;
+        };
+        let Cargo::Commands(carried) = flight.cargo else {
+            unreachable!("only a batch grows")
+        };
+        let count = carried.len();
+        self.requeue(carried);
+        if let Err(error) = self.decide(flight.slot) {
+            let carried: Vec<_> = self.queue.drain(..count).collect();
+            for ticket in carried
+                .into_iter()
+                .flat_map(|submission| submission.tickets)
+            {
+                self.settle(ticket, Settled::Refused(Refusal::Unknown));
+            }
+            self.break_down(Refusal::Cache(error));
         }
     }
 
@@ -738,9 +767,10 @@ impl<R: Replica> Machine<R> {
         }
     }
 
-    /// The content of the next slot is known: apply it. The flight ends when
-    /// its entry decides here, or when its own slot resolves without that; a
-    /// void copy below its slot leaves the PUT at the slot outstanding.
+    /// The content of the next slot is known: apply it, and answer every
+    /// pending command it decides, whoever wrote it. The flight ends when its
+    /// entry decides here, or when its own slot resolves without that; a copy
+    /// below its slot leaves the PUT at the slot outstanding.
     fn land(&mut self, seq: Seq, bytes: Vec<u8>, at: Millis) {
         debug_assert_eq!(seq, self.next_slot());
         let Ok(entry) = Entry::parse(&bytes) else {
@@ -755,10 +785,11 @@ impl<R: Replica> Machine<R> {
             }
             return self.follow_migration(seq, entry);
         }
-        let Some(standing) = self.apply(seq, &entry, at) else {
+        let Some((standing, receipts)) = self.apply(seq, &entry, at) else {
             return;
         };
         self.after_land();
+        self.answer_decided(&receipts);
         match std::mem::replace(&mut self.writer, Writer::Idle) {
             Writer::InFlight(flight) if flight.bytes == bytes && standing != Standing::Void => {
                 self.landed(*flight, seq, &entry);
@@ -825,8 +856,8 @@ impl<R: Replica> Machine<R> {
     }
 
     /// Fold and apply a non-migration entry, judging a rebased batch here;
-    /// `None` when the machine broke.
-    fn apply(&mut self, seq: Seq, entry: &Entry, at: Millis) -> Option<Standing> {
+    /// its standing and receipts, or `None` when the machine broke.
+    fn apply(&mut self, seq: Seq, entry: &Entry, at: Millis) -> Option<(Standing, Vec<Receipt>)> {
         let head = self.replica.head();
         let Ok(standing) = standing(head, seq, &entry.body) else {
             self.break_down(Refusal::Corrupt(seq));
@@ -858,7 +889,7 @@ impl<R: Replica> Machine<R> {
             })
         };
         match applied {
-            Ok(()) => Some(standing),
+            Ok(()) => Some((standing, folded.receipts)),
             Err(error) => {
                 self.break_down(Refusal::Cache(error));
                 None
@@ -913,11 +944,18 @@ impl<R: Replica> Machine<R> {
             .collect())
     }
 
-    /// Our own entry decided at `seq`.
+    /// Our own entry decided at `seq`. A batch's commands were answered as
+    /// the receipts deciding them landed, here or in an earlier copy.
     fn landed(&mut self, flight: Flight, seq: Seq, entry: &Entry) {
         match flight.cargo {
             Cargo::Genesis => self.opened(),
-            Cargo::Commands(batch) => self.answer_all(batch),
+            Cargo::Commands(batch) => {
+                debug_assert!(
+                    batch.is_empty(),
+                    "a landed batch leaves no command unanswered"
+                );
+                self.requeue(batch);
+            }
             Cargo::Freeze(ticket) => self.settle(ticket, Settled::Frozen(seq)),
             Cargo::Thaw(ticket) => {
                 if let (Some(ticket), Body::Thaw(Thaw::Rejected(rejection))) = (ticket, &entry.body)
@@ -930,29 +968,36 @@ impl<R: Replica> Machine<R> {
         }
     }
 
-    /// Settle each submission from the receipt the log holds for its request.
-    fn answer_all(&mut self, batch: Vec<Submission>) {
-        let receipts: Result<Vec<_>, _> = batch
+    /// Answer every pending command whose request `receipts` decide.
+    fn answer_decided(&mut self, receipts: &[Receipt]) {
+        if receipts.is_empty() {
+            return;
+        }
+        let decided: BTreeMap<RequestId, &Receipt> = receipts
             .iter()
-            .map(|submission| self.replica.receipt(submission.command.request()))
+            .map(|receipt| (receipt.command.request, receipt))
             .collect();
-        match receipts {
-            Ok(receipts) => {
-                for (submission, receipt) in batch.into_iter().zip(receipts) {
-                    let receipt = receipt.expect("a decided batch leaves every request a receipt");
-                    let settled = answer(receipt, &submission.command);
-                    for ticket in submission.tickets {
-                        self.settle(ticket, settled.clone());
-                    }
-                }
-            }
-            Err(error) => {
-                for ticket in batch.into_iter().flat_map(|submission| submission.tickets) {
-                    self.settle(ticket, Settled::Refused(Refusal::Unknown));
-                }
-                self.break_down(Refusal::Cache(error));
+        let is_decided =
+            |submission: &mut Submission| decided.contains_key(&submission.command.request());
+        let mut answered: Vec<Submission> = self.queue.extract_if(.., is_decided).collect();
+        if let Writer::InFlight(flight) = &mut self.writer
+            && let Cargo::Commands(batch) = &mut flight.cargo
+        {
+            answered.extend(batch.extract_if(.., is_decided));
+        }
+        for submission in answered {
+            let receipt = decided[&submission.command.request()].clone();
+            let settled = answer(receipt, &submission.command);
+            for ticket in submission.tickets {
+                self.settle(ticket, settled.clone());
             }
         }
+    }
+
+    /// Put commands back at the front of the queue.
+    fn requeue(&mut self, batch: Vec<Submission>) {
+        let queued = std::mem::replace(&mut self.queue, batch);
+        self.queue.extend(queued);
     }
 
     /// The flight's slot resolved without its entry deciding anything there.
@@ -963,10 +1008,7 @@ impl<R: Replica> Machine<R> {
         };
         match flight.cargo {
             Cargo::Genesis => self.opened(),
-            Cargo::Commands(batch) => {
-                let queued = std::mem::replace(&mut self.queue, batch);
-                self.queue.extend(queued);
-            }
+            Cargo::Commands(batch) => self.requeue(batch),
             Cargo::Freeze(ticket) | Cargo::Migration(ticket, _) | Cargo::Thaw(Some(ticket)) => {
                 self.settle(ticket, Settled::Refused(stale));
             }
@@ -1076,7 +1118,7 @@ impl<R: Replica> Machine<R> {
                             initial: initial.id.clone(),
                             schema: initial.fingerprint,
                         });
-                        self.launch(body, Cargo::Genesis);
+                        self.launch(self.next_slot(), body, Cargo::Genesis);
                     }
                 } else {
                     self.halt(Life::Fresh, &Refusal::NotFound);
@@ -1150,7 +1192,11 @@ impl<R: Replica> Machine<R> {
             let head = self.replica.head().expect("an open machine has a head");
             if let Some(deadline) = head.mode.deadline() {
                 if self.now.is_some_and(|now| now >= deadline) {
-                    self.launch(Body::Thaw(Thaw::Lifted), Cargo::Thaw(None));
+                    self.launch(
+                        self.next_slot(),
+                        Body::Thaw(Thaw::Lifted),
+                        Cargo::Thaw(None),
+                    );
                     return;
                 }
                 match self.clock {
@@ -1172,15 +1218,27 @@ impl<R: Replica> Machine<R> {
                 return;
             }
             self.clock = Clock::Unchecked;
-            if let Err(error) = self.decide() {
+            if let Err(error) = self.decide(self.next_slot()) {
                 self.break_down(Refusal::Cache(error));
             }
         }
     }
 
-    /// Judge the queue against the head and write it as one batch. Nothing
-    /// is settled or taken from the queue unless the judgment succeeded.
-    fn decide(&mut self) -> Result<(), CacheError> {
+    /// Whether a batch may be decided at the head now.
+    fn takes_commands(&self) -> bool {
+        self.life == Life::Open
+            && self.install.is_none()
+            && self.gate().is_ok()
+            && self
+                .replica
+                .head()
+                .is_some_and(|head| head.mode == Mode::Open)
+    }
+
+    /// Judge the queue against the head and write it as one batch at `slot`.
+    /// Nothing is settled or taken from the queue unless the judgment
+    /// succeeded.
+    fn decide(&mut self, slot: Seq) -> Result<(), CacheError> {
         enum Fate {
             Answered(Settled),
             Proposed,
@@ -1230,7 +1288,7 @@ impl<R: Replica> Machine<R> {
             }
         }
         if let Some(proposals) = Batch::new(base, schema, &proposals) {
-            self.launch(Body::Commands(proposals), Cargo::Commands(batch));
+            self.launch(slot, Body::Commands(proposals), Cargo::Commands(batch));
         }
         Ok(())
     }
@@ -1270,7 +1328,7 @@ impl<R: Replica> Machine<R> {
                     migration: pending.id,
                     lease_millis,
                 });
-                self.launch(body, Cargo::Freeze(ticket));
+                self.launch(self.next_slot(), body, Cargo::Freeze(ticket));
             }
             Control::Migrate(ticket, population) => {
                 if population.base != head.seq {
@@ -1286,7 +1344,7 @@ impl<R: Replica> Machine<R> {
                             schema: pending.fingerprint,
                             image: image.digest,
                         });
-                        self.launch(body, Cargo::Migration(ticket, image));
+                        self.launch(self.next_slot(), body, Cargo::Migration(ticket, image));
                     }
                     Ok(Migrated::Rejected(evidence)) => {
                         let rejection = Rejection {
@@ -1294,6 +1352,7 @@ impl<R: Replica> Machine<R> {
                             evidence,
                         };
                         self.launch(
+                            self.next_slot(),
                             Body::Thaw(Thaw::Rejected(rejection)),
                             Cargo::Thaw(Some(ticket)),
                         );
@@ -1304,13 +1363,12 @@ impl<R: Replica> Machine<R> {
         }
     }
 
-    fn launch(&mut self, body: Body, cargo: Cargo) {
+    fn launch(&mut self, slot: Seq, body: Body, cargo: Cargo) {
         let bytes = Entry {
             nonce: self.nonce(),
             body,
         }
         .encode();
-        let slot = self.next_slot();
         let state = match &cargo {
             Cargo::Migration(_, image) => FlightState::Uploading(self.request(
                 Bucket::Checkpoints,

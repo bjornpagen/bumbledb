@@ -197,6 +197,68 @@ fn a_refused_batch_is_written_again_at_the_next_slot_in_the_same_step() {
     assert_eq!(standings(&world, &states).rebased, 1);
 }
 
+fn requests_at(world: &World, client: usize, seq: u64, schema: &Schema) -> Vec<RequestId> {
+    let Body::Commands(batch) = Entry::parse(&body_at(world, client, seq)).unwrap().body else {
+        panic!("a batch at {seq}");
+    };
+    batch
+        .proposals(schema)
+        .unwrap()
+        .iter()
+        .map(|proposal| proposal.command.request())
+        .collect()
+}
+
+#[test]
+fn a_refused_batch_takes_the_commands_queued_behind_it() {
+    let schema = schema();
+    let mut world = opened(20, 2);
+    let a = submit(&mut world, 0, command(&schema, 1, &[(1, 1)]));
+    let b = submit(&mut world, 1, command(&schema, 2, &[(2, 2)]));
+    let c = submit(&mut world, 0, command(&schema, 3, &[(3, 3)]));
+    world.execute_as(world.find(1, put_at(2)).unwrap(), Fate::Answered);
+    world.execute_as(world.find(0, put_at(2)).unwrap(), Fate::Answered);
+    assert_eq!(
+        requests_at(&world, 0, 3, &schema),
+        [RequestId([1; 16]), RequestId([3; 16])],
+        "the queued command joins the refused batch"
+    );
+    assert_eq!(head(&world, 0), Seq::GENESIS, "nothing was read yet");
+    world.drain();
+    for (ticket, seq) in [(b, 2), (a, 3), (c, 3)] {
+        assert_eq!(
+            receipt_of(settled(&world, ticket)).seq,
+            Seq::new(seq).unwrap()
+        );
+    }
+    assert_eq!(world.log.len(), 3);
+    let states = check(&world);
+    assert_eq!(standings(&world, &states).rebased, 1);
+}
+
+#[test]
+fn a_grown_batch_over_a_landed_copy_decides_each_request_once() {
+    let schema = schema();
+    let mut world = opened(21, 1);
+    let a = submit(&mut world, 0, command(&schema, 1, &[(1, 1)]));
+    let c = submit(&mut world, 0, command(&schema, 3, &[(3, 3)]));
+    world.execute_as(world.find(0, put_at(2)).unwrap(), Fate::Retried);
+    assert_eq!(
+        requests_at(&world, 0, 3, &schema),
+        [RequestId([1; 16]), RequestId([3; 16])]
+    );
+    world.drain();
+    assert_eq!(receipt_of(settled(&world, a)).seq, Seq::new(2).unwrap());
+    assert_eq!(receipt_of(settled(&world, c)).seq, Seq::new(3).unwrap());
+    let states = check(&world);
+    assert_eq!(
+        states[2].receipts[&RequestId([1; 16])].seq,
+        Seq::new(2).unwrap(),
+        "the grown copy decides only what the first left undecided"
+    );
+    assert_eq!(states[2].head.revision, Revision(2));
+}
+
 #[test]
 fn a_rebased_batch_is_judged_where_it_lands() {
     let schema = schema();
