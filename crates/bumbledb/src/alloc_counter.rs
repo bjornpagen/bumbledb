@@ -1,9 +1,11 @@
 //! Allocation accounting for allocation gates and benchmark diagnostics.
 //! This crate's unit tests register [`CountingAllocator`] globally; another
-//! test binary registers it with its own `#[global_allocator]`. Counters are
-//! process-global, so measured windows assume one test per process (nextest).
+//! test binary registers it with its own `#[global_allocator]`. The process
+//! counters assume one test per process (nextest); [`thread_counts`] sees only
+//! the calling thread, so the test harness's own allocations never leak in.
 #![allow(unsafe_code)] // GlobalAlloc delegates to the system allocator below.
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
@@ -18,6 +20,45 @@ fn bump_live(add: u64) {
     PEAK_LIVE.fetch_max(prev.saturating_add(add), Ordering::Relaxed);
 }
 
+/// One thread's allocation events and bytes since it started.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ThreadCounts {
+    pub allocs: u64,
+    pub alloc_bytes: u64,
+    pub dealloc_bytes: u64,
+}
+
+impl ThreadCounts {
+    /// Bytes this thread allocated and has not freed (it may be negative when
+    /// the thread frees memory another thread allocated).
+    #[must_use]
+    pub fn net_bytes(self) -> i128 {
+        i128::from(self.alloc_bytes) - i128::from(self.dealloc_bytes)
+    }
+}
+
+thread_local! {
+    // Const-initialized and without a destructor, so the allocator can touch it
+    // at any point in a thread's life without allocating.
+    static THREAD: Cell<ThreadCounts> = const { Cell::new(ThreadCounts { allocs: 0, alloc_bytes: 0, dealloc_bytes: 0 }) };
+}
+
+fn count_thread(allocs: u64, alloc_bytes: u64, dealloc_bytes: u64) {
+    let _ = THREAD.try_with(|cell| {
+        let mut counts = cell.get();
+        counts.allocs += allocs;
+        counts.alloc_bytes += alloc_bytes;
+        counts.dealloc_bytes += dealloc_bytes;
+        cell.set(counts);
+    });
+}
+
+/// The calling thread's counters, unaffected by allocations on other threads.
+#[must_use]
+pub fn thread_counts() -> ThreadCounts {
+    THREAD.try_with(Cell::get).unwrap_or_default()
+}
+
 /// The counting wrapper around the system allocator.
 pub struct CountingAllocator;
 
@@ -29,6 +70,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         let bytes = layout.size() as u64;
         ALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed);
         bump_live(bytes);
+        count_thread(1, bytes, 0);
         // SAFETY: forwarded contract.
         unsafe { System.alloc(layout) }
     }
@@ -38,6 +80,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         let bytes = layout.size() as u64;
         ALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed);
         bump_live(bytes);
+        count_thread(1, bytes, 0);
         // SAFETY: forwarded contract.
         unsafe { System.alloc_zeroed(layout) }
     }
@@ -47,6 +90,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         let bytes = layout.size() as u64;
         DEALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed);
         LIVE_BYTES.fetch_sub(bytes, Ordering::Relaxed);
+        count_thread(0, 0, bytes);
         // SAFETY: forwarded contract.
         unsafe { System.dealloc(ptr, layout) }
     }
@@ -57,6 +101,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         let new = new_size as u64;
         ALLOC_BYTES.fetch_add(new, Ordering::Relaxed);
         DEALLOC_BYTES.fetch_add(old, Ordering::Relaxed);
+        count_thread(1, new, old);
 
         if new >= old {
             bump_live(new - old);
