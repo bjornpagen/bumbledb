@@ -484,7 +484,6 @@ impl<R: Replica> Machine<R> {
                 }
             },
             (Purpose::Put, result) => self.put_returned(id, result, date),
-            (Purpose::Fill, _) => {}
             (Purpose::Upload, result) => self.upload_returned(id, &result),
             (Purpose::List, IoResult::Keys(keys)) => self.listed(&keys),
             (Purpose::List, _) => self.listed(&[]),
@@ -504,7 +503,7 @@ impl<R: Replica> Machine<R> {
             }
             (Purpose::Checkpoint(_), _) => self.checkpoints.uploading = false,
             (Purpose::Prune(newest), IoResult::Keys(keys)) => self.prune(newest, &keys),
-            (Purpose::Slot { .. } | Purpose::Prune(_) | Purpose::Delete, _) => {}
+            (Purpose::Slot { .. } | Purpose::Fill | Purpose::Prune(_) | Purpose::Delete, _) => {}
         }
     }
 
