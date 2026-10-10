@@ -1,5 +1,6 @@
-# A v* tag publishes the npm package family once ci, musl and the AWS lane pass
-# on the tagged commit and the release environment approves.
+# A v* tag publishes the npm package family once ci and musl pass on the tagged
+# commit and the release environment approves. A package version already on npm,
+# or a release already on GitHub, is left as it is.
 name: release
 
 on:
@@ -12,9 +13,6 @@ permissions:
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
-      id-token: write
 
   musl:
     uses: ./.github/workflows/musl.yml
@@ -61,14 +59,26 @@ jobs:
       - run: node scripts/family.mjs smoke family
       - name: Publish with npm trusted publishing, platform packages first
         run: |
-          core="family/bjornpagen-bumbledb-${GITHUB_REF_NAME#v}.tgz"
+          version=${GITHUB_REF_NAME#v}
+          core="family/bjornpagen-bumbledb-$version.tgz"
+          publish() {
+            local name
+            name=$(tar -xzOf "$1" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).name')
+            if npm view "$name@$version" version > /dev/null 2>&1; then
+              echo "$name@$version is already on npm"
+            else
+              npm publish "$1"
+            fi
+          }
           for tarball in family/*.tgz; do
             if [ "$tarball" != "$core" ]; then
-              npm publish "$tarball"
+              publish "$tarball"
             fi
           done
-          npm publish "$core"
+          publish "$core"
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" family/*.tgz family/SHA256SUMS --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" family/*.tgz family/SHA256SUMS --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
