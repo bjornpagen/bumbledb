@@ -1,10 +1,13 @@
 # BumbleDB 1.3.0 benchmark results
 
+These are the last full-suite results, measured on the 1.3.0 engine. BumbleDB
+2.0 has not been re-measured; its storage and query formats changed.
+
 The full local suite finished on **September 11, 2026 at 18:09 UTC**:
 **13 measured lanes, 32 read families, and 34 scenario queries**.
 The pre-timing oracle passed **2,879 cases**. All lanes and chart generation
-completed successfully. This page includes all **21 measured charts**, the
-complete workload tables, and the historical comparison with 1.1.0.
+completed successfully. This page includes all **21 measured charts** and the
+complete workload tables.
 
 ## Measurement identity
 
@@ -49,40 +52,6 @@ and conformance-test prerequisites are separate from its completed pre-timing
 oracle. Correctness/packaging CI and registry installation checks are separate
 from benchmarks. Hash equivalence passed; no known-answer vector file was
 supplied, and reused-state hash timing was not run.
-
-## Compared with the previous full run
-
-The [1.1.0 raw reports](runs/1.1.0/README.md) measured source
-`548193d46f645ff4a4f007517733deb4bd389569` on the same M2 Max and toolchain.
-Both runs use serial lanes, matching workload rosters and scheduler boosting.
-They were measured on different days under shared-host load, so these are
-observed differences, not controlled causal estimates of code improvements.
-
-Read medians: **27 lower, 3 unchanged, 2 higher**.
-Scenario medians: **19 lower, 2 unchanged, 13 higher**.
-The full distributions matter: a mixed hit/miss workload can show a much larger
-median change than mean change. Small differences also reflect timer granularity.
-
-Selected comparisons below use **microseconds**.
-
-| Workload | 1.1.0 median | 1.3.0 median | Median change | Mean change |
-| --- | --- | --- | --- | --- |
-| stats | 348.708 | 331.875 | -4.8% | -10.7% |
-| triangle | 1,570.958 | 1,583.291 | +0.8% | -0.7% |
-| slot_booking_overlap | 25.791 | 4.084 | -84.2% | -21.0% |
-| closure_fanout | 7.042 | 0.583 | -91.7% | -37.9% |
-| disp_probe_d24 | 186,404.166 | 83,147.291 | -55.4% | -54.6% |
-| disp_stream_d24 | 168.917 | 171.667 | +1.6% | +1.2% |
-| j4_five_way | 1,650.958 | 684.584 | -58.5% | -29.5% |
-| g4_mutual | 4,590.334 | 2,539.250 | -44.7% | -46.0% |
-| t2_overlap_join | 39,949.916 | 46,119.708 | +15.4% | +38.2% |
-| o5_store_extremes | 490.250 | 524.875 | +7.1% | +1.8% |
-| 100,000-row native result | 5,824.500 | 4,805.750 | -17.5% | -12.3% |
-| Tiny tenant open/query/close | 342.333 | 405.959 | +18.6% | +85.0% |
-
-The slower temporal-overlap scenario and tenant-lifecycle results remain
-visible alongside lower query medians. A further matched comparison would be
-needed to attribute either direction to a particular implementation change.
 
 ## Native application lifecycle
 
@@ -339,8 +308,6 @@ uses a different indexing contract. Raw LMDB files also contain free-page histor
 | S / calendar | 192,369 | 59,031,552 | 31,129,600 | 17,686,528 | 1.760× |
 | M / ledger | 2,526,889 | 477,773,824 | 330,842,112 | 192,147,456 | 1.722× |
 | M / calendar | 1,830,369 | 557,449,216 | 294,043,648 | 176,193,536 | 1.669× |
-
-Compacted sizes match the 1.1.0 measurements for these ledger/calendar fixtures.
 
 ![Compacted storage against indexed and table-only SQLite](../../assets/bench-storage.svg)
 

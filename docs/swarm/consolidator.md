@@ -12,7 +12,7 @@ Resume from the first step that is not `done`.
 | 3 | Legacy cull grep gate | done for code, tests, scripts, examples; docs/ handled in 5 |
 | 4 | D20 bdb grep gate | done (libbumbledb.a is the crate artifact name) |
 | 5a | README.md + docs/cookbook.md rewrite, cookbook doctests | done (ReadmeDoctests + CookbookDoctests, 33 doctests; recipes 20, 24, 25, 27, 28, 30 run a store; root README ts fence type-checked by ts/test/readme.test.ts) |
-| 5b | Delete docs/release-1.*, stale docs/perf/runs; write docs/release-2.0.md | pending |
+| 5b | Delete docs/release-1.*, stale docs/perf/runs; write docs/release-2.0.md | done (runs/1.1.0 and the 1.3.1 SDK measurement deleted; results.md labeled as the last full run, 1.3.0) |
 | 5c | Versions to 2.0.0 (Cargo, npm) | pending |
 | 5d | ts/README.md, ts/COOKBOOK.md | pending |
 | 6a | Delete scripts/swarm/ and docs/swarm/ | pending |

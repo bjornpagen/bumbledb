@@ -57,7 +57,7 @@ Fresh output directories are mandatory: the runner does not treat an existing
 or partially written report as a successful measurement. Chart generation runs
 only after every lane succeeds, and a renderer failure makes the run incomplete.
 
-The default without `--full` is the compact storage/lifecycle/hash subset.
+The default without `--full` is the compact storage and lifecycle subset.
 It does not include the main Free Join versus SQLite comparison.
 
 `BUMBLEDB_BENCH_BIN=/absolute/path/to/frozen/bumbledb-bench` skips the build
@@ -139,7 +139,7 @@ Do **not** use Samply 0.13.1's `--unstable-presymbolicate`: its cache collapses
 debug information by machine-function start address, assigning the same
 inline stack to different instructions. The exporter bypasses adjacent
 `.syms.json` files using a temporary profile alias. For interactive viewing,
-also keep that lossy sidecar away from the original profile name. Preserve
+also keep that lossy symbol file away from the original profile name. Preserve
 the executable and dSYM; source-level debug information is not optional.
 
 The export attributes each thread CPU delta once to its sampled stack. It
@@ -318,8 +318,7 @@ still requires real Graviton and Linux x64 runs.
 | `app-perf-warm` | Reused prepared full-account projection, independently checked against canonical-row scanning. |
 | `app-perf-cold` | Open/prepare/execute/dispose, and first prepared PostingTag projection after an actual delete or insert. Cold-open is not a flushed OS page cache. |
 | `app-perf-large-result` | Prepared full-Posting query through CompleteResult, then real cursor-page construction and typed-value visitation through the terminal frame. Includes native result disposal. Not TypeScript serialization, network delivery, or Effect streaming. |
-| `app-perf-tenants` | Open/prepare/project/dispose across small tenant stores with before/after descriptor counts; not the hosted `TenantCache` or S3 activation path. |
-| `hash-probe` | Candidate hash timings and one-shot/streaming equivalence. Known-answer vectors are a separate input. |
+| `app-perf-tenants` | Open/prepare/project/dispose across small tenant stores with before/after descriptor counts; not the hosted `Database.pool` or an object-store open. |
 | `reads` | Verified registered read families compared with SQLite, plus the runner's write/cold panels. |
 | `scenarios` | Non-ledger join, graph, analytic, point, ring, and temporal workloads with their own comparisons. |
 | `crud` | Application read/write families under the currently supported durability contract. |
@@ -334,9 +333,7 @@ ordinary release timing suite. Generators and report
 merges are not extra measurements. See `bumbledb-bench help` for exact flags.
 
 Application reports with `protocol: 2` measure native prepared queries and
-paged results. Earlier reports without this marker measured metadata-count
-and vector-length scaffolds; their numbers are not comparable speedups or
-regressions. `work` counts delivered output rows, not source visits. Tenant
+paged results. `work` counts delivered output rows, not source visits. Tenant
 rows do not inherit the unrelated main corpus's storage-size metadata.
 
 The historical `cold_containment_walk` row inserts an unrelated Org before
@@ -370,9 +367,8 @@ size still includes indexes, page/node overhead, and fill slack. SQLite is
 checkpointed, with WAL bytes reported separately.
 
 Live namespace bytes, page statistics, allocated blocks, and virtual map size
-are distinct quantities. The census helpers under the benchmark crate's
-`space/` module expose finer accounting, but the presence of those helpers
-does not mean the ordinary storage JSON contains a full attribution.
+are distinct quantities; the ordinary storage JSON does not attribute bytes
+among them.
 
 Compare indexed SQLite with the compacted engine for the main ratio; the
 table-only SQLite column is an additional reference, not the same indexing
@@ -385,13 +381,10 @@ actual namespace census and controlled layout variants.
 - Graviton or Linux x64 application performance measured on those targets.
 - A genuinely populated database larger than an enforced memory budget.
 - TypeScript/native-boundary, Effect-runtime, and deployed application costs.
-- Hash known-answer evidence when no `--kat` vector file was supplied.
 - Repeated controls or per-operation raw samples absent from a lane's report.
 
-The runner explicitly marks external prerequisites as not run.
-`.config/obligation-inventory.json` and `scripts/release-results.mjs`
-retain the independent release requirements. A local manifest must never be
-used to mark those missing cells passed.
+The runner explicitly marks external prerequisites as not run, and a local
+manifest must never be used to mark them passed.
 
 ## Charts and retention
 
