@@ -186,7 +186,7 @@ def main():
                          "QoS steering with --allow-macos-qos")
     if out.exists():
         raise ValueError(f"output already exists: {out}; use a fresh directory (no stale reports are reused)")
-    lock = Path(os.environ.get("BUMBLEDB_MEASURE_LOCK", "/tmp/bumbledb.measure.lock"))
+    lock = Path(os.environ.get("BUMBLEDB_MEASURE_LOCK", "/tmp/bdb.measure.lock"))
     if os.environ.get("BENCH_NIGHT_UNDER_LOCK") != "1":
         if lock.exists():
             raise ValueError(f"measurement lock held: {lock}; wait for the other measurement")

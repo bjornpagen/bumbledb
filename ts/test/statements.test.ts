@@ -328,16 +328,14 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 
 	test("degenerate literal sets refuse — a membership array needs two DISTINCT members, and the refusal locates itself", function probeDegenerateSet() {
 		const { Account } = buildLedger()
-		// Every refusal names the relation and field (`relation Account.kind:`)
-
+		// Every refusal names the relation and field (`relation Account.kind:`).
 		assert.throws(function emptySet() {
 			select(Account, { kind: [] })
 		}, /relation Account\.kind: an empty literal set selects nothing/)
 		assert.throws(function oneElementSet() {
 			select(Account, { kind: ["Checking"] })
 		}, /relation Account\.kind: a one-element literal set is the bare literal respelled/)
-		// A duplicate member is the banned one-element set respelled — refused
-
+		// A duplicate member is the banned one-element set respelled.
 		assert.throws(function duplicateMember() {
 			select(Account, { kind: ["Checking", "Checking"] })
 		}, /relation Account\.kind: the literal set spells Checking twice — write it once/)
@@ -350,9 +348,7 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 
 	test("a duplicate field in a key() projection refuses at the mint — the engine's FieldSet duplicate, canonical voice", function probeDuplicateKeyProjection() {
 		const { Holder } = buildLedger()
-
-		// without the mint refusal it could set-match a 1-field target
-
+		// Without the mint refusal it could set-match a one-field target.
 		assert.throws(function duplicateProjection() {
 			key(Holder, ["name", "name"])
 		}, /key\(Holder, \.\.\.\): the projection spells name twice/)

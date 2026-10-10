@@ -297,8 +297,8 @@ type ClosedHandles<F extends AnyField> = F extends {
 
 /**
  * Two closed ids anti-join when their handle vectors carry the same Peano
- * length ({@link SameLen}: zero equals zero, successor recurses on
- * successor). A bare field has no vector and proves nothing.
+ * length ({@link SameLen}: zero equals zero, n + 1 recurses on n). A bare
+ * field has no vector and proves nothing.
  */
 type ClosedIdOk<A extends AnyField, B extends AnyField> = [ClosedHandles<A>] extends [never]
 	? false

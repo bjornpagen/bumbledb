@@ -202,10 +202,8 @@ describe("the generic full-binding law", function suite() {
 	})
 
 	test("an aliased extra-key record is refused at every full-binding site — ExactVars keeps bindings exact", function aliasedExtraKey() {
-		// general form refused it (CheckBindings → the unknown-field arm).
-
-		// refused at compile time AND by the construction twin (`relation R
-
+		// Refused at compile time (the general form's unknown-field arm) and by
+		// the construction twin.
 		const accountExtras = { ...v(Account), extra: v(Holder).id }
 		const holderExtras = { ...v(Holder), extra: v(Account).id }
 
@@ -273,8 +271,8 @@ describe("the generic full-binding law", function suite() {
 	})
 
 	test("r.match(A, v(B)) is refused — concrete owners", function crossOwnerConcrete() {
-		// where the first shared field (id) is a cross-class reuse — refused at
-
+		// The first shared field (id) is a cross-class reuse, refused at compile
+		// time and by the construction twin.
 		assert.throws(function fullForeignRecord() {
 			query(Ledger).rule((r) => {
 				// @ts-expect-error — v(Holder) is Holder's full binding, never Account's

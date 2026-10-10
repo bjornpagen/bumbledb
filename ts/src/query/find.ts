@@ -35,7 +35,7 @@ function count(): CountAgg {
  * Exact checked sum over a NUMERIC (u64/i64/f64) variable — wide accumulator,
  * one finalize range check; overflow is the engine's typed runtime error —
  * of a measured interval in a following stage. Bool stays refused: a
- * quantifier is not an addition (R3).
+ * quantifier is not an addition.
  */
 function sum<const O extends AnyVar>(over: O): Agg<"sum", O> {
 	return aggregate("sum", over)

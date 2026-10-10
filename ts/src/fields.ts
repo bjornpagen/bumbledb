@@ -70,8 +70,7 @@ interface F64Field {
 /**
  * The application-owned 128-bit identity scalar: sixteen
  * exact bytes, spelled as the canonical hyphenated UUID {@link Uuid}
- * host value. There is no `fresh` mark anywhere: the database issues no
- * identity, and key laws are declared statements.
+ * host value. Key laws are declared statements.
  */
 interface UuidField {
 	readonly kind: "uuid"
@@ -335,7 +334,7 @@ const i64: I64Field = Object.freeze({ kind: "i64" })
 /** Binary64. The native value boundary canonicalizes NaN and signed zero. */
 const f64: F64Field = Object.freeze({ kind: "f64" })
 
-/** The application-owned 128-bit identity scalar; no fresh mark exists. */
+/** The application-owned 128-bit identity scalar. */
 const uuid: UuidField = Object.freeze({ kind: "uuid" })
 
 const bool: BoolField = Object.freeze({ kind: "bool" })

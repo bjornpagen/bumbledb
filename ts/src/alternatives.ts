@@ -39,7 +39,6 @@ function scalarKey(input: KeyStatement): KeyStatement {
  * Exhaustive closed alternatives, expanded into ordinary laws. Declare the
  * supplied keys in the schema once; this helper emits only the discriminator
  * containment followed by one mirrors statement per handle in roster order.
- * No new statement kind or assembled payload representation is introduced.
  */
 function alternatives<
 	P extends KeyStatement,

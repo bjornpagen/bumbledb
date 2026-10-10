@@ -110,7 +110,7 @@ describe("the comparison pairing walls", function suite() {
 					return (
 						r
 							.match(Reading, { id, flag })
-							// @ts-expect-error — a bigint literal against a bool var is check_const's conviction (R3 orders bool, it does not number it)
+							// @ts-expect-error — a bigint literal against a bool var is check_const's conviction (bool is ordered, never numeric)
 							.where(r.lt(flag, 5n))
 							.find({ n: id })
 					)

@@ -17,15 +17,6 @@ import { schemaDescriptor } from "./schema.ts"
 import type { Rel } from "./shape.ts"
 import { bytesValue, recordValue } from "./values.ts"
 
-/**
- * `ChangeSet` — the engine's checked immutable delta:
- * schema-fingerprint-bound canonical native bytes with
- * one-command `(add, remove ∖ add)` normalization and exact same-fact
- * add-wins. Immutable and reusable while open; sealing/submitting it later
- * retains the SAME native value — no second JS row walk ever happens.
- */
-/** Counts of distinct fact additions and removals, never input events. */
-
 /** A relation-name-discriminated union of plain, fully typed facts. */
 type ChangeRecord<S extends AnySchema> = {
 	[N in keyof S["relations"]]: S["relations"][N] extends AnyRelation
@@ -33,6 +24,11 @@ type ChangeRecord<S extends AnySchema> = {
 		: never
 }[keyof S["relations"]]
 
+/**
+ * The engine's checked immutable delta: schema-fingerprint-bound canonical native bytes with
+ * one-command `(add, remove ∖ add)` normalization and exact same-fact add-wins. Reusable while
+ * open; submitting it retains the same native value, so no second row walk happens.
+ */
 interface ChangeSet<S extends AnySchema> {
 	readonly schemaId: SchemaId
 	/** Distinct requested actions; use judge for effective counts against a store. */

@@ -54,11 +54,9 @@ type NegativeBan<N extends bigint> = bigint extends N
 		: unknown
 
 /**
- * `{n..n}`, `{0..0}`,
- * unit floors `{1..*}`/`{N..*}` and the vacuous `{0..*}` are harmless
- * equivalent spellings that lower to the one canonical `(lo, hi)` law at
- * the mint. Genuinely different semantics still refuse: negative bounds
- * (out of the u64 domain) and inverted literal bounds.
+ * The floor-slot refusals. `{n..n}`, `{0..0}`, unit floors `{1..*}`/`{N..*}` and the vacuous
+ * `{0..*}` are harmless equivalent spellings that lower to the one canonical `(lo, hi)` law at the
+ * mint; negative bounds (out of the u64 domain) and inverted literal bounds refuse.
  */
 type FloorBan<N extends bigint> = NegativeBan<N>
 

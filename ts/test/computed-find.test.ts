@@ -14,7 +14,6 @@ import { lowerQuery, query } from "../src/query/lower.ts"
 import { v } from "../src/query/scope.ts"
 import { Attempt, Learning, Student } from "./fixtures/learning.ts"
 
-/** Reads one lowered find term structurally (the wire arm is P06R2's). */
 describe("Compute construction walls (engine result_type parity)", function walls() {
 	test("mixed numeric kinds refuse — no implicit promotion", function mixed() {
 		const { score, units } = v(Attempt)

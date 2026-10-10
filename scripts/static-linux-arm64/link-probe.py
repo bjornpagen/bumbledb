@@ -35,7 +35,7 @@ def main():
     archive = next(p for p in core_files if p.suffix == ".a")
     rlib = next(p for p in core_files if p.suffix == ".rlib")
     # Use Cargo's actual dependency outputs, including nightly build-dir v2
-    # and host proc-macros. Never guess a legacy target/.../deps layout.
+    # and host proc-macros. Never guess the target/.../deps layout.
     directories = sorted({str(Path(p).parent) for a in artifacts for p in a["filenames"]})
     native = Path(subprocess.check_output(
         ["rustc", "--print", "target-libdir", "--target", TARGET], text=True

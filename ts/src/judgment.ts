@@ -3,7 +3,7 @@
  *
  * {@link Same} is definitional equality by mutual extension — the ONE
  * spelling of `A = B` at the type tier. {@link SameLen} is Peano equality
- * on tuple lengths — zero equals zero, successor recurses on successor,
+ * on tuple lengths — zero equals zero, n + 1 recurses on n,
  * everything else is refused. An open array carries no Nat (its length is
  * `number`), so it proves nothing.
  */

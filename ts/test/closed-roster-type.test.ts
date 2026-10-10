@@ -88,7 +88,7 @@ type OverlapCases = [
 
 /**
  * The judgment kernel, proven at its own tier. `SameLen` is Peano equality
- * on handle vectors: zero/zero holds, successor recurses on successor, an
+ * on handle vectors: zero/zero holds, n + 1 recurses on n, an
  * open array carries no Nat and proves NOTHING (not even against itself).
  * `Same` is definitional equality — a vector is not its element union, and
  * order is meaning: reordering a roster changes the type.
