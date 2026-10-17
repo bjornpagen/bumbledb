@@ -57,9 +57,9 @@
 		}
 	},
 	"devDependencies": {
-		"@aws-sdk/client-s3": "3.1148.0",
+		"@aws-sdk/client-s3": "3.1152.0",
 		"@biomejs/biome": "2.5.15",
-		"@types/node": "26.6.4",
+		"@types/node": "26.6.5",
 		"effect": "catalog:",
 		"typescript": "7.0.2"
 	},
