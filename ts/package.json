@@ -45,7 +45,7 @@
 	},
 	"homepage": "https://github.com/bjornpagen/bumbledb#readme",
 	"dependencies": {
-		"arkregex": "0.0.13"
+		"arkregex": "0.0.14"
 	},
 	"peerDependencies": {
 		"@aws-sdk/client-s3": "^3.1148.0",
@@ -57,9 +57,9 @@
 		}
 	},
 	"devDependencies": {
-		"@aws-sdk/client-s3": "3.1148.0",
-		"@biomejs/biome": "2.5.15",
-		"@types/node": "26.6.4",
+		"@aws-sdk/client-s3": "3.1155.0",
+		"@biomejs/biome": "2.6.2",
+		"@types/node": "26.6.5",
 		"effect": "catalog:",
 		"typescript": "7.0.2"
 	},
