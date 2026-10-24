@@ -40,7 +40,7 @@ jobs:
           git config user.name "${SLUG}[bot]"
           git config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.148,cargo-deny,cargo-shear

@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install && rustup component add miri rust-src
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.148
@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.148
@@ -54,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - run: scripts/ci.sh clippy
 
   udeps:
@@ -63,7 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-udeps
@@ -75,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - run: scripts/ci.sh asm
 
   report:

@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny,cargo-shear
@@ -47,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.148
@@ -99,7 +99,7 @@ jobs:
           ln -s /opt/pnpm/pnpm /usr/local/bin/pnpm
           pnpm --version
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - if: matrix.platform == 'darwin-arm64'
         uses: pnpm/action-setup@v6.1.0
         with:
