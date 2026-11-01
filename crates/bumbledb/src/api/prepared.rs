@@ -540,10 +540,10 @@ impl FreeJoinRule {
         self.memo.release_memory();
         self.executor.release_memory();
         for filters in &mut self.resolved_filters {
-            *filters = Vec::new();
+            drop(std::mem::take(filters));
         }
         for selections in &mut self.resolved_selections {
-            *selections = Vec::new();
+            drop(std::mem::take(selections));
         }
         self.resolution = ResolutionState::Pending;
     }

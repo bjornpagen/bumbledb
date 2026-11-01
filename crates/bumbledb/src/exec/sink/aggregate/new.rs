@@ -424,8 +424,8 @@ impl AggregateSink {
         self.clear_state();
         self.groups.release_memory();
         match &mut self.group_state {
-            GroupState::Folds { accs, .. } => *accs = Vec::new(),
-            GroupState::Pack { claims, .. } => *claims = Vec::new(),
+            GroupState::Folds { accs, .. } => drop(std::mem::take(accs)),
+            GroupState::Pack { claims, .. } => drop(std::mem::take(claims)),
         }
         if let Some(seen) = self.dedup.seen_mut() {
             seen.release_memory();

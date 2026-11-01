@@ -589,7 +589,7 @@ impl GroupTable {
                 table, ordinals, ..
             } => {
                 *table = Box::default();
-                *ordinals = Vec::new();
+                drop(std::mem::take(ordinals));
             }
         }
     }

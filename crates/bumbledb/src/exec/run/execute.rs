@@ -363,7 +363,7 @@ impl Executor {
         self.ledger = None;
         self.drive_state = super::DriveState::Running;
         if let LeafPrecompute::Fast { row, .. } = &mut self.leaf {
-            *row = Vec::new();
+            drop(std::mem::take(row));
         }
     }
 
