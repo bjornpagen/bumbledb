@@ -55,14 +55,16 @@ x86_64 Linux and arm64 macOS. What it provides that matters here:
   mutable cell could reach itself is refused, so counting never leaks. In-place
   reuse happens where uniqueness is proved, and `--demand-in-place` turns a
   missed in-place update into a compile error.
-- **Compile-time evaluation.** Every closed call of total code is evaluated to
-  the end at compile time; partial code runs within a budget.
+- **Static normalization, no comptime feature.** The frontend normalizes the
+  static part of the program on the type checker's interpreter, with array
+  operations as whole-array primitives (idris-mlir proposal 0003): closed
+  calls of total code become values; partial code never runs at compile time.
   `idr-specialize`, defunctionalization and inlining remove indirection.
 - **Arrays as memrefs, vectorized by default.** Array combinators become
   `linalg`, and `idr-in-bounds` erases bounds checks it can prove.
 - **No escape hatches in user code.** No `%foreign`, no C ABI, no raw
   pointers, no threads with shared memory. Rust is the one foreign world
-  (idris-mlir proposal 0001).
+  (idris-mlir proposal 0013).
 
 Measured on 2026-10-07 (idris-mlir `bench/runs/2026-10-07-f5a4dff9-darwin-arm64`),
 with the speedup shown as clang -O2's time over idris-mlir's:
@@ -81,14 +83,14 @@ with the speedup shown as clang -O2's time over idris-mlir's:
 | rejections naming every violated law with its facts (`schema/evidence`) | The same evidence, produced by the compiled law queries: each violation is a result row, not a hand-built report. |
 | values (`bumbledb-theory`): checked integers, canonical `f64`, half-open intervals, Allen's 13-bit mask | Checked integers are types whose operations fail instead of wrapping. `CanonDouble` can only be built by canonicalizing (one NaN, one zero). `Interval` carries an erased proof that its start is not after its end. The Allen mask stays a 13-bit word. |
 | `ValidatedPlan`, distinctness witnesses | Erased proofs indexed by the query: `ValidatedPlan q`. |
-| column images, SoA slabs, immutable, shared by `Arc` (`image.rs`) | Shaped columnar arrays (idris-mlir proposal 0004). One image per shard (§5). |
+| column images, SoA slabs, immutable, shared by `Arc` (`image.rs`) | Shaped columnar arrays (idris-mlir proposal 0007). One image per shard (§5). |
 | COLT, `Cursor = Node \| Row`, `KeyCount = Exact \| Estimate` | Unchanged in representation: sum types over arenas. |
 | SIMD kernels: scans, compaction, Allen masks, folds, gathers (`exec/kernel/*`) | One array program each, lowered to `linalg` and vectorized per target. The scalar reference is the same source at one lane, and the gate is a differential test of one lane against N. The NEON Allen specialization and the runtime level dispatch go (measurement rule in §4.2). |
 | `db.write(\|tx\| …)`, `WorkContext` | A linear transaction handle. `WorkContext` becomes an explicit argument of the shell. |
-| LMDB through `heed` (`storage/`) | Through Rust: heed and LMDB reached by idris-mlir proposal 0001's generated bindings, linked statically as bitcode. LMDB's C is reached only inside the Rust crate. |
-| the command log in S3 (`bumbledb-log`) | Its logic (frames, fold, receipts, replica) is ported to Idris. The S3 client is a Rust crate through 0001. |
+| LMDB through `heed` (`storage/`) | Through Rust: heed and LMDB reached by idris-mlir proposal 0013's generated bindings, linked statically as bitcode. LMDB's C is reached only inside the Rust crate. |
+| the command log in S3 (`bumbledb-log`) | Its logic (frames, fold, receipts, replica) is ported to Idris. The S3 client is a Rust crate through 0013. |
 | Node binding through napi (`bumbledb-node`) | No C ABI exists by design, so napi is impossible. Decided: the TypeScript package loads a WebAssembly build (§6). |
-| `blake3` | Through Rust (0001), not re-implemented. |
+| `blake3` | Through Rust (0013), not re-implemented. |
 
 ## 4. The query engine: specialize the executor, fuse across the boundary
 
@@ -101,14 +103,15 @@ interpreter, written once and kept readable. Then:
 - **Prepared queries.** A query known at compile time is a closed call of the
   interpreter on a constant query. Planning (`plan/fj/*`: `binary2fj`,
   `factor`, `gj_split`, cover enumeration, residual and anti-probe placement)
-  is total and runs at compile time. `idr-specialize` clones the executor for
-  that plan, defunctionalization and inlining remove the dispatch, and `linalg`
-  fusion merges each pipeline (scan → filter → probe → fold → sink) into one
-  loop nest, tiled and vectorized. The output is a compiled query, with no
-  query compiler written.
-- **Ad-hoc queries.** The same interpreter runs them, or a JIT built from the
-  same pipeline compiles them (idris-mlir already runs an LLJIT for
-  compile-time evaluation).
+  is total, so static normalization computes the plan (0003).
+  `idr-specialize` clones the executor for that plan, defunctionalization and
+  inlining remove the dispatch, and `linalg` fusion merges each pipeline
+  (scan → filter → probe → fold → sink) into one loop nest, tiled and
+  vectorized. The output is a compiled query, with no query compiler written.
+  The planner's totality is now a requirement: a planner Idris cannot check
+  total would leave every plan for run time.
+- **Ad-hoc queries.** The same interpreter runs them, batched and vectorized.
+  There is no JIT in a program (it would link LLVM into every program).
 - **Prior art:**
   - HyPer and Umbra (Neumann, "Efficiently Compiling Efficient Query Plans for
     Modern Hardware", VLDB 2011; adaptive execution in Umbra);
@@ -153,87 +156,25 @@ A plan fixed at compile time can be wrong for the data it meets. Decided:
 - a guard on the image statistics (`plan/selectivity`) picks among them at run
   time, Umbra-style;
 - Free Join's robustness to bad estimates bounds the cost of a wrong choice;
-- a query whose statistics leave every variant's range falls back to the JIT.
+- a query whose statistics leave every variant's range is planned at run time
+  and runs on the interpreter.
 
 ### 4.5 The relational core is its own library, shared with the compiler
 
 What bumbledb's engine is, without persistence, laws and the log, is a general
-relational core. It becomes a library of its own, `mlir-relational`, shipped
-in idris-mlir's `libs/` beside `mlir-linear`. Decided there, not in bumbledb,
-because the compiler is one of its consumers and the compiler builds only from
-its own tree. bumbledb depends on it as a package.
-
-**Its layers, each built on the one below:**
-
-1. **Relations and joins.**
-   - typed relations as sets, held as columnar arrays (the images);
-   - lazy tries (COLT);
-   - Free Join and the generic-join end of its spectrum;
-   - selections, anti-probes, folds and exact aggregates;
-   - the planner (`plan/fj/*`, `plan/selectivity`);
-   - the executor as an interpreter, specialized per prepared query (§4.1).
-
-   No storage and no IO: the library is the functional core and the array
-   core, and the shell belongs to its consumers.
-2. **Fixpoints.** Semi-naive Datalog evaluation over layer 1: recursive
-   queries, with delta relations so each round joins only what is new.
-   Transitive closure, reachability and strongly connected components are
-   queries in it.
-3. **Equality saturation.**
-   - egglog-style e-graphs over layers 1 and 2: union-find, congruence
-     rebuilding;
-   - e-matching as worst-case optimal joins (Zhang et al., "Relational
-     E-Matching", POPL 2022), which is the join engine of layer 1 used
-     again;
-   - binders in terms through slotted e-graphs (Wu et al. 2026, stored in
-     idris-mlir's `sources/papers/wu-2026-slotted-egraphs`).
-
-**Its consumers:**
-
-- **bumbledb**, which becomes the relational core plus storage (LMDB through
-  Rust), the laws and judge (§4.3), the log, transactions and the
-  shard partitioning (§5). Its own code shrinks to what is genuinely about
-  being a database.
-- **idris-mlir's type checker.** The fork of Idris's elaborator is idris-mlir's
-  own code, which makes this possible:
-  - unification constraints as relations, solved by union-find (connected
-    components in batch);
-  - dependent rewrite and shape equalities as e-graph saturation. For
-    example `n * m = m * n` and `n + 0 = n` in idris-mlir proposal 0004's
-    shape types are rewrites the e-graph closes over, so they never block a
-    user;
-  - size-change termination's closure as a recursive query over call-graph
-    relations.
-- **idris-mlir's frontend analyses written in Idris:**
-  - reachability from `main` (the profile's work queue is a fixpoint);
-  - the recursion and polymorphism checks over size-change graphs;
-  - instance and dictionary resolution;
-  - later, the type-graph cycle check and label flow, once these are written
-    on the Idris side.
-- **User programs.** Graph queries, rule engines and program analyses get a
-  Datalog and e-graph engine compiled into them, specialized and fused like
-  any prepared query.
-
-**What it gains:**
-- **One representation across projects.** There is one join engine, one
-  planner, one fixpoint loop and one e-graph, instead of a database engine
-  in bumbledb, a unifier and rewrite machinery in the elaborator, and ad hoc
-  worklists in the analyses.
-- **Every improvement lands once.** A faster join, a better plan, a new array
-  kernel or a GPU offload on unified memory speeds up all of them.
-
-**Gates, beside bumbledb's own (§9):**
-- semi-naive Datalog within 1.5× of Soufflé in compiled mode on Soufflé's
-  standard programs (transitive closure, points-to, same generation);
-- e-matching and saturation within 1.5× of egglog on egglog's benchmarks;
-- joins at the ≥ 80% of the Rust engine already required by §9's P4.
-
-A consumer may not keep its own copy of a mechanism the library provides.
+relational core: typed relations, lazy tries, Free Join, the planner, the
+executor as an interpreter, semi-naive fixpoints and e-graphs. It is
+idris-mlir's `libs/mlir-relational`, specified there in proposal 0010 (its
+layers, its consumers including idris-mlir's elaborator and frontend, its
+gates against Soufflé and egglog, and why it lives in the compiler's tree).
+bumbledb depends on it as a package, and its own code shrinks to what is
+genuinely about being a database: storage, laws and the judge, the log,
+transactions and shard partitioning.
 
 ## 5. Concurrency: shards own partitions
 
 idris-mlir's runtime is thread-per-core shards with no shared heap (its
-proposal 0005): values cross shards by move or copy. bumbledb today shares
+proposal 0009): values cross shards by move or copy. bumbledb today shares
 immutable images across threads through `Arc`.
 
 Decided:
@@ -242,7 +183,7 @@ Decided:
 - a query forks across shards and joins their partial results;
 - writes go through one writer shard that owns the LMDB write transaction, as
   LMDB requires;
-- sharing a whole image read-only across shards waits on 0005's "lend" step
+- sharing a whole image read-only across shards waits on 0009's "lend" step
   and its measurement rule.
 
 On a single core, one shard holds everything, so the Pi Zero 2 pays nothing for
@@ -283,18 +224,19 @@ the design.
   compiler must prove bounds or keep a guard, and §4.2's rule decides which
   gaps become compiler work.
 
-## 8. Dependencies, each with its status on 2026-10-09
+## 8. Dependencies, each with its status on 2026-10-10
 
 | Needed from idris-mlir | Status |
 | --- | --- |
-| a self-hosting frontend, static native compiler | in progress: the fork of upstream Idris is in, the frontend runs on it, the self-compile loop is under way; C++ unbuilt at the current LLVM pin |
-| typed arrays of any rank, fusion, bufferization (proposal 0004) | being rewritten as a typed APL over MLIR |
-| shards, the reactor, fork/join (proposal 0005) | proposed |
-| Rust interop: heed/LMDB, S3, blake3 (proposal 0001) | proposed, not started |
-| IORef, growable arrays, Integer shifts, record boxing | written and merged, unbuilt |
-| `mlir-relational` in `libs/` (§4.5): relations, joins, fixpoints, e-graphs | proposed here; nothing written |
-| the fork's elaborator on flat, hash-consed terms, with constraints and rewrite on `mlir-relational` | discussed, not proposed in idris-mlir yet |
-| aarch64 Linux and wasm32 target entries | not proposed yet; each is a new target entry, not a rewrite |
+| a self-hosting frontend, static native compiler | stage 0 done; `make self` shows stage 2 identical to stage 3 (1ce907d3); the C++ toolchain is built on arm64 (8395d4f7); x86_64 Linux is not |
+| typed arrays of any rank, fusion, bufferization (proposal 0007) | proposed |
+| shards, the reactor, fork/join (proposal 0009) | proposed |
+| Rust interop: heed/LMDB, S3, blake3 (proposal 0013) | proposed, not started. Storage waits on it; the rest of this port does not |
+| IORef, growable arrays, Integer shifts, record boxing | written, and compiled on the arm64 toolchain (f2d87554) |
+| `mlir-relational` in `libs/` (§4.5): relations, joins, fixpoints, e-graphs | proposed in idris-mlir 0010; nothing written |
+| the fork's elaborator on flat, hash-consed terms, with constraints and rewrite on `mlir-relational` | proposed in idris-mlir 0006, 0005 and 0010. The term arena is 0005's |
+| static normalization, no comptime feature | decided (idris-mlir 0003); `idr-eval` is out of the simplify round; the pass is not deleted |
+| aarch64 Linux and wasm32 target entries | not proposed yet; each is a new target entry, not a rewrite. wasm32 is a target, not the evaluator |
 
 ## 9. Staged plan
 
@@ -306,13 +248,13 @@ suite.
 
 | Stage | Content | Gate |
 | --- | --- | --- |
-| P0 | idris-mlir prerequisites: self-hosting, 0001 for heed and S3, 0004's columns, 0005's shards | their own gates |
+| P0 | idris-mlir prerequisites: self-hosting, 0013 for heed and S3, 0007's columns, 0009's shards | their own gates |
 | P1 | `bumbledb-theory`: Allen relations, intervals, canonical floats, as types | its tests ported, all passing |
 | P2 | schema, laws, judge (§3, §4.3) | the oracle's admission cases |
 | P3 | images and kernels as array programs (§4.2) | kernel benches at ≥ 90% of Rust on both targets |
 | P4 | `mlir-relational` layer 1: relations, tries, Free Join, the planner, the executor as an interpreter (§4.5) | read families and scenarios at ≥ 80% of the Rust engine |
 | P4b | `mlir-relational` layers 2 and 3: semi-naive fixpoints, e-graphs (§4.5) | within 1.5× of Soufflé (compiled) and of egglog on their benchmarks |
-| P4c | idris-mlir's elaborator on the library: unification and shape-equality rewriting (§4.5) | a shape-equality corpus from idris-mlir proposal 0004 never blocks; elaboration of base no slower than before |
+| P4c | idris-mlir's elaborator on the library: unification and shape-equality rewriting (§4.5) | a shape-equality corpus from idris-mlir proposal 0007 never blocks; elaboration of base no slower than before |
 | P5 | prepared-query specialization and plan variants (§4.1, §4.4) | the 34 scenario queries at ≥ 1.5× the Rust engine, prepared |
 | P6 | storage and log (LMDB, S3) through Rust | the storage, CRUD and lifecycle lanes |
 | P7 | shards (§5) | the multi-core lanes at ≥ the Rust engine |
