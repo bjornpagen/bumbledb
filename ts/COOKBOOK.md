@@ -222,8 +222,11 @@ const inspectAndCompose = Effect.scoped(
 		const decoded = yield* ChangeSet.fromBytes(Tasks, bytes)
 		const combined = yield* changes.compose(decoded)
 		const preview = yield* Stream.runCollect(combined.records().pipe(Stream.take(10)))
-		return { counts: combined.counts, byteLength: combined.byteLength,
-			titles: preview.map((record) => record.fact.title) }
+		return {
+			counts: combined.counts,
+			byteLength: combined.byteLength,
+			titles: preview.map((record) => record.fact.title)
+		}
 	})
 )
 void inspectAndCompose
@@ -312,10 +315,7 @@ const readTwoAuthors = (reader: QueryReader<typeof Library>) =>
 			const prepared = yield* reader.prepare(booksBy)
 			const first = yield* prepared.execute({ name: "Ursula Le Guin" })
 			const second = yield* prepared.execute({ name: "Octavia Butler" })
-			return [
-				yield* first.collect(),
-				yield* second.collect()
-			]
+			return [yield* first.collect(), yield* second.collect()]
 		})
 	)
 void readTwoAuthors
@@ -366,10 +366,7 @@ const perSensor = query(Telemetry).rule((r) => {
 const labeled = query(Telemetry).rule((r) => {
 	const { sensor, mean } = v(perSensor)
 	const { label } = v(Sensor)
-	return r
-		.match(perSensor, { sensor, mean })
-		.match(Sensor, { id: sensor, label })
-		.find({ label, mean })
+	return r.match(perSensor, { sensor, mean }).match(Sensor, { id: sensor, label }).find({ label, mean })
 })
 void labeled
 ```
@@ -513,15 +510,23 @@ const Rates = schema("Rates", { Earning, Band }, [key(Earning, ["id"]), key(Band
 const overlaps = query(Rates).rule((r) => {
 	const earning = v(Earning)
 	const band = v(Band)
-	return r.match(Earning, earning).match(Band, { ...band, schedule: earning.schedule }).find({
-		earning: earning.id, band: band.id, numerator: band.numerator,
-		span: r.intersection(earning.span, band.span)
-	})
+	return r
+		.match(Earning, earning)
+		.match(Band, { ...band, schedule: earning.schedule })
+		.find({
+			earning: earning.id,
+			band: band.id,
+			numerator: band.numerator,
+			span: r.intersection(earning.span, band.span)
+		})
 })
 const weighted = query(Rates).rule((r) => {
 	const row = v(overlaps)
-	return r.match(overlaps, row).find({ earning: row.earning, band: row.band,
-		weighted: Compute.multiply(Compute.measure(row.span), row.numerator) })
+	return r.match(overlaps, row).find({
+		earning: row.earning,
+		band: row.band,
+		weighted: Compute.multiply(Compute.measure(row.span), row.numerator)
+	})
 })
 const totals = query(Rates).rule((r) => {
 	const row = v(weighted)
@@ -529,21 +534,25 @@ const totals = query(Rates).rule((r) => {
 })
 const amounts = query(Rates).rule((r) => {
 	const row = v(totals)
-	return r.match(totals, row).find({ earning: row.earning,
-		amount: Compute.mulDiv(row.total, Compute.u64(1n), Compute.u64(10n), "nearestTiesToEven") })
+	return r.match(totals, row).find({
+		earning: row.earning,
+		amount: Compute.mulDiv(row.total, Compute.u64(1n), Compute.u64(10n), "nearestTiesToEven")
+	})
 })
-const calculate = Effect.scoped(Effect.gen(function* () {
-	const db = yield* Db.create(localPath, Rates)
-	const change = yield* ChangeSet.builder(Rates)
-	yield* change.insert(Earning, [{ id: 1n, schedule: 1n, span: { start: 80n, end: 140n } }])
-	yield* change.insert(Band, [
-		{ id: 1n, schedule: 1n, span: { start: 0n, end: 100n }, numerator: 1n },
-		{ id: 2n, schedule: 1n, span: { start: 100n, end: 200n }, numerator: 2n }
-	])
-	yield* db.apply(yield* change.finish())
-	const snapshot = yield* db.snapshot()
-	return yield* (yield* snapshot.execute(amounts, {})).collect()
-}))
+const calculate = Effect.scoped(
+	Effect.gen(function* () {
+		const db = yield* Db.create(localPath, Rates)
+		const change = yield* ChangeSet.builder(Rates)
+		yield* change.insert(Earning, [{ id: 1n, schedule: 1n, span: { start: 80n, end: 140n } }])
+		yield* change.insert(Band, [
+			{ id: 1n, schedule: 1n, span: { start: 0n, end: 100n }, numerator: 1n },
+			{ id: 2n, schedule: 1n, span: { start: 100n, end: 200n }, numerator: 2n }
+		])
+		yield* db.apply(yield* change.finish())
+		const snapshot = yield* db.snapshot()
+		return yield* (yield* snapshot.execute(amounts, {})).collect()
+	})
+)
 // [{ earning: 1n, amount: 10n }]: (20*1 + 40*2)/10, rounded once.
 void calculate
 ```
@@ -629,7 +638,10 @@ const arms = {
 	Postal: key(Postal, ["document"])
 }
 const Documents = schema("Documents", { Kind, Document, Imported, Electronic, Postal }, [
-	documentKey, arms.Imported, arms.Electronic, arms.Postal,
+	documentKey,
+	arms.Imported,
+	arms.Electronic,
+	arms.Postal,
 	...alternatives(documentKey, "kind", Kind, arms)
 ])
 void Documents
@@ -716,7 +728,8 @@ const amounts = query(Ledger)
 	})
 	.rule((r) => {
 		const { id, amount, previous } = v(Entry)
-		return r.match(Entry, { id, amount, previous, correction: true })
+		return r
+			.match(Entry, { id, amount, previous, correction: true })
 			.find({ id, amount: Compute.subtract(amount, previous) })
 	})
 const totals = query(Ledger).rule((r) => {

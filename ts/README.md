@@ -40,7 +40,7 @@ automatically during installation. Defining a schema or a query loads the
 addon and validates the definition in the engine, so an invalid definition
 throws `AuthoringError` where it is written. On an unsupported platform the
 first definition fails with a diagnostic naming the running platform and the
-available binaries. Node 26 or newer is required; Edge and browser runtimes
+available binaries. Node 24 or newer is required; Edge and browser runtimes
 are unsupported.
 Linux artifacts target Amazon Linux 2023 / glibc 2.34 or newer. Their
 correctness CI is distinct from the Apple Silicon performance measurements.
@@ -187,7 +187,20 @@ schema has an ungenerated change or a migration was edited.
 
 ```ts
 import { Effect, Option } from "effect"
-import { Bumble, ChangeSet, Database, FsStore, key, type Migrations, query, relation, schema, str, uuid, v } from "@bjornpagen/bumbledb"
+import {
+	Bumble,
+	ChangeSet,
+	Database,
+	FsStore,
+	key,
+	type Migrations,
+	query,
+	relation,
+	schema,
+	str,
+	uuid,
+	v
+} from "@bjornpagen/bumbledb"
 
 const Note = relation("Note", { id: uuid, text: str })
 const App = schema("App", { Note }, [key(Note, ["id"])])

@@ -17,13 +17,13 @@
 		"resolve-command": "node scripts/resolve-command.ts"
 	},
 	"dependencies": {
-		"@aws-sdk/client-s3": "3.1148.0",
+		"@aws-sdk/client-s3": "3.1161.0",
 		"@bjornpagen/bumbledb": "file:../../ts",
 		"alchemy": "2.0.0-beta.81",
-		"effect": "4.0.2",
-		"next": "16.4.0",
-		"react": "19.3.0",
-		"react-dom": "19.3.0",
+		"effect": "4.0.7",
+		"next": "16.4.3",
+		"react": "19.3.1",
+		"react-dom": "19.3.1",
 		"server-only": "0.0.1"
 	},
 	"optionalDependencies": {
@@ -32,13 +32,14 @@
 		"@bjornpagen/bumbledb-linux-x64": "file:../../ts/npm/linux-x64"
 	},
 	"devDependencies": {
-		"@types/node": "26.6.4",
+		"@effect/platform-node": "4.0.7",
+		"@types/node": "24.19.2",
 		"@types/react": "19.3.0",
 		"@types/react-dom": "19.3.0",
 		"typescript": "7.0.2"
 	},
 	"engines": {
-		"node": ">=26"
+		"node": ">=24"
 	},
-	"packageManager": "pnpm@12.10.1"
+	"packageManager": "pnpm@12.16.1"
 }

@@ -308,7 +308,7 @@ Rust builds from Git with the nightly toolchain in
 bumbledb = { git = "https://github.com/bjornpagen/bumbledb" }
 ```
 
-TypeScript needs Node 26 and Effect 4. The package ships native addons for
+TypeScript needs Node 24 or newer and Effect 4. The package ships native addons for
 darwin-arm64, linux-arm64 and linux-x64:
 
 ```sh

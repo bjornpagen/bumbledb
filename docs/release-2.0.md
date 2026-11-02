@@ -96,7 +96,7 @@ log.
   description, IR and spec types, `StorageInspection`, `WriteOptions`,
   `WriteExpected`, `runtimeErrorCodes`, the native error classes and the
   internal log export.
-- **Requirements:** Node 26 or later and Effect `^4.0.2`. The addon file is
+- **Requirements:** Node 24 or later and Effect `^4.0.2`. The addon file is
   `bdb.node`, in one platform package each for darwin-arm64, linux-arm64 and
   linux-x64.
 

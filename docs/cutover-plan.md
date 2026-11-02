@@ -7,7 +7,7 @@ Status: **done, 2026-10-09.** All nine lanes and the consolidator landed on `mai
 - **Landed:** A, B, C1–C17, D (sans-IO log core, checkpoints, migrations, Freeze/Migration/Thaw), E1–E8, F (one package, generated bridge outputs, serde inputs, one validator, `Database`), G (CI lanes, one allocation counter, one compile-fail runner, README and cookbook as doctests, bench restructure, toolchain bump script), H, I and L. D20 `bdb` naming is applied repo-wide. Swarm tooling and lane boards are deleted.
 - **Final local gate:** fmt; clippy default and `--all-features`; rustdoc `-D warnings`; cargo-deny; cargo-shear; nextest 1934 passed, 12 skipped (the `deep` sweeps, the bless test, the crash child); doctests (README and cookbook included); addon build, TS lint, typecheck, `dts.sh --check`, 283 TS tests, package pack and smoke; notes typecheck, 8 tests, `migrations:check`, `next build`.
 - **Not run locally:** the full Miri suite (the tests rescaled for it were run individually), musl (the dev machine has no virtualization), the deep sweeps and udeps. `docs/perf/results.md` holds the 2.0 benchmark run.
-- **Open, for the owner:** U10 (Lambda `nodejs26.x` availability); U12 log GC stays deferred. A push that changes `ts/package.json`'s version releases it ([ts/PUBLISHING.md](../ts/PUBLISHING.md)). There are no S3 CI lanes, so U13 is void: the store conformance suite passed by hand against real S3 Express and Standard buckets.
+- **Open, for the owner:** U12 log GC stays deferred. A push that changes `ts/package.json`'s version releases it ([ts/PUBLISHING.md](../ts/PUBLISHING.md)). There are no S3 CI lanes, so U13 is void: the store conformance suite passed by hand against real S3 Express and Standard buckets.
 
 **Governing law:** [docs/design/representation-first.md](design/representation-first.md). Every item below is justified as a representation change, not a new branch. Items are tagged with the rule they apply: R1–R7, the bumbledb rules at the end of that document.
 
@@ -27,7 +27,7 @@ Status: **done, 2026-10-09.** All nine lanes and the consolidator landed on `mai
 | D7 | **fearless_simd replaces std::simd** for all portable kernels on every backend, with runtime dispatch on x86. **Keep the hand-tuned NEON paths.** |
 | D8 | **Delete the second join evaluator** and all beyond-u32 machinery (§1). |
 | D9 | **Workflow:** commit directly on `main`, no worktrees, no adversarial review waves. The repo's tests are the gate. |
-| D10 | **Node 26 hard upgrade.** `engines: >=26` everywhere. Corepack is gone in Node 25+, so CI uses pnpm/action-setup. |
+| D10 | **Node 24 floor.** `engines: >=24` everywhere and CI on Node 24: the addon is N-API 8, and `nodejs24.x` is the newest Lambda runtime. Corepack is gone in Node 25+, so CI uses pnpm/action-setup. |
 | D11 | **Backup/restore are dropped.** No backup, verify or restore API or formats. The immutable log plus Standard-bucket versioning on `ckpt/` is the safety net. `fork`/time-travel is deferred. |
 | D12 | **Maximal on-disk churn.** The LMDB layout, checkpoint images and every frame format are redesigned for the best end state (§2b U3, §3 C16). Nothing is kept for compatibility. |
 | D13 | **The S3 protocol follows the research verdict:** create-only `log/{seq}` on S3 Express, `ckpt/` on S3 Standard, a nonce per submission, `Idle \| InFlight` writer state, entries carrying ChangeSets, timer-free group commit, no deletes on `log/` (§3 D). |
@@ -68,7 +68,7 @@ None of this can trigger on the target hardware, a 512 MB Pi Zero 2: 4.29 billio
 | Q4 | FP-environment guard | **Resolved → D15 (read-only check)** |
 | Q5 | Fixed virtual LMDB map | **Resolved → D16** |
 | Q6 | Pure authoring without the addon | **Resolved → D17 (dropped)** |
-| Q7 | Node engines | **Resolved → D10 (`>=26`)** |
+| Q7 | Node engines | **Resolved → D10 (`>=24`)** |
 
 ## 2b. Unresolved issues and proposed resolutions
 
@@ -83,7 +83,7 @@ None of this can trigger on the target hardware, a 512 MB Pi Zero 2: 4.29 billio
 | U7 | **Where migrations run.** Lambda has a 15-minute cap, limited memory and ephemeral `/tmp`. | `bumbledb migrate` runs in the **deploy pipeline** (CI runner or dev machine with S3 credentials) before traffic shifts. Production `Database.layer({ onOpen: "verify" })` refuses with `MigrationPending`. `onOpen: "migrate"` is for dev and local. | **accepted** |
 | U8 | **Rolling deploy window.** Between `migrate` and the alias/traffic shift, old instances get `SchemaAdvanced` (writes refused). | Accept for v1 (seconds; personal scale). Document the order: migrate → shift alias. Expand/contract compatibility, where old code keeps writing through additive migrations, is deferred; it would need schema-compatibility rules. | **accepted** |
 | U9 | **Concurrent serverless writers.** Each Lambda instance races on `log/{t+1}`. Group commit only batches within one process. | A writer refused at slot n PUTs its batch at n+1 in the same step, with the commands queued behind it, while it GETs n, so every writer races for every slot. The entry records the head it was judged at and is judged again where it lands. A single-writer broker is deferred. | **done** |
-| U10 | **Lambda `nodejs26.x` runtime availability.** AWS has historically added each Node LTS runtime about a month after it goes LTS; Node 26 goes LTS on 2026-10-28. | **Verify before the TS cutover.** If `nodejs26.x` isn't available, deploy notes as a Lambda container image (or custom runtime) with Node 26. `engines >=26` stays (D10). | verify |
+| U10 | **Lambda `nodejs26.x` runtime availability.** AWS has historically added each Node LTS runtime about a month after it goes LTS; Node 26 goes LTS on 2026-10-28. | **Resolved → D10:** Lambda offers `nodejs24.x`, which meets the `>=24` floor. | done |
 | U11 | **Sans-IO core interface.** | Rust: `Machine::step(Input) -> Step { io: Vec<IoRequest{id, op: Get\|PutIfAbsent\|List\|Delete, key, body}>, done: Option<Outcome> }`. TS executes requests concurrently (bounded) and feeds `IoResponse{id, ...}` back. Rust owns the protocol and can be simulation-tested deterministically with a fake store and fault injection (dropped responses, 409/412/5xx, delays). TS owns credentials, retries of *idempotent* reads, timeouts and interruption. | **accepted** |
 | U12 | **Log growth.** v1 never deletes `log/` keys. | Express storage is $0.11/GB-month, negligible at personal scale. Later GC overwrites folded entries with `Compacted{ckpt}` stubs; never a delete or lifecycle rule (SlateDB's re-create hole). | deferred |
 | U13 | **Owner actions needed for S3 lanes** (before the G4 S3 lanes PR). | Provision one Express directory bucket and one Standard bucket in one region, plus a GitHub OIDC role scoped to `ci/` prefixes with a 1-day lifecycle on Standard `ci/`. Express gets no lifecycle on `log/` in prod, but the `ci/` prefix may expire. | owner |

@@ -87,7 +87,7 @@ receives traffic.
 The build ships the `linux-arm64` platform package, so
 `../../ts/npm/linux-arm64/bdb.node` must hold that platform's addon (the CI
 artifact `bdb.linux-arm64.node`) and the install must include that platform. The function runs on `nodejs24.x`, the newest
-runtime Alchemy offers, while bumbledb requires Node 26.
+runtime Alchemy offers, which meets bumbledb's Node 24 floor.
 
 ## Verification
 

@@ -3,12 +3,12 @@
 A release publishes four version-matched packages and a GitHub Release holding their tarballs and
 `SHA256SUMS`:
 
-| Package | Contents |
-|---|---|
-| `@bjornpagen/bumbledb` | The SDK (`dist/`, `src/`, `COOKBOOK.md`) and the `bumbledb` CLI |
-| `@bjornpagen/bumbledb-darwin-arm64` | `bdb.node` for Apple Silicon |
-| `@bjornpagen/bumbledb-linux-arm64` | `bdb.node` for Linux arm64 (amazonlinux:2023, glibc 2.34) |
-| `@bjornpagen/bumbledb-linux-x64` | `bdb.node` for Linux x64 (amazonlinux:2023, glibc 2.34) |
+| Package                             | Contents                                                        |
+| ----------------------------------- | --------------------------------------------------------------- |
+| `@bjornpagen/bumbledb`              | The SDK (`dist/`, `src/`, `COOKBOOK.md`) and the `bumbledb` CLI |
+| `@bjornpagen/bumbledb-darwin-arm64` | `bdb.node` for Apple Silicon                                    |
+| `@bjornpagen/bumbledb-linux-arm64`  | `bdb.node` for Linux arm64 (amazonlinux:2023, glibc 2.34)       |
+| `@bjornpagen/bumbledb-linux-x64`    | `bdb.node` for Linux x64 (amazonlinux:2023, glibc 2.34)         |
 
 The core package pins each platform package as an exact optional dependency. Rust crates are not
 published.

@@ -1,8 +1,8 @@
 catalog:
-  effect: 4.0.2
+  effect: 4.1.1
 
 minimumReleaseAgeExclude:
-  - '@bjornpagen/*'
+  - "@bjornpagen/*"
 
 allowBuilds:
   msgpackr-extract: false
