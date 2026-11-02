@@ -20,7 +20,7 @@
 		"@aws-sdk/client-s3": "3.1161.0",
 		"@bjornpagen/bumbledb": "file:../../ts",
 		"alchemy": "2.0.0-beta.81",
-		"effect": "4.0.7",
+		"effect": "4.1.0",
 		"next": "16.4.3",
 		"react": "19.3.1",
 		"react-dom": "19.3.1",
@@ -32,7 +32,7 @@
 		"@bjornpagen/bumbledb-linux-x64": "file:../../ts/npm/linux-x64"
 	},
 	"devDependencies": {
-		"@effect/platform-node": "4.0.7",
+		"@effect/platform-node": "4.1.0",
 		"@types/node": "24.19.2",
 		"@types/react": "19.3.0",
 		"@types/react-dom": "19.3.0",
