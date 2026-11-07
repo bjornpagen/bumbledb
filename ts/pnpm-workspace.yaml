@@ -1,5 +1,5 @@
 catalog:
-  effect: 4.1.1
+  effect: 4.1.2
 
 minimumReleaseAgeExclude:
   - "@bjornpagen/*"
