@@ -272,3 +272,76 @@ optional for any rule whose argument is subtle enough to warrant it; item
    before L4; L5 waits on the event-algebra work.
 5. Each section 4.4 question opens with the prior-work read and a written
    statement of the claim, then a referee, and only then code.
+
+## 6. Further questions
+
+Read at 93540b7b6. Each item records what the code does today and what is
+not yet known. None proposes a design.
+
+### 6.1 Cold start
+
+A fresh process builds every image it uses from a full row scan. A hosted
+replica opens a compacted LMDB copy (`storage/store/store_env.rs`,
+`copy_to_path`; `bumbledb-log/src/cache.rs`) and then builds images on first
+use. Option A's delta log is in memory, so it cannot help a new process.
+
+- What share of a cold hosted request is image build, next to checkpoint
+  fetch, open, and the join itself? How does that share scale with |R|?
+- Does the answer change how option A ranks against the persisted-slab
+  variant in section 3?
+
+### 6.2 Capacity and eviction
+
+Eviction is least-recently-used over slab bytes, under `image_cache_bytes`
+(default 128 MiB, `image/cache.rs`). An image larger than the cap is returned
+but never admitted (`image/cache/get_or_build.rs`), so every read that needs
+it rebuilds it. Cached images duplicate data the LMDB page cache also holds.
+
+- How often does a realistic workload reach the over-cap path?
+- Would weighing rebuild cost in eviction change hit rates measurably?
+- What is resident memory on the 512 MB target with the cache near its cap,
+  page cache included?
+
+### 6.3 The trie layer
+
+A prepared query keeps each occurrence's bound COLT, forced maps included,
+across executions while the relation version, filters and selections match
+(`api/prepared/view_memo.rs`, `ViewMemo::bind`). A version bump supersedes
+the binding, and the next execution re-forces lazily. Patching images
+leaves this layer cold.
+
+- After a small write, how does re-forcing compare with image rebuild for
+  join-heavy queries? Step zero's repeated-query lane would answer this if
+  it reports the two costs separately.
+- Could forced maps absorb appended positions the way a patched image
+  would? What would deletes require?
+
+### 6.4 Durable text identity
+
+String columns hold interner tokens. They are generation-scoped, minted in
+arrival order, mean equality only, and are never persisted
+(`image/intern.rs`). This blocks every way of persisting columns: the
+persisted-slab variant, columns as a rebuild source, and columns as primary
+storage.
+
+- What would a durable text identity look like, for example ids assigned at
+  commit in an LMDB dictionary? What does it cost per commit?
+- How would texts no fact references be reclaimed?
+- Does it touch any judge or canonical-row invariant?
+
+This can be studied without first choosing a persistence design.
+
+### 6.5 Persisted columns
+
+Building an image today decodes every canonical row and interns its text.
+If column slabs were stored durably beside the rows:
+
+- How much rebuild and cold-start cost would a copy-based build remove,
+  against the extra write volume and the larger file and checkpoint?
+- If columns were the source of truth instead, what would the engine need?
+  Candidates: a durable key-to-position map for deletes; chunked columns,
+  since LMDB cannot update part of a value; segment iteration in kernels and
+  COLT, which read one contiguous column slice today; and alignment inside
+  LMDB values.
+
+Both questions depend on 6.4.
