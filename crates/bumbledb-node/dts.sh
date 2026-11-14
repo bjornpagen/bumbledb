@@ -15,7 +15,7 @@ trap 'rm -rf "$work"' EXIT
 
 printf '{"name":"bumbledb-native","private":true,"napi":{"binaryName":"bdb"}}\n' \
 	>"$work/package.json"
-pnpm --silent --package=@napi-rs/cli@3.10.8 dlx napi build \
+pnpm --silent --package=@napi-rs/cli@3.10.12 dlx napi build \
 	--manifest-path "$crate/Cargo.toml" \
 	--package-json-path "$work/package.json" \
 	--output-dir "$work" \

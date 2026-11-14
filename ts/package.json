@@ -57,16 +57,16 @@
 		}
 	},
 	"devDependencies": {
-		"@aws-sdk/client-s3": "3.1161.0",
-		"@biomejs/biome": "2.6.4",
+		"@aws-sdk/client-s3": "3.1169.0",
+		"@biomejs/biome": "2.6.7",
 		"@types/node": "24.19.2",
 		"effect": "catalog:",
-		"typescript": "7.0.2"
+		"typescript": "7.1.0-beta"
 	},
 	"engines": {
 		"node": ">=24"
 	},
-	"packageManager": "pnpm@12.16.1",
+	"packageManager": "pnpm@12.18.0",
 	"publishConfig": {
 		"access": "public"
 	},
