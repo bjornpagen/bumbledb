@@ -30,7 +30,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.3
       - uses: taiki-e/install-action@v2
         with:
-          tool: nextest@0.9.148
+          tool: nextest@0.9.152
       - run: scripts/ci.sh miri_${{ matrix.shard }}
 
   musl:
@@ -45,7 +45,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.3
       - uses: taiki-e/install-action@v2
         with:
-          tool: nextest@0.9.148
+          tool: nextest@0.9.152
       - run: scripts/ci.sh deep
 
   clippy-macos:
