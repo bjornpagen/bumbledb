@@ -1088,12 +1088,16 @@ fn create_refuses_a_foreign_lmdb_environment() {
                 .open(dir.path())
                 .expect("raw lmdb env")
         };
-        let mut wtxn = env.write_txn().expect("txn");
-        let db: heed::Database<heed::types::Bytes, heed::types::Bytes> = env
-            .create_database(&mut wtxn, Some("someone_elses_table"))
-            .expect("foreign named db");
-        db.put(&mut wtxn, b"k", b"v").expect("put");
-        wtxn.commit().expect("commit");
+        let wtxn = env.write_txn().expect("txn");
+        env.create_databases_and_commit(wtxn, |opener, wtxn| {
+            let db: heed::Database<'_, heed::types::Bytes, heed::types::Bytes> =
+                opener.create_database(wtxn, Some("someone_elses_table"))?;
+            db.put(wtxn, b"k", b"v")?;
+            Ok::<_, heed::Error>(heed::CommitOrAbort::<(), std::convert::Infallible>::Commit(
+                (),
+            ))
+        })
+        .expect("foreign named db");
     }
     let err = Db::create(dir.path(), Ledger, common::work())
         .map(|_| ())

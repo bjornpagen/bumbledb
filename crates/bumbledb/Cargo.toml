@@ -13,16 +13,16 @@ blake3 = "1.8.7"
 fearless_simd = "1.1"
 bumbledb-macros = { path = "../bumbledb-macros" }
 bumbledb-theory = { path = "../bumbledb-theory" }
-heed = { version = "0.22", default-features = false }
+heed = { version = "0.23", default-features = false }
 
 # On Apple platforms LMDB's default locks are SysV semaphores, whose keys
 # collide across directories and outlive a crashed owner; POSIX semaphores do not.
 [target.'cfg(target_os = "macos")'.dependencies]
-heed = { version = "0.22", default-features = false, features = ["posix-sem"] }
+heed = { version = "0.23", default-features = false, features = ["posix-sem"] }
 
 [dev-dependencies]
 fearless_simd = { version = "1.1", features = ["force_support_fallback"] }
-heed = { version = "0.22", default-features = false }
+heed = { version = "0.23", default-features = false }
 
 [lints]
 workspace = true

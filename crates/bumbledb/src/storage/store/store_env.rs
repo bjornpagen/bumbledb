@@ -4,12 +4,16 @@
 //! address space, not RAM or disk, because without `WRITEMAP` the file grows
 //! only as pages are written.
 
+use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use heed::types::Bytes;
-use heed::{Database, EnvFlags, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
+use heed::{
+    CommitOrAbort, CommitToken, Database, DatabaseOpener, EnvFlags, EnvOpenOptions, OnCommit,
+    RoTxn, RwTxn, WithoutTls,
+};
 
 use super::det_index::DeterminantTable;
 use super::fingerprint::Fingerprinter;
@@ -72,9 +76,9 @@ pub(crate) struct StoreInner {
     // Field order is drop order: the environment closes before the kernel
     // lock releases.
     pub(crate) env: heed::Env<WithoutTls>,
-    pub(crate) meta: Database<Bytes, Bytes>,
-    pub(crate) rows: Database<Bytes, Bytes>,
-    pub(crate) dets: Database<Bytes, Bytes>,
+    pub(crate) meta: Database<'static, Bytes, Bytes>,
+    pub(crate) rows: Database<'static, Bytes, Bytes>,
+    pub(crate) dets: Database<'static, Bytes, Bytes>,
     pub(crate) gate: TransactionGate,
     writer: WriterSlot,
     options: Options,
@@ -241,16 +245,38 @@ fn acquire_lock(path: &Path) -> Result<DirectoryLock> {
     }
 }
 
-fn open_database(
-    env: &heed::Env<WithoutTls>,
-    rtxn: &RoTxn<'_, WithoutTls>,
+fn open_database<'e>(
+    opener: &DatabaseOpener<'e, WithoutTls>,
+    rtxn: &RoTxn<'e, WithoutTls>,
     name: &str,
-) -> Result<Database<Bytes, Bytes>> {
-    env.open_database(rtxn, Some(name))
+) -> Result<Database<'e, Bytes, Bytes>> {
+    opener
+        .open_database(rtxn, Some(name))
         .map_err(Error::from)?
         .ok_or(Error::Corruption(CorruptionError::MetaMissing(
             "named database",
         )))
+}
+
+/// The three named databases and the identity, read in one transaction.
+struct Opened<'t> {
+    meta: Database<'t, Bytes, Bytes>,
+    rows: Database<'t, Bytes, Bytes>,
+    dets: Database<'t, Bytes, Bytes>,
+    database: DatabaseId,
+}
+
+impl OnCommit for Opened<'_> {
+    type Committed = Opened<'static>;
+
+    fn on_commit(self, token: &CommitToken) -> Opened<'static> {
+        Opened {
+            meta: self.meta.on_commit(token),
+            rows: self.rows.on_commit(token),
+            dets: self.dets.on_commit(token),
+            database: self.database,
+        }
+    }
 }
 
 impl Store {
@@ -304,16 +330,28 @@ impl Store {
         let env = open_env(path, options)?;
         let schema_fp = fingerprint(schema);
         let rtxn = env.read_txn().map_err(Error::from)?;
-        let meta: Database<Bytes, Bytes> = env
-            .open_database(&rtxn, Some(META_DB))
-            .map_err(Error::from)?
-            .ok_or_else(|| Error::NotABumbleDb {
-                path: path.to_path_buf(),
-            })?;
-        let database = format::verify_meta(&meta, &rtxn, path, &schema_fp)?;
-        let rows = open_database(&env, &rtxn, ROWS_DB)?;
-        let dets = open_database(&env, &rtxn, DET_DB)?;
-        rtxn.commit().map_err(Error::from)?;
+        let Opened {
+            meta,
+            rows,
+            dets,
+            database,
+        } = env
+            .open_databases_and_commit(rtxn, |opener, rtxn| {
+                let meta = opener
+                    .open_database(rtxn, Some(META_DB))
+                    .map_err(Error::from)?
+                    .ok_or_else(|| Error::NotABumbleDb {
+                        path: path.to_path_buf(),
+                    })?;
+                let database = format::verify_meta(&meta, rtxn, path, &schema_fp)?;
+                Ok::<_, Error>(CommitOrAbort::<_, Infallible>::Commit(Opened {
+                    meta,
+                    rows: open_database(opener, rtxn, ROWS_DB)?,
+                    dets: open_database(opener, rtxn, DET_DB)?,
+                    database,
+                }))
+            })?
+            .unwrap_commit();
         Ok(Self {
             inner: Arc::new(StoreInner {
                 env,
@@ -475,31 +513,33 @@ pub(crate) fn init_directory(
 ) -> Result<()> {
     let _lock = acquire_lock(staging)?;
     let env = open_env(staging, options)?;
-    let mut wtxn = env.write_txn().map_err(Error::from)?;
-    let meta: Database<Bytes, Bytes> = env
-        .create_database(&mut wtxn, Some(META_DB))
-        .map_err(Error::from)?;
-    for name in [ROWS_DB, DET_DB] {
-        let _: Database<Bytes, Bytes> = env
-            .create_database(&mut wtxn, Some(name))
+    let wtxn = env.write_txn().map_err(Error::from)?;
+    env.create_databases_and_commit(wtxn, |opener, wtxn| {
+        let meta: Database<'_, Bytes, Bytes> = opener
+            .create_database(wtxn, Some(META_DB))
             .map_err(Error::from)?;
-    }
-    for (key, value) in [
-        (K_FORMAT, FORMAT.as_slice()),
-        (K_SCHEMA, fingerprint(schema).0.as_slice()),
-        (K_DATABASE, database.0.as_slice()),
-        (
-            K_GENERATION,
-            GenerationId::initial()
-                .storage_word()
-                .to_be_bytes()
-                .as_slice(),
-        ),
-        (K_NEXT_ROW_ID, 1u64.to_be_bytes().as_slice()),
-    ] {
-        meta.put(&mut wtxn, key, value).map_err(Error::from)?;
-    }
-    wtxn.commit().map_err(Error::from)?;
+        for name in [ROWS_DB, DET_DB] {
+            let _: Database<'_, Bytes, Bytes> = opener
+                .create_database(wtxn, Some(name))
+                .map_err(Error::from)?;
+        }
+        for (key, value) in [
+            (K_FORMAT, FORMAT.as_slice()),
+            (K_SCHEMA, fingerprint(schema).0.as_slice()),
+            (K_DATABASE, database.0.as_slice()),
+            (
+                K_GENERATION,
+                GenerationId::initial()
+                    .storage_word()
+                    .to_be_bytes()
+                    .as_slice(),
+            ),
+            (K_NEXT_ROW_ID, 1u64.to_be_bytes().as_slice()),
+        ] {
+            meta.put(wtxn, key, value).map_err(Error::from)?;
+        }
+        Ok::<_, Error>(CommitOrAbort::<(), Infallible>::Commit(()))
+    })?;
     env.force_sync().map_err(Error::from)?;
     Ok(())
 }
