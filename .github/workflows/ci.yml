@@ -27,7 +27,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny,cargo-shear
-      - uses: pnpm/action-setup@v6.1.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           package_json_file: ts/package.json
       - uses: actions/setup-node@v7
@@ -101,7 +101,7 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2.9.3
       - if: matrix.platform == 'darwin-arm64'
-        uses: pnpm/action-setup@v6.1.0
+        uses: pnpm/action-setup@v6.1.1
         with:
           package_json_file: ts/package.json
       - if: matrix.platform == 'darwin-arm64'
@@ -136,7 +136,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6.1.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           package_json_file: ts/package.json
       # No registry-url: its placeholder auth token would shadow trusted publishing.
