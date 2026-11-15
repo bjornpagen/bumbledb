@@ -103,11 +103,6 @@ export const readAttempts = Effect.fn("readAttempts")(
 )
 
 export const runtimePolicy: BumbleOptions = {
-	workers: 2,
-	queueCapacity: 16,
-	cleanupCapacity: 16,
-	ownerCapacity: 16,
-	nativeHandleCapacity: 64,
 	cleanupTimeout: "2 seconds"
 }
 

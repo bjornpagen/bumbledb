@@ -27,7 +27,7 @@ export class Databases extends Context.Service<Databases, DatabasePool<typeof Ap
 	)
 }
 
-const appLayer = Databases.layer.pipe(Layer.provideMerge(Bumble.layer(runtimePolicy.native)))
+const appLayer = Databases.layer.pipe(Layer.provideMerge(Bumble.layer()))
 
 const makeRuntime = () => ManagedRuntime.make(appLayer)
 

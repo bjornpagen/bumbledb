@@ -6,7 +6,6 @@ import { Bumble, Database, Uuid } from "@bjornpagen/bumbledb"
 import { Effect, Option, Result } from "effect"
 import { migrations } from "../migrations/index.ts"
 import { requestIdOf } from "../src/db/commands.ts"
-import { runtimePolicy } from "../src/db/runtime-policy.ts"
 import { App } from "../src/db/schema.ts"
 import { cacheFor, storeFor } from "../src/db/stores.ts"
 
@@ -23,7 +22,7 @@ const program = Effect.scoped(
 		(db) => db.resolve(requestIdOf(parsed.success))
 	)
 )
-const receipt = await Effect.runPromise(program.pipe(Effect.provide(Bumble.layer(runtimePolicy.native))))
+const receipt = await Effect.runPromise(program.pipe(Effect.provide(Bumble.layer())))
 console.log(
 	Option.match(receipt, {
 		onNone: () => "not decided",

@@ -6,7 +6,6 @@
 import { Bumble, Database } from "@bjornpagen/bumbledb"
 import { Effect } from "effect"
 import { migrations } from "../migrations/index.ts"
-import { runtimePolicy } from "../src/db/runtime-policy.ts"
 import { App } from "../src/db/schema.ts"
 import { cacheFor, storeFor } from "../src/db/stores.ts"
 
@@ -24,4 +23,4 @@ const program = Effect.forEach(
 		).pipe(Effect.tap(() => Effect.sync(() => console.log(`migrated ${tenant}`)))),
 	{ discard: true }
 )
-await Effect.runPromise(program.pipe(Effect.provide(Bumble.layer(runtimePolicy.native))))
+await Effect.runPromise(program.pipe(Effect.provide(Bumble.layer())))

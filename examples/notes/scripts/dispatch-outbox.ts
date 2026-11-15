@@ -5,7 +5,6 @@
 import { Bumble, Database } from "@bjornpagen/bumbledb"
 import { Effect } from "effect"
 import { migrations } from "../migrations/index.ts"
-import { runtimePolicy } from "../src/db/runtime-policy.ts"
 import { App } from "../src/db/schema.ts"
 import { cacheFor, storeFor } from "../src/db/stores.ts"
 import { dispatchOutbox } from "../src/outbox.ts"
@@ -22,5 +21,5 @@ const program = Effect.scoped(
 		dispatchOutbox
 	)
 )
-const report = await Effect.runPromise(program.pipe(Effect.provide(Bumble.layer(runtimePolicy.native))))
+const report = await Effect.runPromise(program.pipe(Effect.provide(Bumble.layer())))
 console.log(`outbox: dispatched ${report.dispatched}${report.stopped === null ? "" : ` (stopped: ${report.stopped})`}`)
