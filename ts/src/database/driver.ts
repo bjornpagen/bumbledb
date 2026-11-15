@@ -8,7 +8,7 @@ import type { Scope } from "effect"
 import { Deferred, Effect, Fiber, FiberSet, Queue, Semaphore } from "effect"
 import { DbError } from "../errors.ts"
 import type { ExecutorOptions, IoRequest, IoResponse, ObjectStore } from "./io.ts"
-import { defaultExecutorOptions, execute } from "./io.ts"
+import { execute } from "./io.ts"
 
 interface Step<Settled> {
 	readonly io: readonly IoRequest[]
@@ -39,13 +39,11 @@ type Message<Request> =
 	| { readonly _tag: "Response"; readonly response: IoResponse }
 	| { readonly _tag: "Close" }
 
-const defaultDriverOptions: DriverOptions = { concurrency: 32, executor: defaultExecutorOptions }
-
 /** Starts a driver owned by the current scope; closing the scope closes the machine. */
 const make = Effect.fnUntraced(function* <Request, Settled>(
 	port: MachinePort<Request, Settled>,
 	store: ObjectStore,
-	options: DriverOptions = defaultDriverOptions
+	options: DriverOptions
 ): Effect.fn.Return<Driver<Request, Settled>, never, Scope.Scope> {
 	const mailbox = yield* Queue.unbounded<Message<Request>>()
 	const permits = yield* Semaphore.make(options.concurrency)
@@ -128,7 +126,7 @@ const make = Effect.fnUntraced(function* <Request, Settled>(
 	}
 })
 
-const Driver = Object.freeze({ make, defaultOptions: defaultDriverOptions })
+const Driver = Object.freeze({ make })
 
 export type { DriverOptions, MachinePort, Step }
 export { Driver }
